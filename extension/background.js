@@ -4,7 +4,7 @@
 // (установлен как задача Планировщика / LaunchAgent).
 
 const UPDATE_JSON_URL =
-  'https://raw.githubusercontent.com/PENA-AGENCY/bx24-extension/main/update.json';
+  'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
 
 // Сравнивает версии вида "5.0.0". Возвращает true если remote > local.
 function isNewer(remote, local) {

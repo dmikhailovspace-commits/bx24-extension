@@ -12,7 +12,7 @@
 # ==============================================================
 
 # ── Конфигурация (замените URL на свой реальный репозиторий) ──
-UPDATE_JSON_URL="https://raw.githubusercontent.com/PENA-AGENCY/bx24-extension/main/update.json"
+UPDATE_JSON_URL="https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json"
 INSTALL_DIR="$HOME/Library/Application Support/PENA Agency/Extension"
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 PLIST_NAME="ru.pena-agency.updater"

@@ -17,7 +17,7 @@ param(
 )
 
 # ── Конфигурация (замените URL на свой реальный репозиторий) ──
-$UPDATE_JSON_URL = "https://raw.githubusercontent.com/PENA-AGENCY/bx24-extension/main/update.json"
+$UPDATE_JSON_URL = "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json"
 $INSTALL_DIR     = "$env:LOCALAPPDATA\PENA Agency\Extension"
 $TASK_NAME       = "PENAAgencyUpdater"
 $LOG_FILE        = "$env:LOCALAPPDATA\PENA Agency\updater.log"

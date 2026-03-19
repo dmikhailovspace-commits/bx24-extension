@@ -1,6 +1,6 @@
 {
   "version": "5.0.0",
   "release_date": "2026-03-18",
-  "zip_url": "https://github.com/PENA-AGENCY/bx24-extension/releases/download/v5.0.0/pena-agency-v5.0.0.zip",
+  "zip_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/download/v5.0.0/pena-agency-v5.0.0.zip",
   "changelog": "- Управление прозрачностью панели\n- Ресайз по боковым граням окна\n- Горячие клавиши работают в фоне\n- Управление пресетами через панель настроек\n- Ctrl+1..9 для переключения пресетов"
 }
