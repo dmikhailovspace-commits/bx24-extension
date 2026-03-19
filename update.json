@@ -1,6 +1,8 @@
 {
   "version": "5.0.0",
-  "release_date": "2026-03-18",
+  "release_date": "2026-03-19",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v5.0.0",
   "zip_url": "https://github.com/dmikhailovspace-commits/bx24-extension/archive/refs/heads/main.zip",
-  "changelog": "- Управление прозрачностью панели\n- Ресайз по боковым граням окна\n- Горячие клавиши работают в фоне\n- Управление пресетами через панель настроек\n- Ctrl+1..9 для переключения пресетов"
+  "exe_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/download/v5.0.0/PENA_Agency_Setup_v5.0.0.exe",
+  "changelog": "Ресайз панели по бокам, прозрачность, совместимость с OneDrive Desktop, исправлен запуск Bitrix24 из установщика"
 }
