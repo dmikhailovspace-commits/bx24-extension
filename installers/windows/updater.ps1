@@ -84,16 +84,35 @@ if ($Setup) {
 
     # -- Находим Bitrix24 --
     $BitrixCandidates = @(
-        "C:\Program Files (x86)\Bitrix24\Bitrix24.exe",
-        "C:\Program Files\Bitrix24\Bitrix24.exe",
         "$env:LOCALAPPDATA\Programs\Bitrix24\Bitrix24.exe",
         "$env:LOCALAPPDATA\Bitrix24\Bitrix24.exe",
-        "$env:APPDATA\Bitrix24\Bitrix24.exe"
+        "C:\Program Files (x86)\Bitrix24\Bitrix24.exe",
+        "C:\Program Files\Bitrix24\Bitrix24.exe",
+        "$env:APPDATA\Bitrix24\Bitrix24.exe",
+        "$env:USERPROFILE\AppData\Local\Programs\Bitrix24\Bitrix24.exe"
     )
 
     $BitrixExe = $null
+    # Сначала пробуем стандартные пути
     foreach ($p in $BitrixCandidates) {
         if (Test-Path $p) { $BitrixExe = $p; break }
+    }
+    # Затем реестр
+    if (-not $BitrixExe) {
+        $regPaths = @(
+            'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Bitrix24',
+            'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Bitrix24',
+            'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Bitrix24'
+        )
+        foreach ($rp in $regPaths) {
+            if (Test-Path $rp) {
+                $loc = (Get-ItemProperty $rp -ErrorAction SilentlyContinue).InstallLocation
+                if ($loc) {
+                    $candidate = Join-Path $loc "Bitrix24.exe"
+                    if (Test-Path $candidate) { $BitrixExe = $candidate; break }
+                }
+            }
+        }
     }
 
     # Если не найден — спросить пользователя через диалог
@@ -121,7 +140,8 @@ if ($Setup) {
         $BitrixExe | Set-Content -Path $BITRIX_PATH_FILE -Encoding UTF8
 
         # Ярлык на рабочем столе
-        $DesktopLnk = "$env:USERPROFILE\Desktop\Bitrix24 + Фильтр чатов.lnk"
+        $Desktop    = [Environment]::GetFolderPath('Desktop')
+        $DesktopLnk = "$Desktop\Bitrix24 + Фильтр чатов.lnk"
         if (MakeShortcut $DesktopLnk $BitrixExe $ExtArgs (Split-Path $BitrixExe) "Bitrix24 с фильтром чатов") {
             Log "Создан ярлык: рабочий стол"
         }
@@ -136,7 +156,7 @@ if ($Setup) {
 
         # Обновляем стандартные ярлыки Bitrix24 (передаём им параметры расширения)
         $StdLinks = @(
-            "$env:USERPROFILE\Desktop\Bitrix24.lnk",
+            "$Desktop\Bitrix24.lnk",
             "$env:PUBLIC\Desktop\Bitrix24.lnk",
             "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Bitrix24\Bitrix24.lnk"
         )
@@ -185,21 +205,34 @@ if ($Setup) {
 if ($Launch) {
     $INSTALL_DIR = "$env:LOCALAPPDATA\PENA Agency\Extension"
     $BITRIX_PATH_FILE = "$env:LOCALAPPDATA\PENA Agency\bitrix_path.txt"
+    $extArgs = "--disable-extensions-except=`"$INSTALL_DIR`" --load-extension=`"$INSTALL_DIR`""
+    $Desktop = [Environment]::GetFolderPath('Desktop')
+
+    # 1. Читаем сохранённый путь
     if (Test-Path $BITRIX_PATH_FILE) {
         $exe = (Get-Content $BITRIX_PATH_FILE -Raw -ErrorAction SilentlyContinue).Trim()
         if ($exe -and (Test-Path $exe)) {
-            $extArgs = "--disable-extensions-except=`"$INSTALL_DIR`" --load-extension=`"$INSTALL_DIR`""
-            Start-Process -FilePath $exe -ArgumentList $extArgs
-            exit 0
+            Start-Process -FilePath $exe -ArgumentList $extArgs; exit 0
         }
     }
-    # Путь не сохранён — ищем в ярлыке на рабочем столе
-    $lnk = "$env:USERPROFILE\Desktop\Bitrix24 + Фильтр чатов.lnk"
+    # 2. Ищем в ярлыке
+    $lnk = "$Desktop\Bitrix24 + Фильтр чатов.lnk"
     if (Test-Path $lnk) {
         $sc = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
         if (Test-Path $sc.TargetPath) {
-            Start-Process -FilePath $sc.TargetPath -ArgumentList $sc.Arguments
-            exit 0
+            Start-Process -FilePath $sc.TargetPath -ArgumentList $sc.Arguments; exit 0
+        }
+    }
+    # 3. Ищем стандартные пути
+    $candidates = @(
+        "$env:LOCALAPPDATA\Programs\Bitrix24\Bitrix24.exe",
+        "$env:LOCALAPPDATA\Bitrix24\Bitrix24.exe",
+        "C:\Program Files (x86)\Bitrix24\Bitrix24.exe",
+        "C:\Program Files\Bitrix24\Bitrix24.exe"
+    )
+    foreach ($c in $candidates) {
+        if (Test-Path $c) {
+            Start-Process -FilePath $c -ArgumentList $extArgs; exit 0
         }
     }
     exit 0

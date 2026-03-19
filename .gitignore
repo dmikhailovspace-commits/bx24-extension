@@ -11,6 +11,8 @@ Thumbs.db
 
 # Build output (compiled installers — не коммитим в репо)
 dist/
+!dist/Install_macOS.command
+!dist/Install_Browser.html
 
 # Archives
 *.zip
