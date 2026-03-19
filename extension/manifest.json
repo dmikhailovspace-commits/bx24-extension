@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Сортировщик чатов BX24",
+  "version": "5.0.0",
+  "description": "Фильтрация и сортировка чатов Bitrix24 по ключевым словам, тегам и категориям",
+  "permissions": ["storage", "tabs", "notifications"],
+  "host_permissions": ["*://*.bitrix24.ru/*", "*://bx24.id-pr.ru/*", "<all_urls>"],
+  "background": {"service_worker": "background.js"},
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "PENA Agency",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [{
+    "matches": ["*://*.bitrix24.ru/*", "*://bx24.id-pr.ru/*"],
+    "js": ["content.js"],
+    "run_at": "document_start",
+    "all_frames": true,
+    "match_about_blank": true
+  }],
+  "web_accessible_resources": [{"resources": ["injected.js", "icons/*"], "matches": ["*://*.bitrix24.ru/*", "*://bx24.id-pr.ru/*"]}]
+}

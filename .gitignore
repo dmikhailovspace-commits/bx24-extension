@@ -1,0 +1,17 @@
+# Claude Code settings
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs / temp
+*.log
+*.tmp
+
+# Build output (compiled installers — не коммитим в репо)
+dist/
+
+# Archives
+*.zip
+*.tar.gz
