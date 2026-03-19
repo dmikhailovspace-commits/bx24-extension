@@ -303,28 +303,42 @@
         <ol class="steps">
           <li>
             <div class="snum">1</div>
-            <div class="sbody">Откройте папку <code>installers\windows\</code> — там находится установщик.</div>
+            <div class="sbody">
+              Откройте папку <code>dist\</code> и дважды кликните
+              <strong>PENA_Agency_Setup_v5.0.0.exe</strong>.
+            </div>
           </li>
           <li>
             <div class="snum">2</div>
-            <div class="sbody">Дважды кликните <strong>install.bat</strong>.</div>
-          </li>
-          <li>
-            <div class="snum">3</div>
             <div class="sbody">
               Если Windows показывает предупреждение SmartScreen —
               нажмите <strong>«Подробнее» → «Выполнить в любом случае»</strong>.
             </div>
           </li>
           <li>
+            <div class="snum">3</div>
+            <div class="sbody">
+              Следуйте инструкциям мастера установки. Если Bitrix24 не найден автоматически —
+              введите путь к <code>Bitrix24.exe</code> в появившемся диалоге.
+            </div>
+          </li>
+          <li>
             <div class="snum">4</div>
             <div class="sbody">
-              Следуйте инструкциям установщика. По завершении будет создан ярлык
-              <strong>«Bitrix24 + Фильтр чатов»</strong> на рабочем столе и в меню Пуск.
+              По завершении будет создан ярлык <strong>«Bitrix24 + Фильтр чатов»</strong>
+              на рабочем столе и в меню Пуск. Отметьте «Запустить Bitrix24» для немедленного запуска.
             </div>
           </li>
         </ol>
       </div>
+
+      <details>
+        <summary>Альтернатива: установка через скрипт</summary>
+        <div class="details-body">
+          <p>Откройте папку <code>installers\windows\</code> и дважды кликните <strong>install.bat</strong>.
+          Если появится предупреждение SmartScreen — нажмите «Подробнее» → «Выполнить в любом случае».</p>
+        </div>
+      </details>
 
       <details>
         <summary>Ручная установка</summary>
@@ -357,22 +371,22 @@
           <li>
             <div class="snum">3</div>
             <div class="sbody">
-              Расположите окна <strong>Finder</strong> (папка <code>installers/macos/</code>) и
-              <strong>Терминала</strong> рядом. В Терминале введите <code>bash&nbsp;</code>
-              (с пробелом в конце, без Enter), затем перетащите файл
-              <strong>install.sh</strong> из Finder прямо в окно Терминала —
-              путь вставится автоматически.
+              Дважды кликните <strong>install.command</strong> в Finder.
+              macOS откроет Терминал и запустит установщик автоматически.
+              <br><small style="color:var(--muted)">При запросе «Открыть» — подтвердите.</small>
             </div>
           </li>
           <li>
             <div class="snum">4</div>
-            <div class="sbody">Нажмите <strong>Enter</strong> и следуйте инструкциям установщика.</div>
+            <div class="sbody">
+              Следуйте инструкциям. Если Bitrix24 не найден — введите путь к <code>Bitrix24</code> в Терминале.
+            </div>
           </li>
           <li>
             <div class="snum">5</div>
             <div class="sbody">
               Установщик создаст приложение <strong>«Bitrix24 + Фильтр чатов.app»</strong>
-              в папке «Программы» и на рабочем столе.
+              на рабочем столе.
             </div>
           </li>
         </ol>
@@ -716,9 +730,9 @@ function setupDonePage() {
   const elU = document.getElementById('uninstall-info');
   const uninstall = {
     win: `<ul>
-      <li>Запустите <code>uninstall.ps1</code> из папки:<br>
-          <code>%LOCALAPPDATA%\\PENA Agency\\Extension\\</code></li>
-      <li>Скрипт удалит файлы расширения и ярлыки, восстановит стандартный ярлык Bitrix24.</li>
+      <li>Откройте <strong>Параметры Windows → Приложения</strong> (или «Панель управления → Программы»).</li>
+      <li>Найдите <strong>«Сортировщик чатов BX24»</strong> в списке и нажмите <strong>«Удалить»</strong>.</li>
+      <li>Деинсталлятор удалит файлы расширения, ярлыки и задачу планировщика.</li>
     </ul>`,
     mac: `<ul>
       <li>Откройте Терминал (<span class="hotkey" style="font-size:12px">⌘ Пробел</span> → Terminal → Enter).</li>

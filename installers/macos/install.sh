@@ -37,8 +37,8 @@ error_exit() {
 }
 
 div
-echo -e "${CYAN}  PENA Agency - Установщик расширения${NC}"
-echo -e "${CYAN}  Bitrix24  |  macOS  |  v2.3.0${NC}"
+echo -e "${CYAN}  Сортировщик чатов BX24 — Установщик${NC}"
+echo -e "${CYAN}  для PENA Agency  |  macOS  |  v5.0.0${NC}"
 div
 echo ""
 
@@ -238,14 +238,14 @@ UHEAD
 
     cat << 'UBODY'
 
-echo -e "${CYAN}Удаление PENA Agency Extension...${NC}"
+echo -e "${CYAN}Удаление Сортировщика чатов BX24...${NC}"
 [ -e "$APP_DESK" ]    && rm -rf "$APP_DESK"    && echo -e "  ${GREEN}Удалено: $APP_DESK${NC}"
 [ -e "$APP_INST" ]    && rm -rf "$APP_INST"    && echo -e "  ${GREEN}Удалено: $APP_INST${NC}"
 [ -d "$INSTALL_DIR" ] && rm -rf "$INSTALL_DIR" && echo -e "  ${GREEN}Удалена: $INSTALL_DIR${NC}"
 PARENT="$(dirname "$INSTALL_DIR")"
 [ -d "$PARENT" ] && rmdir "$PARENT" 2>/dev/null || true
 echo ""
-echo -e "${GREEN}PENA Agency успешно удалён.${NC}"
+echo -e "${GREEN}Сортировщик чатов BX24 успешно удалён.${NC}"
 UBODY
 } > "$UNINSTALL_PATH"
 
@@ -254,7 +254,7 @@ ok "Деинсталлятор: $UNINSTALL_PATH"
 echo ""
 
 # ==============================================================
-# 6. Итог
+# 7. Итог
 # ==============================================================
 div
 ok "Установка завершена успешно!"

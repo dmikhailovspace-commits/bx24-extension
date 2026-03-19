@@ -6,12 +6,14 @@
 #   -Setup   : Первоначальная настройка (запускается установщиком)
 #              Находит Bitrix24, создаёт ярлыки, регистрирует
 #              задачу в Планировщике для ежедневного обновления.
+#   -Launch  : Запускает Bitrix24 с расширением (из чекбокса в конце установки).
 #   (нет)    : Проверяет обновление и устанавливает, если есть.
 #
 # Планировщик запускает этот скрипт ежедневно автоматически.
 # ==============================================================
 param(
-    [switch]$Setup   # режим первоначальной настройки
+    [switch]$Setup,   # первоначальная настройка (из Inno Setup)
+    [switch]$Launch   # запустить Bitrix24 с расширением
 )
 
 # ── Конфигурация (замените URL на свой реальный репозиторий) ──
@@ -19,6 +21,7 @@ $UPDATE_JSON_URL = "https://raw.githubusercontent.com/PENA-AGENCY/bx24-extension
 $INSTALL_DIR     = "$env:LOCALAPPDATA\PENA Agency\Extension"
 $TASK_NAME       = "PENAAgencyUpdater"
 $LOG_FILE        = "$env:LOCALAPPDATA\PENA Agency\updater.log"
+$BITRIX_PATH_FILE = "$env:LOCALAPPDATA\PENA Agency\bitrix_path.txt"
 # ──────────────────────────────────────────────────────────────
 
 $ErrorActionPreference = "SilentlyContinue"
@@ -93,9 +96,9 @@ if ($Setup) {
         if (Test-Path $p) { $BitrixExe = $p; break }
     }
 
+    # Если не найден — спросить пользователя через диалог
     if (-not $BitrixExe) {
-        Log "Bitrix24 не найден по стандартным путям — запрашиваю путь у пользователя."
-        # Показываем диалог ввода пути
+        Log "Bitrix24 не найден по стандартным путям — показываю диалог ввода."
         Add-Type -AssemblyName Microsoft.VisualBasic -ErrorAction SilentlyContinue
         $BitrixInput = [Microsoft.VisualBasic.Interaction]::InputBox(
             "Bitrix24.exe не найден в стандартных папках.`n`nВставьте полный путь к Bitrix24.exe:`n(например: C:\Users\User\AppData\Local\Programs\Bitrix24\Bitrix24.exe)",
@@ -105,14 +108,17 @@ if ($Setup) {
             $BitrixExe = $BitrixInput
             Log "Путь к Bitrix24 указан пользователем: $BitrixExe"
         } else {
-            Log "Путь не указан — ярлыки не созданы. Укажите путь вручную позже."
+            Log "Путь не указан. Запустите updater.ps1 -Setup вручную после установки Bitrix24."
         }
-        if (-not $BitrixExe) {
-        Log "Создайте ярлык вручную: Bitrix24.exe --load-extension=`"$INSTALL_DIR`" --disable-extensions-except=`"$INSTALL_DIR`""
-        } # end inner if no path given
-    } else {
+    }
+
+    # Создаём ярлыки и сохраняем путь (если Bitrix24 найден — автоматически или вручную)
+    if ($BitrixExe) {
         Log "Битрикс24: $BitrixExe"
         $ExtArgs = "--disable-extensions-except=`"$INSTALL_DIR`" --load-extension=`"$INSTALL_DIR`""
+
+        # Сохраняем путь для режима -Launch
+        $BitrixExe | Set-Content -Path $BITRIX_PATH_FILE -Encoding UTF8
 
         # Ярлык на рабочем столе
         $DesktopLnk = "$env:USERPROFILE\Desktop\Bitrix24 + Фильтр чатов.lnk"
@@ -128,7 +134,7 @@ if ($Setup) {
             Log "Создан ярлык: меню Пуск"
         }
 
-        # Обновляем существующие ярлыки Bitrix24
+        # Обновляем стандартные ярлыки Bitrix24 (передаём им параметры расширения)
         $StdLinks = @(
             "$env:USERPROFILE\Desktop\Bitrix24.lnk",
             "$env:PUBLIC\Desktop\Bitrix24.lnk",
@@ -136,11 +142,13 @@ if ($Setup) {
         )
         foreach ($lnk in $StdLinks) {
             if (Test-Path $lnk) {
-                if (MakeShortcut $lnk $BitrixExe $ExtArgs (Split-Path $BitrixExe) "Битрикс24 с PENA Agency") {
+                if (MakeShortcut $lnk $BitrixExe $ExtArgs (Split-Path $BitrixExe) "Битрикс24 с фильтром чатов") {
                     Log "Обновлён ярлык: $(Split-Path $lnk -Leaf)"
                 }
             }
         }
+    } else {
+        Log "Bitrix24 не найден — ярлыки не созданы. Запустите updater.ps1 -Setup после установки Bitrix24."
     }
 
     # -- Регистрируем задачу Планировщика для ежедневного обновления --
@@ -167,6 +175,33 @@ if ($Setup) {
     }
 
     Log "Настройка завершена."
+    exit 0
+}
+
+# ==============================================================
+# РЕЖИМ ЗАПУСКА (-Launch)
+# Вызывается из чекбокса "Запустить Bitrix24" в конце установки
+# ==============================================================
+if ($Launch) {
+    $INSTALL_DIR = "$env:LOCALAPPDATA\PENA Agency\Extension"
+    $BITRIX_PATH_FILE = "$env:LOCALAPPDATA\PENA Agency\bitrix_path.txt"
+    if (Test-Path $BITRIX_PATH_FILE) {
+        $exe = (Get-Content $BITRIX_PATH_FILE -Raw -ErrorAction SilentlyContinue).Trim()
+        if ($exe -and (Test-Path $exe)) {
+            $extArgs = "--disable-extensions-except=`"$INSTALL_DIR`" --load-extension=`"$INSTALL_DIR`""
+            Start-Process -FilePath $exe -ArgumentList $extArgs
+            exit 0
+        }
+    }
+    # Путь не сохранён — ищем в ярлыке на рабочем столе
+    $lnk = "$env:USERPROFILE\Desktop\Bitrix24 + Фильтр чатов.lnk"
+    if (Test-Path $lnk) {
+        $sc = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
+        if (Test-Path $sc.TargetPath) {
+            Start-Process -FilePath $sc.TargetPath -ArgumentList $sc.Arguments
+            exit 0
+        }
+    }
     exit 0
 }
 

@@ -75,7 +75,7 @@ Source: "updater.ps1";                   DestDir: "{app}"; Flags: ignoreversion
 ; Шаг 1: Ищет Bitrix24, создаёт ярлыки, регистрирует Task Scheduler
 Filename: "powershell.exe"; Parameters: "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\updater.ps1"" -Setup"; WorkingDir: "{app}"; StatusMsg: "Настройка ярлыков и автообновления..."; Flags: runhidden waituntilterminated
 ; Шаг 2 (опционально): Предложить запустить Bitrix24 сразу
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File ""{app}\updater.ps1"""; Description: "Запустить Bitrix24 с расширением"; Flags: postinstall skipifsilent unchecked
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\updater.ps1"" -Launch"; Description: "Запустить Bitrix24 с расширением"; Flags: postinstall skipifsilent unchecked runhidden
 
 [UninstallRun]
 ; Снимаем задачу Планировщика при удалении
