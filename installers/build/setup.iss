@@ -13,7 +13,7 @@
 ; Результат: ..\..\dist\PENA_Agency_Setup_v5.0.0.exe
 ; ================================================================
 
-#define AppName      "Сортировщик чатов BX24"
+#define AppName      "BX24 Chat Sorter"
 #define AppVersion   "5.0.0"
 #define AppPublisher "PENA Agency"
 #define AppURL       "https://github.com/dmikhailovspace-commits/bx24-extension"
@@ -73,7 +73,7 @@ Source: "..\windows\updater.ps1";                   DestDir: "{app}"; Flags: ign
 
 [Run]
 ; Шаг 1: Ищет Bitrix24, создаёт ярлыки, регистрирует Task Scheduler
-Filename: "powershell.exe"; Parameters: "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\updater.ps1"" -Setup"; WorkingDir: "{app}"; StatusMsg: "Настройка ярлыков и автообновления..."; Flags: waituntilterminated
+Filename: "powershell.exe"; Parameters: "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\updater.ps1"" -Setup"; WorkingDir: "{app}"; StatusMsg: "Настройка ярлыков и автообновления..."; Flags: waituntilterminated runhidden
 ; Шаг 2 (опционально): Предложить запустить Bitrix24 сразу
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\updater.ps1"" -Launch"; Description: "Запустить Bitrix24 с расширением"; Flags: postinstall skipifsilent unchecked runhidden
 
@@ -83,7 +83,7 @@ Filename: "powershell.exe"; Parameters: "-NoProfile -WindowStyle Hidden -Executi
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
-Type: dirifempty;     Name: "{userappdata}\Microsoft\Windows\Start Menu\Programs\Сортировщик чатов BX24"
+Type: dirifempty;     Name: "{userappdata}\Microsoft\Windows\Start Menu\Programs\BX24 Chat Sorter"
 
 [Code]
 // Удаляем ярлыки при деинсталляции
@@ -92,8 +92,8 @@ var
   Desktop, StartMenu: String;
 begin
   if CurUninstallStep = usPostUninstall then begin
-    Desktop   := ExpandConstant('{userdesktop}\Bitrix24 + Фильтр чатов.lnk');
-    StartMenu := ExpandConstant('{userappdata}\Microsoft\Windows\Start Menu\Programs\Сортировщик чатов BX24\Bitrix24 + Фильтр чатов.lnk');
+    Desktop   := ExpandConstant('{userdesktop}\Bitrix24 + Chat Filter.lnk');
+    StartMenu := ExpandConstant('{userappdata}\Microsoft\Windows\Start Menu\Programs\BX24 Chat Sorter\Bitrix24 + Chat Filter.lnk');
     if FileExists(Desktop)   then DeleteFile(Desktop);
     if FileExists(StartMenu) then DeleteFile(StartMenu);
   end;

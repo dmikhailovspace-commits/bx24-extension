@@ -143,15 +143,15 @@ if ($Setup) {
 
         # Ярлык на рабочем столе
         $Desktop    = [Environment]::GetFolderPath('Desktop')
-        $DesktopLnk = "$Desktop\Bitrix24 + Фильтр чатов.lnk"
+        $DesktopLnk = "$Desktop\Bitrix24 + Chat Filter.lnk"
         if (MakeShortcut $DesktopLnk $BitrixExe $ExtArgs (Split-Path $BitrixExe) "Bitrix24 с фильтром чатов") {
             Log "Создан ярлык: рабочий стол"
         }
 
         # Ярлык в меню Пуск
-        $StartDir = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Сортировщик чатов BX24"
+        $StartDir = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\BX24 Chat Sorter"
         New-Item -Path $StartDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
-        $StartLnk = "$StartDir\Bitrix24 + Фильтр чатов.lnk"
+        $StartLnk = "$StartDir\Bitrix24 + Chat Filter.lnk"
         if (MakeShortcut $StartLnk $BitrixExe $ExtArgs (Split-Path $BitrixExe) "Bitrix24 с фильтром чатов") {
             Log "Создан ярлык: меню Пуск"
         }
@@ -218,7 +218,7 @@ if ($Launch) {
         }
     }
     # 2. Ищем в ярлыке
-    $lnk = "$Desktop\Bitrix24 + Фильтр чатов.lnk"
+    $lnk = "$Desktop\Bitrix24 + Chat Filter.lnk"
     if (Test-Path $lnk) {
         $sc = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
         if (Test-Path $sc.TargetPath) {

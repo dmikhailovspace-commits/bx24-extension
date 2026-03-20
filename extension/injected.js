@@ -445,10 +445,7 @@ if (_presetChannel) {
 	const defaultFilters = () => ({
 	unreadOnly: false,
 	withAttach: false,
-	status: 'any',
 	query: '',
-	onlyWhatsApp: false,
-	onlyTelegram: false,
 	typesSelected: [],
 	hideCompletedTasks: false,
 	projectIndexes: [],
@@ -751,7 +748,6 @@ if (_presetChannel) {
 	let itemType = 'other';
 	if (has(/--user\b/)) itemType = 'dialog';
 	if (has(/--chat\b/)) itemType = 'chat';
-	if (has(/--crm\b/)) itemType = 'deal';
 	if (has(/--videoconf\b/)) itemType = 'videoconf';
 	if (has(/--support24|--support24Question/)) itemType = 'support';
 	if (has(/--sonetGroup\b/) || !!el.querySelector('.ui-avatar.--hexagon')) itemType = 'group';
@@ -862,29 +858,18 @@ if (_presetChannel) {
 	if (filters.unreadOnly && !meta.hasUnread && !meta.hasLater) return false;
 
 	if (filters.withAttach && !meta.hasAttach) return false;
-	if (!IS_OL_FRAME && filters.hideCompletedTasks && isTasksChatsModeNow()) {
+	if (filters.hideCompletedTasks && isTasksChatsModeNow()) {
 		if (isTaskCompletedByLastMessage(meta)) return false;
 	}
-	if (IS_OL_FRAME) {
-	if (filters.onlyWhatsApp && !meta.isWhatsApp) return false;
-	if (filters.onlyTelegram && !meta.isTelegram) return false;
-	// Статус: «В работе» = 20 и 25, «Отвеченные» = 40
-	if (filters.status !== 'any') {
-		const s = String(meta.status || '');
-		if (filters.status === '20' && s !== '20' && s !== '25') return false;
-		if (filters.status === '40' && s !== '40') return false;
-	}
-} else {
 	const sel = Array.isArray(filters.typesSelected) ? filters.typesSelected : [];
 	if (sel.length && !sel.includes(meta.type)) return false;
-}
 	const q = (filters.query || '').trim().toLowerCase();
 	if (q) {
 	const haystack = [meta.title, meta.lastText, meta.projectName, meta.responsibleName, meta.statusName].filter(Boolean).join(' ').toLowerCase();
 	if (!haystack.includes(q)) return false;
 }
 	// project filter only in "task chats" mode
-	if (!IS_OL_FRAME && isTasksChatsModeNow()) {
+	if (isTasksChatsModeNow()) {
 		const pSel = Array.isArray(filters.projectIndexes) ? filters.projectIndexes : [];
 		if (pSel.length) {
 			const pi = (typeof meta.projectIndex === 'number') ? meta.projectIndex : -1;
@@ -892,7 +877,7 @@ if (_presetChannel) {
 		}
 	}
 	// responsible filter only in "task chats" mode
-	if (!IS_OL_FRAME && isTasksChatsModeNow()) {
+	if (isTasksChatsModeNow()) {
 		const rSel = Array.isArray(filters.responsibleIndexes) ? filters.responsibleIndexes : [];
 		if (rSel.length) {
 			const ri = (typeof meta.responsibleIndex === 'number') ? meta.responsibleIndex : 0;
@@ -908,7 +893,7 @@ if (_presetChannel) {
 		}
 	}
 	// скрытые проекты и исполнители (только в чатах задач)
-	if (!IS_OL_FRAME && isTasksChatsModeNow()) {
+	if (isTasksChatsModeNow()) {
 		const hProj = Array.isArray(filters.hiddenProjectIndexes) ? filters.hiddenProjectIndexes : [];
 		if (hProj.length && typeof meta.projectIndex === 'number' && hProj.includes(meta.projectIndex)) return false;
 		const hResp = Array.isArray(filters.hiddenResponsibleIndexes) ? filters.hiddenResponsibleIndexes : [];
@@ -955,7 +940,7 @@ if (_presetChannel) {
 	el.style.display = matchByFilters(meta) ? '' : 'none';
 
 }
-	if (!IS_OL_FRAME && !isTasksChatsModeNow() && window.__anitProjectLookup && (filters.sortMode === 'project' || filters.sortMode === 'projectName')) {
+	if (!isTasksChatsModeNow() && window.__anitProjectLookup && (filters.sortMode === 'project' || filters.sortMode === 'projectName')) {
 		const visible = items.filter(el => el.style.display !== 'none');
 		const hidden = items.filter(el => el.style.display === 'none');
 		const withMeta = visible.map(el => ({ el, meta: getItemMeta(el) }));
@@ -1106,8 +1091,7 @@ if (_presetChannel) {
 	const BUILTIN_CATS = [
 		{ type: 'dialog',   label: 'Диалоги',        rx: /--user\b/         },
 		{ type: 'chat',     label: 'Чаты',            rx: /--chat\b/         },
-		{ type: 'deal',     label: 'Сделка',          rx: /--crm\b/          },
-		{ type: 'videoconf',label: 'Видеоконф.',      rx: /--videoconf\b/    },
+			{ type: 'videoconf',label: 'Видеоконф.',      rx: /--videoconf\b/    },
 		{ type: 'support',  label: 'Техподдержка',    rx: /--support24/      },
 		{ type: 'group',    label: 'Группы/Коллабы',  rx: /--sonetGroup\b|--hexagon/ },
 		{ type: 'phone',    label: 'Телефон',         rx: /--call\b/         },
@@ -1187,16 +1171,7 @@ if (_presetChannel) {
 			host.querySelector('#anit_query').value = String(filters.query || '');
 			const hc = host.querySelector('#anit_hide_completed');
 			if (hc) hc.checked = !!filters.hideCompletedTasks;
-			if (IS_OL_FRAME) {
-				const wa = host.querySelector('#anit_wa'),
-					tg = host.querySelector('#anit_tg'),
-					st = host.querySelector('#anit_status');
-				if (wa) wa.checked = !!filters.onlyWhatsApp;
-				if (tg) tg.checked = !!filters.onlyTelegram;
-				if (st) st.value = (filters.status === '25' || filters.status === '20') ? '20' : String(filters.status || 'any');
-			} else {
-				updateTypeChipsUI(host);
-			}
+			updateTypeChipsUI(host);
 			if (host.querySelector('#anit_project_input')) {
 				try { syncProjectInputFromFilters?.(); } catch {}
 			}
@@ -1234,13 +1209,7 @@ if (_presetChannel) {
 			filters.withAttach = host.querySelector('#anit_attach')?.checked || false;
 			filters.query      = host.querySelector('#anit_query').value;
 			filters.hideCompletedTasks = host.querySelector('#anit_hide_completed')?.checked || false;
-				if (IS_OL_FRAME) {
-				filters.onlyWhatsApp = host.querySelector('#anit_wa')?.checked || false;
-				filters.onlyTelegram = host.querySelector('#anit_tg')?.checked || false;
-				filters.status       = host.querySelector('#anit_status')?.value || 'any';
-			} else {
 				filters.typesSelected = readTypesFromUI(host);
-			}
 			const pInp = host.querySelector('#anit_project_input');
 			if (pInp) {
 				const v = String(pInp.value || '').trim();
@@ -1464,7 +1433,7 @@ if (_presetChannel) {
 
 	async function buildFiltersPanel() {
 
-	if (!(IS_OL_FRAME || isInternalChatsDOM())) return;
+	if (!isInternalChatsDOM()) return;
 
 	await waitForBody(5000);
 
@@ -1744,6 +1713,13 @@ if (_presetChannel) {
 	document.body.appendChild(host);
 	filtersHost = host;
 	host.dataset.mode = _currentPanelMode;
+	// Apply saved opacity immediately — prevents flicker on tab switch
+	try {
+		const _initOp = parseInt(localStorage.getItem('pena.panel.opacity') || '100', 10);
+		if (!isNaN(_initOp) && _initOp < 100) {
+			host.style.opacity = String(Math.max(0.2, Math.min(1, _initOp / 100)));
+		}
+	} catch {}
 	renderPresetsUI(host);
 
 
@@ -2442,12 +2418,7 @@ if (_presetChannel) {
 	const hc = host.querySelector('#anit_hide_completed');
 	if (hc) hc.checked = !!filters.hideCompletedTasks;
 
-	if (IS_OL_FRAME) {
-	const wa = host.querySelector('#anit_wa'), tg = host.querySelector('#anit_tg'), st = host.querySelector('#anit_status');
-	if (wa) wa.checked = !!filters.onlyWhatsApp;
-	if (tg) tg.checked = !!filters.onlyTelegram;
-	if (st) st.value = (filters.status === '25' || filters.status === '20') ? '20' : String(filters.status || 'any');
-} else if (!isTasksMode) {
+	if (!isTasksMode) {
 		updateTypeChipsUI(host);
 	}
 	if (host.querySelector('#anit_project_input')) {
@@ -2464,11 +2435,7 @@ if (_presetChannel) {
 	filters.query      = host.querySelector('#anit_query').value;
 	filters.hideCompletedTasks = host.querySelector('#anit_hide_completed')?.checked || false;
 
-	if (IS_OL_FRAME) {
-	filters.onlyWhatsApp = host.querySelector('#anit_wa')?.checked || false;
-	filters.onlyTelegram = host.querySelector('#anit_tg')?.checked || false;
-	filters.status       = host.querySelector('#anit_status')?.value || 'any';
-	} else if (!isTasksMode){
+	if (!isTasksMode){
 	filters.typesSelected = readTypesFromUI(host);
 	} else {
 		filters.typesSelected = [];
@@ -2514,7 +2481,6 @@ if (_presetChannel) {
 	host.querySelector('#anit_reset').addEventListener('click', () => {
 	_isResetting = true;
 	try {
-	const wasOL = IS_OL_FRAME;
 	// Сохраняем теги — сброс только снимает выбор, не удаляет теги
 	const savedTags = Array.isArray(filters.keywordTags) ? [...filters.keywordTags] : [];
 	const savedIntersectionTags = Array.isArray(filters.intersectionTags) ? [...filters.intersectionTags] : [];
@@ -2536,12 +2502,7 @@ if (_presetChannel) {
 	const hc = host.querySelector('#anit_hide_completed');
 	if (hc) hc.checked = false;
 	host.querySelector('#anit_query').value = '';
-	if (wasOL) {
-	const st = host.querySelector('#anit_status');
-	if (st) st.value = 'any';
-	const wa = host.querySelector('#anit_wa'), tg = host.querySelector('#anit_tg');
-	if (wa) wa.checked = false; if (tg) tg.checked = false;
-	} else if (!isTasksMode) {
+	if (!isTasksMode) {
 		host.querySelectorAll('#anit_types .anit-type-chip').forEach(btn => { btn.classList.remove('is-selected'); btn.setAttribute('aria-pressed','false'); });
 	}
 	const pInpReset = host.querySelector('#anit_project_input');
