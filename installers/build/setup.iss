@@ -3,7 +3,7 @@
 ;
 ; Что делает:
 ;   - Упаковывает расширение в полноценный .exe установщик
-;   - Создаёт ярлыки Bitrix24 (рабочий стол + меню Пуск)
+;   - Создаёт ярлык Bitrix24 (меню Пуск + опционально рабочий стол)
 ;   - Регистрирует ежедневное автообновление (Планировщик задач)
 ;   - Создаёт деинсталлятор (Панель управления → Приложения)
 ;
@@ -51,13 +51,16 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Messages]
 russian.WelcomeLabel1=Добро пожаловать в мастер установки
-russian.WelcomeLabel2=Фильтр и сортировщик чатов Bitrix24 для PENA Agency.%n%nБудут созданы:%n  • Ярлыки Bitrix24 с расширением (рабочий стол + меню Пуск)%n  • Задача автообновления (ежедневная проверка новых версий)%n%nНажмите «Далее» для продолжения.
+russian.WelcomeLabel2=Фильтр и сортировщик чатов Bitrix24 для PENA Agency.%n%nБудут созданы:%n  • Ярлык «Bitrix24 (PENA Agency)» в меню Пуск%n  • Задача автообновления (ежедневная проверка новых версий)%n%nНажмите «Далее» для продолжения.
 english.WelcomeLabel1=Welcome to {#AppName} Setup
-english.WelcomeLabel2=This extension adds keyword filtering and chat sorting for Bitrix24.%n%nThe installer will create:%n  • Bitrix24 shortcuts with extension (Desktop + Start Menu)%n  • Auto-update task (daily version check)%n%nClick Next to continue.
+english.WelcomeLabel2=This extension adds keyword filtering and chat sorting for Bitrix24.%n%nThe installer will create:%n  • "Bitrix24 (PENA Agency)" shortcut in Start Menu%n  • Auto-update task (daily version check)%n%nClick Next to continue.
 russian.FinishedHeadingLabel=Установка {#AppName} завершена
-russian.FinishedLabel=Расширение установлено.%nЗапустите Bitrix24 через ярлык «Bitrix24 + Фильтр чатов» на рабочем столе.
+russian.FinishedLabel=Расширение установлено. Запускайте Bitrix24 через ярлык «Bitrix24 (PENA Agency)».
 english.FinishedHeadingLabel={#AppName} installation complete
-english.FinishedLabel=Extension installed.%n%nIf Bitrix24 was found - shortcut "Bitrix24 + Chat Filter" is on your Desktop.%nIf not - use the "Setup BX24 Chat Sorter" shortcut to configure.
+english.FinishedLabel=Extension installed. Launch Bitrix24 via the "Bitrix24 (PENA Agency)" shortcut.
+
+[Tasks]
+Name: "desktopicon"; Description: "Создать ярлык на рабочем столе"; Flags: unchecked
 
 [Files]
 ; Файлы расширения Chrome
@@ -73,7 +76,8 @@ Source: "..\windows\updater.ps1";                   DestDir: "{app}"; Flags: ign
 
 [Run]
 ; Шаг 1: Ищет Bitrix24, создаёт ярлыки, регистрирует Task Scheduler
-Filename: "powershell.exe"; Parameters: "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\updater.ps1"" -Setup"; WorkingDir: "{app}"; StatusMsg: "Настройка ярлыков и автообновления..."; Flags: waituntilterminated runhidden
+; {code:GetDesktopFlag} добавляет -Desktop если пользователь отметил чекбокс
+Filename: "powershell.exe"; Parameters: "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\updater.ps1"" -Setup{code:GetDesktopFlag}"; WorkingDir: "{app}"; StatusMsg: "Настройка ярлыков и автообновления..."; Flags: waituntilterminated runhidden
 ; Шаг 2 (опционально): Предложить запустить Bitrix24 сразу
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\updater.ps1"" -Launch"; Description: "Запустить Bitrix24 с расширением"; Flags: postinstall skipifsilent unchecked runhidden
 
@@ -86,14 +90,23 @@ Type: filesandordirs; Name: "{app}"
 Type: dirifempty;     Name: "{userappdata}\Microsoft\Windows\Start Menu\Programs\BX24 Chat Sorter"
 
 [Code]
+// Возвращает " -Desktop" если пользователь отметил чекбокс "создать ярлык"
+function GetDesktopFlag(Param: String): String;
+begin
+  if WizardIsTaskSelected('desktopicon') then
+    Result := ' -Desktop'
+  else
+    Result := '';
+end;
+
 // Удаляем ярлыки при деинсталляции
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Desktop, StartMenu: String;
 begin
   if CurUninstallStep = usPostUninstall then begin
-    Desktop   := ExpandConstant('{userdesktop}\Bitrix24 + Chat Filter.lnk');
-    StartMenu := ExpandConstant('{userappdata}\Microsoft\Windows\Start Menu\Programs\BX24 Chat Sorter\Bitrix24 + Chat Filter.lnk');
+    Desktop   := ExpandConstant('{userdesktop}\Bitrix24 (PENA Agency).lnk');
+    StartMenu := ExpandConstant('{userappdata}\Microsoft\Windows\Start Menu\Programs\BX24 Chat Sorter\Bitrix24 (PENA Agency).lnk');
     if FileExists(Desktop)   then DeleteFile(Desktop);
     if FileExists(StartMenu) then DeleteFile(StartMenu);
   end;
