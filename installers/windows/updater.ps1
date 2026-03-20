@@ -12,9 +12,9 @@
 # Планировщик запускает этот скрипт ежедневно автоматически.
 # ==============================================================
 param(
-    [switch]$Setup,    # первоначальная настройка (из Inno Setup)
-    [switch]$Launch,   # запустить Bitrix24 с расширением
-    [switch]$Desktop   # создать ярлык на рабочем столе (передаётся из Inno Setup)
+    [switch]$Setup,                 # первоначальная настройка (из Inno Setup)
+    [switch]$Launch,                # запустить Bitrix24 с расширением
+    [switch]$CreateDesktopShortcut  # создать ярлык на рабочем столе (postinstall чекбокс)
 )
 
 # ── Конфигурация (замените URL на свой реальный репозиторий) ──
@@ -142,37 +142,36 @@ if ($Setup) {
         # Сохраняем путь для режима -Launch
         $BitrixExe | Set-Content -Path $BITRIX_PATH_FILE -Encoding UTF8
 
-        $LnkName = "Bitrix24 (PENA Agency)"
+        $LnkName    = "Bitrix24 (PENA Agency)"
         $DesktopDir = [Environment]::GetFolderPath('Desktop')
-
-        # Ярлык на рабочем столе — только если запрошено флагом -Desktop
-        if ($Desktop) {
-            $DesktopLnk = "$DesktopDir\$LnkName.lnk"
-            if (MakeShortcut $DesktopLnk $BitrixExe $ExtArgs (Split-Path $BitrixExe) "Bitrix24 with BX24 Chat Sorter") {
-                Log "Desktop shortcut created: $DesktopLnk"
-            } else {
-                Log "WARNING: could not create desktop shortcut"
-            }
-        }
+        $ProgramsDir = [Environment]::GetFolderPath('Programs')  # надёжнее $env:APPDATA\...\Programs
 
         # Ярлык в меню Пуск (всегда)
-        $StartDir = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\BX24 Chat Sorter"
-        New-Item -Path $StartDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
-        $StartLnk = "$StartDir\$LnkName.lnk"
-        if (MakeShortcut $StartLnk $BitrixExe $ExtArgs (Split-Path $BitrixExe) "Bitrix24 with BX24 Chat Sorter") {
-            Log "Start Menu shortcut created"
+        $StartDir = "$ProgramsDir\BX24 Chat Sorter"
+        try {
+            if (-not (Test-Path $StartDir)) {
+                New-Item -Path $StartDir -ItemType Directory -Force | Out-Null
+            }
+            $StartLnk = "$StartDir\$LnkName.lnk"
+            if (MakeShortcut $StartLnk $BitrixExe $ExtArgs (Split-Path $BitrixExe) "Bitrix24 with BX24 Chat Sorter") {
+                Log "Start Menu shortcut created: $StartLnk"
+            } else {
+                Log "WARNING: could not create Start Menu shortcut"
+            }
+        } catch {
+            Log "WARNING: Start Menu error: $($_.Exception.Message)"
         }
 
         # Обновляем стандартные ярлыки Bitrix24 (передаём им параметры расширения)
         $StdLinks = @(
-            "$Desktop\Bitrix24.lnk",
+            "$DesktopDir\Bitrix24.lnk",
             "$env:PUBLIC\Desktop\Bitrix24.lnk",
-            "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Bitrix24\Bitrix24.lnk"
+            "$ProgramsDir\Bitrix24\Bitrix24.lnk"
         )
         foreach ($lnk in $StdLinks) {
             if (Test-Path $lnk) {
-                if (MakeShortcut $lnk $BitrixExe $ExtArgs (Split-Path $BitrixExe) "Битрикс24 с фильтром чатов") {
-                    Log "Обновлён ярлык: $(Split-Path $lnk -Leaf)"
+                if (MakeShortcut $lnk $BitrixExe $ExtArgs (Split-Path $BitrixExe) "Bitrix24 with BX24 Chat Sorter") {
+                    Log "Updated existing shortcut: $(Split-Path $lnk -Leaf)"
                 }
             }
         }
@@ -204,6 +203,44 @@ if ($Setup) {
     }
 
     Log "Настройка завершена."
+    exit 0
+}
+
+# ==============================================================
+# РЕЖИМ ЯРЛЫКА НА РАБОЧЕМ СТОЛЕ (-CreateDesktopShortcut)
+# Вызывается из postinstall-чекбокса "Создать ярлык на рабочем столе"
+# Читает путь Bitrix24 из bitrix_path.txt (сохранён в -Setup)
+# ==============================================================
+if ($CreateDesktopShortcut) {
+    $LnkName    = "Bitrix24 (PENA Agency)"
+    $DesktopDir = [Environment]::GetFolderPath('Desktop')
+    $ExtArgs    = "--disable-extensions-except=`"$INSTALL_DIR`" --load-extension=`"$INSTALL_DIR`""
+
+    $BitrixExe = $null
+    if (Test-Path $BITRIX_PATH_FILE) {
+        $p = (Get-Content $BITRIX_PATH_FILE -Raw -ErrorAction SilentlyContinue).Trim()
+        if ($p -and (Test-Path $p)) { $BitrixExe = $p }
+    }
+    if (-not $BitrixExe) {
+        # Fallback: стандартные пути
+        @("$env:LOCALAPPDATA\Programs\Bitrix24\Bitrix24.exe",
+          "$env:LOCALAPPDATA\Bitrix24\Bitrix24.exe",
+          "C:\Program Files (x86)\Bitrix24\Bitrix24.exe",
+          "C:\Program Files\Bitrix24\Bitrix24.exe") | ForEach-Object {
+            if (-not $BitrixExe -and (Test-Path $_)) { $BitrixExe = $_ }
+        }
+    }
+
+    if ($BitrixExe) {
+        $DesktopLnk = "$DesktopDir\$LnkName.lnk"
+        if (MakeShortcut $DesktopLnk $BitrixExe $ExtArgs (Split-Path $BitrixExe) "Bitrix24 with BX24 Chat Sorter") {
+            Log "Desktop shortcut created: $DesktopLnk"
+        } else {
+            Log "WARNING: could not create desktop shortcut"
+        }
+    } else {
+        Log "WARNING: Bitrix24 not found, desktop shortcut not created"
+    }
     exit 0
 }
 
