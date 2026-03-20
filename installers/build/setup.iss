@@ -35,7 +35,6 @@ DisableDirPage=yes
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 WizardStyle=modern
-WizardSizePercent=100
 ShowLanguageDialog=no
 OutputDir=..\..\dist
 OutputBaseFilename=PENA_Agency_Setup_v{#AppVersion}
@@ -50,14 +49,14 @@ Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Messages]
-russian.WelcomeLabel1=Добро пожаловать в мастер установки
-russian.WelcomeLabel2=Фильтр и сортировщик чатов Bitrix24 для PENA Agency.%n%nБудут созданы:%n  • Ярлык «Bitrix24 (PENA Agency)» в меню Пуск%n  • Задача автообновления (ежедневная проверка новых версий)%n%nНажмите «Далее» для продолжения.
-english.WelcomeLabel1=Welcome to {#AppName} Setup
-english.WelcomeLabel2=This extension adds keyword filtering and chat sorting for Bitrix24.%n%nThe installer will create:%n  • "Bitrix24 (PENA Agency)" shortcut in Start Menu%n  • Auto-update task (daily version check)%n%nClick Next to continue.
-russian.FinishedHeadingLabel=Установка {#AppName} завершена
-russian.FinishedLabel=Расширение установлено. Запускайте Bitrix24 через ярлык «Bitrix24 (PENA Agency)».
-english.FinishedHeadingLabel={#AppName} installation complete
-english.FinishedLabel=Extension installed. Launch Bitrix24 via the "Bitrix24 (PENA Agency)" shortcut.
+russian.WelcomeLabel1=Сортировщик чатов BX24 для PENA Agency
+russian.WelcomeLabel2=Расширение добавляет фильтрацию и сортировку чатов Bitrix24.%n%nУстановщик создаст:%n— ярлык запуска «Bitrix24 (PENA Agency)» в меню Пуск%n— задачу автообновления (ежедневная проверка)%n%nНажмите «Далее», чтобы продолжить.
+english.WelcomeLabel1=BX24 Chat Sorter for PENA Agency
+english.WelcomeLabel2=Adds chat filtering and sorting to Bitrix24.%n%nThe installer will create:%n— "Bitrix24 (PENA Agency)" shortcut in Start Menu%n— Auto-update task (daily check)%n%nClick Next to continue.
+russian.FinishedHeadingLabel=Установка завершена
+russian.FinishedLabel=Сортировщик чатов BX24 установлен.%nЗапускайте Bitrix24 через ярлык «Bitrix24 (PENA Agency)» в меню Пуск.
+english.FinishedHeadingLabel=Installation complete
+english.FinishedLabel=BX24 Chat Sorter is installed.%nLaunch Bitrix24 via "Bitrix24 (PENA Agency)" in the Start Menu.
 
 [Files]
 ; Файлы расширения Chrome

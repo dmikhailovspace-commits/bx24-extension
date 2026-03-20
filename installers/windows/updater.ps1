@@ -144,7 +144,13 @@ if ($Setup) {
 
         $LnkName    = "Bitrix24 (PENA Agency)"
         $DesktopDir = [Environment]::GetFolderPath('Desktop')
-        $ProgramsDir = [Environment]::GetFolderPath('Programs')  # надёжнее $env:APPDATA\...\Programs
+        if ([string]::IsNullOrEmpty($DesktopDir)) { $DesktopDir = "$env:USERPROFILE\Desktop" }
+
+        # Папка Programs в меню Пуск — несколько fallback-вариантов для разных систем
+        $ProgramsDir = [Environment]::GetFolderPath([System.Environment+SpecialFolder]::Programs)
+        if ([string]::IsNullOrEmpty($ProgramsDir)) {
+            $ProgramsDir = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs"
+        }
 
         # Ярлык в меню Пуск (всегда)
         $StartDir = "$ProgramsDir\BX24 Chat Sorter"
