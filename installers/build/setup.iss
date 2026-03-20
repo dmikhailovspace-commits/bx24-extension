@@ -57,7 +57,7 @@ english.WelcomeLabel2=This extension adds keyword filtering and chat sorting for
 russian.FinishedHeadingLabel=Установка {#AppName} завершена
 russian.FinishedLabel=Расширение установлено.%nЗапустите Bitrix24 через ярлык «Bitrix24 + Фильтр чатов» на рабочем столе.
 english.FinishedHeadingLabel={#AppName} installation complete
-english.FinishedLabel=Extension installed.%nLaunch Bitrix24 via the "Bitrix24 + Chat Filter" shortcut on your Desktop.
+english.FinishedLabel=Extension installed.%n%nIf Bitrix24 was found - shortcut "Bitrix24 + Chat Filter" is on your Desktop.%nIf not - use the "Setup BX24 Chat Sorter" shortcut to configure.
 
 [Files]
 ; Файлы расширения Chrome

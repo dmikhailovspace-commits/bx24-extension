@@ -1,4 +1,4 @@
-# ==============================================================
+﻿# ==============================================================
 # PENA Agency — Скрипт автообновления (Windows)
 # Версия: 5.0.0
 #
@@ -115,19 +115,21 @@ if ($Setup) {
         }
     }
 
-    # Если не найден — спросить пользователя через диалог
+    # Если не найден — создаём ярлык "Setup" на рабочем столе
+    # (InputBox прячется за окно установщика, поэтому не используем его)
     if (-not $BitrixExe) {
-        Log "Bitrix24 не найден по стандартным путям — показываю диалог ввода."
-        Add-Type -AssemblyName Microsoft.VisualBasic -ErrorAction SilentlyContinue
-        $BitrixInput = [Microsoft.VisualBasic.Interaction]::InputBox(
-            "Bitrix24.exe не найден в стандартных папках.`n`nВставьте полный путь к Bitrix24.exe:`n(например: C:\Users\User\AppData\Local\Programs\Bitrix24\Bitrix24.exe)",
-            "Сортировщик чатов BX24 — укажите путь к Bitrix24", "")
-        $BitrixInput = $BitrixInput.Trim().Trim('"')
-        if ($BitrixInput -and (Test-Path $BitrixInput)) {
-            $BitrixExe = $BitrixInput
-            Log "Путь к Bitrix24 указан пользователем: $BitrixExe"
-        } else {
-            Log "Путь не указан. Запустите updater.ps1 -Setup вручную после установки Bitrix24."
+        Log "Bitrix24 not found. Creating setup shortcut on Desktop."
+        $Desktop = [Environment]::GetFolderPath("Desktop")
+        $SetupLnk = "$Desktop\Setup BX24 Chat Sorter.lnk"
+        try {
+            $sc = (New-Object -ComObject WScript.Shell).CreateShortcut($SetupLnk)
+            $sc.TargetPath  = "powershell.exe"
+            $sc.Arguments   = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File `"$INSTALL_DIR\updater.ps1`" -Setup"
+            $sc.Description = "Configure BX24 Chat Sorter - find Bitrix24"
+            $sc.Save()
+            Log "Setup shortcut created: $SetupLnk"
+        } catch {
+            Log "Could not create setup shortcut: $($_.Exception.Message)"
         }
     }
 
