@@ -396,6 +396,7 @@ try { localStorage.removeItem('pena.presets'); } catch {}
 const _presetsData = { chats: null, tasks: null };
 // Активный пресет для каждого режима (null = общий режим)
 const _activePresetIds = { chats: null, tasks: null };
+let _debugModeActive = false;
 // Режим текущей вкладки: 'chats' | 'tasks'
 const _pMode = () => isTasksChatsModeNow() ? 'tasks' : 'chats';
 const _pLSKey = (m) => m === 'tasks' ? _LS_PRESETS_TASKS : _LS_PRESETS_CHATS;
@@ -977,6 +978,7 @@ if (_presetChannel) {
 
 	// Применить пресет: восстановить фильтры + обновить весь UI
 	function applyPreset(presetId) {
+		_debugModeActive = false;          // сброс режима отладки при переключении пресета
 		const preset = _getPresetsArr().find(p => p.id === presetId);
 		if (!preset) return;
 		// Всегда сохраняем текущий активный пресет перед переключением
@@ -1007,6 +1009,44 @@ if (_presetChannel) {
 		if (preset) { preset.filters = _snapFilters(); _saveCustomPresets(); }
 	}
 
+	// ─── Режим отладки: вспомогательные функции ───────────────────────────────
+	function _updateDebugUI(h) {
+		const active = _debugModeActive && !!_getActiveId();
+		if (h) h.classList.toggle('anit-debug-mode', active);
+		const dbBtn = h?.querySelector('#anit_preset_debug_btn');
+		if (dbBtn) dbBtn.style.opacity = active ? '1' : '0.45';
+	}
+
+	let _toastTimer = null;
+	function _showPresetToast(msg) {
+		const toast = filtersHost?.querySelector('#anit_preset_toast');
+		if (!toast) return;
+		toast.textContent = msg;
+		toast.classList.add('--show');
+		if (_toastTimer) clearTimeout(_toastTimer);
+		_toastTimer = setTimeout(() => toast.classList.remove('--show'), 2400);
+	}
+
+	function _showPresetConfirm(msg, okLabel, cancelLabel, onOk) {
+		const overlay = filtersHost?.querySelector('#anit_preset_confirm');
+		if (!overlay) { onOk(); return; }
+		overlay.innerHTML = '';
+		const p = document.createElement('p');
+		p.textContent = msg;
+		const btns = document.createElement('div');
+		btns.className = 'confirm-btns';
+		const ok = document.createElement('button');
+		ok.type = 'button'; ok.className = '--ok'; ok.textContent = okLabel;
+		const cancel = document.createElement('button');
+		cancel.type = 'button'; cancel.textContent = cancelLabel;
+		const hide = () => overlay.classList.remove('--show');
+		ok.addEventListener('click', () => { hide(); onOk(); });
+		cancel.addEventListener('click', hide);
+		btns.append(ok, cancel);
+		overlay.append(p, btns);
+		overlay.classList.add('--show');
+	}
+
 	// Отрисовать строку кнопок-пресетов
 	function renderPresetsUI(host) {
 		const row = host?.querySelector('#anit_presets_row');
@@ -1023,6 +1063,7 @@ if (_presetChannel) {
 			btn.addEventListener('click', () => applyPreset(p.id));
 			row.appendChild(btn);
 		});
+		_updateDebugUI(host);
 	}
 
 	// Отрисовать панель управления пресетами (список с rename/delete + форма добавления)
@@ -1570,6 +1611,18 @@ if (_presetChannel) {
 #anit-filters .preset-btn{padding:3px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.07);color:#b8c1cf;font-size:11px;cursor:pointer;transition:background .15s,border-color .15s;white-space:nowrap;line-height:1.5}
 #anit-filters .preset-btn:hover{background:rgba(255,255,255,.15);color:#fff}
 #anit-filters .preset-btn.--active{background:rgba(46,95,163,.85);border-color:#4a7fc0;color:#fff}
+#anit-filters.anit-debug-mode .pane{outline:2px solid #f59e0b;outline-offset:-2px;border-radius:12px}
+#anit-filters .debug-badge{display:none;font-size:10px;color:#f59e0b;padding:1px 6px;border-radius:6px;border:1px solid rgba(245,158,11,.4);background:rgba(245,158,11,.12);white-space:nowrap;line-height:1.5}
+#anit-filters.anit-debug-mode .debug-badge{display:inline-flex;align-items:center}
+.anit-preset-toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#1a1d23;border:1px solid rgba(245,158,11,.5);color:#f59e0b;padding:8px 18px;border-radius:10px;font-size:12px;z-index:2147483647;pointer-events:none;opacity:0;transition:opacity .25s;white-space:nowrap}
+.anit-preset-toast.--show{opacity:1}
+.anit-preset-confirm{position:absolute;inset:0;background:rgba(5,6,9,.92);border-radius:12px;display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:10;padding:20px;text-align:center}
+.anit-preset-confirm.--show{display:flex}
+.anit-preset-confirm p{color:#c8d0dc;font-size:12px;line-height:1.5;margin:0}
+.anit-preset-confirm .confirm-btns{display:flex;gap:8px}
+.anit-preset-confirm .confirm-btns button{padding:5px 14px;border-radius:7px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.07);color:#fff;font-size:11px;cursor:pointer;transition:background .15s}
+.anit-preset-confirm .confirm-btns button.--ok{background:rgba(245,158,11,.18);border-color:rgba(245,158,11,.5);color:#f59e0b}
+.anit-preset-confirm .confirm-btns button.--ok:hover{background:rgba(245,158,11,.32)}
 #anit-filters .opacity-wrap{display:inline-flex;align-items:center;gap:3px;cursor:default;opacity:.65;transition:opacity .15s}
 #anit-filters .opacity-wrap:hover{opacity:1}
 #anit-filters #anit_opacity_slider{width:48px;height:3px;accent-color:#4a7fc0;cursor:pointer;outline:none;border:none;background:transparent;padding:0;margin:0;vertical-align:middle}
@@ -1594,14 +1647,22 @@ if (_presetChannel) {
     </div>
   </div>
 
+  <div class="anit-preset-confirm" id="anit_preset_confirm"></div>
+  <div class="anit-preset-toast" id="anit_preset_toast"></div>
   <div class="group">
     <div class="group-head">
       <div class="group-title">Пресеты</div>
-      <button type="button" id="anit_preset_manage_btn" class="icon-btn" title="Управление пресетами">
-        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:12px;height:12px;fill:#fff;opacity:.8">
-          <path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.4.12-.61l-1.92-3.32c-.11-.2-.35-.28-.57-.2l-2.39.96c-.5-.38-1.04-.69-1.63-.94l-.36-2.54A.49.49 0 0 0 13.95 1h-3.9a.49.49 0 0 0-.48.41l-.36 2.54c-.59.25-1.13.56-1.63.94l-2.39-.96c-.22-.09-.46 0-.57.2L2.7 7.45c-.11.2-.06.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.82 14.52a.5.5 0 0 0-.12.61l1.92 3.32c.11.2.35.28.57.2l2.39-.96c.5.38 1.04.69 1.63.94l.36 2.54c.04.24.24.41.48.41h3.9c.24 0 .44-.17.48-.41l.36-2.54c.59-.25 1.13-.56 1.63-.94l2.39.96c.22.09.46 0 .57-.2l1.92-3.32a.5.5 0 0 0-.12-.61l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5z"/>
-        </svg>
-      </button>
+      <div style="display:flex;gap:4px;align-items:center">
+        <span class="debug-badge" id="anit_debug_badge">&#9881; Отладка</span>
+        <button type="button" id="anit_preset_debug_btn" class="icon-btn" title="Режим отладки пресета">
+          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:12px;height:12px;fill:#f59e0b;opacity:.7"><path d="M20 8h-2.81A6.978 6.978 0 0 0 15 5.7V2h-2v3.07a6.934 6.934 0 0 0-2 0V2H9v3.7A6.978 6.978 0 0 0 6.81 8H4v2h2.09A7.05 7.05 0 0 0 6 11v1H4v2h2v1c0 .34.03.67.08 1H4v2h2.81A7 7 0 0 0 19.19 18H22v-2h-2.08c.05-.33.08-.66.08-1v-1h2v-2h-2v-1c0-.34-.03-.67-.08-1H22V8h-2zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z"/></svg>
+        </button>
+        <button type="button" id="anit_preset_manage_btn" class="icon-btn" title="Управление пресетами">
+          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:12px;height:12px;fill:#fff;opacity:.8">
+            <path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.4.12-.61l-1.92-3.32c-.11-.2-.35-.28-.57-.2l-2.39.96c-.5-.38-1.04-.69-1.63-.94l-.36-2.54A.49.49 0 0 0 13.95 1h-3.9a.49.49 0 0 0-.48.41l-.36 2.54c-.59.25-1.13.56-1.63.94l-2.39-.96c-.22-.09-.46 0-.57.2L2.7 7.45c-.11.2-.06.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.82 14.52a.5.5 0 0 0-.12.61l1.92 3.32c.11.2.35.28.57.2l2.39-.96c.5.38 1.04.69 1.63.94l.36 2.54c.04.24.24.41.48.41h3.9c.24 0 .44-.17.48-.41l.36-2.54c.59-.25 1.13-.56 1.63-.94l2.39.96c.22.09.46 0 .57-.2l1.92-3.32a.5.5 0 0 0-.12-.61l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5z"/>
+          </svg>
+        </button>
+      </div>
     </div>
     <div class="presets-row" id="anit_presets_row"></div>
     <div id="anit_preset_manage_panel" style="display:none;margin-top:8px;padding:8px;background:rgba(255,255,255,.04);border-radius:8px;border:1px solid rgba(255,255,255,.1)">
@@ -2430,6 +2491,12 @@ if (_presetChannel) {
 	function readAndApply() {
 	// Не вмешиваемся в процесс сброса (change-события чекбоксов могут стрелять в ходе reset)
 	if (_isResetting) return;
+	// Заблокировать изменения фильтров, если пресет активен и режим отладки не включён
+	if (_getActiveId() && !_debugModeActive) {
+		uiFromFilters(host);
+		_showPresetToast('Пресет активен — войдите в режим отладки для изменений');
+		return;
+	}
 	filters.unreadOnly = host.querySelector('#anit_unread').checked;
 	filters.withAttach = host.querySelector('#anit_attach')?.checked || false;
 	filters.query      = host.querySelector('#anit_query').value;
@@ -2674,6 +2741,31 @@ if (_presetChannel) {
 				});
 			}
 		}
+	}
+
+	// -- Кнопка режима отладки пресетов ----------------------------------------
+	const presetDebugBtn = host.querySelector('#anit_preset_debug_btn');
+	if (presetDebugBtn) {
+		presetDebugBtn.addEventListener('click', (e) => {
+			e.preventDefault(); e.stopPropagation();
+			if (!_getActiveId()) {
+				_showPresetToast('Сначала выберите пресет');
+				return;
+			}
+			if (!_debugModeActive) {
+				_showPresetConfirm(
+					'Войти в режим отладки? Вы сможете изменять фильтры выбранного пресета.',
+					'Войти', 'Отмена',
+					() => { _debugModeActive = true; _updateDebugUI(host); }
+				);
+			} else {
+				_showPresetConfirm(
+					'Выйти из режима отладки? Текущие фильтры будут сохранены в пресет.',
+					'Выйти', 'Отмена',
+					() => { saveFiltersToActivePreset(); _debugModeActive = false; _updateDebugUI(host); }
+				);
+			}
+		});
 	}
 
 	const catManageBtn = host.querySelector('#anit_cat_manage_btn');
