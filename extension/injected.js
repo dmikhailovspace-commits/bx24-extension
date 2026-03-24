@@ -1099,7 +1099,7 @@ if (_presetChannel) {
 		let _overEl     = null;
 
 		const DRAG_SVG = '<svg viewBox="0 0 16 16" style="width:12px;height:12px;fill:currentColor;display:block"><rect y="2" width="16" height="2" rx="1"/><rect y="7" width="16" height="2" rx="1"/><rect y="12" width="16" height="2" rx="1"/></svg>';
-		const DEL_SVG  = '<svg viewBox="0 0 24 24" style="width:11px;height:11px;fill:currentColor;display:block"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>';
+		const DEL_SVG  = '<svg viewBox="0 0 12 12" style="width:9px;height:9px;fill:currentColor;display:block"><path d="M11 1.7 9.3 0 6 3.3 2.7 0 1 1.7 4.3 5 1 8.3 2.7 10 6 6.7 9.3 10 11 8.3 7.7 5z"/></svg>';
 
 		for (const p of presets) {
 			const row = document.createElement('div');
@@ -1563,9 +1563,10 @@ if (_presetChannel) {
 #anit-filters{position:fixed;top:8px;left:8px;z-index:9999;width:300px;min-width:210px;max-width:90vw;transition:opacity .4s ease}
 #anit-filters.anit-hidden{max-width:none !important;width:24px !important;height:24px !important}
 #anit-filters.anit-hidden .pane{display:none !important}
-#anit-filters .mini-toggle{display:none;width:24px;height:24px;border:1px solid rgba(255,255,255,.25);border-radius:6px;background:#070809;color:#fff;align-items:center;justify-content:center;cursor:move;box-shadow:0 8px 24px rgba(0,0,0,.35)}
+#anit-filters .mini-toggle{display:none;width:30px;height:30px;border:1px solid rgba(255,255,255,.3);border-radius:9px;background:#0b0d10;color:#fff;align-items:center;justify-content:center;cursor:move;box-shadow:0 4px 18px rgba(0,0,0,.6);transition:border-color .15s,box-shadow .15s}
 #anit-filters.anit-hidden .mini-toggle{display:inline-flex}
-#anit-filters .mini-toggle svg{width:12px;height:12px;display:block;fill:#ffffff}
+#anit-filters .mini-toggle:hover{border-color:rgba(255,255,255,.55);box-shadow:0 6px 22px rgba(0,0,0,.7)}
+#anit-filters .mini-toggle svg{width:14px;height:14px;display:block;fill:#ffffff;opacity:.9}
 #anit-filters .pane{background:#0b0d10;color:#fff;border:1px solid rgba(255,255,255,.15);
   border-radius:12px;padding:10px 12px;font:12px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Arial;
   box-shadow:0 8px 24px rgba(0,0,0,.35);
@@ -1667,7 +1668,8 @@ if (_presetChannel) {
 #anit-filters .pena-prefetch-cancel{margin-top:8px;width:100%;padding:5px;border-radius:6px;border:1px solid rgba(255,255,255,.2);background:transparent;color:#9ab;cursor:pointer;font-size:11px;box-sizing:border-box}
 #anit-filters .pena-prefetch-cancel:hover{border-color:#f66;color:#f88}
 #anit-filters .type-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;width:100%}
-#anit-filters .anit-type-chip{display:inline-flex;align-items:center;justify-content:center;min-height:28px;padding:5px 8px;border-radius:8px;border:1px solid rgba(255,255,255,.2);background:#070809;color:#dce4ef;cursor:pointer;text-align:center}
+#anit-filters .anit-type-chip{display:flex;align-items:center;justify-content:center;width:100%;min-height:26px;padding:4px 6px;border-radius:7px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.04);color:#bac7da;cursor:pointer;font-size:11px;line-height:1.2;text-align:center;transition:background .12s,border-color .12s,color .12s;box-sizing:border-box}
+#anit-filters .anit-type-chip:hover{border-color:rgba(255,255,255,.32);background:rgba(255,255,255,.09);color:#e2eaf5}
 #anit-filters .anit-type-chip.is-selected{background:rgba(21,135,250,.22);border-color:#1587fa;color:#fff}
 #anit-filters .group-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
 #anit-filters .category-toggle{width:20px;height:20px;border:1px solid rgba(255,255,255,.2);background:transparent;color:#b8c1cf;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
@@ -1692,8 +1694,8 @@ if (_presetChannel) {
 #anit-filters .pm-drag:active{cursor:grabbing}
 #anit-filters .pm-inp{flex:1;padding:4px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.04);color:#e9edf1;font-size:11px;min-width:0;outline:none;transition:border-color .15s,background .15s}
 #anit-filters .pm-inp:focus{border-color:rgba(21,135,250,.55);background:rgba(21,135,250,.07)}
-#anit-filters .pm-del{flex-shrink:0;width:24px;height:24px;border-radius:5px;border:1px solid rgba(255,80,80,.2);background:rgba(255,80,80,.07);color:rgba(255,110,110,.6);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s}
-#anit-filters .pm-del:hover{border-color:rgba(255,80,80,.5);background:rgba(255,80,80,.2);color:#f88}
+#anit-filters .pm-del{flex-shrink:0;width:22px;height:22px;padding:0;box-sizing:border-box;border-radius:5px;border:1px solid rgba(255,80,80,.22);background:rgba(255,80,80,.07);color:rgba(255,110,110,.65);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s}
+#anit-filters .pm-del:hover{border-color:rgba(255,80,80,.55);background:rgba(255,80,80,.22);color:#f99}
 #anit-filters .pm-add-section{border-top:1px solid rgba(255,255,255,.08);padding-top:8px;margin-top:6px}
 #anit-filters .pm-add-label{font-size:10px;color:rgba(255,255,255,.32);text-transform:uppercase;letter-spacing:.07em;margin-bottom:5px}
 #anit-filters .pm-add-row{display:flex;gap:4px}
@@ -1729,7 +1731,11 @@ if (_presetChannel) {
 .anit-preset-confirm .confirm-btns button.--ok:hover{background:rgba(245,158,11,.32)}
 #anit-filters .opacity-wrap{display:inline-flex;align-items:center;gap:3px;cursor:default;opacity:.65;transition:opacity .15s}
 #anit-filters .opacity-wrap:hover{opacity:1}
-#anit-filters #anit_opacity_slider{width:48px;height:3px;accent-color:#4a7fc0;cursor:pointer;outline:none;border:none;background:transparent;padding:0;margin:0;vertical-align:middle}
+#anit-filters #anit_opacity_slider{-webkit-appearance:none;appearance:none;width:54px;height:2px;border-radius:2px;background:rgba(255,255,255,.2);cursor:pointer;outline:none;border:none;padding:0;margin:0;vertical-align:middle;flex-shrink:0}
+#anit-filters #anit_opacity_slider::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:#4a90d9;border:2px solid #1d3550;cursor:pointer;transition:background .15s,transform .1s;box-shadow:0 1px 4px rgba(0,0,0,.5)}
+#anit-filters #anit_opacity_slider::-webkit-slider-thumb:hover{background:#6ab0ff;transform:scale(1.2)}
+#anit-filters #anit_opacity_slider::-moz-range-thumb{width:12px;height:12px;border-radius:50%;background:#4a90d9;border:2px solid #1d3550;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.5)}
+#anit-filters #anit_opacity_slider::-moz-range-track{height:2px;border-radius:2px;background:rgba(255,255,255,.2);border:none}
 
 /* Locked state: пресет активен, режим отладки не включён */
 #anit-filters.preset-locked .kw-tag-chip:not(.is-active){opacity:.22;pointer-events:none}
@@ -1762,7 +1768,7 @@ if (_presetChannel) {
         <input type="range" id="anit_opacity_slider" min="20" max="100" step="5">
       </div>
       <button id="anit_update_btn" class="icon-btn" type="button" title="Проверить обновления">
-        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:13px;height:13px;fill:#fff;opacity:.7;display:block"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:13px;height:13px;fill:#fff;opacity:.75;display:block"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
         <span class="update-dot" id="anit_update_dot"></span>
       </button>
       <button id="anit_toggle_btn" class="anit-toggle icon-btn" type="button" title="Скрыть/показать (Ctrl+Alt+F)">-</button>
