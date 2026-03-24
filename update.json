@@ -1,8 +1,8 @@
 {
-  "version": "5.0.0",
-  "release_date": "2026-03-19",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v5.0.0",
+  "version": "6.0.0",
+  "release_date": "2026-03-23",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.0.0",
   "zip_url": "https://github.com/dmikhailovspace-commits/bx24-extension/archive/refs/heads/main.zip",
-  "exe_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/download/v5.0.0/PENA_Agency_Setup_v5.0.0.exe",
-  "changelog": "Ресайз панели по бокам, прозрачность, совместимость с OneDrive Desktop, исправлен запуск Bitrix24 из установщика"
+  "exe_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/download/v6.0.0/PENA_Agency_Setup_v6.0.0.exe",
+  "changelog": "Пресеты с режимом отладки, управление категориями, кнопка проверки обновлений, поддержка любого домена Bitrix24, исправлен установщик"
 }

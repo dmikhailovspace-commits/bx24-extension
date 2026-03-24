@@ -3,47 +3,67 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Сортировщик чатов BX24</title>
+  <title>BX24 Chat Sorter</title>
   <style>
     * { box-sizing: border-box; }
     body {
-      margin: 0;
-      padding: 14px 16px;
-      min-width: 240px;
+      margin: 0; padding: 14px 16px; min-width: 260px;
       font: 13px/1.35 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      background: #0a0b0d;
-      color: #e9edf1;
+      background: #0a0b0d; color: #e9edf1;
     }
-    .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-    .brand-logo { height: 26px; width: auto; filter: invert(1); opacity: .93; display: block; }
-    .brand-sub { font-size: 11px; color: rgba(255,255,255,.5); margin-top: 1px; }
-    p { margin: 0 0 10px; color: rgba(255,255,255,.75); font-size: 12px; }
-    .update { margin-bottom: 12px; padding: 10px; background: rgba(230,168,0,.12); border: 1px solid rgba(230,168,0,.35); border-radius: 8px; }
-    .update-title { font-weight: 600; color: #e6a800; margin-bottom: 6px; }
-    a { color: #6ab0ff; text-decoration: none; }
+    .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .brand-logo { height: 26px; filter: invert(1); opacity: .9; display: block; }
+    .brand-name { font-size: 13px; font-weight: 600; }
+    .brand-sub  { font-size: 11px; color: rgba(255,255,255,.45); margin-top: 1px; }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+    .version { font-size: 12px; color: rgba(255,255,255,.45); }
+    .check-btn {
+      padding: 5px 12px; border-radius: 7px;
+      border: 1px solid rgba(255,255,255,.2); background: rgba(255,255,255,.06);
+      color: #e9edf1; font-size: 11px; cursor: pointer; transition: background .15s; white-space: nowrap;
+    }
+    .check-btn:hover:not(:disabled) { background: rgba(255,255,255,.14); }
+    .check-btn:disabled { opacity: .45; cursor: default; }
+    .status { font-size: 12px; min-height: 20px; margin-bottom: 6px; color: rgba(255,255,255,.45); }
+    .status.ok  { color: #5dc87e; }
+    .status.err { color: rgba(255,100,100,.85); }
+    .update {
+      padding: 10px 12px; background: rgba(230,168,0,.1);
+      border: 1px solid rgba(230,168,0,.3); border-radius: 8px; margin-bottom: 8px;
+    }
+    .update-title { font-weight: 600; color: #e6a800; margin-bottom: 5px; font-size: 12px; }
+    a { color: #6ab0ff; text-decoration: none; font-size: 12px; }
     a:hover { text-decoration: underline; }
-    .links { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.1); }
-    .links a { display: block; margin-bottom: 6px; font-size: 12px; }
-    .muted { color: rgba(255,255,255,.45); font-size: 11px; }
-    .divider { border: none; border-top: 1px solid rgba(255,255,255,.1); margin: 8px 0; }
+    hr { border: none; border-top: 1px solid rgba(255,255,255,.08); margin: 10px 0; }
+    .hint { font-size: 11px; color: rgba(255,255,255,.3); line-height: 1.45; }
   </style>
 </head>
 <body>
   <div class="brand">
-    <img src="icons/logo.png" class="brand-logo" alt="PENA Agency">
+    <img src="icons/logo.png" class="brand-logo" alt="PENA" onerror="this.style.display='none'">
     <div>
-      <div class="brand-sub">Сортировка чатов BX24</div>
+      <div class="brand-name">BX24 Chat Sorter</div>
+      <div class="brand-sub">PENA Agency</div>
     </div>
   </div>
 
-  <div id="updateBlock" class="update" style="display:none">
-    <div class="update-title">Доступно обновление</div>
-    <p id="updateText"></p>
-    <a id="updateLink" href="#" target="_blank" rel="noopener noreferrer">Скачать</a>
+  <div class="row">
+    <span class="version" id="version">v—</span>
+    <button class="check-btn" id="checkBtn">Проверить обновления</button>
   </div>
-  <div id="currentBlock">
-    <p class="muted" id="currentText">Версия актуальна</p>
+
+  <div class="status" id="status"></div>
+
+  <div id="updateBlock" style="display:none" class="update">
+    <div class="update-title">Доступно обновление <span id="updateVer"></span></div>
+    <a id="updateLink" href="#" target="_blank" rel="noopener noreferrer">Скачать установщик →</a>
   </div>
+
+  <hr>
+  <div class="hint">
+    Запускайте Bitrix24 через ярлык&nbsp;«Bitrix24&nbsp;(PENA&nbsp;Agency)» в меню&nbsp;Пуск.
+  </div>
+
   <script src="popup.js"></script>
 </body>
 </html>
