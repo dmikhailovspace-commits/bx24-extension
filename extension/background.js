@@ -27,9 +27,18 @@ async function checkForUpdates() {
 
     const url = data.exe_url || data.release_url || '';
 
-    // Сохраняем в storage — popup.js читает отсюда
+    // Сохраняем в storage — popup.js и content.js читают отсюда
     chrome.storage.local.set({
       anit_update_info: { hasUpdate: true, version: remoteVer, url }
+    });
+
+    // Немедленно уведомляем все открытые вкладки Битрикс24
+    chrome.tabs.query({}, (tabs) => {
+      for (const tab of tabs) {
+        if (tab.id) {
+          chrome.tabs.sendMessage(tab.id, { type: 'UPDATE_AVAILABLE', version: remoteVer, url }).catch(() => {});
+        }
+      }
     });
 
     // OS-уведомление

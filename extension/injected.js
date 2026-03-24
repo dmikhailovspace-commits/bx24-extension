@@ -2685,6 +2685,9 @@ if (_presetChannel) {
 			if (_ubpProg)   _ubpProg.style.display = 'none';
 			if (_ubpInstBtn) { _ubpInstBtn.disabled = false; _ubpInstBtn.textContent = 'Повторить'; }
 			_showUpdToast('Ошибка загрузки обновления');
+		} else if (msg.type === 'PENA_UPDATE_AVAILABLE') {
+			// Пришло от content.js: background нашёл обновление в chrome.storage.local
+			if (msg.version && msg.url) _applyUpdateBanner(msg.version, msg.url);
 		}
 	});
 
