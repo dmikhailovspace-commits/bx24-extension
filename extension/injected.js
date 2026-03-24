@@ -1560,7 +1560,7 @@ if (_presetChannel) {
 	host.id = 'anit-filters';
 	host.innerHTML = `
 <style>
-#anit-filters{position:fixed;top:8px;left:8px;z-index:9999;width:300px;min-width:210px;max-width:90vw;transition:opacity .4s ease}
+#anit-filters{position:fixed;top:8px;left:8px;z-index:9999;width:300px;min-width:240px;max-width:90vw;transition:opacity .4s ease}
 #anit-filters.anit-hidden{max-width:none !important;width:24px !important;height:24px !important}
 #anit-filters.anit-hidden .pane{display:none !important}
 #anit-filters .mini-toggle{display:none;width:30px;height:30px;border:1px solid rgba(255,255,255,.3);border-radius:9px;background:#0b0d10;color:#fff;align-items:center;justify-content:center;cursor:move;box-shadow:0 4px 18px rgba(0,0,0,.6);transition:border-color .15s,box-shadow .15s}
@@ -1593,7 +1593,7 @@ if (_presetChannel) {
 #anit-filters .brand-icon{width:20px;height:20px;display:inline-flex;flex:0 0 20px}
 #anit-filters .brand-logo{height:20px;width:auto;max-width:120px;filter:invert(1);mix-blend-mode:screen;flex-shrink:0;display:block}
 #anit-filters .brand-title{font-size:12px;font-weight:700;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#anit-filters .brand-sub{font-size:14px;font-weight:700;opacity:.95;letter-spacing:.1px}
+#anit-filters .brand-sub{font-size:13px;font-weight:700;opacity:.95;letter-spacing:.1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #anit-filters .group{margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.1)}
 #anit-filters .group-title{font-size:11px;font-weight:700;letter-spacing:.2px;text-transform:uppercase;opacity:.78;margin:0 0 6px 0}
 #anit-filters .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:4px 0}
@@ -1635,7 +1635,7 @@ if (_presetChannel) {
 #anit-filters .muted{opacity:.75}
 #anit-filters .actions{display:flex;gap:8px;margin-top:2px;flex-wrap:wrap}
 #anit-filters button{padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.25);background:#070809;color:#fff;cursor:pointer}
-#anit-filters .anit-toggle,#anit-filters .category-toggle{padding:0 !important;line-height:1;box-sizing:border-box}
+#anit-filters .anit-toggle,#anit-filters .category-toggle{padding:0 !important;line-height:1;box-sizing:border-box;flex-shrink:0}
 #anit-filters .btn-primary{background:#2b7fff;border-color:#2b7fff;color:#fff}
 #anit-filters .btn-secondary{background:#2a2f38;border-color:rgba(255,255,255,.25);color:#fff}
 #anit-filters .btn-tertiary{background:transparent;border-color:rgba(255,255,255,.3);color:#d6dce5}
@@ -1654,11 +1654,18 @@ if (_presetChannel) {
 #anit-filters .tag-confirm-cancel{padding:5px 14px;border-radius:6px;border:1px solid rgba(255,255,255,.2);background:transparent;color:#9ab;cursor:pointer;font-size:12px}
 #anit-filters .tag-confirm-ok{padding:5px 14px;border-radius:6px;border:1px solid rgba(220,50,50,.5);background:rgba(220,50,50,.15);color:#f88;cursor:pointer;font-size:12px}
 #anit-filters #anit_tag_add_input{flex:1;min-width:80px;padding:6px 8px;border-radius:8px;border:1px solid rgba(255,255,255,.25);background:#070809;color:#fff;outline:none;font-size:12px}
-#anit-filters #anit_tag_add_btn{padding:5px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.25);background:#070809;color:#b8c6dc;cursor:pointer;font-size:12px}
+#anit-filters #anit_tag_add_btn{flex-shrink:0;align-self:stretch;display:flex;align-items:center;justify-content:center;padding:0 12px;border-radius:8px;border:1px solid rgba(255,255,255,.25);background:#070809;color:#b8c6dc;cursor:pointer;font-size:14px;line-height:1}
 #anit-filters #anit_tag_add_btn:hover{border-color:#1587fa;color:#fff}
 #anit-filters #anit_itag_add_input{flex:1;min-width:80px;padding:6px 8px;border-radius:8px;border:1px solid rgba(255,255,255,.25);background:#070809;color:#fff;outline:none;font-size:12px}
-#anit-filters #anit_itag_add_btn{padding:5px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.25);background:#070809;color:#b8c6dc;cursor:pointer;font-size:12px}
+#anit-filters #anit_itag_add_btn{flex-shrink:0;align-self:stretch;display:flex;align-items:center;justify-content:center;padding:0 12px;border-radius:8px;border:1px solid rgba(255,255,255,.25);background:#070809;color:#b8c6dc;cursor:pointer;font-size:14px;line-height:1}
 #anit-filters #anit_itag_add_btn:hover{border-color:#1587fa;color:#fff}
+/* Help popup */
+#anit-filters .help-popup{display:none;position:absolute;top:28px;right:0;background:#0f1117;border:1px solid rgba(255,255,255,.15);border-radius:10px;padding:10px 12px;box-shadow:0 8px 28px rgba(0,0,0,.55);z-index:10001;white-space:nowrap}
+#anit-filters .help-popup.--show{display:block}
+#anit-filters .help-popup .hp-title{font-size:10px;font-weight:700;color:rgba(255,255,255,.32);text-transform:uppercase;letter-spacing:.07em;margin-bottom:7px}
+#anit-filters .help-popup table{border-collapse:collapse;font-size:11px}
+#anit-filters .help-popup td{padding:2px 0;color:#b8c6dc;vertical-align:middle}
+#anit-filters .help-popup td:first-child{padding-right:10px;white-space:nowrap}
 #anit-filters .pena-prefetch-popup{position:absolute;inset:0;z-index:1000;background:rgba(11,13,16,.88);display:flex;align-items:center;justify-content:center;border-radius:inherit}
 #anit-filters .pena-prefetch-box{background:#1a1f2a;border:1px solid rgba(255,255,255,.18);border-radius:10px;padding:12px 16px;width:190px;box-shadow:0 4px 20px rgba(0,0,0,.55)}
 #anit-filters .pena-prefetch-handle{font-size:13px;font-weight:600;color:#fff;margin-bottom:10px;cursor:move;user-select:none}
@@ -1672,9 +1679,10 @@ if (_presetChannel) {
 #anit-filters .anit-type-chip:hover{border-color:rgba(255,255,255,.32);background:rgba(255,255,255,.09);color:#e2eaf5}
 #anit-filters .anit-type-chip.is-selected{background:rgba(21,135,250,.22);border-color:#1587fa;color:#fff}
 #anit-filters .group-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
-#anit-filters .category-toggle{width:20px;height:20px;border:1px solid rgba(255,255,255,.2);background:transparent;color:#b8c1cf;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
-#anit-filters .category-toggle .chev{width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);transition:transform .15s ease}
-#anit-filters .group.is-collapsed .category-toggle .chev{transform:rotate(-45deg)}
+#anit-filters .category-toggle{width:22px;height:22px;border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.04);color:#9ab;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:border-color .15s,background .15s}
+#anit-filters .category-toggle:hover{border-color:rgba(255,255,255,.4);background:rgba(255,255,255,.09)}
+#anit-filters .category-toggle svg{display:block;width:11px;height:11px;fill:none;stroke:#b8c4d4;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;transition:transform .18s ease}
+#anit-filters .group.is-collapsed .category-toggle svg{transform:rotate(-90deg)}
 #anit-filters .group.is-collapsed .group-body{display:none}
 #anit-filters .chip-remove:hover{color:#fff}
 #anit-filters .anit-hidden-row .project-wrap{position:relative}
@@ -1767,6 +1775,18 @@ if (_presetChannel) {
         <svg viewBox="0 0 24 24" style="width:11px;height:11px;fill:#aaa;flex-shrink:0" aria-hidden="true"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
         <input type="range" id="anit_opacity_slider" min="20" max="100" step="5">
       </div>
+      <button id="anit_help_btn" class="icon-btn" type="button" title="Горячие клавиши">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:13px;height:13px;fill:#fff;opacity:.65;display:block"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/></svg>
+      </button>
+      <div id="anit_help_popup" class="help-popup">
+        <div class="hp-title">Горячие клавиши</div>
+        <table>
+          <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">Alt</span>+<span class="kbd">F</span></td><td>Показать / скрыть панель</td></tr>
+          <tr><td><span class="kbd">Esc</span></td><td>Сброс всех фильтров</td></tr>
+          <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">1</span>…<span class="kbd">9</span></td><td>Быстрый выбор пресета</td></tr>
+          <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">Q</span></td><td>Обрамить выделение (в чате)</td></tr>
+        </table>
+      </div>
       <button id="anit_update_btn" class="icon-btn" type="button" title="Проверить обновления">
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:13px;height:13px;fill:#fff;opacity:.75;display:block"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
         <span class="update-dot" id="anit_update_dot"></span>
@@ -1843,7 +1863,7 @@ if (_presetChannel) {
             <path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.4.12-.61l-1.92-3.32c-.11-.2-.35-.28-.57-.2l-2.39.96c-.5-.38-1.04-.69-1.63-.94l-.36-2.54A.49.49 0 0 0 13.95 1h-3.9a.49.49 0 0 0-.48.41l-.36 2.54c-.59.25-1.13.56-1.63.94l-2.39-.96c-.22-.09-.46 0-.57.2L2.7 7.45c-.11.2-.06.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.82 14.52a.5.5 0 0 0-.12.61l1.92 3.32c.11.2.35.28.57.2l2.39-.96c.5.38 1.04.69 1.63.94l.36 2.54c.04.24.24.41.48.41h3.9c.24 0 .44-.17.48-.41l.36-2.54c.59-.25 1.13-.56 1.63-.94l2.39.96c.22.09.46 0 .57-.2l1.92-3.32a.5.5 0 0 0-.12-.61l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5z"/>
           </svg>
         </button>
-        <button type="button" id="anit_categories_toggle" class="category-toggle" title="Свернуть/развернуть категории"><span class="chev"></span></button>
+        <button type="button" id="anit_categories_toggle" class="category-toggle" title="Свернуть/развернуть категории"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
       </div>
     </div>
     <div class="group-body">
@@ -1897,9 +1917,6 @@ if (_presetChannel) {
     <div class="actions">
       <button id="anit_reset" class="btn-secondary">Сброс</button>
       ${!IS_OL_FRAME ? `<button id="anit_prefetch_manual" class="btn-tertiary">Загрузить чаты</button>` : ``}
-    </div>
-    <div class="row">
-      <span class="muted">(<span class="kbd">Ctrl</span>+<span class="kbd">Alt</span>+<span class="kbd">F</span> — показать/скрыть)</span>
     </div>
   </div>
 </div>
@@ -2592,7 +2609,7 @@ if (_presetChannel) {
 
 	// --- Проверка обновлений прямо из панели ---
 	const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
-	const _UPD_CURRENT = '6.0.0';
+	const _UPD_CURRENT = '6.1.0';
 	const _UPD_LS_KEY  = 'pena.update.info';
 
 	function _semverNewer(remote, local) {
@@ -2670,6 +2687,22 @@ if (_presetChannel) {
 		}
 	});
 	// --- конец блока проверки обновлений ---
+
+	// --- Help popup (горячие клавиши) ---
+	const _helpBtn = host.querySelector('#anit_help_btn');
+	const _helpPop = host.querySelector('#anit_help_popup');
+	if (_helpBtn && _helpPop) {
+		_helpBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			_helpPop.classList.toggle('--show');
+		});
+		document.addEventListener('click', (e) => {
+			if (!_helpPop.classList.contains('--show')) return;
+			if (!_helpPop.contains(e.target) && e.target !== _helpBtn) {
+				_helpPop.classList.remove('--show');
+			}
+		}, true);
+	}
 
 	const mode = IS_OL_FRAME ? 'ol' : 'internal';
 
@@ -3336,10 +3369,10 @@ if (_presetChannel) {
 			const dx = e.clientX - _rzStartX, dy = e.clientY - _rzStartY;
 			const pane = host.querySelector('.pane');
 			if (_rzEdges.r) {
-				host.style.width = Math.max(210, Math.min(window.innerWidth * 0.9, _rzStartW + dx)) + 'px';
+				host.style.width = Math.max(240, Math.min(window.innerWidth * 0.9, _rzStartW + dx)) + 'px';
 			}
 			if (_rzEdges.l) {
-				const newW = Math.max(210, Math.min(window.innerWidth * 0.9, _rzStartW - dx));
+				const newW = Math.max(240, Math.min(window.innerWidth * 0.9, _rzStartW - dx));
 				host.style.width = newW + 'px';
 				host.style.left = Math.max(0, _rzStartLeft + (_rzStartW - newW)) + 'px';
 			}

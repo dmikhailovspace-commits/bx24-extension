@@ -38,7 +38,7 @@ error_exit() {
 
 div
 echo -e "${CYAN}  Сортировщик чатов BX24 — Установщик${NC}"
-echo -e "${CYAN}  для PENA Agency  |  macOS  |  v6.0.0${NC}"
+echo -e "${CYAN}  для PENA Agency  |  macOS  |  v6.1.0${NC}"
 div
 echo ""
 

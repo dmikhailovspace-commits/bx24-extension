@@ -1,8 +1,8 @@
 {
-  "version": "6.0.0",
-  "release_date": "2026-03-23",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.0.0",
+  "version": "6.1.0",
+  "release_date": "2026-03-24",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.1.0",
   "zip_url": "https://github.com/dmikhailovspace-commits/bx24-extension/archive/refs/heads/main.zip",
-  "exe_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/download/v6.0.0/PENA_Agency_Setup_v6.0.0.exe",
-  "changelog": "Пресеты с режимом отладки, управление категориями, кнопка проверки обновлений, поддержка любого домена Bitrix24, исправлен установщик"
+  "exe_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/download/v6.1.0/PENA_Agency_Setup_v6.1.0.exe",
+  "changelog": "UI-фиксы: кнопка ? с горячими клавишами, SVG-шеврон категорий, растянутые кнопки +, min-width 240px, стилизованный слайдер"
 }
