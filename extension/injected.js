@@ -1011,10 +1011,15 @@ if (_presetChannel) {
 
 	// ─── Режим отладки: вспомогательные функции ───────────────────────────────
 	function _updateDebugUI(h) {
-		const active = _debugModeActive && !!_getActiveId();
-		if (h) h.classList.toggle('anit-debug-mode', active);
+		const hasPreset  = !!_getActiveId();
+		const debugActive = _debugModeActive && hasPreset;
+		const locked      = hasPreset && !_debugModeActive;
+		if (h) {
+			h.classList.toggle('anit-debug-mode', debugActive);
+			h.classList.toggle('preset-locked',   locked);
+		}
 		const dbBtn = h?.querySelector('#anit_preset_debug_btn');
-		if (dbBtn) dbBtn.style.opacity = active ? '1' : '0.45';
+		if (dbBtn) dbBtn.style.opacity = debugActive ? '1' : (hasPreset ? '0.65' : '0.45');
 	}
 
 	let _toastTimer = null;
@@ -1626,6 +1631,23 @@ if (_presetChannel) {
 #anit-filters .opacity-wrap{display:inline-flex;align-items:center;gap:3px;cursor:default;opacity:.65;transition:opacity .15s}
 #anit-filters .opacity-wrap:hover{opacity:1}
 #anit-filters #anit_opacity_slider{width:48px;height:3px;accent-color:#4a7fc0;cursor:pointer;outline:none;border:none;background:transparent;padding:0;margin:0;vertical-align:middle}
+
+/* Locked state: пресет активен, режим отладки не включён */
+#anit-filters.preset-locked .kw-tag-chip:not(.is-active){opacity:.22;pointer-events:none}
+#anit-filters.preset-locked .kw-tag-chip.is-active{pointer-events:none}
+#anit-filters.preset-locked .kw-tag-chip .tag-rm{display:none}
+#anit-filters.preset-locked .anit-type-chip:not(.is-selected){opacity:.22;pointer-events:none}
+#anit-filters.preset-locked .anit-type-chip.is-selected{pointer-events:none}
+#anit-filters.preset-locked #anit_unread,
+#anit-filters.preset-locked #anit_attach{pointer-events:none;opacity:.4}
+#anit-filters.preset-locked #anit_query{pointer-events:none;opacity:.45}
+#anit-filters.preset-locked #anit_tag_add_btn,
+#anit-filters.preset-locked #anit_itag_add_btn,
+#anit-filters.preset-locked #anit_tag_add_input,
+#anit-filters.preset-locked #anit_itag_add_input{pointer-events:none;opacity:.2}
+#anit-filters.preset-locked #anit_reset{pointer-events:none;opacity:.25}
+#anit-filters.preset-locked .chips,
+#anit-filters.preset-locked .type-grid{cursor:default}
 </style>
 <div class="pane">
   <div class="header">
