@@ -22,10 +22,37 @@
     try { chrome.runtime.sendMessage({ type: 'ANIT_BXCS_OPEN_OPTIONS' }).catch?.(() => {}); } catch (_) {}
   }
 
+  // Relay: прогресс скачивания из background.js → injected.js
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg && (msg.type === 'DL_PROGRESS' || msg.type === 'DL_DONE' || msg.type === 'DL_ERROR')) {
+      window.postMessage({ ...msg, _pena_dl: true }, '*');
+    }
+  });
+
   window.addEventListener('message', (event) => {
     if (event.source !== window) return;
     const d = event.data;
-    if (!d || d.type !== 'ANIT_BXCS_OPEN_OPTIONS') return;
-    openOptionsPageSafe();
+    if (!d) return;
+
+    if (d.type === 'ANIT_BXCS_OPEN_OPTIONS') {
+      openOptionsPageSafe();
+      return;
+    }
+
+    // Скачать обновление через background.js (доступ к chrome.downloads)
+    if (d.type === 'PENA_DOWNLOAD_UPDATE') {
+      try {
+        chrome.runtime.sendMessage({ type: 'DOWNLOAD_UPDATE', url: d.url, filename: d.filename }).catch(() => {});
+      } catch (_) {}
+      return;
+    }
+
+    // Перезапустить расширение
+    if (d.type === 'PENA_RELOAD_EXT') {
+      try {
+        chrome.runtime.sendMessage({ type: 'RELOAD_EXTENSION' }).catch(() => {});
+      } catch (_) {}
+      return;
+    }
   });
 })();

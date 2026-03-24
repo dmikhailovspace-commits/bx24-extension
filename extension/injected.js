@@ -1560,7 +1560,7 @@ if (_presetChannel) {
 	host.id = 'anit-filters';
 	host.innerHTML = `
 <style>
-#anit-filters{position:fixed;top:8px;left:8px;z-index:9999;width:300px;min-width:240px;max-width:90vw;transition:opacity .4s ease}
+#anit-filters{position:fixed;top:8px;left:8px;z-index:9999;width:300px;min-width:300px;max-width:90vw;transition:opacity .4s ease}
 #anit-filters.anit-hidden{max-width:none !important;width:24px !important;height:24px !important}
 #anit-filters.anit-hidden .pane{display:none !important}
 #anit-filters .mini-toggle{display:none;width:30px;height:30px;border:1px solid rgba(255,255,255,.3);border-radius:9px;background:#0b0d10;color:#fff;align-items:center;justify-content:center;cursor:move;box-shadow:0 4px 18px rgba(0,0,0,.6);transition:border-color .15s,box-shadow .15s}
@@ -1702,7 +1702,7 @@ if (_presetChannel) {
 #anit-filters .pm-drag:active{cursor:grabbing}
 #anit-filters .pm-inp{flex:1;padding:4px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.04);color:#e9edf1;font-size:11px;min-width:0;outline:none;transition:border-color .15s,background .15s}
 #anit-filters .pm-inp:focus{border-color:rgba(21,135,250,.55);background:rgba(21,135,250,.07)}
-#anit-filters .pm-del{flex-shrink:0;width:22px;height:22px;padding:0;box-sizing:border-box;border-radius:5px;border:1px solid rgba(255,80,80,.22);background:rgba(255,80,80,.07);color:rgba(255,110,110,.65);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s}
+#anit-filters .pm-del{flex-shrink:0;width:22px;align-self:stretch;padding:0;box-sizing:border-box;border-radius:5px;border:1px solid rgba(255,80,80,.22);background:rgba(255,80,80,.07);color:rgba(255,110,110,.65);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s}
 #anit-filters .pm-del:hover{border-color:rgba(255,80,80,.55);background:rgba(255,80,80,.22);color:#f99}
 #anit-filters .pm-add-section{border-top:1px solid rgba(255,255,255,.08);padding-top:8px;margin-top:6px}
 #anit-filters .pm-add-label{font-size:10px;color:rgba(255,255,255,.32);text-transform:uppercase;letter-spacing:.07em;margin-bottom:5px}
@@ -1723,13 +1723,26 @@ if (_presetChannel) {
 #anit-filters .update-dot{position:absolute;top:-3px;right:-3px;width:7px;height:7px;background:#ef4444;border-radius:50%;border:1px solid #0b0d10;pointer-events:none;display:none}
 #anit-filters #anit_update_btn.--checking svg{animation:anit-spin .7s linear infinite}
 @keyframes anit-spin{to{transform:rotate(360deg)}}
-/* Update banner */
-#anit-filters .update-banner{display:flex;align-items:center;gap:6px;margin-top:6px;padding:7px 10px;background:rgba(230,168,0,.09);border:1px solid rgba(230,168,0,.28);border-radius:8px;font-size:11px;color:#e6a800}
-#anit-filters .update-banner-text{flex:1;min-width:0}
-#anit-filters .update-banner-link{color:#f0b820;text-decoration:underline;cursor:pointer;white-space:nowrap;background:none;border:none;font-size:11px;padding:0;font-family:inherit}
-#anit-filters .update-banner-link:hover{color:#fcd34d}
-#anit-filters .update-banner-close{margin-left:2px;background:none;border:none;color:rgba(255,255,255,.35);font-size:15px;cursor:pointer;line-height:1;padding:0;font-family:inherit}
+/* Update banner — multi-state */
+#anit-filters .update-banner{margin-top:6px;padding:7px 10px;background:rgba(230,168,0,.09);border:1px solid rgba(230,168,0,.28);border-radius:8px;font-size:11px;color:#e6a800}
+#anit-filters .ubp-top-row{display:flex;align-items:center;gap:6px}
+#anit-filters .update-banner-text{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#anit-filters .ubp-install-btn{flex-shrink:0;padding:3px 9px;border-radius:6px;border:1px solid rgba(230,168,0,.5);background:rgba(230,168,0,.12);color:#f0b820;font-size:11px;cursor:pointer;white-space:nowrap;font-family:inherit;transition:all .15s}
+#anit-filters .ubp-install-btn:hover:not(:disabled){background:rgba(230,168,0,.22);color:#fcd34d}
+#anit-filters .ubp-install-btn:disabled{opacity:.45;cursor:default}
+#anit-filters .update-banner-close{flex-shrink:0;background:none;border:none;color:rgba(255,255,255,.35);font-size:15px;cursor:pointer;line-height:1;padding:0;font-family:inherit}
 #anit-filters .update-banner-close:hover{color:rgba(255,255,255,.65)}
+#anit-filters .ubp-progress{margin-top:6px}
+#anit-filters .ubp-label-row{display:flex;justify-content:space-between;margin-bottom:3px;font-size:10px;opacity:.7}
+#anit-filters .ubp-track{height:4px;background:rgba(255,255,255,.1);border-radius:2px;overflow:hidden}
+#anit-filters .ubp-fill{height:100%;background:#f0b820;border-radius:2px;transition:width .3s ease;width:0%}
+#anit-filters .ubp-done-row{display:flex;align-items:center;justify-content:space-between;margin-top:6px;gap:8px}
+#anit-filters .ubp-done-row>span{color:#5dc87e;font-size:11px}
+#anit-filters .ubp-restart{padding:3px 10px;border-radius:6px;border:1px solid rgba(93,200,126,.4);background:rgba(93,200,126,.12);color:#5dc87e;font-size:11px;cursor:pointer;font-family:inherit;transition:all .15s}
+#anit-filters .ubp-restart:hover{background:rgba(93,200,126,.24);color:#7ddfa0}
+#anit-filters .update-banner.--downloading{border-color:rgba(230,168,0,.45)}
+#anit-filters .update-banner.--done{background:rgba(93,200,126,.07);border-color:rgba(93,200,126,.3);color:#5dc87e}
+#anit-filters .update-banner.--error{background:rgba(255,60,60,.08);border-color:rgba(255,60,60,.25);color:#ef9090}
 .anit-preset-confirm{position:absolute;inset:0;background:rgba(5,6,9,.92);border-radius:12px;display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:10;padding:20px;text-align:center}
 .anit-preset-confirm.--show{display:flex}
 .anit-preset-confirm p{color:#c8d0dc;font-size:12px;line-height:1.5;margin:0}
@@ -1791,13 +1804,26 @@ if (_presetChannel) {
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:13px;height:13px;fill:#fff;opacity:.75;display:block"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
         <span class="update-dot" id="anit_update_dot"></span>
       </button>
-      <button id="anit_toggle_btn" class="anit-toggle icon-btn" type="button" title="Скрыть/показать (Ctrl+Alt+F)">-</button>
+      <button id="anit_toggle_btn" class="anit-toggle icon-btn" type="button" title="Скрыть/показать (Ctrl+Alt+F)"><svg viewBox="0 0 24 24" style="width:12px;height:12px;display:block;fill:#fff" aria-hidden="true"><path d="M19 13H5v-2h14v2z"/></svg></button>
     </div>
   </div>
   <div class="update-banner" id="anit_update_banner" style="display:none">
-    <span class="update-banner-text" id="anit_update_banner_text">Доступно обновление</span>
-    <button type="button" class="update-banner-link" id="anit_update_banner_link">Скачать</button>
-    <button type="button" class="update-banner-close" id="anit_update_banner_close" title="Закрыть">×</button>
+    <div class="ubp-top-row">
+      <span class="update-banner-text" id="anit_update_banner_text">Доступно обновление</span>
+      <button type="button" class="ubp-install-btn" id="anit_update_banner_link">Установить</button>
+      <button type="button" class="update-banner-close" id="anit_update_banner_close" title="Закрыть">×</button>
+    </div>
+    <div class="ubp-progress" id="anit_ubp_progress" style="display:none">
+      <div class="ubp-label-row">
+        <span id="anit_ubp_label">Загрузка...</span>
+        <span id="anit_ubp_pct">0%</span>
+      </div>
+      <div class="ubp-track"><div class="ubp-fill" id="anit_ubp_fill"></div></div>
+    </div>
+    <div class="ubp-done-row" id="anit_ubp_done" style="display:none">
+      <span>✓ Загружено</span>
+      <button type="button" class="ubp-restart" id="anit_ubp_restart">Перезапустить</button>
+    </div>
   </div>
 
   <div class="anit-preset-confirm" id="anit_preset_confirm"></div>
@@ -1811,8 +1837,8 @@ if (_presetChannel) {
           <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:14px;height:14px;fill:#f59e0b;display:block"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>
         </button>
         <button type="button" id="anit_preset_manage_btn" class="icon-btn" title="Управление пресетами">
-          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:12px;height:12px;fill:#fff;opacity:.8">
-            <path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.4.12-.61l-1.92-3.32c-.11-.2-.35-.28-.57-.2l-2.39.96c-.5-.38-1.04-.69-1.63-.94l-.36-2.54A.49.49 0 0 0 13.95 1h-3.9a.49.49 0 0 0-.48.41l-.36 2.54c-.59.25-1.13.56-1.63.94l-2.39-.96c-.22-.09-.46 0-.57.2L2.7 7.45c-.11.2-.06.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.82 14.52a.5.5 0 0 0-.12.61l1.92 3.32c.11.2.35.28.57.2l2.39-.96c.5.38 1.04.69 1.63.94l.36 2.54c.04.24.24.41.48.41h3.9c.24 0 .44-.17.48-.41l.36-2.54c.59-.25 1.13-.56 1.63-.94l2.39.96c.22.09.46 0 .57-.2l1.92-3.32a.5.5 0 0 0-.12-.61l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5z"/>
+          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:13px;height:13px;display:block;fill:#fff;opacity:.8">
+            <path d="M3 17v2h6v-2H3zm0-8v2h10V9H3zm10 10v-2h8v-2h-8v-2h-2v6h2zM7 9V7H3V5h4V3h2v6H7zm14 2v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/>
           </svg>
         </button>
       </div>
@@ -1859,8 +1885,8 @@ if (_presetChannel) {
       <div class="group-title">Категории</div>
       <div style="display:flex;gap:4px;align-items:center">
         <button type="button" id="anit_cat_manage_btn" class="icon-btn" title="Настроить категории">
-          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:12px;height:12px;fill:#fff;opacity:.8">
-            <path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.4.12-.61l-1.92-3.32c-.11-.2-.35-.28-.57-.2l-2.39.96c-.5-.38-1.04-.69-1.63-.94l-.36-2.54A.49.49 0 0 0 13.95 1h-3.9a.49.49 0 0 0-.48.41l-.36 2.54c-.59.25-1.13.56-1.63.94l-2.39-.96c-.22-.09-.46 0-.57.2L2.7 7.45c-.11.2-.06.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.82 14.52a.5.5 0 0 0-.12.61l1.92 3.32c.11.2.35.28.57.2l2.39-.96c.5.38 1.04.69 1.63.94l.36 2.54c.04.24.24.41.48.41h3.9c.24 0 .44-.17.48-.41l.36-2.54c.59-.25 1.13-.56 1.63-.94l2.39.96c.22.09.46 0 .57-.2l1.92-3.32a.5.5 0 0 0-.12-.61l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5z"/>
+          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:13px;height:13px;display:block;fill:#fff;opacity:.8">
+            <path d="M3 17v2h6v-2H3zm0-8v2h10V9H3zm10 10v-2h8v-2h-8v-2h-2v6h2zM7 9V7H3V5h4V3h2v6H7zm14 2v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/>
           </svg>
         </button>
         <button type="button" id="anit_categories_toggle" class="category-toggle" title="Свернуть/развернуть категории"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
@@ -1873,14 +1899,8 @@ if (_presetChannel) {
     </div>
     <div id="anit_cat_manage_panel" style="display:none;margin-top:8px;padding:8px;background:rgba(255,255,255,.04);border-radius:8px;border:1px solid rgba(255,255,255,.1)">
       <div style="font-size:11px;font-weight:700;margin-bottom:6px;opacity:.9">Показывать категории</div>
-      <div id="anit_cat_vis_list" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px"></div>
-      <div style="font-size:11px;opacity:.65;margin-bottom:4px">Добавить категорию</div>
-      <div style="display:flex;gap:4px;flex-wrap:wrap">
-        <input type="text" id="anit_cat_new_name" placeholder="Название" style="flex:1;min-width:90px;padding:4px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.2);background:#070809;color:#fff;font-size:11px">
-        <input type="text" id="anit_cat_new_rx" placeholder="CSS-паттерн (regex)" style="flex:1;min-width:100px;padding:4px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.2);background:#070809;color:#fff;font-size:11px">
-        <button type="button" id="anit_cat_add_btn" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.25);background:#070809;color:#fff;cursor:pointer;font-size:11px">+</button>
-      </div>
-      <div id="anit_cat_custom_list" style="margin-top:6px"></div>
+      <div id="anit_cat_vis_list" style="display:flex;flex-wrap:wrap;gap:4px"></div>
+      <div id="anit_cat_custom_list" style="margin-top:4px"></div>
     </div>
   </div>
   ` : ''}
@@ -2580,7 +2600,9 @@ if (_presetChannel) {
 			const mini = host.querySelector('#anit_mini_toggle');
 			const full = host.querySelector('#anit_toggle_btn');
 			if (mini) mini.title = hidden ? 'Показать панель (Ctrl+Alt+F)' : 'Скрыть панель (Ctrl+Alt+F)';
-			if (full) full.textContent = hidden ? '+' : '-';
+			if (full) full.innerHTML = hidden
+			? '<svg viewBox="0 0 24 24" style="width:12px;height:12px;display:block;fill:#fff" aria-hidden="true"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>'
+			: '<svg viewBox="0 0 24 24" style="width:12px;height:12px;display:block;fill:#fff" aria-hidden="true"><path d="M19 13H5v-2h14v2z"/></svg>';
 			try { localStorage.setItem(HIDE_LS_KEY, hidden ? '1' : '0'); } catch {}
 		}
 		function togglePanel() {
@@ -2609,7 +2631,7 @@ if (_presetChannel) {
 
 	// --- Проверка обновлений прямо из панели ---
 	const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
-	const _UPD_CURRENT = '6.1.0';
+	const _UPD_CURRENT = '6.2.0';
 	const _UPD_LS_KEY  = 'pena.update.info';
 
 	function _semverNewer(remote, local) {
@@ -2635,8 +2657,12 @@ if (_presetChannel) {
 		const lnk    = host.querySelector('#anit_update_banner_link');
 		if (dot)    dot.style.display = '';
 		if (txt)    txt.textContent = `Доступно обновление v${version}`;
-		if (lnk)    lnk.dataset.url = url || '';
-		if (banner) banner.style.display = '';
+		if (lnk)  { lnk.dataset.url = url || ''; lnk.dataset.filename = `PENA_Agency_Setup_v${version}.exe`; lnk.disabled = false; lnk.textContent = 'Установить'; }
+		if (banner) { banner.style.display = ''; banner.className = 'update-banner'; }
+		const prog = host.querySelector('#anit_ubp_progress');
+		const done = host.querySelector('#anit_ubp_done');
+		if (prog) prog.style.display = 'none';
+		if (done) done.style.display = 'none';
 	}
 	function _clearUpdateBanner() {
 		const dot    = host.querySelector('#anit_update_dot');
@@ -2651,13 +2677,58 @@ if (_presetChannel) {
 		if (saved?.hasUpdate && saved.version && saved.url) _applyUpdateBanner(saved.version, saved.url);
 	} catch {}
 
-	host.querySelector('#anit_update_banner_link')?.addEventListener('click', (e) => {
-		const url = e.currentTarget.dataset.url;
-		if (url) window.open(url, '_blank');
+	// --- Seamless update download flow ---
+	const _ubpBanner  = host.querySelector('#anit_update_banner');
+	const _ubpInstBtn = host.querySelector('#anit_update_banner_link');
+	const _ubpProg    = host.querySelector('#anit_ubp_progress');
+	const _ubpLabel   = host.querySelector('#anit_ubp_label');
+	const _ubpPct     = host.querySelector('#anit_ubp_pct');
+	const _ubpFill    = host.querySelector('#anit_ubp_fill');
+	const _ubpDone    = host.querySelector('#anit_ubp_done');
+	const _ubpRestart = host.querySelector('#anit_ubp_restart');
+
+	_ubpInstBtn?.addEventListener('click', () => {
+		const url      = _ubpInstBtn.dataset.url;
+		const filename = _ubpInstBtn.dataset.filename || 'PENA_Agency_Update.exe';
+		if (!url) return;
+		_ubpInstBtn.disabled = true;
+		if (_ubpProg) _ubpProg.style.display = '';
+		if (_ubpPct)  _ubpPct.textContent = '0%';
+		if (_ubpFill) _ubpFill.style.width = '0%';
+		if (_ubpBanner) _ubpBanner.classList.add('--downloading');
+		window.postMessage({ type: 'PENA_DOWNLOAD_UPDATE', url, filename }, '*');
 	});
+
+	_ubpRestart?.addEventListener('click', () => {
+		window.postMessage({ type: 'PENA_RELOAD_EXT' }, '*');
+	});
+
+	// Ответы от content.js о прогрессе скачивания
+	window.addEventListener('message', (ev) => {
+		if (!ev.data || !ev.data._pena_dl) return;
+		const msg = ev.data;
+		if (msg.type === 'DL_PROGRESS') {
+			const pct = Math.min(99, Math.round(msg.pct || 0));
+			if (_ubpPct)  _ubpPct.textContent  = pct + '%';
+			if (_ubpFill) _ubpFill.style.width = pct + '%';
+		} else if (msg.type === 'DL_DONE') {
+			if (_ubpPct)  _ubpPct.textContent  = '100%';
+			if (_ubpFill) _ubpFill.style.width = '100%';
+			setTimeout(() => {
+				if (_ubpProg) _ubpProg.style.display = 'none';
+				if (_ubpDone) _ubpDone.style.display  = '';
+				if (_ubpBanner) { _ubpBanner.classList.remove('--downloading', '--error'); _ubpBanner.classList.add('--done'); }
+			}, 300);
+		} else if (msg.type === 'DL_ERROR') {
+			if (_ubpBanner) { _ubpBanner.classList.remove('--downloading', '--done'); _ubpBanner.classList.add('--error'); }
+			if (_ubpProg)   _ubpProg.style.display = 'none';
+			if (_ubpInstBtn) { _ubpInstBtn.disabled = false; _ubpInstBtn.textContent = 'Повторить'; }
+			_showUpdToast('Ошибка загрузки обновления');
+		}
+	});
+
 	host.querySelector('#anit_update_banner_close')?.addEventListener('click', () => {
-		const banner = host.querySelector('#anit_update_banner');
-		if (banner) banner.style.display = 'none';
+		if (_ubpBanner) _ubpBanner.style.display = 'none';
 	});
 	host.querySelector('#anit_update_btn')?.addEventListener('click', async () => {
 		const btn = host.querySelector('#anit_update_btn');
@@ -2920,24 +2991,22 @@ if (_presetChannel) {
 		visList.innerHTML = '';
 		for (const c of [...allBuiltin, ...allCustom]) {
 			const visible = isCatVisible(c.type);
-			const lbl = document.createElement('label');
-			lbl.style.cssText = 'display:inline-flex;align-items:center;gap:4px;border:1px solid rgba(255,255,255,.18);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px;color:#dce4ef;background:rgba(255,255,255,.04);margin:2px';
-			const cb = document.createElement('input');
-			cb.type = 'checkbox';
-			cb.checked = visible;
-			cb.style.cssText = 'width:12px;height:12px;accent-color:#5dc';
-			const span = document.createElement('span');
-			span.textContent = c.label;
-			lbl.appendChild(cb);
-			lbl.appendChild(span);
-			cb.addEventListener('change', () => {
-				setCatVisible(c.type, cb.checked);
+			const btn = document.createElement('button');
+			btn.type = 'button';
+			btn.textContent = c.label;
+			const onStyle  = 'border:1px solid rgba(85,180,255,.5);background:rgba(85,180,255,.14);color:#b8d8ff;border-radius:14px;padding:3px 10px;font-size:11px;cursor:pointer;margin:2px;transition:all .15s;outline:none';
+			const offStyle = 'border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.03);color:rgba(255,255,255,.28);text-decoration:line-through;border-radius:14px;padding:3px 10px;font-size:11px;cursor:pointer;margin:2px;transition:all .15s;outline:none';
+			btn.style.cssText = visible ? onStyle : offStyle;
+			btn.addEventListener('click', () => {
+				const nowVisible = !isCatVisible(c.type);
+				setCatVisible(c.type, nowVisible);
+				btn.style.cssText = nowVisible ? onStyle : offStyle;
 				renderTypeChips();
 				filters.typesSelected = (filters.typesSelected || []).filter(t => isCatVisible(t));
 				persistFilters();
 				applyFilters();
 			});
-			visList.appendChild(lbl);
+			visList.appendChild(btn);
 		}
 		if (customList) {
 			customList.innerHTML = '';
@@ -3051,27 +3120,6 @@ if (_presetChannel) {
 				catManagePanel.style.display = 'none';
 			}
 		}, true);
-		const catAddBtn = host.querySelector('#anit_cat_add_btn');
-		if (catAddBtn) {
-			catAddBtn.addEventListener('click', () => {
-				const nameInp = host.querySelector('#anit_cat_new_name');
-				const rxInp = host.querySelector('#anit_cat_new_rx');
-				const name = (nameInp?.value || '').trim();
-				const rx = (rxInp?.value || '').trim();
-				if (!name) return;
-				const type = 'custom_' + name.toLowerCase().replace(/[^a-zа-яёa-z0-9]/gi, '_');
-				const cats = loadCustomCats();
-				if (!cats.find(c => c.type === type)) {
-					cats.push({ type, label: name, rxPattern: rx });
-					saveCustomCats(cats);
-					setCatVisible(type, true);
-				}
-				if (nameInp) nameInp.value = '';
-				if (rxInp) rxInp.value = '';
-				renderCatManagePanel();
-				renderTypeChips();
-			});
-		}
 	}
 
 		const categoriesGroup = host.querySelector('#anit_categories_group');
@@ -3369,10 +3417,10 @@ if (_presetChannel) {
 			const dx = e.clientX - _rzStartX, dy = e.clientY - _rzStartY;
 			const pane = host.querySelector('.pane');
 			if (_rzEdges.r) {
-				host.style.width = Math.max(240, Math.min(window.innerWidth * 0.9, _rzStartW + dx)) + 'px';
+				host.style.width = Math.max(300, Math.min(window.innerWidth * 0.9, _rzStartW + dx)) + 'px';
 			}
 			if (_rzEdges.l) {
-				const newW = Math.max(240, Math.min(window.innerWidth * 0.9, _rzStartW - dx));
+				const newW = Math.max(300, Math.min(window.innerWidth * 0.9, _rzStartW - dx));
 				host.style.width = newW + 'px';
 				host.style.left = Math.max(0, _rzStartLeft + (_rzStartW - newW)) + 'px';
 			}

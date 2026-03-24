@@ -49,10 +49,60 @@ async function checkForUpdates() {
 chrome.runtime.onStartup.addListener(checkForUpdates);
 chrome.runtime.onInstalled.addListener(checkForUpdates);
 
-// Ручная проверка из popup
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+// Обработчик сообщений от content.js и popup
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // Ручная проверка обновлений
   if (msg?.type === 'CHECK_UPDATES') {
     checkForUpdates().then(() => sendResponse({ ok: true }));
     return true; // async response
+  }
+
+  // Скачать обновление (вызывается из injected.js через content.js)
+  if (msg?.type === 'DOWNLOAD_UPDATE') {
+    const url      = msg.url;
+    const filename = msg.filename || 'PENA_Agency_Update.exe';
+    const tabId    = sender.tab?.id;
+    if (!url || !tabId) { sendResponse({ ok: false }); return; }
+
+    chrome.downloads.download({ url, filename, conflictAction: 'overwrite' }, (downloadId) => {
+      if (chrome.runtime.lastError || downloadId === undefined) {
+        chrome.tabs.sendMessage(tabId, {
+          type: 'DL_ERROR',
+          err:  String(chrome.runtime.lastError?.message || 'start failed')
+        }).catch(() => {});
+        sendResponse({ ok: false });
+        return;
+      }
+      sendResponse({ ok: true });
+
+      // Опрос прогресса каждые 300 мс
+      const poll = setInterval(() => {
+        chrome.downloads.search({ id: downloadId }, ([item]) => {
+          if (!item) { clearInterval(poll); return; }
+          if (item.state === 'in_progress') {
+            const total = item.totalBytes   || 0;
+            const recv  = item.bytesReceived || 0;
+            const pct   = total > 0 ? Math.round(recv / total * 100) : 0;
+            chrome.tabs.sendMessage(tabId, { type: 'DL_PROGRESS', pct }).catch(() => {});
+          } else if (item.state === 'complete') {
+            clearInterval(poll);
+            chrome.tabs.sendMessage(tabId, { type: 'DL_DONE' }).catch(() => {});
+          } else if (item.state === 'interrupted') {
+            clearInterval(poll);
+            chrome.tabs.sendMessage(tabId, {
+              type: 'DL_ERROR',
+              err:  item.error || 'interrupted'
+            }).catch(() => {});
+          }
+        });
+      }, 300);
+    });
+    return true; // async response
+  }
+
+  // Перезапустить расширение (подхватит обновлённые файлы)
+  if (msg?.type === 'RELOAD_EXTENSION') {
+    chrome.runtime.reload();
+    return;
   }
 });
