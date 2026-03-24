@@ -1471,62 +1471,6 @@ if (_presetChannel) {
 				return;
 			}
 
-			// Ctrl+Q — в диалоге (чаты задач): обрамить выделенный текст линиями
-			if (e.ctrlKey && !e.altKey && !e.shiftKey && e.code === 'KeyQ') {
-				if (!isTasksChatsModeNow()) return;
-
-				const active = document.activeElement;
-				if (!active) return;
-				// не мешаем вводу в поиске по чатам/панели
-				if (active.id === 'anit_query') return;
-
-				const line = '------------------------------------------------------';
-				const wrap = (s) => `${line}\n${s}\n${line}`;
-
-				// textarea / input
-				if (active instanceof HTMLTextAreaElement || (active instanceof HTMLInputElement && (active.type || '').toLowerCase() === 'text')) {
-					const start = active.selectionStart ?? 0;
-					const end = active.selectionEnd ?? 0;
-					if (end <= start) return;
-					const v = active.value || '';
-					const selText = v.slice(start, end);
-					const next = v.slice(0, start) + wrap(selText) + v.slice(end);
-					active.value = next;
-					const newEnd = start + wrap(selText).length;
-					active.selectionStart = start;
-					active.selectionEnd = newEnd;
-					active.dispatchEvent(new Event('input', { bubbles: true }));
-
-					e.stopImmediatePropagation();
-					e.preventDefault();
-					return;
-				}
-
-				// contenteditable
-				const isCE = active instanceof HTMLElement && (active.isContentEditable || active.getAttribute('contenteditable') === 'true');
-				if (isCE) {
-					const sel = window.getSelection?.();
-					if (!sel || sel.rangeCount === 0) return;
-					if (sel.isCollapsed) return;
-					const range = sel.getRangeAt(0);
-					// ограничим замену выделения только если оно внутри active
-					const anc = sel.anchorNode;
-					if (anc && active.contains(anc)) {
-						const txt = sel.toString();
-						range.deleteContents();
-						range.insertNode(document.createTextNode(wrap(txt)));
-						sel.removeAllRanges();
-						const r2 = document.createRange();
-						r2.selectNodeContents(active);
-						r2.collapse(false);
-						sel.addRange(r2);
-						active.dispatchEvent(new Event('input', { bubbles: true }));
-
-						e.stopImmediatePropagation();
-						e.preventDefault();
-					}
-				}
-			}
 		}
 
 
@@ -1795,9 +1739,8 @@ if (_presetChannel) {
         <div class="hp-title">Горячие клавиши</div>
         <table>
           <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">Alt</span>+<span class="kbd">F</span></td><td>Показать / скрыть панель</td></tr>
-          <tr><td><span class="kbd">Esc</span></td><td>Сброс всех фильтров</td></tr>
+          <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">Q</span></td><td>Сброс всех фильтров</td></tr>
           <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">1</span>…<span class="kbd">9</span></td><td>Быстрый выбор пресета</td></tr>
-          <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">Q</span></td><td>Обрамить выделение (в чате)</td></tr>
         </table>
       </div>
       <button id="anit_update_btn" class="icon-btn" type="button" title="Проверить обновления">
@@ -1838,7 +1781,7 @@ if (_presetChannel) {
         </button>
         <button type="button" id="anit_preset_manage_btn" class="icon-btn" title="Управление пресетами">
           <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:13px;height:13px;display:block;fill:#fff;opacity:.8">
-            <path d="M3 17v2h6v-2H3zm0-8v2h10V9H3zm10 10v-2h8v-2h-8v-2h-2v6h2zM7 9V7H3V5h4V3h2v6H7zm14 2v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/>
+            <path d="M19.43 12.98c.04-.32.07-.64.07-.98 0-.34-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.58-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98 0 .33.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.58 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
           </svg>
         </button>
       </div>
@@ -1886,7 +1829,7 @@ if (_presetChannel) {
       <div style="display:flex;gap:4px;align-items:center">
         <button type="button" id="anit_cat_manage_btn" class="icon-btn" title="Настроить категории">
           <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:13px;height:13px;display:block;fill:#fff;opacity:.8">
-            <path d="M3 17v2h6v-2H3zm0-8v2h10V9H3zm10 10v-2h8v-2h-8v-2h-2v6h2zM7 9V7H3V5h4V3h2v6H7zm14 2v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/>
+            <path d="M19.43 12.98c.04-.32.07-.64.07-.98 0-.34-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.58-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98 0 .33.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.58 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
           </svg>
         </button>
         <button type="button" id="anit_categories_toggle" class="category-toggle" title="Свернуть/развернуть категории"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
@@ -2677,6 +2620,24 @@ if (_presetChannel) {
 		if (saved?.hasUpdate && saved.version && saved.url) _applyUpdateBanner(saved.version, saved.url);
 	} catch {}
 
+	// Автопроверка при загрузке (тихая — обновляет баннер без уведомлений)
+	setTimeout(async () => {
+		try {
+			const resp = await fetch(_UPD_URL, { cache: 'no-store' });
+			if (!resp.ok) return;
+			const data = await resp.json();
+			const remoteVer = String(data.version || '');
+			const url = data.exe_url || data.release_url || '';
+			if (remoteVer && _semverNewer(remoteVer, _UPD_CURRENT)) {
+				try { localStorage.setItem(_UPD_LS_KEY, JSON.stringify({ hasUpdate: true, version: remoteVer, url })); } catch {}
+				_applyUpdateBanner(remoteVer, url);
+			} else {
+				try { localStorage.setItem(_UPD_LS_KEY, JSON.stringify({ hasUpdate: false })); } catch {}
+				_clearUpdateBanner();
+			}
+		} catch (_) {}
+	}, 4000);
+
 	// --- Seamless update download flow ---
 	const _ubpBanner  = host.querySelector('#anit_update_banner');
 	const _ubpInstBtn = host.querySelector('#anit_update_banner_link');
@@ -2916,12 +2877,15 @@ if (_presetChannel) {
 	}
 	};
 	host.querySelector('#anit_reset').addEventListener('click', _doReset);
-	// Хоткей Escape — сброс фильтров (работает даже при активном пресете)
+	// Хоткей Ctrl+Q — сброс фильтров (вне полей ввода)
 	document.addEventListener('keydown', (e) => {
-		if (e.key === 'Escape' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+		if (e.ctrlKey && !e.altKey && !e.shiftKey && e.code === 'KeyQ') {
 			const tag = document.activeElement?.tagName?.toLowerCase();
-			if (tag === 'input' || tag === 'textarea') return;
+			if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+			const inPanel = document.activeElement && document.getElementById('anit-filters')?.contains(document.activeElement);
+			if (inPanel) return;
 			e.preventDefault();
+			e.stopImmediatePropagation();
 			_doReset();
 		}
 	}, true);
