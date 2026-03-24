@@ -1707,6 +1707,19 @@ if (_presetChannel) {
 #anit-filters.anit-debug-mode .debug-badge{display:inline-flex;align-items:center}
 .anit-preset-toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#1a1d23;border:1px solid rgba(245,158,11,.5);color:#f59e0b;padding:8px 18px;border-radius:10px;font-size:12px;z-index:2147483647;pointer-events:none;opacity:0;transition:opacity .25s;white-space:nowrap}
 .anit-preset-toast.--show{opacity:1}
+.anit-preset-toast.--ok{border-color:rgba(93,200,126,.5);color:#5dc87e}
+/* Update check button */
+#anit-filters #anit_update_btn{position:relative}
+#anit-filters .update-dot{position:absolute;top:-3px;right:-3px;width:7px;height:7px;background:#ef4444;border-radius:50%;border:1px solid #0b0d10;pointer-events:none;display:none}
+#anit-filters #anit_update_btn.--checking svg{animation:anit-spin .7s linear infinite}
+@keyframes anit-spin{to{transform:rotate(360deg)}}
+/* Update banner */
+#anit-filters .update-banner{display:flex;align-items:center;gap:6px;margin-top:6px;padding:7px 10px;background:rgba(230,168,0,.09);border:1px solid rgba(230,168,0,.28);border-radius:8px;font-size:11px;color:#e6a800}
+#anit-filters .update-banner-text{flex:1;min-width:0}
+#anit-filters .update-banner-link{color:#f0b820;text-decoration:underline;cursor:pointer;white-space:nowrap;background:none;border:none;font-size:11px;padding:0;font-family:inherit}
+#anit-filters .update-banner-link:hover{color:#fcd34d}
+#anit-filters .update-banner-close{margin-left:2px;background:none;border:none;color:rgba(255,255,255,.35);font-size:15px;cursor:pointer;line-height:1;padding:0;font-family:inherit}
+#anit-filters .update-banner-close:hover{color:rgba(255,255,255,.65)}
 .anit-preset-confirm{position:absolute;inset:0;background:rgba(5,6,9,.92);border-radius:12px;display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:10;padding:20px;text-align:center}
 .anit-preset-confirm.--show{display:flex}
 .anit-preset-confirm p{color:#c8d0dc;font-size:12px;line-height:1.5;margin:0}
@@ -1748,8 +1761,17 @@ if (_presetChannel) {
         <svg viewBox="0 0 24 24" style="width:11px;height:11px;fill:#aaa;flex-shrink:0" aria-hidden="true"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
         <input type="range" id="anit_opacity_slider" min="20" max="100" step="5">
       </div>
+      <button id="anit_update_btn" class="icon-btn" type="button" title="Проверить обновления">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:13px;height:13px;fill:#fff;opacity:.7;display:block"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+        <span class="update-dot" id="anit_update_dot"></span>
+      </button>
       <button id="anit_toggle_btn" class="anit-toggle icon-btn" type="button" title="Скрыть/показать (Ctrl+Alt+F)">-</button>
     </div>
+  </div>
+  <div class="update-banner" id="anit_update_banner" style="display:none">
+    <span class="update-banner-text" id="anit_update_banner_text">Доступно обновление</span>
+    <button type="button" class="update-banner-link" id="anit_update_banner_link">Скачать</button>
+    <button type="button" class="update-banner-close" id="anit_update_banner_close" title="Закрыть">×</button>
   </div>
 
   <div class="anit-preset-confirm" id="anit_preset_confirm"></div>
@@ -2561,6 +2583,88 @@ if (_presetChannel) {
 			if (ts && (Date.now() - ts) < 250) return;
 			togglePanel();
 		});
+
+	// --- Проверка обновлений прямо из панели ---
+	const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
+	const _UPD_CURRENT = '6.0.0';
+	const _UPD_LS_KEY  = 'pena.update.info';
+
+	function _semverNewer(remote, local) {
+		const p = v => String(v).split('.').map(Number);
+		const [ra, rb, rc] = p(remote), [la, lb, lc] = p(local);
+		if (ra !== la) return ra > la;
+		if (rb !== lb) return rb > lb;
+		return rc > lc;
+	}
+	function _showUpdToast(msg, ok) {
+		const toast = host.querySelector('#anit_preset_toast');
+		if (!toast) return;
+		toast.textContent = msg;
+		toast.classList.toggle('--ok', !!ok);
+		toast.classList.add('--show');
+		if (_toastTimer) clearTimeout(_toastTimer);
+		_toastTimer = setTimeout(() => { toast.classList.remove('--show'); toast.classList.remove('--ok'); }, 2800);
+	}
+	function _applyUpdateBanner(version, url) {
+		const dot    = host.querySelector('#anit_update_dot');
+		const banner = host.querySelector('#anit_update_banner');
+		const txt    = host.querySelector('#anit_update_banner_text');
+		const lnk    = host.querySelector('#anit_update_banner_link');
+		if (dot)    dot.style.display = '';
+		if (txt)    txt.textContent = `Доступно обновление v${version}`;
+		if (lnk)    lnk.dataset.url = url || '';
+		if (banner) banner.style.display = '';
+	}
+	function _clearUpdateBanner() {
+		const dot    = host.querySelector('#anit_update_dot');
+		const banner = host.querySelector('#anit_update_banner');
+		if (dot)    dot.style.display = 'none';
+		if (banner) banner.style.display = 'none';
+	}
+
+	// Восстановить состояние из localStorage
+	try {
+		const saved = JSON.parse(localStorage.getItem(_UPD_LS_KEY) || 'null');
+		if (saved?.hasUpdate && saved.version && saved.url) _applyUpdateBanner(saved.version, saved.url);
+	} catch {}
+
+	host.querySelector('#anit_update_banner_link')?.addEventListener('click', (e) => {
+		const url = e.currentTarget.dataset.url;
+		if (url) window.open(url, '_blank');
+	});
+	host.querySelector('#anit_update_banner_close')?.addEventListener('click', () => {
+		const banner = host.querySelector('#anit_update_banner');
+		if (banner) banner.style.display = 'none';
+	});
+	host.querySelector('#anit_update_btn')?.addEventListener('click', async () => {
+		const btn = host.querySelector('#anit_update_btn');
+		if (!btn || btn.classList.contains('--checking')) return;
+		btn.classList.add('--checking');
+		btn.disabled = true;
+		try {
+			const resp = await fetch(_UPD_URL, { cache: 'no-store' });
+			if (!resp.ok) throw new Error('HTTP ' + resp.status);
+			const data = await resp.json();
+			const remoteVer = String(data.version || '');
+			const url = data.exe_url || data.release_url || '';
+			if (remoteVer && _semverNewer(remoteVer, _UPD_CURRENT)) {
+				try { localStorage.setItem(_UPD_LS_KEY, JSON.stringify({ hasUpdate: true, version: remoteVer, url })); } catch {}
+				_applyUpdateBanner(remoteVer, url);
+				_showUpdToast(`⬆ Обновление v${remoteVer} доступно — нажмите «Скачать»`);
+			} else {
+				try { localStorage.setItem(_UPD_LS_KEY, JSON.stringify({ hasUpdate: false })); } catch {}
+				_clearUpdateBanner();
+				_showUpdToast('✓ Установлена актуальная версия', true);
+			}
+		} catch (_e) {
+			_showUpdToast('Нет соединения — проверьте позже');
+		} finally {
+			btn.classList.remove('--checking');
+			btn.disabled = false;
+		}
+	});
+	// --- конец блока проверки обновлений ---
+
 	const mode = IS_OL_FRAME ? 'ol' : 'internal';
 
 
