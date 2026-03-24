@@ -3,7 +3,7 @@
   "name": "Сортировщик чатов BX24",
   "version": "6.0.0",
   "description": "Фильтрация и сортировка чатов Bitrix24 по ключевым словам, тегам и категориям",
-  "permissions": ["storage", "tabs", "notifications"],
+  "permissions": ["storage", "tabs", "notifications", "downloads"],
   "host_permissions": ["<all_urls>"],
   "background": {"service_worker": "background.js"},
   "action": {

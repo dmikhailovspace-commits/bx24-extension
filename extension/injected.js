@@ -1019,7 +1019,16 @@ if (_presetChannel) {
 			h.classList.toggle('preset-locked',   locked);
 		}
 		const dbBtn = h?.querySelector('#anit_preset_debug_btn');
-		if (dbBtn) dbBtn.style.opacity = debugActive ? '1' : (hasPreset ? '0.65' : '0.45');
+		if (dbBtn) {
+			const LOCK_CLOSED = 'M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z';
+			const LOCK_OPEN   = 'M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6h2c0-1.66 1.34-3 3-3s3 1.34 3 3v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm0 12H6V10h12v10zm-6-3c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2z';
+			const iconPath = debugActive ? LOCK_OPEN : LOCK_CLOSED;
+			dbBtn.innerHTML = `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:14px;height:14px;fill:#f59e0b;display:block"><path d="${iconPath}"/></svg>`;
+			dbBtn.style.opacity = debugActive ? '1' : (hasPreset ? '0.75' : '0.4');
+			dbBtn.title = debugActive
+				? 'Выйти из режима отладки (заблокировать фильтры)'
+				: (hasPreset ? 'Войти в режим отладки (разблокировать фильтры)' : 'Режим отладки пресета');
+		}
 	}
 
 	let _toastTimer = null;
@@ -1676,8 +1685,8 @@ if (_presetChannel) {
       <div class="group-title">Пресеты</div>
       <div style="display:flex;gap:4px;align-items:center">
         <span class="debug-badge" id="anit_debug_badge">&#9881; Отладка</span>
-        <button type="button" id="anit_preset_debug_btn" class="icon-btn" title="Режим отладки пресета">
-          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:12px;height:12px;fill:#f59e0b;opacity:.7"><path d="M20 8h-2.81A6.978 6.978 0 0 0 15 5.7V2h-2v3.07a6.934 6.934 0 0 0-2 0V2H9v3.7A6.978 6.978 0 0 0 6.81 8H4v2h2.09A7.05 7.05 0 0 0 6 11v1H4v2h2v1c0 .34.03.67.08 1H4v2h2.81A7 7 0 0 0 19.19 18H22v-2h-2.08c.05-.33.08-.66.08-1v-1h2v-2h-2v-1c0-.34-.03-.67-.08-1H22V8h-2zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z"/></svg>
+        <button type="button" id="anit_preset_debug_btn" class="icon-btn" title="Войти в режим отладки (разблокировать фильтры)">
+          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:14px;height:14px;fill:#f59e0b;display:block"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>
         </button>
         <button type="button" id="anit_preset_manage_btn" class="icon-btn" title="Управление пресетами">
           <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:12px;height:12px;fill:#fff;opacity:.8">
