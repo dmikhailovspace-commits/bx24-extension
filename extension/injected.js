@@ -1086,21 +1086,37 @@ if (_presetChannel) {
 		if (!listEl) return;
 		listEl.innerHTML = '';
 		const presets = _getPresetsArr();
+
 		if (!presets.length) {
 			const empty = document.createElement('div');
-			empty.style.cssText = 'font-size:11px;color:rgba(255,255,255,.35);padding:2px 0 4px';
-			empty.textContent = 'Пресетов нет. Добавьте первый ниже.';
+			empty.className = 'pm-empty';
+			empty.textContent = 'Пресетов нет — добавьте первый ниже';
 			listEl.appendChild(empty);
 			return;
 		}
+
+		let _draggingId = null;
+		let _overEl     = null;
+
+		const DRAG_SVG = '<svg viewBox="0 0 16 16" style="width:12px;height:12px;fill:currentColor;display:block"><rect y="2" width="16" height="2" rx="1"/><rect y="7" width="16" height="2" rx="1"/><rect y="12" width="16" height="2" rx="1"/></svg>';
+		const DEL_SVG  = '<svg viewBox="0 0 24 24" style="width:11px;height:11px;fill:currentColor;display:block"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>';
+
 		for (const p of presets) {
 			const row = document.createElement('div');
-			row.style.cssText = 'display:flex;align-items:center;gap:5px;margin:3px 0';
+			row.className = 'pm-row';
+			row.dataset.presetId = p.id;
+			row.draggable = true;
+
+			const handle = document.createElement('span');
+			handle.className = 'pm-drag';
+			handle.innerHTML = DRAG_SVG;
+			handle.title = 'Перетащите для изменения порядка';
+
 			const inp = document.createElement('input');
 			inp.type = 'text';
+			inp.className = 'pm-inp';
 			inp.value = p.label;
 			inp.maxLength = 30;
-			inp.style.cssText = 'flex:1;padding:3px 6px;border-radius:5px;border:1px solid rgba(255,255,255,.2);background:#070809;color:#fff;font-size:11px;min-width:0';
 			inp.addEventListener('blur', () => {
 				const label = inp.value.trim();
 				if (!label) { inp.value = p.label; return; }
@@ -1110,25 +1126,68 @@ if (_presetChannel) {
 				}
 			});
 			inp.addEventListener('keydown', (e) => {
-				if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
+				if (e.key === 'Enter')  { e.preventDefault(); inp.blur(); }
 				if (e.key === 'Escape') { inp.value = p.label; inp.blur(); }
 				e.stopPropagation();
 			});
+
 			const delBtn = document.createElement('button');
 			delBtn.type = 'button';
-			delBtn.textContent = '×';
+			delBtn.className = 'pm-del';
 			delBtn.title = 'Удалить пресет';
-			delBtn.style.cssText = 'padding:2px 7px;border-radius:4px;border:1px solid rgba(255,0,0,.3);background:rgba(255,0,0,.1);color:#f66;cursor:pointer;font-size:14px;flex-shrink:0;line-height:1';
+			delBtn.innerHTML = DEL_SVG;
 			delBtn.addEventListener('mousedown', (e) => {
 				e.preventDefault();
 				_presetsData[_pMode()] = _getPresetsArr().filter(x => x.id !== p.id);
-				if (_getActiveId() === p.id) _setActiveId(null);
+				if (_getActiveId() === p.id) {
+					_setActiveId(null);
+					_debugModeActive = false;
+					_updateDebugUI(host);
+				}
 				_saveCustomPresets();
 				renderPresetManagePanel(host);
 				renderPresetsUI(host);
 			});
-			row.appendChild(inp);
-			row.appendChild(delBtn);
+
+			row.addEventListener('dragstart', (e) => {
+				_draggingId = p.id;
+				e.dataTransfer.effectAllowed = 'move';
+				setTimeout(() => { row.style.opacity = '0.4'; }, 0);
+			});
+			row.addEventListener('dragend', () => {
+				row.style.opacity = '';
+				if (_overEl) { _overEl.classList.remove('drag-over'); _overEl = null; }
+				_draggingId = null;
+			});
+			row.addEventListener('dragover', (e) => {
+				e.preventDefault();
+				e.dataTransfer.dropEffect = 'move';
+				if (_overEl && _overEl !== row) _overEl.classList.remove('drag-over');
+				_overEl = row;
+				row.classList.add('drag-over');
+			});
+			row.addEventListener('dragleave', (e) => {
+				if (!row.contains(e.relatedTarget)) {
+					row.classList.remove('drag-over');
+					if (_overEl === row) _overEl = null;
+				}
+			});
+			row.addEventListener('drop', (e) => {
+				e.preventDefault();
+				row.classList.remove('drag-over');
+				if (!_draggingId || _draggingId === p.id) return;
+				const arr = _getPresetsArr();
+				const fromIdx = arr.findIndex(x => x.id === _draggingId);
+				const toIdx   = arr.findIndex(x => x.id === p.id);
+				if (fromIdx < 0 || toIdx < 0) return;
+				const [moved] = arr.splice(fromIdx, 1);
+				arr.splice(toIdx, 0, moved);
+				_saveCustomPresets();
+				renderPresetManagePanel(host);
+				renderPresetsUI(host);
+			});
+
+			row.append(handle, inp, delBtn);
 			listEl.appendChild(row);
 		}
 	}
@@ -1625,6 +1684,24 @@ if (_presetChannel) {
 #anit-filters .preset-btn{padding:3px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.07);color:#b8c1cf;font-size:11px;cursor:pointer;transition:background .15s,border-color .15s;white-space:nowrap;line-height:1.5}
 #anit-filters .preset-btn:hover{background:rgba(255,255,255,.15);color:#fff}
 #anit-filters .preset-btn.--active{background:rgba(46,95,163,.85);border-color:#4a7fc0;color:#fff}
+#anit-filters .pm-header{font-size:10px;font-weight:600;color:rgba(255,255,255,.32);text-transform:uppercase;letter-spacing:.07em;margin-bottom:7px}
+#anit-filters .pm-row{display:flex;align-items:center;gap:5px;padding:2px 0;border-radius:6px;transition:background .1s}
+#anit-filters .pm-row.drag-over{background:rgba(21,135,250,.1);outline:1px dashed rgba(21,135,250,.35);outline-offset:-1px}
+#anit-filters .pm-drag{cursor:grab;padding:0 3px;opacity:.3;flex-shrink:0;display:flex;align-items:center;color:#fff;user-select:none;touch-action:none}
+#anit-filters .pm-drag:hover{opacity:.7}
+#anit-filters .pm-drag:active{cursor:grabbing}
+#anit-filters .pm-inp{flex:1;padding:4px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.04);color:#e9edf1;font-size:11px;min-width:0;outline:none;transition:border-color .15s,background .15s}
+#anit-filters .pm-inp:focus{border-color:rgba(21,135,250,.55);background:rgba(21,135,250,.07)}
+#anit-filters .pm-del{flex-shrink:0;width:24px;height:24px;border-radius:5px;border:1px solid rgba(255,80,80,.2);background:rgba(255,80,80,.07);color:rgba(255,110,110,.6);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s}
+#anit-filters .pm-del:hover{border-color:rgba(255,80,80,.5);background:rgba(255,80,80,.2);color:#f88}
+#anit-filters .pm-add-section{border-top:1px solid rgba(255,255,255,.08);padding-top:8px;margin-top:6px}
+#anit-filters .pm-add-label{font-size:10px;color:rgba(255,255,255,.32);text-transform:uppercase;letter-spacing:.07em;margin-bottom:5px}
+#anit-filters .pm-add-row{display:flex;gap:4px}
+#anit-filters .pm-add-inp{flex:1;min-width:0;padding:5px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.04);color:#e9edf1;font-size:11px;outline:none;transition:border-color .15s}
+#anit-filters .pm-add-inp:focus{border-color:rgba(21,135,250,.5)}
+#anit-filters .pm-add-btn{padding:5px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:#c8d0dc;cursor:pointer;font-size:11px;white-space:nowrap;transition:all .15s}
+#anit-filters .pm-add-btn:hover{background:rgba(255,255,255,.14);color:#fff}
+#anit-filters .pm-empty{font-size:11px;color:rgba(255,255,255,.28);padding:4px 2px 6px;text-align:center}
 #anit-filters.anit-debug-mode .pane{outline:2px solid #f59e0b;outline-offset:-2px;border-radius:12px}
 #anit-filters .debug-badge{display:none;font-size:10px;color:#f59e0b;padding:1px 6px;border-radius:6px;border:1px solid rgba(245,158,11,.4);background:rgba(245,158,11,.12);white-space:nowrap;line-height:1.5}
 #anit-filters.anit-debug-mode .debug-badge{display:inline-flex;align-items:center}
@@ -1647,14 +1724,11 @@ if (_presetChannel) {
 #anit-filters.preset-locked .kw-tag-chip .tag-rm{display:none}
 #anit-filters.preset-locked .anit-type-chip:not(.is-selected){opacity:.22;pointer-events:none}
 #anit-filters.preset-locked .anit-type-chip.is-selected{pointer-events:none}
-#anit-filters.preset-locked #anit_unread,
-#anit-filters.preset-locked #anit_attach{pointer-events:none;opacity:.4}
 #anit-filters.preset-locked #anit_query{pointer-events:none;opacity:.45}
 #anit-filters.preset-locked #anit_tag_add_btn,
 #anit-filters.preset-locked #anit_itag_add_btn,
 #anit-filters.preset-locked #anit_tag_add_input,
 #anit-filters.preset-locked #anit_itag_add_input{pointer-events:none;opacity:.2}
-#anit-filters.preset-locked #anit_reset{pointer-events:none;opacity:.25}
 #anit-filters.preset-locked .chips,
 #anit-filters.preset-locked .type-grid{cursor:default}
 </style>
@@ -1696,11 +1770,15 @@ if (_presetChannel) {
       </div>
     </div>
     <div class="presets-row" id="anit_presets_row"></div>
-    <div id="anit_preset_manage_panel" style="display:none;margin-top:8px;padding:8px;background:rgba(255,255,255,.04);border-radius:8px;border:1px solid rgba(255,255,255,.1)">
-      <div id="anit_preset_list_edit" style="margin-bottom:6px"></div>
-      <div style="border-top:1px solid rgba(255,255,255,.08);padding-top:6px;display:flex;gap:4px">
-        <input type="text" id="anit_preset_new_name" placeholder="Название пресета..." maxlength="30" style="flex:1;min-width:80px;padding:4px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.2);background:#070809;color:#fff;font-size:11px">
-        <button type="button" id="anit_preset_add_btn" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.25);background:#070809;color:#fff;cursor:pointer;font-size:11px;white-space:nowrap">+ Добавить</button>
+    <div id="anit_preset_manage_panel" style="display:none;margin-top:8px;padding:10px;background:rgba(255,255,255,.04);border-radius:8px;border:1px solid rgba(255,255,255,.1)">
+      <div class="pm-header">Управление пресетами</div>
+      <div id="anit_preset_list_edit"></div>
+      <div class="pm-add-section">
+        <div class="pm-add-label">Новый пресет</div>
+        <div class="pm-add-row">
+          <input type="text" id="anit_preset_new_name" class="pm-add-inp" placeholder="Название..." maxlength="30">
+          <button type="button" id="anit_preset_add_btn" class="pm-add-btn">+ Добавить</button>
+        </div>
       </div>
     </div>
   </div>
@@ -2522,10 +2600,15 @@ if (_presetChannel) {
 	function readAndApply() {
 	// Не вмешиваемся в процесс сброса (change-события чекбоксов могут стрелять в ходе reset)
 	if (_isResetting) return;
-	// Заблокировать изменения фильтров, если пресет активен и режим отладки не включён
-	if (_getActiveId() && !_debugModeActive) {
-		uiFromFilters(host);
-		_showPresetToast('Пресет активен — войдите в режим отладки для изменений');
+	// При активном пресете без debug-режима: разрешаем только unreadOnly,
+	// hideCompletedTasks и сброс; остальные изменения отклоняем
+	const _presetLocked = _getActiveId() && !_debugModeActive;
+	if (_presetLocked) {
+		// Разрешённые быстрые фильтры — применяем немедленно
+		filters.unreadOnly        = host.querySelector('#anit_unread')?.checked || false;
+		filters.hideCompletedTasks = host.querySelector('#anit_hide_completed')?.checked || false;
+		persistFilters();
+		applyFilters();
 		return;
 	}
 	filters.unreadOnly = host.querySelector('#anit_unread').checked;
@@ -2576,7 +2659,7 @@ if (_presetChannel) {
 			renderPresetsUI(host);
 	}
 
-	host.querySelector('#anit_reset').addEventListener('click', () => {
+	const _doReset = () => {
 	_isResetting = true;
 	try {
 	// Сохраняем теги — сброс только снимает выбор, не удаляет теги
@@ -2617,7 +2700,17 @@ if (_presetChannel) {
 	} finally {
 		_isResetting = false;
 	}
-});
+	};
+	host.querySelector('#anit_reset').addEventListener('click', _doReset);
+	// Хоткей Escape — сброс фильтров (работает даже при активном пресете)
+	document.addEventListener('keydown', (e) => {
+		if (e.key === 'Escape' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+			const tag = document.activeElement?.tagName?.toLowerCase();
+			if (tag === 'input' || tag === 'textarea') return;
+			e.preventDefault();
+			_doReset();
+		}
+	}, true);
 
 
 		let queryTimer = null;
