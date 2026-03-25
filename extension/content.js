@@ -64,15 +64,17 @@
     }
 
     // Запрос на проверку обновлений → background.js (fetch вне CSP страницы)
+    // Результат приходит через .then() — background кладёт всё в sendResponse
     if (d.type === 'PENA_CHECK_UPDATES') {
       const silent = !!d.silent;
-      try {
-        chrome.runtime.sendMessage({ type: 'CHECK_UPDATES', silent }).catch(() => {
+      chrome.runtime.sendMessage({ type: 'CHECK_UPDATES', silent })
+        .then((result) => {
+          // result = { type:'CHECK_RESULT', silent, ok, hasUpdate?, version?, url? }
+          window.postMessage({ ...result, _pena_dl: true }, '*');
+        })
+        .catch(() => {
           window.postMessage({ type: 'CHECK_RESULT', ok: false, silent, _pena_dl: true }, '*');
         });
-      } catch (_) {
-        window.postMessage({ type: 'CHECK_RESULT', ok: false, silent, _pena_dl: true }, '*');
-      }
       return;
     }
 

@@ -64,17 +64,14 @@ chrome.runtime.onInstalled.addListener(checkForUpdates);
 // Обработчик сообщений от content.js и popup
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Ручная/авто проверка обновлений (запрос из injected.js через content.js)
+  // Результат передаём прямо через sendResponse — надёжнее чем tabs.sendMessage,
+  // т.к. service worker гарантированно жив пока не вызван sendResponse.
   if (msg?.type === 'CHECK_UPDATES') {
-    const tabId = sender.tab?.id;
     const silent = !!msg.silent;
     checkForUpdates().then((result) => {
-      sendResponse({ ok: true });
-      // Возвращаем результат напрямую в запросившую вкладку
-      if (tabId) {
-        chrome.tabs.sendMessage(tabId, { type: 'CHECK_RESULT', silent, ...result }).catch(() => {});
-      }
+      sendResponse({ type: 'CHECK_RESULT', silent, ...result });
     });
-    return true; // async response
+    return true; // держим канал открытым до вызова sendResponse
   }
 
   // Скачать обновление (вызывается из injected.js через content.js)

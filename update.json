@@ -1,8 +1,8 @@
 {
-  "version": "6.3.3",
+  "version": "6.3.4",
   "release_date": "2026-03-25",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.3.3",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.3.4",
   "zip_url": "https://github.com/dmikhailovspace-commits/bx24-extension/archive/refs/heads/main.zip",
-  "exe_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/download/v6.3.3/PENA_Agency_Setup_v6.3.3.exe",
-  "changelog": "Чаты задач: min-width увеличен до 360px — элементы больше не накладываются. Стилизованный скроллбар панели в тёмной теме."
+  "exe_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/download/v6.3.4/PENA_Agency_Setup_v6.3.4.exe",
+  "changelog": "Исправлена вечная загрузка при проверке обновлений: результат передаётся через sendResponse вместо tabs.sendMessage (service worker мог завершиться раньше времени)"
 }
