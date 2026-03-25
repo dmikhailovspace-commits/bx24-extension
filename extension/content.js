@@ -171,7 +171,8 @@
         .then(() => {
           window.postMessage({ type: 'UPDATE_DONE', _pena_dl: true }, '*');
           // Автоперезапуск через 1.5 сек — injected.js успеет показать сообщение об успехе
-          setTimeout(() => { try { chrome.runtime.reload(); } catch (_) {} }, 1500);
+          // Перезагружаем СТРАНИЦУ (не SW) → content.js заново инжектирует обновлённый injected.js из cache
+          setTimeout(() => { try { window.location.reload(); } catch (_) {} }, 1500);
         })
         .catch((err) => {
           clearTimeout(_t);

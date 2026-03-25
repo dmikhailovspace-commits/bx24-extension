@@ -1725,7 +1725,11 @@ if (_presetChannel) {
 #anit-filters .ubp-restart:hover{background:rgba(93,200,126,.24);color:#7ddfa0}
 #anit-filters .update-banner.--downloading{border-color:rgba(230,168,0,.45)}
 #anit-filters .update-banner.--done{background:rgba(93,200,126,.07);border-color:rgba(93,200,126,.3);color:#5dc87e}
+#anit-filters .update-banner.--done .ubp-install-btn,
+#anit-filters .update-banner.--done .update-banner-close{display:none}
 #anit-filters .update-banner.--error{background:rgba(255,60,60,.08);border-color:rgba(255,60,60,.25);color:#ef9090}
+/* Версия — нижний правый угол панели */
+#anit-filters .pena-ver-badge{position:sticky;bottom:4px;text-align:right;font-size:9px;color:rgba(255,255,255,.22);pointer-events:none;user-select:none;padding:6px 2px 0;line-height:1;letter-spacing:.2px}
 .anit-preset-confirm{position:absolute;inset:0;background:rgba(5,6,9,.92);border-radius:12px;display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:10;padding:20px;text-align:center}
 .anit-preset-confirm.--show{display:flex}
 .anit-preset-confirm p{color:#c8d0dc;font-size:12px;line-height:1.5;margin:0}
@@ -1920,6 +1924,7 @@ if (_presetChannel) {
       ${!IS_OL_FRAME ? `<button id="anit_prefetch_manual" class="btn-tertiary">Загрузить чаты</button>` : ``}
     </div>
   </div>
+  <div class="pena-ver-badge" id="anit_ver_badge"></div>
 </div>
 <div class="anit-preset-toast" id="anit_preset_toast"></div>
 <div id="anit_debug_overlay"><span class="anit-debug-flag">⚙ Режим отладки</span></div>
@@ -2615,7 +2620,6 @@ if (_presetChannel) {
 	// --- Проверка обновлений прямо из панели ---
 	const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
 	const _UPD_CURRENT = '6.4.1';
-	console.log('[PENA] injected.js v6.4.1 загружен (тест self-update)');
 	const _UPD_LS_KEY  = 'pena.update.info';
 
 	function _semverNewer(remote, local) {
@@ -2680,6 +2684,10 @@ if (_presetChannel) {
 			}
 		}, 15000);
 	}, 3000);
+
+	// Версия в нижнем правом углу
+	const _verBadge = host.querySelector('#anit_ver_badge');
+	if (_verBadge) _verBadge.textContent = 'v' + _UPD_CURRENT;
 
 	// --- Seamless update download flow ---
 	const _ubpBanner  = host.querySelector('#anit_update_banner');
