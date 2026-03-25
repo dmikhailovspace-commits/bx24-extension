@@ -69,7 +69,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type === 'CHECK_UPDATES') {
     const silent = !!msg.silent;
     checkForUpdates().then((result) => {
-      sendResponse({ type: 'CHECK_RESULT', silent, ...result });
+      const payload = { type: 'CHECK_RESULT', silent, ...result };
+      // Основной канал: sendResponse → content.js .then() → window.postMessage
+      try { sendResponse(payload); } catch (_) {}
+      // Запасной канал: storage.onChanged → content.js → window.postMessage
+      // Гарантирует доставку даже если SW-канал уже закрылся
+      chrome.storage.local.set({ anit_check_result: { ...payload, ts: Date.now() } });
     });
     return true; // держим канал открытым до вызова sendResponse
   }

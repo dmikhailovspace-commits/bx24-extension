@@ -1480,7 +1480,7 @@ if (_presetChannel) {
 				if (_inPanel) return;
 				e.stopImmediatePropagation();
 				e.preventDefault();
-				if (typeof _doReset === 'function') _doReset();
+				document.getElementById('anit-filters')?.querySelector('#anit_reset')?.dispatchEvent(new MouseEvent('click',{bubbles:true}));
 				return;
 			}
 
@@ -1527,7 +1527,7 @@ if (_presetChannel) {
 #anit-filters .pane{background:#0b0d10;color:#fff;border:1px solid rgba(255,255,255,.15);
   border-radius:12px;padding:10px 12px;font:12px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Arial;
   box-shadow:0 8px 24px rgba(0,0,0,.35);
-  position:relative;width:100%;box-sizing:border-box;overflow-y:auto;max-height:90vh;}
+  position:relative;width:100%;box-sizing:border-box;overflow-y:overlay;max-height:90vh;}
 #anit-filters .pane::-webkit-scrollbar{width:5px}
 #anit-filters .pane::-webkit-scrollbar-track{background:rgba(255,255,255,.04);border-radius:0 12px 12px 0}
 #anit-filters .pane::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:3px}
@@ -2593,7 +2593,7 @@ if (_presetChannel) {
 
 	// --- Проверка обновлений прямо из панели ---
 	const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
-	const _UPD_CURRENT = '6.3.0';
+	const _UPD_CURRENT = '6.3.5';
 	const _UPD_LS_KEY  = 'pena.update.info';
 
 	function _semverNewer(remote, local) {
@@ -2638,6 +2638,10 @@ if (_presetChannel) {
 		const saved = JSON.parse(localStorage.getItem(_UPD_LS_KEY) || 'null');
 		if (saved?.hasUpdate && saved.version && saved.url) _applyUpdateBanner(saved.version, saved.url);
 	} catch {}
+
+	// Дедупликация CHECK_RESULT: оба канала (sendResponse + storage) могут прийти
+	// почти одновременно — обрабатываем только первый с данным ts
+	let _lastCheckResultTs = 0;
 
 	// Автопроверка при загрузке (тихая — через background.js, минуя CSP)
 	setTimeout(() => {
@@ -2695,6 +2699,9 @@ if (_presetChannel) {
 			// Пришло от content.js: background нашёл обновление в chrome.storage.local
 			if (msg.version && msg.url) _applyUpdateBanner(msg.version, msg.url);
 		} else if (msg.type === 'CHECK_RESULT') {
+			// Дедупликация: оба канала могут доставить один и тот же результат
+			if (msg.ts && msg.ts === _lastCheckResultTs) return;
+			if (msg.ts) _lastCheckResultTs = msg.ts;
 			// Ответ на PENA_CHECK_UPDATES — результат проверки из background.js
 			const btn = host.querySelector('#anit_update_btn');
 			if (btn) { btn.classList.remove('--checking'); btn.disabled = false; }
@@ -2722,6 +2729,14 @@ if (_presetChannel) {
 		btn.disabled = true;
 		// Запрос идёт через content.js → background.js (CSP не мешает)
 		window.postMessage({ type: 'PENA_CHECK_UPDATES', silent: false }, '*');
+		// Таймаут: если ни один из каналов не ответил за 20 сек — сбрасываем кнопку
+		setTimeout(() => {
+			if (btn.classList.contains('--checking')) {
+				btn.classList.remove('--checking');
+				btn.disabled = false;
+				_showUpdToast('Нет соединения — проверьте позже');
+			}
+		}, 20000);
 	});
 	// --- конец блока проверки обновлений ---
 
@@ -2840,6 +2855,8 @@ if (_presetChannel) {
 	}
 
 	const _doReset = () => {
+	_setActiveId(null);   // снимаем активный пресет при сбросе
+	_debugModeActive = false;
 	_isResetting = true;
 	try {
 	// Сохраняем теги — сброс только снимает выбор, не удаляет теги

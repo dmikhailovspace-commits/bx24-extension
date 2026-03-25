@@ -53,6 +53,14 @@
     }
   });
 
+  // Запасной канал: storage.onChanged ловит anit_check_result, записанный background.js
+  // Срабатывает даже если sendResponse-канал SW закрылся до ответа
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes.anit_check_result) return;
+    const r = changes.anit_check_result.newValue;
+    if (r) window.postMessage({ ...r, _pena_dl: true }, '*');
+  });
+
   window.addEventListener('message', (event) => {
     if (event.source !== window) return;
     const d = event.data;
