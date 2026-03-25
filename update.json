@@ -1,8 +1,8 @@
 {
-  "version": "6.2.0",
-  "release_date": "2026-03-24",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.2.0",
+  "version": "6.3.0",
+  "release_date": "2026-03-25",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.3.0",
   "zip_url": "https://github.com/dmikhailovspace-commits/bx24-extension/archive/refs/heads/main.zip",
-  "exe_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/download/v6.2.0/PENA_Agency_Setup_v6.2.0.exe",
-  "changelog": "Бесшовное обновление: прогресс-бар скачивания и кнопка перезапуска прямо в панели. UI-фиксы: иконки настроек, чекбоксы категорий, крест-удаление по высоте строки, min-width 300px"
+  "exe_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/download/v6.3.0/PENA_Agency_Setup_v6.3.0.exe",
+  "changelog": "UI-фиксы: Ctrl+` сброс фильтров, шестерня пресетов не меняет размер панели, панель всегда разворачивается при загрузке, скруглённые углы при прогрузке чатов, улучшены ограничения минимального размера"
 }
