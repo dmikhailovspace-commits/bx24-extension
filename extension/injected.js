@@ -2614,7 +2614,8 @@ if (_presetChannel) {
 
 	// --- Проверка обновлений прямо из панели ---
 	const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
-	const _UPD_CURRENT = '6.4.0';
+	const _UPD_CURRENT = '6.4.1';
+	console.log('[PENA] injected.js v6.4.1 загружен (тест self-update)');
 	const _UPD_LS_KEY  = 'pena.update.info';
 
 	function _semverNewer(remote, local) {

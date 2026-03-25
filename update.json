@@ -1,7 +1,7 @@
 {
-  "version": "6.4.0",
+  "version": "6.4.1",
   "release_date": "2026-03-25",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.4.0",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.4.1",
   "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension/injected.js",
-  "changelog": "Перетаскивание окна за любую пустую область; самообновление расширения через загрузку нового injected.js без установщика"
+  "changelog": "TEST: проверка механизма self-update"
 }
