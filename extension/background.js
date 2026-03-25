@@ -15,7 +15,10 @@ function isNewer(remote, local) {
 
 async function checkForUpdates() {
   try {
-    const resp = await fetch(UPDATE_JSON_URL, { cache: 'no-store' });
+    const ctrl = new AbortController();
+    const _abort = setTimeout(() => ctrl.abort(), 12000); // 12 с таймаут на fetch
+    const resp = await fetch(UPDATE_JSON_URL, { cache: 'no-store', signal: ctrl.signal });
+    clearTimeout(_abort);
     if (!resp.ok) return { ok: false, err: 'HTTP ' + resp.status };
     const data = await resp.json();
     const remoteVer = String(data.version || '');
@@ -68,15 +71,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // т.к. service worker гарантированно жив пока не вызван sendResponse.
   if (msg?.type === 'CHECK_UPDATES') {
     const silent = !!msg.silent;
+    // Результат идёт ТОЛЬКО через storage.onChanged → content.js → injected.js
+    // sendResponse не используется — исключает проблему таймаута канала MV3 SW
     checkForUpdates().then((result) => {
-      const payload = { type: 'CHECK_RESULT', silent, ...result };
-      // Основной канал: sendResponse → content.js .then() → window.postMessage
-      try { sendResponse(payload); } catch (_) {}
-      // Запасной канал: storage.onChanged → content.js → window.postMessage
-      // Гарантирует доставку даже если SW-канал уже закрылся
-      chrome.storage.local.set({ anit_check_result: { ...payload, ts: Date.now() } });
+      chrome.storage.local.set({
+        anit_check_result: { type: 'CHECK_RESULT', silent, ...result, ts: Date.now() }
+      });
     });
-    return true; // держим канал открытым до вызова sendResponse
+    // return true не нужен — не ждём sendResponse
   }
 
   // Скачать обновление (вызывается из injected.js через content.js)

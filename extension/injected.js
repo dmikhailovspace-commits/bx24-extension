@@ -1471,8 +1471,8 @@ if (_presetChannel) {
 				return;
 			}
 
-			// Ctrl+` — сброс всех фильтров (аналогично хоткеям пресетов)
-			if (e.ctrlKey && !e.altKey && !e.shiftKey && e.code === 'Backquote') {
+			// Ctrl+Shift+A — сброс всех фильтров
+			if (e.ctrlKey && !e.altKey && e.shiftKey && e.code === 'KeyA') {
 				const _ae = document.activeElement;
 				const _tag = _ae?.tagName?.toLowerCase();
 				if (_tag === 'input' || _tag === 'textarea' || _tag === 'select') return;
@@ -1481,6 +1481,16 @@ if (_presetChannel) {
 				e.stopImmediatePropagation();
 				e.preventDefault();
 				document.getElementById('anit-filters')?.querySelector('#anit_reset')?.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+				return;
+			}
+
+			// Ctrl+Q — подавляем нежелательное действие Bitrix24 вне полей ввода
+			if (e.ctrlKey && !e.altKey && !e.shiftKey && e.code === 'KeyQ') {
+				const _ae = document.activeElement;
+				const _tag = _ae?.tagName?.toLowerCase();
+				if (_tag === 'input' || _tag === 'textarea' || _tag === 'select') return;
+				e.stopImmediatePropagation();
+				e.preventDefault();
 				return;
 			}
 
@@ -1527,11 +1537,13 @@ if (_presetChannel) {
 #anit-filters .pane{background:#0b0d10;color:#fff;border:1px solid rgba(255,255,255,.15);
   border-radius:12px;padding:10px 12px;font:12px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Arial;
   box-shadow:0 8px 24px rgba(0,0,0,.35);
-  position:relative;width:100%;box-sizing:border-box;overflow-y:overlay;max-height:90vh;}
-#anit-filters .pane::-webkit-scrollbar{width:5px}
-#anit-filters .pane::-webkit-scrollbar-track{background:rgba(255,255,255,.04);border-radius:0 12px 12px 0}
-#anit-filters .pane::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:3px}
-#anit-filters .pane::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.32)}
+  position:relative;width:100%;box-sizing:border-box;overflow-y:scroll;scrollbar-width:none;max-height:90vh;}
+#anit-filters .pane::-webkit-scrollbar{display:none}
+/* Кастомный скроллбар — позиционируется снаружи .pane, справа от панели */
+#anit-filters #anit_scr_track{position:absolute;right:-10px;top:16px;bottom:16px;width:5px;background:rgba(255,255,255,.06);border-radius:3px;display:none;z-index:10001;cursor:pointer}
+#anit-filters #anit_scr_thumb{position:absolute;left:0;right:0;background:rgba(255,255,255,.25);border-radius:3px;min-height:20px;cursor:grab;transition:background .15s}
+#anit-filters #anit_scr_thumb:hover,#anit-filters #anit_scr_track:hover #anit_scr_thumb{background:rgba(255,255,255,.42)}
+#anit-filters #anit_scr_thumb:active{cursor:grabbing}
 #anit-filters .pena-resize-handle{position:absolute;bottom:3px;right:3px;width:18px;height:18px;
   cursor:se-resize;border-right:2px solid rgba(255,255,255,.22);border-bottom:2px solid rgba(255,255,255,.22);
   border-radius:0 0 7px 0;transition:border-color .15s;z-index:5}
@@ -1758,7 +1770,7 @@ if (_presetChannel) {
         <div class="hp-title">Горячие клавиши</div>
         <table>
           <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">Alt</span>+<span class="kbd">F</span></td><td>Показать / скрыть панель</td></tr>
-          <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">\`</span></td><td>Сброс всех фильтров</td></tr>
+          <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">Shift</span>+<span class="kbd">A</span></td><td>Сброс всех фильтров</td></tr>
           <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">1</span>…<span class="kbd">9</span></td><td>Быстрый выбор пресета</td></tr>
         </table>
       </div>
@@ -1897,7 +1909,7 @@ if (_presetChannel) {
   <div class="group">
     <div class="group-title">Действия</div>
     <div class="actions">
-      <button id="anit_reset" class="btn-secondary">Сброс</button>
+      <button id="anit_reset" class="btn-secondary" title="Сброс фильтров (Ctrl+Shift+A)">Сброс</button>
       ${!IS_OL_FRAME ? `<button id="anit_prefetch_manual" class="btn-tertiary">Загрузить чаты</button>` : ``}
     </div>
   </div>
@@ -2593,7 +2605,7 @@ if (_presetChannel) {
 
 	// --- Проверка обновлений прямо из панели ---
 	const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
-	const _UPD_CURRENT = '6.3.5';
+	const _UPD_CURRENT = '6.3.6';
 	const _UPD_LS_KEY  = 'pena.update.info';
 
 	function _semverNewer(remote, local) {
@@ -2729,14 +2741,14 @@ if (_presetChannel) {
 		btn.disabled = true;
 		// Запрос идёт через content.js → background.js (CSP не мешает)
 		window.postMessage({ type: 'PENA_CHECK_UPDATES', silent: false }, '*');
-		// Таймаут: если ни один из каналов не ответил за 20 сек — сбрасываем кнопку
+		// Таймаут: если результат не пришёл за 15 сек — сбрасываем кнопку
 		setTimeout(() => {
 			if (btn.classList.contains('--checking')) {
 				btn.classList.remove('--checking');
 				btn.disabled = false;
 				_showUpdToast('Нет соединения — проверьте позже');
 			}
-		}, 20000);
+		}, 15000);
 	});
 	// --- конец блока проверки обновлений ---
 
@@ -2900,6 +2912,55 @@ if (_presetChannel) {
 	};
 	host.querySelector('#anit_reset').addEventListener('click', _doReset);
 
+	// --- Кастомный скроллбар (снаружи .pane, не смещает контент) ---
+	(function _initScrollbar() {
+		const pane = host.querySelector('.pane');
+		if (!pane) return;
+		const track = document.createElement('div');
+		track.id = 'anit_scr_track';
+		const thumb = document.createElement('div');
+		thumb.id = 'anit_scr_thumb';
+		track.appendChild(thumb);
+		host.appendChild(track); // в #anit-filters, не в .pane — выходит за правый край
+
+		function _syncThumb() {
+			const sh = pane.scrollHeight, ch = pane.clientHeight;
+			if (sh <= ch + 2) { track.style.display = 'none'; return; }
+			track.style.display = 'block';
+			const trackH = track.clientHeight;
+			const thumbH = Math.max(20, (ch / sh) * trackH);
+			const maxTop  = trackH - thumbH;
+			const frac    = pane.scrollTop / (sh - ch);
+			thumb.style.height = thumbH + 'px';
+			thumb.style.top    = (frac * maxTop) + 'px';
+		}
+
+		pane.addEventListener('scroll', _syncThumb, { passive: true });
+		try { new ResizeObserver(_syncThumb).observe(pane); } catch (_) {}
+		_syncThumb();
+
+		// Перетаскивание ползунка
+		let _drag = false, _sy = 0, _sst = 0;
+		thumb.addEventListener('mousedown', e => {
+			_drag = true; _sy = e.clientY; _sst = pane.scrollTop;
+			e.preventDefault(); e.stopPropagation();
+		});
+		document.addEventListener('mousemove', e => {
+			if (!_drag) return;
+			const moveRange   = track.clientHeight - thumb.clientHeight;
+			const scrollRange = pane.scrollHeight - pane.clientHeight;
+			if (moveRange > 0) pane.scrollTop = _sst + ((e.clientY - _sy) / moveRange) * scrollRange;
+		}, { passive: true });
+		document.addEventListener('mouseup', () => { _drag = false; });
+
+		// Клик по треку — прыжок к позиции
+		track.addEventListener('click', e => {
+			if (e.target === thumb) return;
+			const rect = track.getBoundingClientRect();
+			const frac = (e.clientY - rect.top) / track.clientHeight;
+			pane.scrollTop = frac * (pane.scrollHeight - pane.clientHeight);
+		});
+	})();
 
 		let queryTimer = null;
 		function scheduleQueryApply() {

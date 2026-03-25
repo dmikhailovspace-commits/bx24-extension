@@ -47,10 +47,7 @@
     if (msg && msg.type === 'UPDATE_AVAILABLE') {
       window.postMessage({ type: 'PENA_UPDATE_AVAILABLE', version: msg.version, url: msg.url, _pena_dl: true }, '*');
     }
-    // Результат ручной/авто проверки (ответ на CHECK_UPDATES)
-    if (msg && msg.type === 'CHECK_RESULT') {
-      window.postMessage({ ...msg, _pena_dl: true }, '*');
-    }
+    // CHECK_RESULT теперь идёт через storage.onChanged (см. ниже), не через sendMessage
   });
 
   // Запасной канал: storage.onChanged ловит anit_check_result, записанный background.js
@@ -72,17 +69,10 @@
     }
 
     // Запрос на проверку обновлений → background.js (fetch вне CSP страницы)
-    // Результат приходит через .then() — background кладёт всё в sendResponse
+    // Fire-and-forget: результат придёт через storage.onChanged (надёжнее .then() в MV3 SW)
     if (d.type === 'PENA_CHECK_UPDATES') {
       const silent = !!d.silent;
-      chrome.runtime.sendMessage({ type: 'CHECK_UPDATES', silent })
-        .then((result) => {
-          // result = { type:'CHECK_RESULT', silent, ok, hasUpdate?, version?, url? }
-          window.postMessage({ ...result, _pena_dl: true }, '*');
-        })
-        .catch(() => {
-          window.postMessage({ type: 'CHECK_RESULT', ok: false, silent, _pena_dl: true }, '*');
-        });
+      try { chrome.runtime.sendMessage({ type: 'CHECK_UPDATES', silent }).catch(() => {}); } catch (_) {}
       return;
     }
 
