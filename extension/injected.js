@@ -1754,7 +1754,7 @@ if (_presetChannel) {
         <div class="hp-title">Горячие клавиши</div>
         <table>
           <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">Alt</span>+<span class="kbd">F</span></td><td>Показать / скрыть панель</td></tr>
-          <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">`</span></td><td>Сброс всех фильтров</td></tr>
+          <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">\`</span></td><td>Сброс всех фильтров</td></tr>
           <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">1</span>…<span class="kbd">9</span></td><td>Быстрый выбор пресета</td></tr>
         </table>
       </div>
