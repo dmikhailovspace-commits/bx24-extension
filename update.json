@@ -1,8 +1,8 @@
 {
-  "version": "6.3.9",
+  "version": "6.4.0",
   "release_date": "2026-03-25",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.3.9",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.4.0",
   "zip_url": "https://github.com/dmikhailovspace-commits/bx24-extension/archive/refs/heads/main.zip",
-  "exe_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/download/v6.3.9/PENA_Agency_Setup_v6.3.9.exe",
-  "changelog": "Проверка обновлений: fetch напрямую в content.js — не зависит от SW, работает в Chrome/Yandex/Edge/десктоп Bitrix24; кнопка ↻ крутится при авто-проверке на старте"
+  "exe_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/download/v6.4.0/PENA_Agency_Setup_v6.4.0.exe",
+  "changelog": "Перетаскивание окна за любую пустую область (не кнопку); курсор grab/grabbing при перетаскивании"
 }

@@ -1374,12 +1374,11 @@ if (_presetChannel) {
 	const onPointerDown = (e) => {
 	if (e.type === 'mousedown' && e.button !== 0) return;
 	const t = e.target;
-	const fromMini = !!t?.closest?.('#anit_mini_toggle');
-	const fromHeader = !!t?.closest?.('.header');
-	if (!fromMini && !fromHeader) return;
-	if (!fromMini && t && (t.closest?.('button, input, select, textarea, a, #anit_project_suggest') || t.isContentEditable)) return;
+	// Запрещаем перетаскивание при клике на интерактивные/скролл элементы
+	if (t && (t.closest?.('button, input, select, textarea, a, [contenteditable], #anit_scr_thumb, #anit_scr_track, .pena-resize-handle, .pm-drag') || t.isContentEditable)) return;
 	dragging = true;
 	moved = false;
+	host.classList.add('anit-dragging');
 	startLeft = parseInt(host.style.left || (window.innerWidth - host.offsetWidth - 10) + '', 10) || 0;
 	startTop  = parseInt(host.style.top  || '8', 10) || 0;
 	startX = (e.touches?.[0]?.clientX ?? e.clientX ?? 0);
@@ -1396,6 +1395,7 @@ if (_presetChannel) {
 	const onPointerUp  = () => {
 	if (!dragging) return;
 	dragging = false;
+	host.classList.remove('anit-dragging');
 	document.removeEventListener('mousemove', onMouseMove);
 	document.removeEventListener('mouseup', onPointerUp);
 	document.removeEventListener('touchmove', onTouchMove);
@@ -1536,7 +1536,7 @@ if (_presetChannel) {
 #anit-filters .mini-toggle svg{width:14px;height:14px;display:block;fill:#ffffff;opacity:.9}
 #anit-filters .pane{background:#0b0d10;color:#fff;border:1px solid rgba(255,255,255,.15);
   border-radius:12px;padding:10px 12px;font:12px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Arial;
-  box-shadow:0 8px 24px rgba(0,0,0,.35);
+  box-shadow:0 8px 24px rgba(0,0,0,.35);cursor:grab;
   position:relative;width:100%;box-sizing:border-box;overflow-y:scroll;scrollbar-width:none;max-height:90vh;}
 #anit-filters .pane::-webkit-scrollbar{display:none}
 /* Кастомный скроллбар — позиционируется снаружи .pane, справа от панели */
@@ -1688,6 +1688,7 @@ if (_presetChannel) {
 #anit-filters .pm-empty{font-size:11px;color:rgba(255,255,255,.28);padding:4px 2px 6px;text-align:center}
 #anit-filters #anit_preset_manage_panel,#anit-filters #anit_cat_manage_panel{position:absolute;left:0;right:0;top:30px;z-index:200;background:#0c0e14;border:1px solid rgba(255,255,255,.18);border-radius:9px;padding:10px;box-shadow:0 10px 30px rgba(0,0,0,.6)}
 #anit-filters.anit-debug-mode .pane{outline:4px solid #f59e0b;outline-offset:-2px;border-radius:12px}
+#anit-filters.anit-dragging,#anit-filters.anit-dragging .pane{cursor:grabbing !important;user-select:none}
 /* debug-badge внутри панели скрыт — индикатор вынесен над окном (#anit_debug_overlay) */
 #anit-filters .debug-badge{display:none !important}
 /* Overlay «Режим отладки» — над окном расширения */
