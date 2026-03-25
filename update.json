@@ -1,8 +1,8 @@
 {
-  "version": "6.3.0",
+  "version": "6.3.1",
   "release_date": "2026-03-25",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.3.0",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.3.1",
   "zip_url": "https://github.com/dmikhailovspace-commits/bx24-extension/archive/refs/heads/main.zip",
-  "exe_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/download/v6.3.0/PENA_Agency_Setup_v6.3.0.exe",
-  "changelog": "UI-фиксы: Ctrl+` сброс фильтров, шестерня пресетов не меняет размер панели, панель всегда разворачивается при загрузке, скруглённые углы при прогрузке чатов, улучшены ограничения минимального размера"
+  "exe_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/download/v6.3.1/PENA_Agency_Setup_v6.3.1.exe",
+  "changelog": "Исправлена проверка обновлений: fetch перенесён из injected.js в background.js (обход CSP Bitrix24). Ручная и авто-проверка теперь работают корректно."
 }

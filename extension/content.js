@@ -47,6 +47,10 @@
     if (msg && msg.type === 'UPDATE_AVAILABLE') {
       window.postMessage({ type: 'PENA_UPDATE_AVAILABLE', version: msg.version, url: msg.url, _pena_dl: true }, '*');
     }
+    // Результат ручной/авто проверки (ответ на CHECK_UPDATES)
+    if (msg && msg.type === 'CHECK_RESULT') {
+      window.postMessage({ ...msg, _pena_dl: true }, '*');
+    }
   });
 
   window.addEventListener('message', (event) => {
@@ -56,6 +60,19 @@
 
     if (d.type === 'ANIT_BXCS_OPEN_OPTIONS') {
       openOptionsPageSafe();
+      return;
+    }
+
+    // Запрос на проверку обновлений → background.js (fetch вне CSP страницы)
+    if (d.type === 'PENA_CHECK_UPDATES') {
+      const silent = !!d.silent;
+      try {
+        chrome.runtime.sendMessage({ type: 'CHECK_UPDATES', silent }).catch(() => {
+          window.postMessage({ type: 'CHECK_RESULT', ok: false, silent, _pena_dl: true }, '*');
+        });
+      } catch (_) {
+        window.postMessage({ type: 'CHECK_RESULT', ok: false, silent, _pena_dl: true }, '*');
+      }
       return;
     }
 

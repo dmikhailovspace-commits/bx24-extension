@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Сортировщик чатов BX24",
-  "version": "6.3.0",
+  "version": "6.3.1",
   "description": "Фильтрация и сортировка чатов Bitrix24 по ключевым словам, тегам и категориям",
   "permissions": [
     "storage",

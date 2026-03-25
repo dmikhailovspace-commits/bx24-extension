@@ -16,13 +16,13 @@ function isNewer(remote, local) {
 async function checkForUpdates() {
   try {
     const resp = await fetch(UPDATE_JSON_URL, { cache: 'no-store' });
-    if (!resp.ok) return;
+    if (!resp.ok) return { ok: false, err: 'HTTP ' + resp.status };
     const data = await resp.json();
     const remoteVer = String(data.version || '');
     const localVer  = chrome.runtime.getManifest().version;
     if (!remoteVer || !isNewer(remoteVer, localVer)) {
       chrome.storage.local.set({ anit_update_info: { hasUpdate: false } });
-      return;
+      return { ok: true, hasUpdate: false };
     }
 
     const url = data.exe_url || data.release_url || '';
@@ -49,8 +49,11 @@ async function checkForUpdates() {
       message:  `Версия ${remoteVer} готова. Откройте расширение для скачивания.`,
       priority: 1,
     });
-  } catch (_) {
+
+    return { ok: true, hasUpdate: true, version: remoteVer, url };
+  } catch (e) {
     // Нет сети — повторим завтра
+    return { ok: false, err: String(e) };
   }
 }
 
@@ -60,9 +63,17 @@ chrome.runtime.onInstalled.addListener(checkForUpdates);
 
 // Обработчик сообщений от content.js и popup
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  // Ручная проверка обновлений
+  // Ручная/авто проверка обновлений (запрос из injected.js через content.js)
   if (msg?.type === 'CHECK_UPDATES') {
-    checkForUpdates().then(() => sendResponse({ ok: true }));
+    const tabId = sender.tab?.id;
+    const silent = !!msg.silent;
+    checkForUpdates().then((result) => {
+      sendResponse({ ok: true });
+      // Возвращаем результат напрямую в запросившую вкладку
+      if (tabId) {
+        chrome.tabs.sendMessage(tabId, { type: 'CHECK_RESULT', silent, ...result }).catch(() => {});
+      }
+    });
     return true; // async response
   }
 

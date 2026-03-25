@@ -2589,7 +2589,7 @@ if (_presetChannel) {
 
 	// --- Проверка обновлений прямо из панели ---
 	const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
-	const _UPD_CURRENT = '6.2.0';
+	const _UPD_CURRENT = '6.3.0';
 	const _UPD_LS_KEY  = 'pena.update.info';
 
 	function _semverNewer(remote, local) {
@@ -2635,22 +2635,9 @@ if (_presetChannel) {
 		if (saved?.hasUpdate && saved.version && saved.url) _applyUpdateBanner(saved.version, saved.url);
 	} catch {}
 
-	// Автопроверка при загрузке (тихая — обновляет баннер без уведомлений)
-	setTimeout(async () => {
-		try {
-			const resp = await fetch(_UPD_URL, { cache: 'no-store' });
-			if (!resp.ok) return;
-			const data = await resp.json();
-			const remoteVer = String(data.version || '');
-			const url = data.exe_url || data.release_url || '';
-			if (remoteVer && _semverNewer(remoteVer, _UPD_CURRENT)) {
-				try { localStorage.setItem(_UPD_LS_KEY, JSON.stringify({ hasUpdate: true, version: remoteVer, url })); } catch {}
-				_applyUpdateBanner(remoteVer, url);
-			} else {
-				try { localStorage.setItem(_UPD_LS_KEY, JSON.stringify({ hasUpdate: false })); } catch {}
-				_clearUpdateBanner();
-			}
-		} catch (_) {}
+	// Автопроверка при загрузке (тихая — через background.js, минуя CSP)
+	setTimeout(() => {
+		window.postMessage({ type: 'PENA_CHECK_UPDATES', silent: true }, '*');
 	}, 4000);
 
 	// --- Seamless update download flow ---
@@ -2703,38 +2690,34 @@ if (_presetChannel) {
 		} else if (msg.type === 'PENA_UPDATE_AVAILABLE') {
 			// Пришло от content.js: background нашёл обновление в chrome.storage.local
 			if (msg.version && msg.url) _applyUpdateBanner(msg.version, msg.url);
+		} else if (msg.type === 'CHECK_RESULT') {
+			// Ответ на PENA_CHECK_UPDATES — результат проверки из background.js
+			const btn = host.querySelector('#anit_update_btn');
+			if (btn) { btn.classList.remove('--checking'); btn.disabled = false; }
+			if (msg.hasUpdate && msg.version && msg.url) {
+				try { localStorage.setItem(_UPD_LS_KEY, JSON.stringify({ hasUpdate: true, version: msg.version, url: msg.url })); } catch {}
+				_applyUpdateBanner(msg.version, msg.url);
+				if (!msg.silent) _showUpdToast('⬆ Обновление v' + msg.version + ' доступно — нажмите «Установить»');
+			} else if (msg.ok) {
+				try { localStorage.setItem(_UPD_LS_KEY, JSON.stringify({ hasUpdate: false })); } catch {}
+				_clearUpdateBanner();
+				if (!msg.silent) _showUpdToast('✓ Установлена актуальная версия', true);
+			} else {
+				if (!msg.silent) _showUpdToast('Нет соединения — проверьте позже');
+			}
 		}
 	});
 
 	host.querySelector('#anit_update_banner_close')?.addEventListener('click', () => {
 		if (_ubpBanner) _ubpBanner.style.display = 'none';
 	});
-	host.querySelector('#anit_update_btn')?.addEventListener('click', async () => {
+	host.querySelector('#anit_update_btn')?.addEventListener('click', () => {
 		const btn = host.querySelector('#anit_update_btn');
 		if (!btn || btn.classList.contains('--checking')) return;
 		btn.classList.add('--checking');
 		btn.disabled = true;
-		try {
-			const resp = await fetch(_UPD_URL, { cache: 'no-store' });
-			if (!resp.ok) throw new Error('HTTP ' + resp.status);
-			const data = await resp.json();
-			const remoteVer = String(data.version || '');
-			const url = data.exe_url || data.release_url || '';
-			if (remoteVer && _semverNewer(remoteVer, _UPD_CURRENT)) {
-				try { localStorage.setItem(_UPD_LS_KEY, JSON.stringify({ hasUpdate: true, version: remoteVer, url })); } catch {}
-				_applyUpdateBanner(remoteVer, url);
-				_showUpdToast(`⬆ Обновление v${remoteVer} доступно — нажмите «Скачать»`);
-			} else {
-				try { localStorage.setItem(_UPD_LS_KEY, JSON.stringify({ hasUpdate: false })); } catch {}
-				_clearUpdateBanner();
-				_showUpdToast('✓ Установлена актуальная версия', true);
-			}
-		} catch (_e) {
-			_showUpdToast('Нет соединения — проверьте позже');
-		} finally {
-			btn.classList.remove('--checking');
-			btn.disabled = false;
-		}
+		// Запрос идёт через content.js → background.js (CSP не мешает)
+		window.postMessage({ type: 'PENA_CHECK_UPDATES', silent: false }, '*');
 	});
 	// --- конец блока проверки обновлений ---
 
