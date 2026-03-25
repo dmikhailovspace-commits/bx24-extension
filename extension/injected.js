@@ -1716,6 +1716,8 @@ if (_presetChannel) {
 #anit-filters .ubp-label-row{display:flex;justify-content:space-between;margin-bottom:3px;font-size:10px;opacity:.7}
 #anit-filters .ubp-track{height:4px;background:rgba(255,255,255,.1);border-radius:2px;overflow:hidden}
 #anit-filters .ubp-fill{height:100%;background:#f0b820;border-radius:2px;transition:width .3s ease;width:0%}
+@keyframes anit-dl-slide{to{background-position:32px 0}}
+#anit-filters .ubp-fill.--indet{width:100% !important;transition:none;background:repeating-linear-gradient(90deg,#e6a800 0,#f0b820 16px,#e6a800 32px);background-size:32px 100%;animation:anit-dl-slide .8s linear infinite}
 #anit-filters .ubp-done-row{display:flex;align-items:center;justify-content:space-between;margin-top:6px;gap:8px}
 #anit-filters .ubp-done-row>span{color:#5dc87e;font-size:11px}
 #anit-filters .ubp-restart{padding:3px 10px;border-radius:6px;border:1px solid rgba(93,200,126,.4);background:rgba(93,200,126,.12);color:#5dc87e;font-size:11px;cursor:pointer;font-family:inherit;transition:all .15s}
@@ -2611,7 +2613,7 @@ if (_presetChannel) {
 
 	// --- Проверка обновлений прямо из панели ---
 	const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
-	const _UPD_CURRENT = '6.3.8';
+	const _UPD_CURRENT = '6.3.9';
 	const _UPD_LS_KEY  = 'pena.update.info';
 
 	function _semverNewer(remote, local) {
@@ -2708,12 +2710,20 @@ if (_presetChannel) {
 		if (!ev.data || !ev.data._pena_dl) return;
 		const msg = ev.data;
 		if (msg.type === 'DL_PROGRESS') {
-			const pct = Math.min(99, Math.round(msg.pct || 0));
-			if (_ubpPct)  _ubpPct.textContent  = pct + '%';
-			if (_ubpFill) _ubpFill.style.width = pct + '%';
+			if (msg.pct >= 0) {
+				// Размер известен — реальный процент
+				const pct = Math.min(99, msg.pct);
+				if (_ubpPct)  _ubpPct.textContent  = pct + '%';
+				if (_ubpFill) { _ubpFill.classList.remove('--indet'); _ubpFill.style.width = pct + '%'; }
+			} else {
+				// Размер неизвестен (totalBytes = -1) — анимированная полоска
+				const mb = msg.recv > 0 ? (msg.recv / 1048576).toFixed(1) + ' МБ' : '...';
+				if (_ubpPct) _ubpPct.textContent = mb;
+				if (_ubpFill) _ubpFill.classList.add('--indet');
+			}
 		} else if (msg.type === 'DL_DONE') {
 			if (_ubpPct)  _ubpPct.textContent  = '100%';
-			if (_ubpFill) _ubpFill.style.width = '100%';
+			if (_ubpFill) { _ubpFill.classList.remove('--indet'); _ubpFill.style.width = '100%'; }
 			setTimeout(() => {
 				if (_ubpProg) _ubpProg.style.display = 'none';
 				if (_ubpDone) _ubpDone.style.display  = '';

@@ -90,10 +90,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         chrome.downloads.search({ id: downloadId }, ([item]) => {
           if (!item) { clearInterval(poll); return; }
           if (item.state === 'in_progress') {
-            const total = item.totalBytes   || 0;
+            // totalBytes может быть -1 если сервер не вернул Content-Length
+            // Используем строгую проверку > 0, не || 0 (иначе -1 || 0 = -1)
+            const total = item.totalBytes > 0 ? item.totalBytes : 0;
             const recv  = item.bytesReceived || 0;
-            const pct   = total > 0 ? Math.round(recv / total * 100) : 0;
-            chrome.tabs.sendMessage(tabId, { type: 'DL_PROGRESS', pct }).catch(() => {});
+            const pct   = total > 0 ? Math.min(99, Math.round(recv / total * 100)) : -1;
+            chrome.tabs.sendMessage(tabId, { type: 'DL_PROGRESS', pct, recv }).catch(() => {});
           } else if (item.state === 'complete') {
             clearInterval(poll);
             chrome.tabs.sendMessage(tabId, { type: 'DL_DONE' }).catch(() => {});
