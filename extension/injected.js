@@ -2614,7 +2614,7 @@ if (_presetChannel) {
 
 	// --- Проверка обновлений прямо из панели ---
 	const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
-	const _UPD_CURRENT = '6.3.9';
+	const _UPD_CURRENT = '6.4.0';
 	const _UPD_LS_KEY  = 'pena.update.info';
 
 	function _semverNewer(remote, local) {
@@ -2633,14 +2633,14 @@ if (_presetChannel) {
 		if (_toastTimer) clearTimeout(_toastTimer);
 		_toastTimer = setTimeout(() => { toast.classList.remove('--show'); toast.classList.remove('--ok'); }, 2800);
 	}
-	function _applyUpdateBanner(version, url) {
+	function _applyUpdateBanner(version, injected_js_url) {
 		const dot    = host.querySelector('#anit_update_dot');
 		const banner = host.querySelector('#anit_update_banner');
 		const txt    = host.querySelector('#anit_update_banner_text');
 		const lnk    = host.querySelector('#anit_update_banner_link');
 		if (dot)    dot.style.display = '';
 		if (txt)    txt.textContent = `Доступно обновление v${version}`;
-		if (lnk)  { lnk.dataset.url = url || ''; lnk.dataset.filename = `PENA_Agency_Setup_v${version}.exe`; lnk.disabled = false; lnk.textContent = 'Установить'; }
+		if (lnk)  { lnk.dataset.injectedJsUrl = injected_js_url || ''; lnk.dataset.version = version || ''; lnk.disabled = false; lnk.textContent = 'Обновить'; }
 		if (banner) { banner.style.display = ''; banner.className = 'update-banner'; }
 		const prog = host.querySelector('#anit_ubp_progress');
 		const done = host.querySelector('#anit_ubp_done');
@@ -2657,7 +2657,7 @@ if (_presetChannel) {
 	// Восстановить состояние из localStorage
 	try {
 		const saved = JSON.parse(localStorage.getItem(_UPD_LS_KEY) || 'null');
-		if (saved?.hasUpdate && saved.version && saved.url) _applyUpdateBanner(saved.version, saved.url);
+		if (saved?.hasUpdate && saved.version && saved.injected_js_url) _applyUpdateBanner(saved.version, saved.injected_js_url);
 	} catch {}
 
 	let _lastCheckResultTs = 0; // дедупликация дублей по ts
@@ -2691,64 +2691,69 @@ if (_presetChannel) {
 	const _ubpRestart = host.querySelector('#anit_ubp_restart');
 
 	_ubpInstBtn?.addEventListener('click', () => {
-		const url      = _ubpInstBtn.dataset.url;
-		const filename = _ubpInstBtn.dataset.filename || 'PENA_Agency_Update.exe';
-		if (!url) return;
+		const injected_js_url = _ubpInstBtn.dataset.injectedJsUrl;
+		const version         = _ubpInstBtn.dataset.version;
+		if (!injected_js_url) return;
 		_ubpInstBtn.disabled = true;
-		if (_ubpProg) _ubpProg.style.display = '';
-		if (_ubpPct)  _ubpPct.textContent = '0%';
-		if (_ubpFill) _ubpFill.style.width = '0%';
+		if (_ubpLabel) _ubpLabel.textContent = 'Загрузка обновления...';
+		if (_ubpProg)  _ubpProg.style.display = '';
+		if (_ubpPct)   _ubpPct.textContent = '0%';
+		if (_ubpFill)  { _ubpFill.classList.remove('--indet'); _ubpFill.style.width = '0%'; }
 		if (_ubpBanner) _ubpBanner.classList.add('--downloading');
-		window.postMessage({ type: 'PENA_DOWNLOAD_UPDATE', url, filename }, '*');
+		window.postMessage({ type: 'PENA_APPLY_UPDATE', injected_js_url, version }, '*');
 	});
 
 	_ubpRestart?.addEventListener('click', () => {
 		window.postMessage({ type: 'PENA_RELOAD_EXT' }, '*');
 	});
 
-	// Ответы от content.js о прогрессе скачивания
+	// Ответы от content.js: прогресс обновления + результат проверки
 	window.addEventListener('message', (ev) => {
 		if (!ev.data || !ev.data._pena_dl) return;
 		const msg = ev.data;
-		if (msg.type === 'DL_PROGRESS') {
-			if (msg.pct >= 0) {
-				// Размер известен — реальный процент
-				const pct = Math.min(99, msg.pct);
-				if (_ubpPct)  _ubpPct.textContent  = pct + '%';
-				if (_ubpFill) { _ubpFill.classList.remove('--indet'); _ubpFill.style.width = pct + '%'; }
-			} else {
-				// Размер неизвестен (totalBytes = -1) — анимированная полоска
-				const mb = msg.recv > 0 ? (msg.recv / 1048576).toFixed(1) + ' МБ' : '...';
-				if (_ubpPct) _ubpPct.textContent = mb;
-				if (_ubpFill) _ubpFill.classList.add('--indet');
-			}
-		} else if (msg.type === 'DL_DONE') {
+
+		if (msg.type === 'UPDATE_PROGRESS') {
+			// Прогресс загрузки нового injected.js
+			const pct = Math.min(99, msg.pct >= 0 ? msg.pct : 0);
+			if (_ubpPct)  _ubpPct.textContent  = pct + '%';
+			if (_ubpFill) { _ubpFill.classList.remove('--indet'); _ubpFill.style.width = pct + '%'; }
+
+		} else if (msg.type === 'UPDATE_DONE') {
+			// Обновление сохранено в chrome.storage.local, расширение перезапускается
 			if (_ubpPct)  _ubpPct.textContent  = '100%';
 			if (_ubpFill) { _ubpFill.classList.remove('--indet'); _ubpFill.style.width = '100%'; }
 			setTimeout(() => {
 				if (_ubpProg) _ubpProg.style.display = 'none';
-				if (_ubpDone) _ubpDone.style.display  = '';
+				if (_ubpDone) {
+					_ubpDone.style.display = '';
+					const span = _ubpDone.querySelector('span');
+					if (span) span.textContent = '✓ Применяется... перезагрузка';
+					// Скрываем кнопку "Перезапустить" — перезапуск автоматический
+					if (_ubpRestart) _ubpRestart.style.display = 'none';
+				}
 				if (_ubpBanner) { _ubpBanner.classList.remove('--downloading', '--error'); _ubpBanner.classList.add('--done'); }
 			}, 300);
-		} else if (msg.type === 'DL_ERROR') {
-			if (_ubpBanner) { _ubpBanner.classList.remove('--downloading', '--done'); _ubpBanner.classList.add('--error'); }
-			if (_ubpProg)   _ubpProg.style.display = 'none';
+
+		} else if (msg.type === 'UPDATE_ERROR') {
+			if (_ubpBanner)  { _ubpBanner.classList.remove('--downloading', '--done'); _ubpBanner.classList.add('--error'); }
+			if (_ubpProg)    _ubpProg.style.display = 'none';
 			if (_ubpInstBtn) { _ubpInstBtn.disabled = false; _ubpInstBtn.textContent = 'Повторить'; }
 			_showUpdToast('Ошибка загрузки обновления');
+
 		} else if (msg.type === 'PENA_UPDATE_AVAILABLE') {
-			// Пришло от content.js: background нашёл обновление в chrome.storage.local
-			if (msg.version && msg.url) _applyUpdateBanner(msg.version, msg.url);
+			// Пришло от content.js: в chrome.storage найдена информация об обновлении
+			if (msg.version && msg.injected_js_url) _applyUpdateBanner(msg.version, msg.injected_js_url);
+
 		} else if (msg.type === 'CHECK_RESULT') {
 			// Дедупликация: оба канала могут доставить один и тот же результат
 			if (msg.ts && msg.ts === _lastCheckResultTs) return;
 			if (msg.ts) _lastCheckResultTs = msg.ts;
-			// Ответ на PENA_CHECK_UPDATES — результат проверки из background.js
 			const btn = host.querySelector('#anit_update_btn');
 			if (btn) { btn.classList.remove('--checking'); btn.disabled = false; }
-			if (msg.hasUpdate && msg.version && msg.url) {
-				try { localStorage.setItem(_UPD_LS_KEY, JSON.stringify({ hasUpdate: true, version: msg.version, url: msg.url })); } catch {}
-				_applyUpdateBanner(msg.version, msg.url);
-				if (!msg.silent) _showUpdToast('⬆ Обновление v' + msg.version + ' доступно — нажмите «Установить»');
+			if (msg.hasUpdate && msg.version && msg.injected_js_url) {
+				try { localStorage.setItem(_UPD_LS_KEY, JSON.stringify({ hasUpdate: true, version: msg.version, injected_js_url: msg.injected_js_url })); } catch {}
+				_applyUpdateBanner(msg.version, msg.injected_js_url);
+				if (!msg.silent) _showUpdToast('⬆ Обновление v' + msg.version + ' доступно — нажмите «Обновить»');
 			} else if (msg.ok) {
 				try { localStorage.setItem(_UPD_LS_KEY, JSON.stringify({ hasUpdate: false })); } catch {}
 				_clearUpdateBanner();
