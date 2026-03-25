@@ -1,5 +1,11 @@
 (function () {
   const LOGP = '[PENA/CS]';
+  const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
+  function _isNewerVer(r, l) {
+    const p = v => v.split('.').map(Number);
+    const [ra,rb,rc]=p(r),[la,lb,lc]=p(l);
+    if(ra!==la)return ra>la;if(rb!==lb)return rb>lb;return rc>lc;
+  }
 
   if (self === top && typeof location !== 'undefined' && /\/marketplace\//.test(location.pathname || '')) {
     return;
@@ -50,14 +56,6 @@
     // CHECK_RESULT теперь идёт через storage.onChanged (см. ниже), не через sendMessage
   });
 
-  // Запасной канал: storage.onChanged ловит anit_check_result, записанный background.js
-  // Срабатывает даже если sendResponse-канал SW закрылся до ответа
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local' || !changes.anit_check_result) return;
-    const r = changes.anit_check_result.newValue;
-    if (r) window.postMessage({ ...r, _pena_dl: true }, '*');
-  });
-
   window.addEventListener('message', (event) => {
     if (event.source !== window) return;
     const d = event.data;
@@ -68,11 +66,31 @@
       return;
     }
 
-    // Запрос на проверку обновлений → background.js (fetch вне CSP страницы)
-    // Fire-and-forget: результат придёт через storage.onChanged (надёжнее .then() в MV3 SW)
+    // Проверка обновлений: fetch ПРЯМО в content script
+    // Content scripts не ограничены CSP страницы → работает в Chrome, Yandex, Edge, десктоп Bitrix24
+    // Не зависит от жизненного цикла Service Worker
     if (d.type === 'PENA_CHECK_UPDATES') {
       const silent = !!d.silent;
-      try { chrome.runtime.sendMessage({ type: 'CHECK_UPDATES', silent }).catch(() => {}); } catch (_) {}
+      const ctrl = new AbortController();
+      const _t = setTimeout(() => ctrl.abort(), 12000);
+      fetch(_UPD_URL, { cache: 'no-store', signal: ctrl.signal })
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(data => {
+          clearTimeout(_t);
+          const remoteVer = String(data.version || '');
+          let localVer = '';
+          try { localVer = chrome.runtime.getManifest().version; } catch (_) {}
+          if (!remoteVer || !localVer || !_isNewerVer(remoteVer, localVer)) {
+            window.postMessage({ type: 'CHECK_RESULT', ok: true, hasUpdate: false, silent, _pena_dl: true }, '*');
+          } else {
+            const url = data.exe_url || data.release_url || '';
+            window.postMessage({ type: 'CHECK_RESULT', ok: true, hasUpdate: true, version: remoteVer, url, silent, _pena_dl: true }, '*');
+          }
+        })
+        .catch(() => {
+          clearTimeout(_t);
+          window.postMessage({ type: 'CHECK_RESULT', ok: false, silent, _pena_dl: true }, '*');
+        });
       return;
     }
 

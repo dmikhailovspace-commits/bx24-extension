@@ -2605,7 +2605,7 @@ if (_presetChannel) {
 
 	// --- Проверка обновлений прямо из панели ---
 	const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
-	const _UPD_CURRENT = '6.3.6';
+	const _UPD_CURRENT = '6.3.7';
 	const _UPD_LS_KEY  = 'pena.update.info';
 
 	function _semverNewer(remote, local) {
@@ -2651,14 +2651,25 @@ if (_presetChannel) {
 		if (saved?.hasUpdate && saved.version && saved.url) _applyUpdateBanner(saved.version, saved.url);
 	} catch {}
 
-	// Дедупликация CHECK_RESULT: оба канала (sendResponse + storage) могут прийти
-	// почти одновременно — обрабатываем только первый с данным ts
-	let _lastCheckResultTs = 0;
+	let _lastCheckResultTs = 0; // дедупликация дублей по ts
 
-	// Автопроверка при загрузке (тихая — через background.js, минуя CSP)
+	// Автопроверка при загрузке — content.js делает fetch напрямую (минуя CSP)
 	setTimeout(() => {
+		const _chkBtn = host.querySelector('#anit_update_btn');
+		if (_chkBtn && !_chkBtn.classList.contains('--checking')) {
+			_chkBtn.classList.add('--checking');
+			_chkBtn.disabled = true;
+		}
 		window.postMessage({ type: 'PENA_CHECK_UPDATES', silent: true }, '*');
-	}, 4000);
+		// Сброс кнопки если ответ не пришёл за 15 сек
+		setTimeout(() => {
+			const _b = host.querySelector('#anit_update_btn');
+			if (_b && _b.classList.contains('--checking')) {
+				_b.classList.remove('--checking');
+				_b.disabled = false;
+			}
+		}, 15000);
+	}, 3000);
 
 	// --- Seamless update download flow ---
 	const _ubpBanner  = host.querySelector('#anit_update_banner');

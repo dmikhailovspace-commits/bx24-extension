@@ -1,8 +1,8 @@
 {
-  "version": "6.3.6",
+  "version": "6.3.7",
   "release_date": "2026-03-25",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.3.6",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.3.7",
   "zip_url": "https://github.com/dmikhailovspace-commits/bx24-extension/archive/refs/heads/main.zip",
-  "exe_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/download/v6.3.6/PENA_Agency_Setup_v6.3.6.exe",
-  "changelog": "Проверка обновлений через pure-storage канал (AbortController 12 с fetch + storage.onChanged — без sendResponse); кастомный скроллбар снаружи панели; хоткей Ctrl+Shift+A; подавление Ctrl+Q Bitrix24; тултип на кнопке Сброс"
+  "exe_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/download/v6.3.7/PENA_Agency_Setup_v6.3.7.exe",
+  "changelog": "Проверка обновлений: fetch напрямую в content.js — не зависит от SW, работает в Chrome/Yandex/Edge/десктоп Bitrix24; кнопка ↻ крутится при авто-проверке на старте"
 }

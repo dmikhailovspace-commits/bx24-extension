@@ -65,22 +65,8 @@ chrome.runtime.onStartup.addListener(checkForUpdates);
 chrome.runtime.onInstalled.addListener(checkForUpdates);
 
 // Обработчик сообщений от content.js и popup
+// Проверка обновлений теперь выполняется прямо в content.js (не зависит от жизни SW)
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  // Ручная/авто проверка обновлений (запрос из injected.js через content.js)
-  // Результат передаём прямо через sendResponse — надёжнее чем tabs.sendMessage,
-  // т.к. service worker гарантированно жив пока не вызван sendResponse.
-  if (msg?.type === 'CHECK_UPDATES') {
-    const silent = !!msg.silent;
-    // Результат идёт ТОЛЬКО через storage.onChanged → content.js → injected.js
-    // sendResponse не используется — исключает проблему таймаута канала MV3 SW
-    checkForUpdates().then((result) => {
-      chrome.storage.local.set({
-        anit_check_result: { type: 'CHECK_RESULT', silent, ...result, ts: Date.now() }
-      });
-    });
-    // return true не нужен — не ждём sendResponse
-  }
-
   // Скачать обновление (вызывается из injected.js через content.js)
   if (msg?.type === 'DOWNLOAD_UPDATE') {
     const url      = msg.url;
