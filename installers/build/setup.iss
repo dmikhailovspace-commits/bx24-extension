@@ -10,11 +10,11 @@
 ; Как скомпилировать:
 ;   Запустите build_setup.bat  (или дважды щёлкните по нему)
 ;
-; Результат: ..\..\dist\PENA_Agency_Setup_v6.3.7.exe
+; Результат: ..\..\dist\PENA_Agency_Setup_v6.3.8.exe
 ; ================================================================
 
 #define AppName      "BX24 Chat Sorter"
-#define AppVersion   "6.3.7"
+#define AppVersion   "6.3.8"
 #define AppPublisher "PENA Agency"
 #define AppURL       "https://github.com/dmikhailovspace-commits/bx24-extension"
 #define TaskName     "PENAAgencyUpdater"

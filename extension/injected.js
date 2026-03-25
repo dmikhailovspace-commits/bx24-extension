@@ -1687,10 +1687,15 @@ if (_presetChannel) {
 #anit-filters .pm-add-btn:hover{background:rgba(255,255,255,.14);color:#fff}
 #anit-filters .pm-empty{font-size:11px;color:rgba(255,255,255,.28);padding:4px 2px 6px;text-align:center}
 #anit-filters #anit_preset_manage_panel,#anit-filters #anit_cat_manage_panel{position:absolute;left:0;right:0;top:30px;z-index:200;background:#0c0e14;border:1px solid rgba(255,255,255,.18);border-radius:9px;padding:10px;box-shadow:0 10px 30px rgba(0,0,0,.6)}
-#anit-filters.anit-debug-mode .pane{outline:2px solid #f59e0b;outline-offset:-2px;border-radius:12px}
-#anit-filters .debug-badge{display:none;font-size:10px;color:#f59e0b;padding:1px 6px;border-radius:6px;border:1px solid rgba(245,158,11,.4);background:rgba(245,158,11,.12);white-space:nowrap;line-height:1.5}
-#anit-filters.anit-debug-mode .debug-badge{display:inline-flex;align-items:center}
-.anit-preset-toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#1a1d23;border:1px solid rgba(245,158,11,.5);color:#f59e0b;padding:8px 18px;border-radius:10px;font-size:12px;z-index:2147483647;pointer-events:none;opacity:0;transition:opacity .25s;white-space:nowrap}
+#anit-filters.anit-debug-mode .pane{outline:4px solid #f59e0b;outline-offset:-2px;border-radius:12px}
+/* debug-badge внутри панели скрыт — индикатор вынесен над окном (#anit_debug_overlay) */
+#anit-filters .debug-badge{display:none !important}
+/* Overlay «Режим отладки» — над окном расширения */
+#anit-filters #anit_debug_overlay{position:absolute;bottom:calc(100% + 5px);left:0;right:0;display:none;justify-content:center;pointer-events:none;z-index:2147483647}
+#anit-filters.anit-debug-mode #anit_debug_overlay{display:flex}
+#anit-filters .anit-debug-flag{font-size:11px;font-weight:600;color:#f59e0b;background:rgba(11,13,16,.92);border:1px solid rgba(245,158,11,.55);border-radius:7px;padding:3px 11px;white-space:nowrap;letter-spacing:.15px;box-shadow:0 2px 8px rgba(0,0,0,.5)}
+/* Тост (уведомления) — над окном расширения, не внутри */
+.anit-preset-toast{position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#1a1d23;border:1px solid rgba(245,158,11,.5);color:#f59e0b;padding:6px 16px;border-radius:10px;font-size:12px;z-index:2147483647;pointer-events:none;opacity:0;transition:opacity .25s;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.5)}
 .anit-preset-toast.--show{opacity:1}
 .anit-preset-toast.--ok{border-color:rgba(93,200,126,.5);color:#5dc87e}
 /* Update check button */
@@ -1801,7 +1806,6 @@ if (_presetChannel) {
   </div>
 
   <div class="anit-preset-confirm" id="anit_preset_confirm"></div>
-  <div class="anit-preset-toast" id="anit_preset_toast"></div>
   <div class="group">
     <div class="group-head">
       <div class="group-title">Пресеты</div>
@@ -1914,6 +1918,8 @@ if (_presetChannel) {
     </div>
   </div>
 </div>
+<div class="anit-preset-toast" id="anit_preset_toast"></div>
+<div id="anit_debug_overlay"><span class="anit-debug-flag">⚙ Режим отладки</span></div>
 <div id="anit_mini_toggle" class="mini-toggle" title="Показать панель (Ctrl+Alt+F)">
   <svg viewBox="0 0 402.577 402.577" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
     <path d="M400.858,11.427c-3.241-7.421-8.85-11.132-16.854-11.136H18.564c-7.993,0-13.61,3.715-16.846,11.136 c-3.234,7.801-1.903,14.467,3.999,19.985l140.757,140.753v138.755c0,4.955,1.809,9.232,5.424,12.854l73.085,73.083 c3.429,3.614,7.71,5.428,12.851,5.428c2.282,0,4.66-0.479,7.135-1.43c7.426-3.238,11.14-8.851,11.14-16.845V172.166L396.861,31.413 C402.765,25.895,404.093,19.231,400.858,11.427z"/>
@@ -2605,7 +2611,7 @@ if (_presetChannel) {
 
 	// --- Проверка обновлений прямо из панели ---
 	const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
-	const _UPD_CURRENT = '6.3.7';
+	const _UPD_CURRENT = '6.3.8';
 	const _UPD_LS_KEY  = 'pena.update.info';
 
 	function _semverNewer(remote, local) {
