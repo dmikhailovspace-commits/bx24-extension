@@ -1517,7 +1517,7 @@ if (_presetChannel) {
 	host.id = 'anit-filters';
 	host.innerHTML = `
 <style>
-#anit-filters{position:fixed;top:8px;left:8px;z-index:9999;width:320px;min-width:320px;max-width:90vw;transition:opacity .4s ease}
+#anit-filters{position:fixed;top:8px;left:8px;z-index:9999;width:360px;min-width:360px;max-width:90vw;transition:opacity .4s ease}
 #anit-filters.anit-hidden{max-width:none !important;width:24px !important;height:24px !important}
 #anit-filters.anit-hidden .pane{display:none !important}
 #anit-filters .mini-toggle{display:none;width:30px;height:30px;border:1px solid rgba(255,255,255,.3);border-radius:9px;background:#0b0d10;color:#fff;align-items:center;justify-content:center;cursor:move;box-shadow:0 4px 18px rgba(0,0,0,.6);transition:border-color .15s,box-shadow .15s}
@@ -1528,6 +1528,10 @@ if (_presetChannel) {
   border-radius:12px;padding:10px 12px;font:12px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Arial;
   box-shadow:0 8px 24px rgba(0,0,0,.35);
   position:relative;width:100%;box-sizing:border-box;overflow-y:auto;max-height:90vh;}
+#anit-filters .pane::-webkit-scrollbar{width:5px}
+#anit-filters .pane::-webkit-scrollbar-track{background:rgba(255,255,255,.04);border-radius:0 12px 12px 0}
+#anit-filters .pane::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:3px}
+#anit-filters .pane::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.32)}
 #anit-filters .pena-resize-handle{position:absolute;bottom:3px;right:3px;width:18px;height:18px;
   cursor:se-resize;border-right:2px solid rgba(255,255,255,.22);border-bottom:2px solid rgba(255,255,255,.22);
   border-radius:0 0 7px 0;transition:border-color .15s;z-index:5}
@@ -3370,10 +3374,10 @@ if (_presetChannel) {
 			const dx = e.clientX - _rzStartX, dy = e.clientY - _rzStartY;
 			const pane = host.querySelector('.pane');
 			if (_rzEdges.r) {
-				host.style.width = Math.max(320, Math.min(window.innerWidth * 0.9, _rzStartW + dx)) + 'px';
+				host.style.width = Math.max(360, Math.min(window.innerWidth * 0.9, _rzStartW + dx)) + 'px';
 			}
 			if (_rzEdges.l) {
-				const newW = Math.max(320, Math.min(window.innerWidth * 0.9, _rzStartW - dx));
+				const newW = Math.max(360, Math.min(window.innerWidth * 0.9, _rzStartW - dx));
 				host.style.width = newW + 'px';
 				host.style.left = Math.max(0, _rzStartLeft + (_rzStartW - newW)) + 'px';
 			}

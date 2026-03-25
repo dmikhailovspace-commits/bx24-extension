@@ -1,8 +1,8 @@
 {
-  "version": "6.3.2",
+  "version": "6.3.3",
   "release_date": "2026-03-25",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.3.2",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.3.3",
   "zip_url": "https://github.com/dmikhailovspace-commits/bx24-extension/archive/refs/heads/main.zip",
-  "exe_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/download/v6.3.2/PENA_Agency_Setup_v6.3.2.exe",
-  "changelog": "Hotfix: экранирован бэктик в template literal (расширение не запускалось)"
+  "exe_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/download/v6.3.3/PENA_Agency_Setup_v6.3.3.exe",
+  "changelog": "Чаты задач: min-width увеличен до 360px — элементы больше не накладываются. Стилизованный скроллбар панели в тёмной теме."
 }
