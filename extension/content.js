@@ -181,8 +181,11 @@
         })
         .then(() => {
           window.postMessage({ type: 'UPDATE_DONE', _pena_dl: true }, '*');
-          // Автоперезапуск через 1.5 сек — переходим на корень Битрикса (полная перезагрузка SPA)
-          setTimeout(() => { try { window.location.href = window.location.origin + '/'; } catch (_) {} }, 1500);
+          // Применяем новый injected.js прямо в текущую страницу через background.js → executeScript(world:'MAIN')
+          // Страница НЕ перезагружается — панель заменяется на месте. Работает везде (CSP обходится).
+          setTimeout(() => {
+            try { chrome.runtime.sendMessage({ type: 'EXEC_CACHED_INJECTED' }).catch(() => {}); } catch (_) {}
+          }, 1500);
         })
         .catch((err) => {
           clearTimeout(_t);

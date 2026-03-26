@@ -117,4 +117,38 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     chrome.runtime.reload();
     return;
   }
+
+  // Применить обновлённый injected.js из chrome.storage напрямую в страницу.
+  // chrome.scripting.executeScript(world:'MAIN') обходит CSP — работает везде:
+  // Chrome, Yandex Browser, Edge, десктоп-приложение Bitrix24 (Electron).
+  if (msg?.type === 'EXEC_CACHED_INJECTED') {
+    const tabId = sender.tab?.id;
+    if (!tabId) { sendResponse({ ok: false, error: 'no tabId' }); return; }
+    const logoUrl = chrome.runtime.getURL('icons/logo.png');
+    chrome.storage.local.get(['pena.injected_cache'], async (data) => {
+      const code = data['pena.injected_cache'];
+      if (!code) { sendResponse({ ok: false, error: 'no cache' }); return; }
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          world: 'MAIN',
+          func: (src, logo) => {
+            // Убираем старую панель и сбрасываем guard перед применением новой версии
+            delete window.__ANITREC_RUNNING__;
+            const old = document.getElementById('anit-filters');
+            if (old) old.remove();
+            // Передаём logoUrl через временный глобал (document.currentScript = null при eval)
+            window.__PENA_LOGO_URL_OVERRIDE__ = logo;
+            try { (0, eval)(src); } catch (e) { console.error('[PENA] exec cached failed', e); }
+            delete window.__PENA_LOGO_URL_OVERRIDE__;
+          },
+          args: [code, logoUrl],
+        });
+        sendResponse({ ok: true });
+      } catch (e) {
+        sendResponse({ ok: false, error: String(e) });
+      }
+    });
+    return true; // async sendResponse
+  }
 });
