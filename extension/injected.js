@@ -1555,6 +1555,12 @@ if (_presetChannel) {
   cursor:se-resize;border-right:2px solid rgba(255,255,255,.22);border-bottom:2px solid rgba(255,255,255,.22);
   border-radius:0 0 7px 0;transition:border-color .15s;z-index:5}
 #anit-filters .pena-resize-handle:hover{border-color:rgba(255,255,255,.5)}
+/* Курсор при ресайзе за края — перекрывает cursor:grab на .pane и других дочерних элементах */
+#anit-filters.rz-e,#anit-filters.rz-e *{cursor:e-resize!important}
+#anit-filters.rz-w,#anit-filters.rz-w *{cursor:w-resize!important}
+#anit-filters.rz-s,#anit-filters.rz-s *{cursor:s-resize!important}
+#anit-filters.rz-se,#anit-filters.rz-se *{cursor:se-resize!important}
+#anit-filters.rz-sw,#anit-filters.rz-sw *{cursor:sw-resize!important}
 #anit-filters .header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 8px 0;cursor:move}
 #anit-filters .header-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto;position:relative}
 #anit-filters .icon-btn{width:22px;height:22px;border:1px solid rgba(255,255,255,.25);border-radius:6px;background:#070809;color:#fff;cursor:pointer;line-height:1;display:inline-flex;align-items:center;justify-content:center;padding:0}
@@ -2626,7 +2632,7 @@ if (_presetChannel) {
 
 	// --- Проверка обновлений прямо из панели ---
 	const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
-	const _UPD_CURRENT = '6.4.10';
+	const _UPD_CURRENT = '6.4.11';
 	const _UPD_LS_KEY  = 'pena.update.info';
 
 	function _semverNewer(remote, local) {
@@ -3469,20 +3475,25 @@ if (_presetChannel) {
 		const r = host.getBoundingClientRect();
 		return { l: ev.clientX <= r.left + _EDGE, r: ev.clientX >= r.right - _EDGE, b: ev.clientY >= r.bottom - _EDGE };
 	};
-	const _edgeCursor = (g) => {
-		if (g.b && g.l) return 'sw-resize';
-		if (g.b && g.r) return 'se-resize';
-		if (g.l) return 'w-resize';
-		if (g.r) return 'e-resize';
-		if (g.b) return 's-resize';
+	const _RZ_CLASSES = ['rz-e','rz-w','rz-s','rz-se','rz-sw'];
+	const _edgeCursorClass = (g) => {
+		if (g.b && g.l) return 'rz-sw';
+		if (g.b && g.r) return 'rz-se';
+		if (g.l) return 'rz-w';
+		if (g.r) return 'rz-e';
+		if (g.b) return 'rz-s';
 		return '';
+	};
+	const _setRzCursor = (cls) => {
+		host.classList.remove(..._RZ_CLASSES);
+		if (cls) host.classList.add(cls);
 	};
 	host.addEventListener('mousemove', (ev) => {
 		if (_rzActive) return;
 		const overUI = !!ev.target.closest('button,input,select,textarea,a,[contenteditable]');
-		host.style.cursor = overUI ? '' : (_edgeCursor(_getEdges(ev)) || '');
+		_setRzCursor(overUI ? '' : _edgeCursorClass(_getEdges(ev)));
 	});
-	host.addEventListener('mouseleave', () => { if (!_rzActive) host.style.cursor = ''; });
+	host.addEventListener('mouseleave', () => { if (!_rzActive) _setRzCursor(''); });
 	host.addEventListener('mousedown', (ev) => {
 		if (ev.button !== 0) return;
 		if (ev.target.closest('button,input,select,textarea,a,[contenteditable]')) return;
@@ -3516,7 +3527,7 @@ if (_presetChannel) {
 			_rzActive = false;
 			document.removeEventListener('mousemove', onRzMove);
 			document.removeEventListener('mouseup', onRzUp);
-			host.style.cursor = '';
+			_setRzCursor('');
 			const pane = host.querySelector('.pane');
 			try { localStorage.setItem(LS_PANEL_SIZE_KEY, JSON.stringify({ w: host.style.width, h: pane?.style.maxHeight || '' })); } catch {}
 		};

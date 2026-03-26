@@ -128,41 +128,47 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     chrome.storage.local.get(['pena.injected_cache'], async (data) => {
       const code = data['pena.injected_cache'];
       if (!code) { sendResponse({ ok: false, error: 'no cache' }); return; }
+      let injected = false;
       try {
-        await chrome.scripting.executeScript({
+        const results = await chrome.scripting.executeScript({
           target: { tabId },
           world: 'MAIN',
           func: (src, logo) => {
-            // Сбрасываем guard, но НЕ удаляем старую панель до проверки успеха
+            // Сбрасываем guard — чтобы новый код мог запуститься
             delete window.__ANITREC_RUNNING__;
             const old = document.getElementById('anit-filters');
-            // Передаём logoUrl через временный глобал (document.currentScript = null в инжектированном script)
+            // Передаём logoUrl через временный глобал
             window.__PENA_LOGO_URL_OVERRIDE__ = logo;
-            // Используем script.textContent вместо eval — обходит unsafe-eval CSP
+            // Метод 1: script.textContent (обходит unsafe-eval, требует unsafe-inline)
             try {
               const s = document.createElement('script');
               s.textContent = src;
               (document.documentElement || document.head || document.body).appendChild(s);
               s.remove();
-            } catch (e) {
-              console.error('[PENA] script inject failed', e);
+            } catch (_) {}
+            // Метод 2: (0,eval) — executeScript world:MAIN сам освобождён от CSP, eval тоже
+            if (!window.__ANITREC_RUNNING__) {
+              try { (0, eval)(src); } catch (_) {} // eslint-disable-line no-eval
             }
             delete window.__PENA_LOGO_URL_OVERRIDE__;
-            // Проверяем, успешно ли запустилась новая версия
-            if (window.__ANITREC_RUNNING__) {
-              // Успех — убираем старую панель
-              if (old && old.parentNode) old.remove();
-            } else {
-              // Не удалось — перезагружаем страницу, чтобы загрузился встроенный injected.js
-              setTimeout(() => { try { window.location.reload(); } catch (_) {} }, 300);
-            }
+            const ok = !!window.__ANITREC_RUNNING__;
+            // Убираем старую панель только при успехе — новая уже в DOM
+            if (ok && old && old.parentNode) old.remove();
+            return ok;
           },
           args: [code, logoUrl],
         });
-        sendResponse({ ok: true });
+        injected = results?.[0]?.result === true;
+        sendResponse({ ok: true, injected });
       } catch (e) {
         sendResponse({ ok: false, error: String(e) });
       }
+      // Если инжект не удался — перезагружаем вкладку через Chrome API
+      // (надёжнее window.location.reload в Electron/Bitrix24 desktop)
+      if (!injected) {
+        try { chrome.tabs.reload(tabId); } catch (_) {}
+      }
+    });
     });
     return true; // async sendResponse
   }
