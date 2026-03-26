@@ -1540,7 +1540,7 @@ if (_presetChannel) {
   position:relative;width:100%;box-sizing:border-box;overflow-y:scroll;scrollbar-width:none;max-height:90vh;}
 #anit-filters .pane::-webkit-scrollbar{display:none}
 /* Кастомный скроллбар — позиционируется снаружи .pane, справа от панели */
-#anit-filters #anit_scr_track{position:absolute;right:-10px;top:16px;bottom:16px;width:5px;background:rgba(255,255,255,.06);border-radius:3px;display:none;z-index:10001;cursor:pointer}
+#anit-filters #anit_scr_track{position:absolute;right:-10px;top:0;bottom:0;width:5px;background:rgba(255,255,255,.06);border-radius:3px;display:none;z-index:10001;cursor:pointer}
 #anit-filters #anit_scr_thumb{position:absolute;left:0;right:0;background:rgba(255,255,255,.25);border-radius:3px;min-height:20px;cursor:grab;transition:background .15s}
 #anit-filters #anit_scr_thumb:hover,#anit-filters #anit_scr_track:hover #anit_scr_thumb{background:rgba(255,255,255,.42)}
 #anit-filters #anit_scr_thumb:active{cursor:grabbing}
