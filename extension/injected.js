@@ -1376,6 +1376,13 @@ if (_presetChannel) {
 	const t = e.target;
 	// Запрещаем перетаскивание при клике на интерактивные/скролл элементы
 	if (t && (t.closest?.('button, input, select, textarea, a, [contenteditable], #anit_scr_thumb, #anit_scr_track, .pena-resize-handle, .pm-drag') || t.isContentEditable)) return;
+	// Запрещаем drag в зонах ресайза (края окна) — там должен работать resize
+	{
+		const _r = host.getBoundingClientRect(), _E = 6;
+		const cx = e.touches?.[0]?.clientX ?? e.clientX ?? 0;
+		const cy = e.touches?.[0]?.clientY ?? e.clientY ?? 0;
+		if (cx <= _r.left + _E || cx >= _r.right - _E || cy >= _r.bottom - _E) return;
+	}
 	dragging = true;
 	moved = false;
 	host.classList.add('anit-dragging');
