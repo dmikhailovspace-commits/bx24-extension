@@ -46,8 +46,14 @@
         s.dataset.logoUrl = _logoUrl;
         s.async = false;
         s.onload = () => { URL.revokeObjectURL(blobUrl); setTimeout(() => s.remove(), 0); };
-        // Если blob заблокирован CSP страницы — падаем на встроенный
-        s.onerror = () => { URL.revokeObjectURL(blobUrl); setTimeout(() => s.remove(), 0); injectBundled(); };
+        // Если blob заблокирован CSP страницы — очищаем битый кеш и падаем на встроенный
+        // (без очистки localVer останется = cachedVer → следующая проверка обновлений даст ложное «актуально»)
+        s.onerror = () => {
+          URL.revokeObjectURL(blobUrl);
+          setTimeout(() => s.remove(), 0);
+          try { chrome.storage.local.remove([_INJECTED_CACHE_KEY, _INJECTED_VER_KEY]); } catch (_) {}
+          injectBundled();
+        };
         _root().appendChild(s);
         return; // ждём onload/onerror — не идём в injectBundled сразу
       }
