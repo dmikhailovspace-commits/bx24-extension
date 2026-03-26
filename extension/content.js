@@ -181,16 +181,52 @@
         })
         .then(() => {
           window.postMessage({ type: 'UPDATE_DONE', _pena_dl: true }, '*');
-          // Применяем новый injected.js прямо в текущую страницу через background.js → executeScript(world:'MAIN')
-          // Страница НЕ перезагружается — панель заменяется на месте. Работает везде (CSP обходится).
-          setTimeout(() => {
-            try { chrome.runtime.sendMessage({ type: 'EXEC_CACHED_INJECTED' }).catch(() => {}); } catch (_) {}
-          }, 1500);
+          // Говорим текущей панели самоудалиться — она ответит PENA_READY_FOR_REINJECT,
+          // после чего мы переинжектируем код прямо из кеша (без background.js / SW).
+          window.postMessage({ type: 'PENA_SELF_RESTART', _pena_dl: true }, '*');
         })
         .catch((err) => {
           clearTimeout(_t);
           window.postMessage({ type: 'UPDATE_ERROR', reason: String(err?.message || err), _pena_dl: true }, '*');
         });
+      return;
+    }
+
+    // ── Переинжект после самоудаления панели ──────────────────────────────────
+    // Панель получила PENA_SELF_RESTART, удалила себя и прислала этот сигнал.
+    // Загружаем обновлённый код из кеша (blob URL) или fallback — встроенный injected.js.
+    // НЕ требует background.js / Service Worker — работает в Electron и в браузере.
+    if (d.type === 'PENA_READY_FOR_REINJECT') {
+      const _lu = chrome.runtime.getURL('icons/logo.png');
+      const _rt = () => document.documentElement || document.head || document.body;
+      const _injectBundledNow = () => {
+        const s = document.createElement('script');
+        s.src = chrome.runtime.getURL('injected.js');
+        s.dataset.logoUrl = _lu;
+        s.async = false;
+        s.onload = s.onerror = () => setTimeout(() => s.remove(), 0);
+        _rt().appendChild(s);
+      };
+      chrome.storage.local.get(_INJECTED_CACHE_KEY, (stored) => {
+        const code = stored[_INJECTED_CACHE_KEY];
+        if (!code) { _injectBundledNow(); return; }
+        // Пробуем blob URL (без сети, быстро)
+        const blob    = new Blob([code], { type: 'application/javascript' });
+        const blobUrl = URL.createObjectURL(blob);
+        const s = document.createElement('script');
+        s.src = blobUrl;
+        s.dataset.logoUrl = _lu;
+        s.async = false;
+        s.onload = () => { URL.revokeObjectURL(blobUrl); setTimeout(() => s.remove(), 0); };
+        s.onerror = () => {
+          // Blob заблокирован CSP — очищаем кеш, fallback на встроенный
+          URL.revokeObjectURL(blobUrl);
+          setTimeout(() => s.remove(), 0);
+          try { chrome.storage.local.remove([_INJECTED_CACHE_KEY, _INJECTED_VER_KEY]); } catch (_) {}
+          _injectBundledNow();
+        };
+        _rt().appendChild(s);
+      });
       return;
     }
 

@@ -1,7 +1,7 @@
 {
   "version": "6.4.12",
   "release_date": "2026-03-26",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.4.12",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.4.14",
   "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension/injected.js",
-  "changelog": "Фикс self-update fallback (chrome.tabs.reload), курсор ресайза через CSS-классы"
+  "changelog": "Новая архитектура self-update: панель сама себя удаляет, content.js переинжектирует без SW"
 }

@@ -2632,7 +2632,7 @@ if (_presetChannel) {
 
 	// --- Проверка обновлений прямо из панели ---
 	const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
-	const _UPD_CURRENT = '6.4.11';
+	const _UPD_CURRENT = '6.4.12';
 	const _UPD_LS_KEY  = 'pena.update.info';
 
 	function _semverNewer(remote, local) {
@@ -2756,7 +2756,16 @@ if (_presetChannel) {
 				if (_ubpBanner) { _ubpBanner.classList.remove('--downloading', '--error'); _ubpBanner.classList.add('--done'); }
 			}, 300);
 
-		} else if (msg.type === 'UPDATE_ERROR') {
+		} else if (msg.type === 'PENA_SELF_RESTART') {
+			// content.js скачал обновление и просит панель самоудалиться для переинжекта
+			// Удаляем guard синхронно — новый код должен запуститься без блокировки
+			delete window.__ANITREC_RUNNING__;
+			const _selfPanel = document.getElementById('anit-filters');
+			if (_selfPanel) _selfPanel.remove();
+			// Сигнал content.js: готов к переинжекту
+			window.postMessage({ type: 'PENA_READY_FOR_REINJECT', _pena_dl: true }, '*');
+
+	} else if (msg.type === 'UPDATE_ERROR') {
 			if (_ubpBanner)  { _ubpBanner.classList.remove('--downloading', '--done'); _ubpBanner.classList.add('--error'); }
 			if (_ubpProg)    _ubpProg.style.display = 'none';
 			if (_ubpInstBtn) { _ubpInstBtn.disabled = false; _ubpInstBtn.textContent = 'Повторить'; }
