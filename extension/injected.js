@@ -1773,6 +1773,7 @@ if (_presetChannel) {
 #anit-filters.preset-locked .type-grid{cursor:default}
 </style>
 <div class="pane">
+  <div id="pena_upd_test" style="background:linear-gradient(90deg,#ff4400,#ff9900);color:#fff;text-align:center;font-weight:800;font-size:13px;padding:8px 6px;border-radius:7px;margin-bottom:10px;letter-spacing:.4px;user-select:none">🎯 UPDATE APPLIED — v6.4.14</div>
   <div class="header">
     <div class="brand">
       ${_PENA_LOGO_URL
@@ -2632,7 +2633,7 @@ if (_presetChannel) {
 
 	// --- Проверка обновлений прямо из панели ---
 	const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
-	const _UPD_CURRENT = '6.4.12';
+	const _UPD_CURRENT = '6.4.14';
 	const _UPD_LS_KEY  = 'pena.update.info';
 
 	function _semverNewer(remote, local) {
