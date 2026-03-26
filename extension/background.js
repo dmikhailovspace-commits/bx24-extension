@@ -133,14 +133,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           target: { tabId },
           world: 'MAIN',
           func: (src, logo) => {
-            // Убираем старую панель и сбрасываем guard перед применением новой версии
+            // Сбрасываем guard, но НЕ удаляем старую панель до проверки успеха
             delete window.__ANITREC_RUNNING__;
             const old = document.getElementById('anit-filters');
-            if (old) old.remove();
-            // Передаём logoUrl через временный глобал (document.currentScript = null при eval)
+            // Передаём logoUrl через временный глобал (document.currentScript = null в инжектированном script)
             window.__PENA_LOGO_URL_OVERRIDE__ = logo;
-            try { (0, eval)(src); } catch (e) { console.error('[PENA] exec cached failed', e); }
+            // Используем script.textContent вместо eval — обходит unsafe-eval CSP
+            try {
+              const s = document.createElement('script');
+              s.textContent = src;
+              (document.documentElement || document.head || document.body).appendChild(s);
+              s.remove();
+            } catch (e) {
+              console.error('[PENA] script inject failed', e);
+            }
             delete window.__PENA_LOGO_URL_OVERRIDE__;
+            // Проверяем, успешно ли запустилась новая версия
+            if (window.__ANITREC_RUNNING__) {
+              // Успех — убираем старую панель
+              if (old && old.parentNode) old.remove();
+            } else {
+              // Не удалось — перезагружаем страницу, чтобы загрузился встроенный injected.js
+              setTimeout(() => { try { window.location.reload(); } catch (_) {} }, 300);
+            }
           },
           args: [code, logoUrl],
         });
