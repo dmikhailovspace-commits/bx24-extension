@@ -1736,10 +1736,15 @@ if (_presetChannel) {
 #anit-filters .ubp-done-row>span{color:#5dc87e;font-size:11px}
 #anit-filters .ubp-restart{padding:3px 10px;border-radius:6px;border:1px solid rgba(93,200,126,.4);background:rgba(93,200,126,.12);color:#5dc87e;font-size:11px;cursor:pointer;font-family:inherit;transition:all .15s}
 #anit-filters .ubp-restart:hover{background:rgba(93,200,126,.24);color:#7ddfa0}
+#anit-filters .ubp-impossible-row{display:flex;align-items:center;justify-content:space-between;margin-top:6px;gap:8px}
+#anit-filters .ubp-imp-text{flex:1;font-size:11px;color:#ef9090}
+#anit-filters .ubp-imp-close{flex-shrink:0;background:none;border:none;color:rgba(255,255,255,.35);font-size:15px;cursor:pointer;line-height:1;padding:0;font-family:inherit}
+#anit-filters .ubp-imp-close:hover{color:rgba(255,255,255,.65)}
 #anit-filters .update-banner.--downloading{border-color:rgba(230,168,0,.45)}
 #anit-filters .update-banner.--done{background:rgba(93,200,126,.07);border-color:rgba(93,200,126,.3);color:#5dc87e}
-#anit-filters .update-banner.--done .ubp-install-btn,
-#anit-filters .update-banner.--done .update-banner-close{display:none}
+#anit-filters .update-banner.--done .ubp-install-btn{display:none}
+#anit-filters .update-banner.--impossible{background:rgba(255,60,60,.07);border-color:rgba(255,60,60,.25);color:#ef9090}
+#anit-filters .update-banner.--impossible .ubp-install-btn{display:none}
 #anit-filters .update-banner.--error{background:rgba(255,60,60,.08);border-color:rgba(255,60,60,.25);color:#ef9090}
 /* Версия — нижний правый угол панели */
 #anit-filters .pena-ver-badge{position:sticky;bottom:4px;text-align:right;font-size:9px;color:rgba(255,255,255,.22);pointer-events:none;user-select:none;padding:6px 2px 0;line-height:1;letter-spacing:.2px}
@@ -1823,6 +1828,10 @@ if (_presetChannel) {
     <div class="ubp-done-row" id="anit_ubp_done" style="display:none">
       <span>✓ Загружено</span>
       <button type="button" class="ubp-restart" id="anit_ubp_restart">Перезапустить</button>
+    </div>
+    <div class="ubp-impossible-row" id="anit_ubp_impossible" style="display:none">
+      <span class="ubp-imp-text">Обновление невозможно — обратитесь к администратору</span>
+      <button type="button" class="ubp-imp-close" id="anit_ubp_impossible_close" title="Закрыть">×</button>
     </div>
   </div>
 
@@ -2650,7 +2659,7 @@ if (_presetChannel) {
 		toast.classList.toggle('--ok', !!ok);
 		toast.classList.add('--show');
 		if (_toastTimer) clearTimeout(_toastTimer);
-		_toastTimer = setTimeout(() => { toast.classList.remove('--show'); toast.classList.remove('--ok'); }, 2800);
+		_toastTimer = setTimeout(() => { toast.classList.remove('--show'); setTimeout(() => toast.classList.remove('--ok'), 350); }, 2800);
 	}
 	function _applyUpdateBanner(version, injected_js_url) {
 		const dot    = host.querySelector('#anit_update_dot');
@@ -2742,7 +2751,7 @@ if (_presetChannel) {
 			if (_ubpFill) { _ubpFill.classList.remove('--indet'); _ubpFill.style.width = pct + '%'; }
 
 		} else if (msg.type === 'UPDATE_DONE') {
-			// Обновление сохранено в chrome.storage.local, расширение перезапускается
+			// Обновление сохранено в chrome.storage.local — показываем кнопку «Перезапустить»
 			if (_ubpPct)  _ubpPct.textContent  = '100%';
 			if (_ubpFill) { _ubpFill.classList.remove('--indet'); _ubpFill.style.width = '100%'; }
 			setTimeout(() => {
@@ -2750,23 +2759,44 @@ if (_presetChannel) {
 				if (_ubpDone) {
 					_ubpDone.style.display = '';
 					const span = _ubpDone.querySelector('span');
-					if (span) span.textContent = '✓ Применяется... перезагрузка';
-					// Скрываем кнопку "Перезапустить" — перезапуск автоматический
-					if (_ubpRestart) _ubpRestart.style.display = 'none';
+					if (span) span.textContent = '✓ Загружено';
+					if (_ubpRestart) { _ubpRestart.style.display = ''; _ubpRestart.textContent = 'Перезапустить'; }
 				}
 				if (_ubpBanner) { _ubpBanner.classList.remove('--downloading', '--error'); _ubpBanner.classList.add('--done'); }
 			}, 300);
 
-		} else if (msg.type === 'PENA_SELF_RESTART') {
-			// content.js скачал обновление и просит панель самоудалиться для переинжекта
-			// Удаляем guard синхронно — новый код должен запуститься без блокировки
-			delete window.__ANITREC_RUNNING__;
-			const _selfPanel = document.getElementById('anit-filters');
-			if (_selfPanel) _selfPanel.remove();
-			// Сигнал content.js: готов к переинжекту
-			window.postMessage({ type: 'PENA_READY_FOR_REINJECT', _pena_dl: true }, '*');
+		} else if (msg.type === 'PENA_NEED_MANUAL_RESTART') {
+			// Electron: автоперезагрузка невозможна — просим пользователя перезапустить вручную
+			setTimeout(() => {
+				if (_ubpProg) _ubpProg.style.display = 'none';
+				if (_ubpDone) {
+					_ubpDone.style.display = '';
+					const span = _ubpDone.querySelector('span');
+					if (span) span.textContent = '✓ Загружено';
+					if (_ubpRestart) _ubpRestart.style.display = 'none';
+				}
+				const impRow = host.querySelector('#anit_ubp_impossible');
+				if (impRow) {
+					impRow.style.display = '';
+					const t = impRow.querySelector('.ubp-imp-text');
+					if (t) t.textContent = 'Перезапустите Bitrix24 для применения обновления';
+				}
+				if (_ubpBanner) { _ubpBanner.classList.remove('--downloading', '--error'); _ubpBanner.classList.add('--done'); }
+			}, 300);
 
-	} else if (msg.type === 'UPDATE_ERROR') {
+		} else if (msg.type === 'PENA_UPDATE_IMPOSSIBLE') {
+			// Инжект нового injected.js не удался — просим обратиться к администратору
+			if (_ubpProg) _ubpProg.style.display = 'none';
+			if (_ubpDone) _ubpDone.style.display = 'none';
+			const impRow = host.querySelector('#anit_ubp_impossible');
+			if (impRow) {
+				impRow.style.display = '';
+				const t = impRow.querySelector('.ubp-imp-text');
+				if (t) t.textContent = 'Обновление невозможно — обратитесь к администратору';
+			}
+			if (_ubpBanner) { _ubpBanner.style.display = ''; _ubpBanner.classList.remove('--downloading', '--done', '--error'); _ubpBanner.classList.add('--impossible'); }
+
+		} else if (msg.type === 'UPDATE_ERROR') {
 			if (_ubpBanner)  { _ubpBanner.classList.remove('--downloading', '--done'); _ubpBanner.classList.add('--error'); }
 			if (_ubpProg)    _ubpProg.style.display = 'none';
 			if (_ubpInstBtn) { _ubpInstBtn.disabled = false; _ubpInstBtn.textContent = 'Повторить'; }
@@ -2797,6 +2827,9 @@ if (_presetChannel) {
 	});
 
 	host.querySelector('#anit_update_banner_close')?.addEventListener('click', () => {
+		if (_ubpBanner) _ubpBanner.style.display = 'none';
+	});
+	host.querySelector('#anit_ubp_impossible_close')?.addEventListener('click', () => {
 		if (_ubpBanner) _ubpBanner.style.display = 'none';
 	});
 	host.querySelector('#anit_update_btn')?.addEventListener('click', () => {
