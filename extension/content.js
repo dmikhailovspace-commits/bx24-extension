@@ -15,40 +15,45 @@
   }
 
   // ── Inject injected.js ──────────────────────────────────────────────────────
-  // При наличии более новой версии в chrome.storage.local — инжектируем её через blob URL
-  // (blob:chrome-extension://... имеет origin расширения → Chrome разрешает без CSP-ограничений страницы)
   (async function injectMain() {
-    let usedCache = false;
+    const _root = () => document.documentElement || document.head || document.body;
+    const _logoUrl = chrome.runtime.getURL('icons/logo.png');
+
+    // Всегда-рабочий fallback — встроенный injected.js из расширения
+    const injectBundled = () => {
+      try {
+        const s = document.createElement('script');
+        s.src = chrome.runtime.getURL('injected.js');
+        s.dataset.logoUrl = _logoUrl;
+        s.async = false;
+        s.onload = s.onerror = () => setTimeout(() => s.remove(), 0);
+        _root().appendChild(s);
+      } catch (e) { console.warn(LOGP, 'inject bundled failed', e); }
+    };
+
     try {
       const stored = await chrome.storage.local.get([_INJECTED_CACHE_KEY, _INJECTED_VER_KEY]);
       const cachedCode = stored[_INJECTED_CACHE_KEY] || '';
       const cachedVer  = stored[_INJECTED_VER_KEY]   || '';
       const manifestVer = chrome.runtime.getManifest().version;
+
       if (cachedCode && cachedVer && _isNewerVer(cachedVer, manifestVer)) {
+        // Пробуем blob URL (быстро, без сети)
         const blob    = new Blob([cachedCode], { type: 'application/javascript' });
         const blobUrl = URL.createObjectURL(blob);
         const s = document.createElement('script');
         s.src = blobUrl;
-        s.dataset.logoUrl = chrome.runtime.getURL('icons/logo.png');
+        s.dataset.logoUrl = _logoUrl;
         s.async = false;
-        s.onload = s.onerror = () => { URL.revokeObjectURL(blobUrl); setTimeout(() => s.remove(), 0); };
-        (document.documentElement || document.head || document.body).appendChild(s);
-        usedCache = true;
+        s.onload = () => { URL.revokeObjectURL(blobUrl); setTimeout(() => s.remove(), 0); };
+        // Если blob заблокирован CSP страницы — падаем на встроенный
+        s.onerror = () => { URL.revokeObjectURL(blobUrl); setTimeout(() => s.remove(), 0); injectBundled(); };
+        _root().appendChild(s);
+        return; // ждём onload/onerror — не идём в injectBundled сразу
       }
     } catch (_) {}
 
-    if (!usedCache) {
-      try {
-        const s = document.createElement('script');
-        s.src = chrome.runtime.getURL('injected.js');
-        s.dataset.logoUrl = chrome.runtime.getURL('icons/logo.png');
-        s.async = false;
-        s.onload = s.onerror = () => setTimeout(() => s.remove(), 0);
-        (document.documentElement || document.head || document.body).appendChild(s);
-      } catch (e) {
-        console.warn(LOGP, 'inject failed', e);
-      }
-    }
+    injectBundled();
 
     // Мост: если есть закэшированная инфа об обновлении — сообщаем injected.js
     setTimeout(() => {
