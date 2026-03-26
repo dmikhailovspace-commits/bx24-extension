@@ -169,7 +169,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         try { chrome.tabs.reload(tabId); } catch (_) {}
       }
     });
-    });
     return true; // async sendResponse
   }
 });
