@@ -3606,6 +3606,9 @@ if (_presetChannel) {
 			}
 		});
 	}
+
+	// Сигнал: панель построена (content.js → background.js → авто-инжект обновления)
+	try { window.postMessage({ type: 'PENA_PANEL_BUILT', _pena_dl: true }, '*'); } catch (_) {}
 }
 
 

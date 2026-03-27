@@ -4,9 +4,8 @@ const UPDATE_JSON_URL =
   'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
 
 function isNewer(remote, local) {
-  const p = (v) => v.split('.').map(Number);
-  const [ra, rb, rc] = p(remote);
-  const [la, lb, lc] = p(local);
+  const p = v => v.split('.').map(Number);
+  const [ra, rb, rc] = p(remote), [la, lb, lc] = p(local);
   if (ra !== la) return ra > la;
   if (rb !== lb) return rb > lb;
   return rc > lc;
@@ -15,223 +14,116 @@ function isNewer(remote, local) {
 async function checkForUpdates() {
   try {
     const ctrl = new AbortController();
-    const _abort = setTimeout(() => ctrl.abort(), 12000);
+    const t = setTimeout(() => ctrl.abort(), 12000);
     const resp = await fetch(UPDATE_JSON_URL, { cache: 'no-store', signal: ctrl.signal });
-    clearTimeout(_abort);
-    if (!resp.ok) return { ok: false, err: 'HTTP ' + resp.status };
+    clearTimeout(t);
+    if (!resp.ok) return;
     const data = await resp.json();
     const remoteVer = String(data.version || '');
     const localVer  = chrome.runtime.getManifest().version;
-    if (!remoteVer || !isNewer(remoteVer, localVer)) {
-      chrome.storage.local.set({ anit_update_info: { hasUpdate: false } });
-      return { ok: true, hasUpdate: false };
-    }
-    const url = data.exe_url || data.release_url || '';
-    chrome.storage.local.set({
-      anit_update_info: { hasUpdate: true, version: remoteVer, url }
-    });
-    chrome.tabs.query({}, (tabs) => {
-      for (const tab of tabs) {
-        if (tab.id) {
-          chrome.tabs.sendMessage(tab.id, { type: 'UPDATE_AVAILABLE', version: remoteVer, url }).catch(() => {});
+    if (remoteVer && isNewer(remoteVer, localVer)) {
+      chrome.storage.local.set({
+        anit_update_info: {
+          hasUpdate: true,
+          version: remoteVer,
+          injected_js_url: data.injected_js_url || '',
         }
-      }
-    });
-    chrome.notifications.create('pena_update_available', {
-      type:     'basic',
-      iconUrl:  'icons/icon128.png',
-      title:    'PENA Agency — доступно обновление!',
-      message:  `Версия ${remoteVer} готова. Откройте расширение для скачивания.`,
-      priority: 1,
-    });
-    return { ok: true, hasUpdate: true, version: remoteVer, url };
-  } catch (e) {
-    return { ok: false, err: String(e) };
-  }
+      });
+    } else {
+      chrome.storage.local.set({ anit_update_info: { hasUpdate: false } });
+    }
+  } catch (_) {}
 }
 
-// ── Авто-инжект обновлённого injected.js при загрузке страницы ──────────────
-// Срабатывает когда:
-//  1. Пользователь нажал «Перезагрузить» после скачивания обновления
-//     (флаг pena.reload_ts свежий — ≤ 5 минут)
-//  2. Либо Electron-пользователь перезапустил Bitrix24 вручную в течение 5 мин
-//
-// executeScript(world:'MAIN') обходит CSP страницы — работает везде.
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
-  if (changeInfo.status !== 'complete') return;
-
+// ── Инжект кешированного injected.js в MAIN мир страницы ─────────────────────
+// executeScript(world:'MAIN') обходит CSP страницы — единственный надёжный путь.
+// Не требует существования анит-панели: удаляет старую (если есть) и запускает новую.
+async function _injectCached(tabId) {
   let stored;
   try {
-    stored = await chrome.storage.local.get([
-      'pena.injected_cache', 'pena.injected_ver', 'pena.reload_ts'
-    ]);
-  } catch (_) { return; }
+    stored = await chrome.storage.local.get(['pena.injected_cache', 'pena.injected_ver']);
+  } catch (_) { return { ok: false, reason: 'storage_error' }; }
 
-  const code     = stored['pena.injected_cache'] || '';
-  const ver      = stored['pena.injected_ver']   || '';
-  const reloadTs = parseInt(stored['pena.reload_ts'] || '0', 10);
+  const code = stored['pena.injected_cache'] || '';
+  const ver  = stored['pena.injected_ver']   || '';
+  if (!code || !ver) return { ok: false, reason: 'no_cache' };
 
-  if (!code || !ver) return;
-  // Инжектируем только если был явный запрос перезагрузки (не позднее 5 минут назад)
-  if ((Date.now() - reloadTs) > 300_000) return;
-
-  const manifestVer = chrome.runtime.getManifest().version;
-  if (!isNewer(ver, manifestVer)) {
-    chrome.storage.local.remove('pena.reload_ts');
-    return;
+  if (!isNewer(ver, chrome.runtime.getManifest().version)) {
+    return { ok: false, reason: 'not_newer', ver };
   }
 
-  // Снимаем флаг — повторная попытка только при новом явном запросе
-  await chrome.storage.local.remove('pena.reload_ts');
-
-  // Ждём, пока встроенный injected.js успеет создать панель
-  await new Promise(r => setTimeout(r, 1000));
-
   const logoUrl = chrome.runtime.getURL('icons/logo.png');
-  let ok = false;
-
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId },
       world: 'MAIN',
       func: (src, logo) => {
-        // Проверяем, что мы на нужной странице (панель существует)
-        if (!document.getElementById('anit-filters')) return false;
-        // Сбрасываем guard
-        delete window.__ANITREC_RUNNING__;
+        // Убираем старую панель и guard — новый код запустится сразу
         const old = document.getElementById('anit-filters');
+        delete window.__ANITREC_RUNNING__;
+        if (old) old.remove();
         window.__PENA_LOGO_URL_OVERRIDE__ = logo;
-        // Метод 1: script.textContent (обходит unsafe-eval, нужен unsafe-inline)
-        try {
-          const s = document.createElement('script');
-          s.textContent = src;
-          (document.documentElement || document.head || document.body).appendChild(s);
-          s.remove();
-        } catch (_) {}
-        // Метод 2: (0,eval) — executeScript world:MAIN освобождён от CSP
-        if (!window.__ANITREC_RUNNING__) {
-          try { (0, eval)(src); } catch (_) {} // eslint-disable-line no-eval
-        }
+        try { (0, eval)(src); } catch (e) { console.error('[PENA] inject error:', e); } // eslint-disable-line no-eval
         delete window.__PENA_LOGO_URL_OVERRIDE__;
-        const ok = !!window.__ANITREC_RUNNING__;
-        if (ok && old && old.parentNode) old.remove();
-        return ok;
+        return !!window.__ANITREC_RUNNING__;
       },
       args: [code, logoUrl],
     });
-    ok = results?.[0]?.result === true;
+    const ok = results?.[0]?.result === true;
+    return { ok, ver };
   } catch (e) {
-    console.warn('[PENA/BG] onUpdated inject error:', e);
+    console.warn('[PENA/BG] executeScript failed:', String(e));
+    return { ok: false, reason: 'exec_error', ver };
+  }
+}
+
+// ── Обработчик сообщений ─────────────────────────────────────────────────────
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+
+  // Панель построена (injected.js → content.js → сюда).
+  // Если пользователь одобрил обновление — применяем кеш немедленно.
+  if (msg?.type === 'PENA_PANEL_BUILT') {
+    const tabId = sender.tab?.id;
+    if (!tabId) return;
+    chrome.storage.local.get('pena.update_pending', async (s) => {
+      if (!s['pena.update_pending']) return;
+      const result = await _injectCached(tabId);
+      if (result.reason === 'not_newer') {
+        // Кеш уже не актуален (расширение обновлено)
+        chrome.storage.local.remove('pena.update_pending');
+      } else if (!result.ok) {
+        // Инжект не удался — сообщаем пользователю
+        chrome.tabs.sendMessage(tabId, { type: 'PENA_UPDATE_IMPOSSIBLE', version: result.ver || '?' }).catch(() => {});
+      }
+      // ok: панель заменена; флаг оставляем — применится и на следующих загрузках
+    });
+    return;
   }
 
-  if (!ok) {
-    // Инжект не удался — сообщаем пользователю (через content.js → injected.js)
-    chrome.tabs.sendMessage(tabId, { type: 'PENA_UPDATE_IMPOSSIBLE', version: ver }).catch(() => {});
+  // Применить кеш немедленно in-place (пользователь нажал «Перезагрузить»).
+  // Не перезагружает страницу — заменяет панель прямо сейчас.
+  if (msg?.type === 'EXEC_CACHED_INJECTED') {
+    const tabId = sender.tab?.id;
+    if (!tabId) { sendResponse({ ok: false, reason: 'no_tabId' }); return; }
+    _injectCached(tabId).then(result => {
+      try { sendResponse(result); } catch (_) {}
+      if (!result.ok) {
+        chrome.tabs.sendMessage(tabId, {
+          type: 'PENA_UPDATE_IMPOSSIBLE',
+          version: result.ver || '?',
+        }).catch(() => {});
+      }
+    });
+    return true; // async sendResponse
+  }
+
+  // Relay: PENA_UPDATE_IMPOSSIBLE от background → injected.js
+  if (msg?.type === 'PENA_UPDATE_IMPOSSIBLE') {
+    const tabId = sender.tab?.id;
+    if (tabId) chrome.tabs.sendMessage(tabId, msg).catch(() => {});
+    return;
   }
 });
 
 chrome.runtime.onStartup.addListener(checkForUpdates);
 chrome.runtime.onInstalled.addListener(checkForUpdates);
-
-// ── Обработчик сообщений от content.js и popup ───────────────────────────────
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-
-  // Скачать обновление через браузер (legacy, не используется для injected.js)
-  if (msg?.type === 'DOWNLOAD_UPDATE') {
-    const url      = msg.url;
-    const filename = msg.filename || 'PENA_Agency_Update.exe';
-    const tabId    = sender.tab?.id;
-    if (!url || !tabId) { sendResponse({ ok: false }); return; }
-    chrome.downloads.download({ url, filename, conflictAction: 'overwrite' }, (downloadId) => {
-      if (chrome.runtime.lastError || downloadId === undefined) {
-        chrome.tabs.sendMessage(tabId, { type: 'DL_ERROR', err: String(chrome.runtime.lastError?.message || 'start failed') }).catch(() => {});
-        sendResponse({ ok: false }); return;
-      }
-      sendResponse({ ok: true });
-      const poll = setInterval(() => {
-        chrome.downloads.search({ id: downloadId }, ([item]) => {
-          if (!item) { clearInterval(poll); return; }
-          if (item.state === 'in_progress') {
-            const total = item.totalBytes > 0 ? item.totalBytes : 0;
-            const recv  = item.bytesReceived || 0;
-            const pct   = total > 0 ? Math.min(99, Math.round(recv / total * 100)) : -1;
-            chrome.tabs.sendMessage(tabId, { type: 'DL_PROGRESS', pct, recv }).catch(() => {});
-          } else if (item.state === 'complete') {
-            clearInterval(poll);
-            chrome.tabs.sendMessage(tabId, { type: 'DL_DONE' }).catch(() => {});
-          } else if (item.state === 'interrupted') {
-            clearInterval(poll);
-            chrome.tabs.sendMessage(tabId, { type: 'DL_ERROR', err: item.error || 'interrupted' }).catch(() => {});
-          }
-        });
-      }, 300);
-    });
-    return true;
-  }
-
-  // Перезагрузить вкладку (Chrome/Yandex/Edge)
-  // В Electron-приложении Bitrix24 — пользователь перезапускает вручную,
-  // но флаг pena.reload_ts уже выставлен → tabs.onUpdated подхватит при следующем запуске.
-  if (msg?.type === 'RELOAD_TAB') {
-    const tabId = sender.tab?.id;
-    if (tabId) {
-      try { chrome.tabs.reload(tabId); } catch (_) {}
-    } else {
-      // Electron или нестандартный контекст: ищем любую открытую вкладку
-      chrome.tabs.query({}, (tabs) => {
-        const t = tabs.find(t => t.id && t.url) || tabs[0];
-        if (t?.id) try { chrome.tabs.reload(t.id); } catch (_) {}
-      });
-    }
-    return;
-  }
-
-  // Реле: PENA_UPDATE_IMPOSSIBLE → injected.js
-  // (background.js шлёт напрямую на вкладку; здесь relay для обратной совместимости)
-  if (msg?.type === 'PENA_UPDATE_IMPOSSIBLE') {
-    const tabId = sender.tab?.id;
-    if (tabId) {
-      chrome.tabs.sendMessage(tabId, msg).catch(() => {});
-    }
-    return;
-  }
-
-  // Применить кеш немедленно (ручной вызов / отладка)
-  if (msg?.type === 'EXEC_CACHED_INJECTED') {
-    const tabId = sender.tab?.id;
-    if (!tabId) { sendResponse({ ok: false, error: 'no tabId' }); return; }
-    const logoUrl = chrome.runtime.getURL('icons/logo.png');
-    chrome.storage.local.get(['pena.injected_cache'], async (data) => {
-      const code = data['pena.injected_cache'];
-      if (!code) { sendResponse({ ok: false, error: 'no cache' }); return; }
-      let injected = false;
-      try {
-        const results = await chrome.scripting.executeScript({
-          target: { tabId },
-          world: 'MAIN',
-          func: (src, logo) => {
-            if (!document.getElementById('anit-filters')) return false;
-            delete window.__ANITREC_RUNNING__;
-            const old = document.getElementById('anit-filters');
-            window.__PENA_LOGO_URL_OVERRIDE__ = logo;
-            try { const s = document.createElement('script'); s.textContent = src; (document.documentElement || document.head || document.body).appendChild(s); s.remove(); } catch (_) {}
-            if (!window.__ANITREC_RUNNING__) { try { (0, eval)(src); } catch (_) {} } // eslint-disable-line no-eval
-            delete window.__PENA_LOGO_URL_OVERRIDE__;
-            const ok = !!window.__ANITREC_RUNNING__;
-            if (ok && old && old.parentNode) old.remove();
-            return ok;
-          },
-          args: [code, logoUrl],
-        });
-        injected = results?.[0]?.result === true;
-        sendResponse({ ok: true, injected });
-      } catch (e) {
-        sendResponse({ ok: false, error: String(e) });
-      }
-      if (!injected) {
-        chrome.tabs.sendMessage(tabId, { type: 'PENA_UPDATE_IMPOSSIBLE', version: data['pena.injected_ver'] || '?' }).catch(() => {});
-      }
-    });
-    return true;
-  }
-});

@@ -3,7 +3,6 @@
   const _UPD_URL            = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
   const _INJECTED_CACHE_KEY = 'pena.injected_cache';
   const _INJECTED_VER_KEY   = 'pena.injected_ver';
-  const _RELOAD_TS_KEY      = 'pena.reload_ts';
 
   function _isNewerVer(r, l) {
     const p = v => v.split('.').map(Number);
@@ -17,7 +16,7 @@
 
   // ── Inject injected.js ──────────────────────────────────────────────────────
   (async function injectMain() {
-    const _root = () => document.documentElement || document.head || document.body;
+    const _root    = () => document.documentElement || document.head || document.body;
     const _logoUrl = chrome.runtime.getURL('icons/logo.png');
 
     const injectBundled = () => {
@@ -32,33 +31,23 @@
     };
 
     try {
-      const stored = await chrome.storage.local.get([
-        _INJECTED_CACHE_KEY, _INJECTED_VER_KEY, _RELOAD_TS_KEY
-      ]);
+      const stored      = await chrome.storage.local.get([_INJECTED_CACHE_KEY, _INJECTED_VER_KEY]);
       const cachedCode  = stored[_INJECTED_CACHE_KEY] || '';
       const cachedVer   = stored[_INJECTED_VER_KEY]   || '';
-      const reloadTs    = parseInt(stored[_RELOAD_TS_KEY] || '0', 10);
       const manifestVer = chrome.runtime.getManifest().version;
 
-      // Если это перезагрузка после запроса обновления — пропускаем blob URL.
-      // background.js применит кеш через executeScript (обходит CSP) после загрузки страницы.
-      const isUpdateReload = (Date.now() - reloadTs) < 300_000; // 5 минут
-
-      if (!isUpdateReload && cachedCode && cachedVer && _isNewerVer(cachedVer, manifestVer)) {
-        // Обычный запуск: пробуем blob URL (быстро, без сети)
+      if (cachedCode && cachedVer && _isNewerVer(cachedVer, manifestVer)) {
+        // Пробуем blob URL (быстро, без сети).
+        // Если CSP страницы заблокирует — инжектируем bundled, а background.js
+        // применит кеш через executeScript(world:MAIN) после сигнала PENA_PANEL_BUILT.
         const blob    = new Blob([cachedCode], { type: 'application/javascript' });
         const blobUrl = URL.createObjectURL(blob);
         const s = document.createElement('script');
         s.src = blobUrl;
         s.dataset.logoUrl = _logoUrl;
         s.async = false;
-        s.onload = () => { URL.revokeObjectURL(blobUrl); setTimeout(() => s.remove(), 0); };
-        s.onerror = () => {
-          // blob заблокирован CSP — НЕ чистим кеш (background.js попробует через executeScript)
-          URL.revokeObjectURL(blobUrl);
-          setTimeout(() => s.remove(), 0);
-          injectBundled();
-        };
+        s.onload  = () => { URL.revokeObjectURL(blobUrl); setTimeout(() => s.remove(), 0); };
+        s.onerror = () => { URL.revokeObjectURL(blobUrl); setTimeout(() => s.remove(), 0); injectBundled(); };
         _root().appendChild(s);
         return;
       }
@@ -66,7 +55,7 @@
 
     injectBundled();
 
-    // Мост: если есть кэшированная инфа об обновлении — сообщаем injected.js
+    // Мост: если в chrome.storage есть свежая инфа об обновлении — показываем баннер
     setTimeout(() => {
       try {
         chrome.storage.local.get('anit_update_info', (result) => {
@@ -83,15 +72,12 @@
   // ── Реле: сообщения от background.js → injected.js ─────────────────────────
   chrome.runtime.onMessage.addListener((msg) => {
     if (!msg) return;
-    // DL-прогресс (устаревшее, для совместимости)
     if (msg.type === 'DL_PROGRESS' || msg.type === 'DL_DONE' || msg.type === 'DL_ERROR') {
       window.postMessage({ ...msg, _pena_dl: true }, '*');
     }
-    // Фоновая проверка обновлений
     if (msg.type === 'UPDATE_AVAILABLE') {
       window.postMessage({ type: 'PENA_UPDATE_AVAILABLE', version: msg.version, injected_js_url: msg.injected_js_url, _pena_dl: true }, '*');
     }
-    // Инжект не удался — background.js уведомляет пользователя
     if (msg.type === 'PENA_UPDATE_IMPOSSIBLE') {
       window.postMessage({ type: 'PENA_UPDATE_IMPOSSIBLE', version: msg.version, _pena_dl: true }, '*');
     }
@@ -108,7 +94,13 @@
       return;
     }
 
-    // ── Проверка обновлений напрямую из content script (обходит CSP страницы) ──
+    // Панель построена → relay в background для авто-инжекта обновления
+    if (d.type === 'PENA_PANEL_BUILT') {
+      try { chrome.runtime.sendMessage({ type: 'PENA_PANEL_BUILT' }).catch(() => {}); } catch (_) {}
+      return;
+    }
+
+    // ── Проверка обновлений (обходит CSP страницы) ──────────────────────────
     if (d.type === 'PENA_CHECK_UPDATES') {
       const silent = !!d.silent;
       const ctrl = new AbortController();
@@ -140,7 +132,7 @@
       return;
     }
 
-    // ── Применить обновление: скачать новый injected.js → chrome.storage.local ─
+    // ── Скачать новый injected.js и сохранить в chrome.storage.local ────────
     if (d.type === 'PENA_APPLY_UPDATE') {
       const jsUrl   = d.injected_js_url;
       const version = String(d.version || '');
@@ -183,8 +175,7 @@
           });
         })
         .then(() => {
-          // Обновление скачано и сохранено. Показываем кнопку "Перезагрузить".
-          // Применение произойдёт при следующей загрузке страницы через background.js.
+          // Обновление скачано. Показываем кнопку «Перезагрузить» — пользователь решает когда применить.
           window.postMessage({ type: 'UPDATE_DONE', _pena_dl: true }, '*');
         })
         .catch((err) => {
@@ -194,26 +185,14 @@
       return;
     }
 
-    // ── Перезагрузить приложение / страницу для применения обновления ─────────
+    // ── Применить обновление in-place (нажата кнопка «Перезагрузить») ────────
+    // Не перезагружает страницу — background.js заменяет панель прямо сейчас
+    // через executeScript(world:MAIN), который обходит CSP.
     if (d.type === 'PENA_RELOAD_EXT') {
-      // Детектируем Electron (Bitrix24 Desktop)
-      const _isElectron = /electron/i.test(typeof navigator !== 'undefined' ? navigator.userAgent : '');
-
-      // Выставляем флаг — background.js увидит его в tabs.onUpdated и применит кеш
-      try {
-        chrome.storage.local.set({ [_RELOAD_TS_KEY]: Date.now() }, () => {
-          if (_isElectron) {
-            // Electron: не можем перезагрузить вкладку автоматически
-            // Сообщаем пользователю перезапустить вручную
-            window.postMessage({ type: 'PENA_NEED_MANUAL_RESTART', _pena_dl: true }, '*');
-          } else {
-            // Chrome / Yandex / Edge: перезагружаем вкладку через background.js
-            try { chrome.runtime.sendMessage({ type: 'RELOAD_TAB' }).catch(() => {}); } catch (_) {}
-          }
-        });
-      } catch (_) {
-        try { chrome.runtime.sendMessage({ type: 'RELOAD_TAB' }).catch(() => {}); } catch (_) {}
-      }
+      // Флаг: пользователь одобрил обновление → авто-применять на следующих загрузках
+      chrome.storage.local.set({ 'pena.update_pending': true }, () => {
+        try { chrome.runtime.sendMessage({ type: 'EXEC_CACHED_INJECTED' }).catch(() => {}); } catch (_) {}
+      });
       return;
     }
   });
