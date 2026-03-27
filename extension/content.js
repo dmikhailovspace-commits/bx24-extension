@@ -107,16 +107,12 @@
       const _t = setTimeout(() => ctrl.abort(), 12000);
       fetch(_UPD_URL, { cache: 'no-store', signal: ctrl.signal })
         .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-        .then(async (data) => {
+        .then((data) => {
           clearTimeout(_t);
           const remoteVer = String(data.version || '');
+          // Сравниваем только с манифестом — кеш не считается «установленной» версией
           let localVer = '';
           try { localVer = chrome.runtime.getManifest().version; } catch (_) {}
-          try {
-            const st = await chrome.storage.local.get(_INJECTED_VER_KEY);
-            const cachedVer = st[_INJECTED_VER_KEY] || '';
-            if (cachedVer && _isNewerVer(cachedVer, localVer)) localVer = cachedVer;
-          } catch (_) {}
           const ts = Date.now();
           if (!remoteVer || !localVer || !_isNewerVer(remoteVer, localVer)) {
             window.postMessage({ type: 'CHECK_RESULT', ok: true, hasUpdate: false, silent, ts, _pena_dl: true }, '*');

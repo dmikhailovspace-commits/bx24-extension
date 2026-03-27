@@ -2812,11 +2812,13 @@ if (_presetChannel) {
 			if (msg.ts) _lastCheckResultTs = msg.ts;
 			const btn = host.querySelector('#anit_update_btn');
 			if (btn) { btn.classList.remove('--checking'); btn.disabled = false; }
-			if (msg.hasUpdate && msg.version && msg.injected_js_url) {
+			if (msg.hasUpdate && msg.version && msg.injected_js_url && _semverNewer(msg.version, _UPD_CURRENT)) {
+				// Обновление доступно и его версия новее той, что сейчас запущена
 				try { localStorage.setItem(_UPD_LS_KEY, JSON.stringify({ hasUpdate: true, version: msg.version, injected_js_url: msg.injected_js_url })); } catch {}
 				_applyUpdateBanner(msg.version, msg.injected_js_url);
 				if (!msg.silent) _showUpdToast('⬆ Обновление v' + msg.version + ' доступно — нажмите «Обновить»');
-			} else if (msg.ok) {
+			} else if (msg.ok || (msg.hasUpdate && !_semverNewer(msg.version, _UPD_CURRENT))) {
+				// Актуальная версия уже запущена
 				try { localStorage.setItem(_UPD_LS_KEY, JSON.stringify({ hasUpdate: false })); } catch {}
 				_clearUpdateBanner();
 				if (!msg.silent) _showUpdToast('✓ Установлена актуальная версия', true);
