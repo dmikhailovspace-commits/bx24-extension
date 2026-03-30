@@ -72,17 +72,17 @@
   // ── Реле: сообщения от background.js → injected.js ─────────────────────────
   chrome.runtime.onMessage.addListener((msg) => {
     if (!msg) return;
-    if (msg.type === 'DL_PROGRESS' || msg.type === 'DL_DONE' || msg.type === 'DL_ERROR') {
+    // Relay: background.js → injected.js (через postMessage в MAIN world)
+    const RELAY_TYPES = [
+      'DL_PROGRESS', 'DL_DONE', 'DL_ERROR',
+      'PENA_NEED_MANUAL_RESTART',
+      'PENA_UPDATE_IMPOSSIBLE',
+    ];
+    if (RELAY_TYPES.includes(msg.type)) {
       window.postMessage({ ...msg, _pena_dl: true }, '*');
     }
     if (msg.type === 'UPDATE_AVAILABLE') {
       window.postMessage({ type: 'PENA_UPDATE_AVAILABLE', version: msg.version, injected_js_url: msg.injected_js_url, _pena_dl: true }, '*');
-    }
-    if (msg.type === 'PENA_UPDATE_IMPOSSIBLE') {
-      window.postMessage({ type: 'PENA_UPDATE_IMPOSSIBLE', version: msg.version, _pena_dl: true }, '*');
-    }
-    if (msg.type === 'PENA_UPDATER_DOWNLOADING' || msg.type === 'PENA_UPDATER_DOWNLOADED') {
-      window.postMessage({ ...msg }, '*');
     }
   });
 
@@ -185,32 +185,22 @@
     }
 
     // ── Применить обновление (нажата кнопка «Перезапустить») ────────────────
-    // Сначала пробуем in-place inject через eval (быстро, без reload).
-    // Если CSP блокирует eval — background.js скачает pena_update.bat/.command,
-    // пользователь запускает его, скрипт обновляет файлы на диске и
-    // перезапускает Bitrix24 полностью. Reload страницы только если скрипт
-    // тоже не скачался (крайний случай).
+    // Пробуем in-place inject через eval (быстро, без reload).
+    // Если CSP блокирует eval — background.js отправляет PENA_NEED_MANUAL_RESTART,
+    // пользователь перезапускает Bitrix24 через ярлык, updater.ps1 обновит файлы.
+    // НЕ делаем location.reload() — это бесполезно (файлы на диске не изменились).
     if (d.type === 'PENA_RELOAD_EXT') {
-      // Флаг: пользователь одобрил обновление → авто-применять при следующем запуске
       chrome.storage.local.set({ 'pena.update_pending': true }, () => {
-        let done = false;
-        // Таймаут 15 сек: если background.js вообще не ответил — reload-страховка
-        const fallback = () => { if (!done) { done = true; location.reload(); } };
-        const timer = setTimeout(fallback, 15000);
-        // Передаём платформу: background.js выберет .bat (Windows) или .command (macOS)
-        const platform = /Win/i.test(navigator.platform) ? 'win' : 'mac';
         try {
-          chrome.runtime.sendMessage({ type: 'EXEC_CACHED_INJECTED', platform })
+          chrome.runtime.sendMessage({ type: 'EXEC_CACHED_INJECTED' })
             .then(result => {
-              clearTimeout(timer);
-              done = true;
-              if (result?.ok) return; // in-place inject сработал — ничего не делаем
-              if (result?.updater) return; // скрипт обновления скачан — ждём перезапуска
-              // Ни то, ни другое не вышло → fallback: reload страницы
-              location.reload();
+              if (result?.ok) {
+                chrome.storage.local.remove('pena.update_pending');
+              }
+              // Если !ok → background уже отправил PENA_NEED_MANUAL_RESTART
             })
-            .catch(() => { clearTimeout(timer); fallback(); });
-        } catch (_) { clearTimeout(timer); fallback(); }
+            .catch(() => {});
+        } catch (_) {}
       });
       return;
     }

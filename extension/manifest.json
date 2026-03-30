@@ -7,8 +7,7 @@
     "storage",
     "tabs",
     "scripting",
-    "notifications",
-    "downloads"
+    "notifications"
   ],
   "host_permissions": [
     "<all_urls>"

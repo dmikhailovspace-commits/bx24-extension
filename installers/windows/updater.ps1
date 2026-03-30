@@ -14,6 +14,7 @@
 param(
     [switch]$Setup,                 # первоначальная настройка (из Inno Setup)
     [switch]$Launch,                # запустить Bitrix24 с расширением
+    [switch]$LaunchWithUpdate,      # проверить обновление + запустить (из ярлыка)
     [switch]$CreateDesktopShortcut  # создать ярлык на рабочем столе (postinstall чекбокс)
 )
 
@@ -64,13 +65,14 @@ function CompareVersions($a, $b) {
     } catch { return 0 }
 }
 
-function MakeShortcut($Path, $Target, $LnkArgs, $WorkDir, $Desc) {
+function MakeShortcut($Path, $Target, $LnkArgs, $WorkDir, $Desc, $Icon) {
     try {
         $sc = (New-Object -ComObject WScript.Shell).CreateShortcut($Path)
         $sc.TargetPath       = $Target
         $sc.Arguments        = $LnkArgs
         $sc.WorkingDirectory = $WorkDir
         $sc.Description      = $Desc
+        if ($Icon) { $sc.IconLocation = $Icon }
         $sc.Save()
         return $true
     } catch { return $false }
@@ -137,9 +139,8 @@ if ($Setup) {
     # Создаём ярлыки и сохраняем путь (если Bitrix24 найден — автоматически или вручную)
     if ($BitrixExe) {
         Log "Битрикс24: $BitrixExe"
-        $ExtArgs = "--disable-extensions-except=`"$INSTALL_DIR`" --load-extension=`"$INSTALL_DIR`""
 
-        # Сохраняем путь для режима -Launch
+        # Сохраняем путь для режимов -Launch / -LaunchWithUpdate
         $BitrixExe | Set-Content -Path $BITRIX_PATH_FILE -Encoding UTF8
 
         $LnkName    = "Bitrix24 (PENA Agency)"
@@ -152,6 +153,12 @@ if ($Setup) {
             $ProgramsDir = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs"
         }
 
+        # Ярлык запускает updater.ps1 -LaunchWithUpdate:
+        #   проверка обновления → скачивание файлов → запуск Bitrix24
+        $LauncherTarget = "powershell.exe"
+        $LauncherArgs   = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$INSTALL_DIR\updater.ps1`" -LaunchWithUpdate"
+        $BitrixIcon     = "$BitrixExe,0"
+
         # Ярлык в меню Пуск (всегда)
         $StartDir = "$ProgramsDir\BX24 Chat Sorter"
         try {
@@ -159,7 +166,7 @@ if ($Setup) {
                 New-Item -Path $StartDir -ItemType Directory -Force | Out-Null
             }
             $StartLnk = "$StartDir\$LnkName.lnk"
-            if (MakeShortcut $StartLnk $BitrixExe $ExtArgs (Split-Path $BitrixExe) "Bitrix24 with BX24 Chat Sorter") {
+            if (MakeShortcut $StartLnk $LauncherTarget $LauncherArgs $INSTALL_DIR "Bitrix24 with BX24 Chat Sorter" $BitrixIcon) {
                 Log "Start Menu shortcut created: $StartLnk"
             } else {
                 Log "WARNING: could not create Start Menu shortcut"
@@ -176,7 +183,7 @@ if ($Setup) {
         )
         foreach ($lnk in $StdLinks) {
             if (Test-Path $lnk) {
-                if (MakeShortcut $lnk $BitrixExe $ExtArgs (Split-Path $BitrixExe) "Bitrix24 with BX24 Chat Sorter") {
+                if (MakeShortcut $lnk $LauncherTarget $LauncherArgs $INSTALL_DIR "Bitrix24 with BX24 Chat Sorter" $BitrixIcon) {
                     Log "Updated existing shortcut: $(Split-Path $lnk -Leaf)"
                 }
             }
@@ -220,15 +227,18 @@ if ($Setup) {
 if ($CreateDesktopShortcut) {
     $LnkName    = "Bitrix24 (PENA Agency)"
     $DesktopDir = [Environment]::GetFolderPath('Desktop')
-    $ExtArgs    = "--disable-extensions-except=`"$INSTALL_DIR`" --load-extension=`"$INSTALL_DIR`""
 
+    # Ярлык запускает updater.ps1 -LaunchWithUpdate (проверка + скачивание + запуск)
+    $LauncherTarget = "powershell.exe"
+    $LauncherArgs   = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$INSTALL_DIR\updater.ps1`" -LaunchWithUpdate"
+
+    # Иконка Bitrix24
     $BitrixExe = $null
     if (Test-Path $BITRIX_PATH_FILE) {
         $p = (Get-Content $BITRIX_PATH_FILE -Raw -ErrorAction SilentlyContinue).Trim()
         if ($p -and (Test-Path $p)) { $BitrixExe = $p }
     }
     if (-not $BitrixExe) {
-        # Fallback: стандартные пути
         @("$env:LOCALAPPDATA\Programs\Bitrix24\Bitrix24.exe",
           "$env:LOCALAPPDATA\Bitrix24\Bitrix24.exe",
           "C:\Program Files (x86)\Bitrix24\Bitrix24.exe",
@@ -236,17 +246,15 @@ if ($CreateDesktopShortcut) {
             if (-not $BitrixExe -and (Test-Path $_)) { $BitrixExe = $_ }
         }
     }
+    $BitrixIcon = if ($BitrixExe) { "$BitrixExe,0" } else { $null }
 
-    if ($BitrixExe) {
-        $DesktopLnk = "$DesktopDir\$LnkName.lnk"
-        if (MakeShortcut $DesktopLnk $BitrixExe $ExtArgs (Split-Path $BitrixExe) "Bitrix24 with BX24 Chat Sorter") {
-            Log "Desktop shortcut created: $DesktopLnk"
-        } else {
-            Log "WARNING: could not create desktop shortcut"
-        }
+    $DesktopLnk = "$DesktopDir\$LnkName.lnk"
+    if (MakeShortcut $DesktopLnk $LauncherTarget $LauncherArgs $INSTALL_DIR "Bitrix24 with BX24 Chat Sorter" $BitrixIcon) {
+        Log "Desktop shortcut created: $DesktopLnk"
     } else {
-        Log "WARNING: Bitrix24 not found, desktop shortcut not created"
+        Log "WARNING: could not create desktop shortcut"
     }
+
     exit 0
 }
 
@@ -286,6 +294,77 @@ if ($Launch) {
         if (Test-Path $c) {
             Start-Process -FilePath $c -ArgumentList $extArgs; exit 0
         }
+    }
+    exit 0
+}
+
+# ==============================================================
+# РЕЖИМ ЗАПУСКА С ОБНОВЛЕНИЕМ (-LaunchWithUpdate)
+# Вызывается из ярлыка «Bitrix24 (PENA Agency)».
+# 1. Проверяет update.json (макс. 8 сек)
+# 2. Если есть обновление — скачивает файлы расширения с GitHub
+# 3. Запускает Bitrix24 с --load-extension
+# ==============================================================
+if ($LaunchWithUpdate) {
+    $RAW_BASE = "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension"
+    $UPD_FILES = @("background.js", "content.js", "injected.js", "manifest.json")
+
+    # — Текущая версия —
+    $localVersion = "0.0.0"
+    $manifestPath = Join-Path $INSTALL_DIR "manifest.json"
+    if (Test-Path $manifestPath) {
+        try {
+            $mf = Get-Content $manifestPath -Raw | ConvertFrom-Json
+            $localVersion = $mf.version
+        } catch {}
+    }
+
+    # — Проверяем update.json (таймаут 8 сек, чтобы не задерживать запуск) —
+    $needsUpdate = $false
+    try {
+        $updateInfo = Invoke-RestMethod -Uri $UPDATE_JSON_URL -TimeoutSec 8
+        $remoteVersion = $updateInfo.version
+        if ($remoteVersion -and (CompareVersions $remoteVersion $localVersion) -gt 0) {
+            $needsUpdate = $true
+            Log "Обновление: $localVersion -> $remoteVersion"
+        }
+    } catch {
+        Log "Не удалось проверить обновление (сеть недоступна) — запускаем как есть."
+    }
+
+    # — Скачиваем файлы если нужно —
+    if ($needsUpdate) {
+        foreach ($f in $UPD_FILES) {
+            try {
+                Invoke-WebRequest -Uri "$RAW_BASE/$f" -OutFile (Join-Path $INSTALL_DIR $f) `
+                    -UseBasicParsing -TimeoutSec 30
+                Log "Загружен: $f"
+            } catch {
+                Log "ОШИБКА загрузки $f — пропускаем."
+            }
+        }
+        ShowBalloon "PENA Agency" "Расширение обновлено до v$remoteVersion"
+    }
+
+    # — Запускаем Bitrix24 (идентично -Launch) —
+    $extArgs = "--disable-extensions-except=`"$INSTALL_DIR`" --load-extension=`"$INSTALL_DIR`""
+    $BitrixExe = $null
+    if (Test-Path $BITRIX_PATH_FILE) {
+        $p = (Get-Content $BITRIX_PATH_FILE -Raw -ErrorAction SilentlyContinue).Trim()
+        if ($p -and (Test-Path $p)) { $BitrixExe = $p }
+    }
+    if (-not $BitrixExe) {
+        @("$env:LOCALAPPDATA\Programs\Bitrix24\Bitrix24.exe",
+          "$env:LOCALAPPDATA\Bitrix24\Bitrix24.exe",
+          "C:\Program Files (x86)\Bitrix24\Bitrix24.exe",
+          "C:\Program Files\Bitrix24\Bitrix24.exe") | ForEach-Object {
+            if (-not $BitrixExe -and (Test-Path $_)) { $BitrixExe = $_ }
+        }
+    }
+    if ($BitrixExe) {
+        Start-Process -FilePath $BitrixExe -ArgumentList $extArgs
+    } else {
+        Log "Bitrix24 не найден — запустите вручную."
     }
     exit 0
 }
