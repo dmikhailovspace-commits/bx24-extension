@@ -2769,6 +2769,27 @@ if (_presetChannel) {
 				if (_ubpBanner) { _ubpBanner.classList.remove('--downloading', '--error'); _ubpBanner.classList.add('--done'); }
 			}, 300);
 
+		} else if (msg.type === 'PENA_UPDATER_DOWNLOADING') {
+			// background.js скачивает скрипт обновления файлов на диске
+			if (_ubpRestart) { _ubpRestart.disabled = true; _ubpRestart.textContent = 'Скачивание...'; }
+
+		} else if (msg.type === 'PENA_UPDATER_DOWNLOADED') {
+			// Скрипт обновления скачан и открыт — ждём подтверждения от ОС
+			if (_ubpProg) _ubpProg.style.display = 'none';
+			if (_ubpDone) {
+				_ubpDone.style.display = '';
+				const span = _ubpDone.querySelector('span');
+				if (span) span.textContent = '✓ Загружено';
+			}
+			if (_ubpRestart) { _ubpRestart.style.display = 'none'; }
+			const impRow2 = host.querySelector('#anit_ubp_impossible');
+			if (impRow2) {
+				impRow2.style.display = '';
+				const t2 = impRow2.querySelector('.ubp-imp-text');
+				if (t2) t2.textContent = 'Нажмите «Запустить» в появившемся окне — Bitrix24 перезапустится автоматически';
+			}
+			if (_ubpBanner) { _ubpBanner.classList.remove('--downloading', '--error', '--impossible'); _ubpBanner.classList.add('--done'); }
+
 		} else if (msg.type === 'PENA_NEED_MANUAL_RESTART') {
 			// Electron: автоперезагрузка невозможна — просим пользователя перезапустить вручную
 			setTimeout(() => {

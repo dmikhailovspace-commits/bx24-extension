@@ -181,24 +181,30 @@
       return;
     }
 
-    // ── Применить обновление in-place (нажата кнопка «Перезагрузить») ────────
-    // Пробуем заменить панель без перезагрузки страницы.
-    // Если не выходит (CSP блокирует eval) — перезагружаем страницу;
-    // при следующей загрузке content.js применит кеш через blob-URL.
+    // ── Применить обновление (нажата кнопка «Перезапустить») ────────────────
+    // Сначала пробуем in-place inject через eval (быстро, без reload).
+    // Если CSP блокирует eval — background.js скачает pena_update.bat/.command,
+    // пользователь запускает его, скрипт обновляет файлы на диске и
+    // перезапускает Bitrix24 полностью. Reload страницы только если скрипт
+    // тоже не скачался (крайний случай).
     if (d.type === 'PENA_RELOAD_EXT') {
-      // Флаг: пользователь одобрил обновление → авто-применять на следующих загрузках
+      // Флаг: пользователь одобрил обновление → авто-применять при следующем запуске
       chrome.storage.local.set({ 'pena.update_pending': true }, () => {
         let done = false;
+        // Таймаут 15 сек: если background.js вообще не ответил — reload-страховка
         const fallback = () => { if (!done) { done = true; location.reload(); } };
-        // Страховочный таймаут: если background.js не ответил за 9 сек — reload
-        const timer = setTimeout(fallback, 9000);
+        const timer = setTimeout(fallback, 15000);
+        // Передаём платформу: background.js выберет .bat (Windows) или .command (macOS)
+        const platform = /Win/i.test(navigator.platform) ? 'win' : 'mac';
         try {
-          chrome.runtime.sendMessage({ type: 'EXEC_CACHED_INJECTED' })
+          chrome.runtime.sendMessage({ type: 'EXEC_CACHED_INJECTED', platform })
             .then(result => {
               clearTimeout(timer);
               done = true;
-              // In-place инжект не удался (eval заблокирован CSP или нет кеша) — reload
-              if (!result?.ok) location.reload();
+              if (result?.ok) return; // in-place inject сработал — ничего не делаем
+              if (result?.updater) return; // скрипт обновления скачан — ждём перезапуска
+              // Ни то, ни другое не вышло → fallback: reload страницы
+              location.reload();
             })
             .catch(() => { clearTimeout(timer); fallback(); });
         } catch (_) { clearTimeout(timer); fallback(); }
