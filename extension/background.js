@@ -14,7 +14,7 @@ function isNewer(remote, local) {
   const p = v => v.split('.').map(Number);
   const [ra, rb, rc] = p(remote), [la, lb, lc] = p(local);
   if (ra !== la) return ra > la;
-  if (rb !== lb) return rb > rb;
+  if (rb !== lb) return rb > lb;
   return rc > lc;
 }
 
@@ -121,18 +121,35 @@ async function _downloadUpdater(tabId, platform) {
     chrome.downloads.download({ url: dataUrl, filename, saveAs: false }, (downloadId) => {
       if (chrome.runtime.lastError || downloadId == null) { resolve(false); return; }
 
+      const _notify = () => {
+        if (tabId) {
+          chrome.tabs.sendMessage(tabId, { type: 'PENA_UPDATER_DOWNLOADED', _pena_dl: true })
+            .catch(() => {});
+        }
+      };
+
       const onChanged = (delta) => {
         if (delta.id !== downloadId) return;
+
         if (delta.state?.current === 'complete') {
           chrome.downloads.onChanged.removeListener(onChanged);
-          // Открываем файл → ОС спрашивает «Запустить?» → пользователь кликает Run
-          chrome.downloads.open(downloadId);
-          // Оповещаем инжектированную панель
-          if (tabId) {
-            chrome.tabs.sendMessage(tabId, { type: 'PENA_UPDATER_DOWNLOADED', _pena_dl: true })
-              .catch(() => {});
-          }
+          // Пробуем открыть через ОС (Windows спросит «Запустить?» → Run)
+          try { chrome.downloads.open(downloadId); } catch (_) {}
+          // Параллельно показываем файл в проводнике — если авто-открытие не сработало
+          chrome.downloads.show(downloadId);
+          _notify();
           resolve(true);
+
+        } else if (delta.danger?.current &&
+                   delta.danger.current !== 'safe' &&
+                   delta.danger.current !== 'accepted') {
+          // Chrome пометил .bat как опасный — открыть не получится автоматически.
+          // Показываем файл в проводнике, пользователь запустит вручную (ПКМ → Запустить).
+          chrome.downloads.onChanged.removeListener(onChanged);
+          chrome.downloads.show(downloadId);
+          _notify();
+          resolve(true);
+
         } else if (delta.error?.current) {
           chrome.downloads.onChanged.removeListener(onChanged);
           resolve(false);
