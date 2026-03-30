@@ -2735,12 +2735,32 @@ if (_presetChannel) {
 		window.postMessage({ type: 'PENA_APPLY_UPDATE', injected_js_url, version }, '*');
 	});
 
+	function _showRestartInstruction() {
+		if (_ubpProg) _ubpProg.style.display = 'none';
+		if (_ubpDone) {
+			_ubpDone.style.display = '';
+			const span = _ubpDone.querySelector('span');
+			if (span) span.textContent = '✓ Загружено';
+			if (_ubpRestart) _ubpRestart.style.display = 'none';
+		}
+		const impRow = host.querySelector('#anit_ubp_impossible');
+		if (impRow) {
+			impRow.style.display = '';
+			const t = impRow.querySelector('.ubp-imp-text');
+			if (t) t.textContent = 'Закройте Bitrix24 и откройте снова — обновление применится автоматически';
+		}
+		if (_ubpBanner) { _ubpBanner.classList.remove('--downloading', '--error', '--impossible'); _ubpBanner.classList.add('--done'); }
+	}
+
 	_ubpRestart?.addEventListener('click', () => {
 		if (_ubpRestart.disabled) return;
-		// Немедленная визуальная обратная связь — кнопка заблокирована до ответа
 		_ubpRestart.disabled = true;
 		_ubpRestart.textContent = 'Применение…';
 		window.postMessage({ type: 'PENA_RELOAD_EXT' }, '*');
+		// Показываем инструкцию через 2 сек независимо от ответа background.js.
+		// Если in-place inject сработал — панель всё равно перестроится (старая исчезнет).
+		// Если нет — пользователь видит чёткую инструкцию.
+		setTimeout(_showRestartInstruction, 2000);
 	});
 
 	// Ответы от content.js: прогресс обновления + результат проверки
@@ -2791,23 +2811,7 @@ if (_presetChannel) {
 			if (_ubpBanner) { _ubpBanner.classList.remove('--downloading', '--error', '--impossible'); _ubpBanner.classList.add('--done'); }
 
 		} else if (msg.type === 'PENA_NEED_MANUAL_RESTART') {
-			// Electron: автоперезагрузка невозможна — просим пользователя перезапустить вручную
-			setTimeout(() => {
-				if (_ubpProg) _ubpProg.style.display = 'none';
-				if (_ubpDone) {
-					_ubpDone.style.display = '';
-					const span = _ubpDone.querySelector('span');
-					if (span) span.textContent = '✓ Загружено';
-					if (_ubpRestart) _ubpRestart.style.display = 'none';
-				}
-				const impRow = host.querySelector('#anit_ubp_impossible');
-				if (impRow) {
-					impRow.style.display = '';
-					const t = impRow.querySelector('.ubp-imp-text');
-					if (t) t.textContent = 'Перезапустите Bitrix24 для применения обновления';
-				}
-				if (_ubpBanner) { _ubpBanner.classList.remove('--downloading', '--error'); _ubpBanner.classList.add('--done'); }
-			}, 300);
+			_showRestartInstruction();
 
 		} else if (msg.type === 'PENA_UPDATE_IMPOSSIBLE') {
 			// Инжект нового injected.js не удался — просим обратиться к администратору
