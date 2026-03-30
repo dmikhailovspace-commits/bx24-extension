@@ -81,6 +81,9 @@
     if (msg.type === 'PENA_UPDATE_IMPOSSIBLE') {
       window.postMessage({ type: 'PENA_UPDATE_IMPOSSIBLE', version: msg.version, _pena_dl: true }, '*');
     }
+    if (msg.type === 'PENA_UPDATER_DOWNLOADING' || msg.type === 'PENA_UPDATER_DOWNLOADED') {
+      window.postMessage({ ...msg }, '*');
+    }
   });
 
   // ── postMessage bridge: injected.js → content.js ────────────────────────────

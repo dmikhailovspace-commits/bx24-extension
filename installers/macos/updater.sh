@@ -135,13 +135,11 @@ if [ -z "$UPDATE_JSON" ]; then
     exit 0
 fi
 
-# Парсим
+# Парсим версию
 if command -v python3 &>/dev/null; then
     REMOTE_VERSION=$(echo "$UPDATE_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['version'])")
-    ZIP_URL=$(echo "$UPDATE_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['zip_url'])")
 else
     REMOTE_VERSION=$(echo "$UPDATE_JSON" | grep -o '"version": *"[^"]*"' | grep -o '[0-9][0-9.]*' | head -1)
-    ZIP_URL=$(echo "$UPDATE_JSON" | grep -o '"zip_url": *"[^"]*"' | sed 's/"zip_url": *"//' | sed 's/"//')
 fi
 
 log "Доступна версия: $REMOTE_VERSION"
@@ -153,45 +151,25 @@ fi
 
 log "Загружаю обновление $REMOTE_VERSION ..."
 
-TMP_ZIP=$(mktemp /tmp/pena_update_XXXXXX.zip)
-TMP_DIR=$(mktemp -d /tmp/pena_update_XXXXXX)
+RAW_BASE="https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension"
+UPDATE_FILES="background.js content.js injected.js manifest.json"
 
-cleanup() {
-    rm -f "$TMP_ZIP" 2>/dev/null
-    rm -rf "$TMP_DIR" 2>/dev/null
-}
-trap cleanup EXIT
+# Скачиваем файлы расширения напрямую с GitHub в папку установки
+for f in $UPDATE_FILES; do
+    if ! curl -fsSL --max-time 60 "$RAW_BASE/$f" -o "$INSTALL_DIR/$f"; then
+        log "ОШИБКА: Не удалось скачать $f"
+        exit 1
+    fi
+    log "Загружен: $f"
+done
+log "Файлы обновлены в: $INSTALL_DIR"
 
-# Скачиваем
-if ! curl -fsSL --max-time 120 "$ZIP_URL" -o "$TMP_ZIP"; then
-    log "ОШИБКА: Не удалось скачать ZIP: $ZIP_URL"
-    exit 1
-fi
-log "ZIP загружен."
+# Перезапускаем Bitrix24
+pkill -f "Bitrix24" 2>/dev/null || true
+sleep 3
+for p in "$HOME/Applications/Bitrix24.app" "/Applications/Bitrix24.app"; do
+    [ -d "$p" ] && open "$p" && break
+done
 
-# Распаковываем
-unzip -q -o "$TMP_ZIP" -d "$TMP_DIR" || { log "ОШИБКА: Не удалось распаковать ZIP."; exit 1; }
-
-# Определяем папку с файлами расширения
-SRC_DIR="$TMP_DIR"
-if [ -f "$TMP_DIR/extension/manifest.json" ]; then
-    SRC_DIR="$TMP_DIR/extension"
-elif [ ! -f "$TMP_DIR/manifest.json" ]; then
-    SRC_DIR=$(find "$TMP_DIR" -name "manifest.json" -maxdepth 3 | head -1 | xargs -I{} dirname {} 2>/dev/null)
-fi
-
-if [ -z "$SRC_DIR" ] || [ ! -f "$SRC_DIR/manifest.json" ]; then
-    log "ОШИБКА: manifest.json не найден в ZIP-архиве."
-    exit 1
-fi
-
-# Копируем файлы
-if command -v rsync &>/dev/null; then
-    rsync -a "$SRC_DIR/" "$INSTALL_DIR/"
-else
-    cp -R "$SRC_DIR/"* "$INSTALL_DIR/"
-fi
-log "Файлы скопированы в: $INSTALL_DIR"
-
-notify "PENA Agency обновлён" "Установлена версия $REMOTE_VERSION. Перезапустите Bitrix24."
+notify "PENA Agency обновлён" "Установлена версия $REMOTE_VERSION. Bitrix24 перезапускается."
 log "Обновление до $REMOTE_VERSION завершено успешно."

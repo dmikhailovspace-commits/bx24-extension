@@ -50,121 +50,50 @@ async function checkForUpdates() {
 // стандартный запрос ОС «Запустить?» и нажимает одну кнопку.
 
 function _generateUpdaterScript(platform) {
+  // Делегируем уже установленному updater-скрипту — он содержит всю логику:
+  // проверка версии, скачивание файлов с GitHub, перезапуск Bitrix24.
   if (platform === 'win') {
-    const lines = [
+    return [
       '@echo off',
-      'setlocal',
-      'set EXT=%LOCALAPPDATA%\\PENA Agency\\Extension',
-      'echo [PENA] Downloading extension files...',
-    ];
-    for (const f of _UPDATE_FILES) {
-      lines.push(
-        `powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest '${_EXT_RAW_BASE}/${f}' -OutFile '%EXT%\\${f}' -UseBasicParsing"`
-      );
-    }
-    lines.push(
-      'echo [PENA] Restarting Bitrix24...',
-      'taskkill /F /IM Bitrix24.exe 2>nul',
-      'timeout /t 3 /nobreak >nul',
-      // Читаем сохранённый путь к Bitrix24 (установщик записывает его в bitrix_path.txt)
-      'set BITRIX_EXE=',
-      'if exist "%LOCALAPPDATA%\\PENA Agency\\bitrix_path.txt" (',
-      '  set /p BITRIX_EXE=<"%LOCALAPPDATA%\\PENA Agency\\bitrix_path.txt"',
-      ')',
-      'if defined BITRIX_EXE if exist "%BITRIX_EXE%" (',
-      '  start "" "%BITRIX_EXE%" --disable-extensions-except="%EXT%" --load-extension="%EXT%"',
-      '  goto :done',
-      ')',
-      // Fallback: перебираем типичные пути установки Bitrix24
-      'for %%p in (',
-      '  "%LOCALAPPDATA%\\Programs\\Bitrix24\\Bitrix24.exe"',
-      '  "%APPDATA%\\Bitrix24\\Bitrix24.exe"',
-      '  "%ProgramFiles%\\Bitrix24\\Bitrix24.exe"',
-      '  "%ProgramFiles(x86)%\\Bitrix24\\Bitrix24.exe"',
-      ') do (',
-      '  if exist "%%~p" (',
-      '    start "" "%%~p" --disable-extensions-except="%EXT%" --load-extension="%EXT%"',
-      '    goto :done',
-      '  )',
-      ')',
-      'echo [PENA] Bitrix24.exe not found - please restart manually.',
-      'pause',
-      ':done',
+      'powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Normal' +
+        ' -File "%LOCALAPPDATA%\\PENA Agency\\Extension\\updater.ps1"',
       'del "%~f0"',
-    );
-    return lines.join('\r\n') + '\r\n';
+    ].join('\r\n') + '\r\n';
   } else {
-    // macOS .command (Terminal double-click)
-    const lines = [
+    return [
       '#!/bin/bash',
-      'EXT="$HOME/Library/Application Support/PENA Agency/Extension"',
-      'echo "[PENA] Downloading extension files..."',
-    ];
-    for (const f of _UPDATE_FILES) {
-      lines.push(`curl -fsSL "${_EXT_RAW_BASE}/${f}" -o "$EXT/${f}"`);
-    }
-    lines.push(
-      'echo "[PENA] Restarting Bitrix24..."',
-      'pkill -f "Bitrix24" 2>/dev/null || true',
-      'sleep 2',
-      // Перебираем пути установки Bitrix24 на macOS
-      'for p in "$HOME/Applications/Bitrix24.app" "/Applications/Bitrix24.app"; do',
-      '  [ -d "$p" ] && open "$p" && break',
-      'done',
+      '"$HOME/Library/Application Support/PENA Agency/Extension/pena_updater.sh"',
       'rm -f "$0"',
-    );
-    return lines.join('\n') + '\n';
+    ].join('\n') + '\n';
   }
 }
 
-// Скачать скрипт обновления через chrome.downloads и сразу открыть его
+// Скачать скрипт обновления через chrome.downloads и сразу открыть его.
+// ВАЖНО: не ждём onChanged — MV3 Service Worker убивается во время ожидания,
+// из-за чего sendResponse никогда не отправляется и content.js уходит в reload.
+// Файл маленький (<300 байт) — скачивается мгновенно; open/show через 1.5 сек.
 async function _downloadUpdater(tabId, platform) {
   const isWin = platform === 'win';
   const script = _generateUpdaterScript(platform);
   const filename = isWin ? 'pena_update.bat' : 'pena_update.command';
-  // data:-URL: chrome.downloads принимает его; зональный идентификатор
-  // (Mark of the Web) НЕ выставляется, поэтому SmartScreen не блокирует.
   const dataUrl = 'data:text/plain;charset=utf-8,' + encodeURIComponent(script);
 
   return new Promise((resolve) => {
     chrome.downloads.download({ url: dataUrl, filename, saveAs: false }, (downloadId) => {
       if (chrome.runtime.lastError || downloadId == null) { resolve(false); return; }
 
-      const _notify = () => {
+      // Отвечаем сразу — не ждём завершения загрузки.
+      // Через 1.5 сек пробуем открыть файл (к этому моменту он уже скачан).
+      setTimeout(() => {
+        try { chrome.downloads.open(downloadId); } catch (_) {}
+        chrome.downloads.show(downloadId);
         if (tabId) {
           chrome.tabs.sendMessage(tabId, { type: 'PENA_UPDATER_DOWNLOADED', _pena_dl: true })
             .catch(() => {});
         }
-      };
+      }, 1500);
 
-      const onChanged = (delta) => {
-        if (delta.id !== downloadId) return;
-
-        if (delta.state?.current === 'complete') {
-          chrome.downloads.onChanged.removeListener(onChanged);
-          // Пробуем открыть через ОС (Windows спросит «Запустить?» → Run)
-          try { chrome.downloads.open(downloadId); } catch (_) {}
-          // Параллельно показываем файл в проводнике — если авто-открытие не сработало
-          chrome.downloads.show(downloadId);
-          _notify();
-          resolve(true);
-
-        } else if (delta.danger?.current &&
-                   delta.danger.current !== 'safe' &&
-                   delta.danger.current !== 'accepted') {
-          // Chrome пометил .bat как опасный — открыть не получится автоматически.
-          // Показываем файл в проводнике, пользователь запустит вручную (ПКМ → Запустить).
-          chrome.downloads.onChanged.removeListener(onChanged);
-          chrome.downloads.show(downloadId);
-          _notify();
-          resolve(true);
-
-        } else if (delta.error?.current) {
-          chrome.downloads.onChanged.removeListener(onChanged);
-          resolve(false);
-        }
-      };
-      chrome.downloads.onChanged.addListener(onChanged);
+      resolve(true);
     });
   });
 }
