@@ -182,12 +182,26 @@
     }
 
     // ── Применить обновление in-place (нажата кнопка «Перезагрузить») ────────
-    // Не перезагружает страницу — background.js заменяет панель прямо сейчас
-    // через executeScript(world:MAIN), который обходит CSP.
+    // Пробуем заменить панель без перезагрузки страницы.
+    // Если не выходит (CSP блокирует eval) — перезагружаем страницу;
+    // при следующей загрузке content.js применит кеш через blob-URL.
     if (d.type === 'PENA_RELOAD_EXT') {
       // Флаг: пользователь одобрил обновление → авто-применять на следующих загрузках
       chrome.storage.local.set({ 'pena.update_pending': true }, () => {
-        try { chrome.runtime.sendMessage({ type: 'EXEC_CACHED_INJECTED' }).catch(() => {}); } catch (_) {}
+        let done = false;
+        const fallback = () => { if (!done) { done = true; location.reload(); } };
+        // Страховочный таймаут: если background.js не ответил за 9 сек — reload
+        const timer = setTimeout(fallback, 9000);
+        try {
+          chrome.runtime.sendMessage({ type: 'EXEC_CACHED_INJECTED' })
+            .then(result => {
+              clearTimeout(timer);
+              done = true;
+              // In-place инжект не удался (eval заблокирован CSP или нет кеша) — reload
+              if (!result?.ok) location.reload();
+            })
+            .catch(() => { clearTimeout(timer); fallback(); });
+        } catch (_) { clearTimeout(timer); fallback(); }
       });
       return;
     }

@@ -2736,6 +2736,10 @@ if (_presetChannel) {
 	});
 
 	_ubpRestart?.addEventListener('click', () => {
+		if (_ubpRestart.disabled) return;
+		// Немедленная визуальная обратная связь — кнопка заблокирована до ответа
+		_ubpRestart.disabled = true;
+		_ubpRestart.textContent = 'Применение…';
 		window.postMessage({ type: 'PENA_RELOAD_EXT' }, '*');
 	});
 

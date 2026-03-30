@@ -37,7 +37,7 @@ async function checkForUpdates() {
 
 // ── Инжект кешированного injected.js в MAIN мир страницы ─────────────────────
 // executeScript(world:'MAIN') обходит CSP страницы — единственный надёжный путь.
-// Не требует существования анит-панели: удаляет старую (если есть) и запускает новую.
+// Старая панель удаляется ТОЛЬКО если новый код успешно запустился (ok=true).
 async function _injectCached(tabId) {
   let stored;
   try {
@@ -58,14 +58,17 @@ async function _injectCached(tabId) {
       target: { tabId },
       world: 'MAIN',
       func: (src, logo) => {
-        // Убираем старую панель и guard — новый код запустится сразу
-        const old = document.getElementById('anit-filters');
+        // Захватываем ссылку на старую панель ДО запуска нового кода.
+        // Удаляем её ТОЛЬКО если новый код успешно инициализировался —
+        // иначе старая панель остаётся и может отобразить сообщение об ошибке.
+        const oldPanel = document.getElementById('anit-filters');
         delete window.__ANITREC_RUNNING__;
-        if (old) old.remove();
         window.__PENA_LOGO_URL_OVERRIDE__ = logo;
-        try { (0, eval)(src); } catch (e) { console.error('[PENA] inject error:', e); } // eslint-disable-line no-eval
+        let ok = false;
+        try { (0, eval)(src); ok = !!window.__ANITREC_RUNNING__; } catch (e) { console.error('[PENA] inject error:', e); } // eslint-disable-line no-eval
         delete window.__PENA_LOGO_URL_OVERRIDE__;
-        return !!window.__ANITREC_RUNNING__;
+        if (ok && oldPanel) oldPanel.remove();
+        return ok;
       },
       args: [code, logoUrl],
     });
@@ -88,14 +91,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     chrome.storage.local.get('pena.update_pending', async (s) => {
       if (!s['pena.update_pending']) return;
       const result = await _injectCached(tabId);
-      if (result.reason === 'not_newer') {
-        // Кеш уже не актуален (расширение обновлено)
+      if (result.ok) {
+        // Успешно: новая панель запущена. Сбрасываем флаг, чтобы избежать
+        // повторного инжекта при следующем PENA_PANEL_BUILT от новой панели.
         chrome.storage.local.remove('pena.update_pending');
-      } else if (!result.ok) {
-        // Инжект не удался — сообщаем пользователю
+      } else if (result.reason === 'not_newer') {
+        // Кеш уже не актуален (расширение обновлено до этой версии)
+        chrome.storage.local.remove('pena.update_pending');
+      } else {
+        // Инжект не удался — сообщаем пользователю, сбрасываем флаг
+        chrome.storage.local.remove('pena.update_pending');
         chrome.tabs.sendMessage(tabId, { type: 'PENA_UPDATE_IMPOSSIBLE', version: result.ver || '?' }).catch(() => {});
       }
-      // ok: панель заменена; флаг оставляем — применится и на следующих загрузках
     });
     return;
   }
@@ -107,7 +114,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!tabId) { sendResponse({ ok: false, reason: 'no_tabId' }); return; }
     _injectCached(tabId).then(result => {
       try { sendResponse(result); } catch (_) {}
-      if (!result.ok) {
+      if (result.ok) {
+        // Успех: сбрасываем флаг, чтобы PENA_PANEL_BUILT от новой панели
+        // не запустил повторный инжект.
+        chrome.storage.local.remove('pena.update_pending');
+      } else {
         chrome.tabs.sendMessage(tabId, {
           type: 'PENA_UPDATE_IMPOSSIBLE',
           version: result.ver || '?',
