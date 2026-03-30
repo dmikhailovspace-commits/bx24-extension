@@ -66,7 +66,16 @@ function _generateUpdaterScript(platform) {
       'echo [PENA] Restarting Bitrix24...',
       'taskkill /F /IM Bitrix24.exe 2>nul',
       'timeout /t 3 /nobreak >nul',
-      // Перебираем типичные пути установки Bitrix24
+      // Читаем сохранённый путь к Bitrix24 (установщик записывает его в bitrix_path.txt)
+      'set BITRIX_EXE=',
+      'if exist "%LOCALAPPDATA%\\PENA Agency\\bitrix_path.txt" (',
+      '  set /p BITRIX_EXE=<"%LOCALAPPDATA%\\PENA Agency\\bitrix_path.txt"',
+      ')',
+      'if defined BITRIX_EXE if exist "%BITRIX_EXE%" (',
+      '  start "" "%BITRIX_EXE%" --disable-extensions-except="%EXT%" --load-extension="%EXT%"',
+      '  goto :done',
+      ')',
+      // Fallback: перебираем типичные пути установки Bitrix24
       'for %%p in (',
       '  "%LOCALAPPDATA%\\Programs\\Bitrix24\\Bitrix24.exe"',
       '  "%APPDATA%\\Bitrix24\\Bitrix24.exe"',
@@ -74,7 +83,7 @@ function _generateUpdaterScript(platform) {
       '  "%ProgramFiles(x86)%\\Bitrix24\\Bitrix24.exe"',
       ') do (',
       '  if exist "%%~p" (',
-      '    start "" "%%~p"',
+      '    start "" "%%~p" --disable-extensions-except="%EXT%" --load-extension="%EXT%"',
       '    goto :done',
       '  )',
       ')',

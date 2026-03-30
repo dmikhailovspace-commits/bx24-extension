@@ -320,7 +320,8 @@ try {
 }
 
 $remoteVersion = $updateInfo.version
-$zipUrl        = $updateInfo.zip_url
+$rawBase       = "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension"
+$updateFiles   = @('background.js', 'content.js', 'injected.js', 'manifest.json')
 Log "Доступна версия: $remoteVersion"
 
 if ((CompareVersions $remoteVersion $localVersion) -le 0) {
@@ -330,47 +331,51 @@ if ((CompareVersions $remoteVersion $localVersion) -le 0) {
 
 Log "Загружаю обновление $remoteVersion ..."
 
-# Загружаем и распаковываем
-$tmpZip  = [System.IO.Path]::GetTempFileName() + ".zip"
-$tmpDir  = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "pena_update_$remoteVersion")
-
 try {
-    # Скачиваем ZIP
-    Invoke-WebRequest -Uri $zipUrl -OutFile $tmpZip -TimeoutSec 120
-    Log "ZIP загружен: $tmpZip"
-
-    # Распаковываем во временную папку
-    if (Test-Path $tmpDir) { Remove-Item $tmpDir -Recurse -Force }
-    Expand-Archive -Path $tmpZip -DestinationPath $tmpDir -Force
-
-    # Определяем папку с файлами расширения (может быть в корне или в подпапке extension/)
-    $srcDir = $tmpDir
-    if (Test-Path (Join-Path $tmpDir "extension\manifest.json")) {
-        $srcDir = Join-Path $tmpDir "extension"
-    } elseif (-not (Test-Path (Join-Path $tmpDir "manifest.json"))) {
-        # ищем manifest.json на один уровень глубже
-        $found = Get-ChildItem $tmpDir -Filter "manifest.json" -Recurse -Depth 2 | Select-Object -First 1
-        if ($found) { $srcDir = $found.DirectoryName }
+    # Скачиваем файлы расширения из GitHub напрямую в папку установки
+    foreach ($f in $updateFiles) {
+        $url     = "$rawBase/$f"
+        $outFile = Join-Path $INSTALL_DIR $f
+        Invoke-WebRequest -Uri $url -OutFile $outFile -UseBasicParsing -TimeoutSec 60
+        Log "Загружен: $f"
     }
 
-    # Проверяем, что нашли манифест
-    if (-not (Test-Path (Join-Path $srcDir "manifest.json"))) {
-        throw "manifest.json не найден в ZIP-архиве"
+    Log "Файлы обновлены в: $INSTALL_DIR"
+
+    # Перезапускаем Bitrix24 с расширением
+    $extArgs = "--disable-extensions-except=`"$INSTALL_DIR`" --load-extension=`"$INSTALL_DIR`""
+    $bitrixExe = $null
+
+    # Сначала из сохранённого пути
+    if (Test-Path $BITRIX_PATH_FILE) {
+        $p = (Get-Content $BITRIX_PATH_FILE -Raw -ErrorAction SilentlyContinue).Trim()
+        if ($p -and (Test-Path $p)) { $bitrixExe = $p }
+    }
+    # Fallback: стандартные пути
+    if (-not $bitrixExe) {
+        @(
+            "$env:LOCALAPPDATA\Programs\Bitrix24\Bitrix24.exe",
+            "$env:LOCALAPPDATA\Bitrix24\Bitrix24.exe",
+            "C:\Program Files (x86)\Bitrix24\Bitrix24.exe",
+            "C:\Program Files\Bitrix24\Bitrix24.exe"
+        ) | ForEach-Object { if (-not $bitrixExe -and (Test-Path $_)) { $bitrixExe = $_ } }
     }
 
-    # Копируем файлы расширения поверх установленных
-    Copy-Item -Path "$srcDir\*" -Destination $INSTALL_DIR -Recurse -Force
-    Log "Файлы скопированы в: $INSTALL_DIR"
+    if ($bitrixExe) {
+        Stop-Process -Name "Bitrix24" -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 3
+        Start-Process -FilePath $bitrixExe -ArgumentList $extArgs
+        Log "Bitrix24 перезапущен: $bitrixExe"
+        ShowBalloon "PENA Agency обновлён" "Установлена версия $remoteVersion. Bitrix24 перезапускается."
+    } else {
+        ShowBalloon "PENA Agency обновлён" "Установлена версия $remoteVersion. Перезапустите Bitrix24 вручную."
+        Log "Bitrix24.exe не найден — перезапуск вручную."
+    }
 
-    # Уведомление
-    ShowBalloon "PENA Agency обновлён" "Установлена версия $remoteVersion. Перезапустите Bitrix24."
     Log "Обновление до $remoteVersion завершено успешно."
 
 } catch {
     Log "ОШИБКА обновления: $($_.Exception.Message)"
     ShowBalloon "PENA Agency — ошибка обновления" "Не удалось обновить до v$remoteVersion. Подробности: $LOG_FILE"
     exit 1
-} finally {
-    try { Remove-Item $tmpZip -Force -ErrorAction SilentlyContinue } catch {}
-    try { Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue } catch {}
 }
