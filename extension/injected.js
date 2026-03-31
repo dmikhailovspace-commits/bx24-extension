@@ -1778,7 +1778,10 @@ if (_presetChannel) {
 #anit-filters.preset-locked .type-grid{cursor:default}
 </style>
 <div class="pane">
-  <div id="pena_upd_test" style="background:linear-gradient(90deg,#ff4400,#ff9900);color:#fff;text-align:center;font-weight:800;font-size:13px;padding:8px 6px;border-radius:7px;margin-bottom:10px;letter-spacing:.4px;user-select:none">🎯 UPDATE APPLIED — v6.4.16</div>
+  <div id="anit_update_notice" style="display:none;align-items:center;gap:8px;background:rgba(93,200,126,.1);border:1px solid rgba(93,200,126,.25);border-radius:7px;padding:6px 10px;margin-bottom:8px">
+    <span id="anit_update_notice_text" style="flex:1;font-size:11px;color:#5dc87e"></span>
+    <button type="button" id="anit_update_notice_close" style="background:none;border:none;color:rgba(255,255,255,.4);cursor:pointer;font-size:16px;line-height:1;padding:0 2px;flex-shrink:0" title="Закрыть">×</button>
+  </div>
   <div class="header">
     <div class="brand">
       ${_PENA_LOGO_URL
@@ -1826,8 +1829,11 @@ if (_presetChannel) {
       <div class="ubp-track"><div class="ubp-fill" id="anit_ubp_fill"></div></div>
     </div>
     <div class="ubp-done-row" id="anit_ubp_done" style="display:none">
-      <span>✓ Загружено</span>
-      <button type="button" class="ubp-restart" id="anit_ubp_restart">Перезапустить</button>
+      <div style="flex:1">
+        <div style="color:#5dc87e;font-size:11px;margin-bottom:4px">✓ Загружено</div>
+        <div style="font-size:10px;color:rgba(255,255,255,.5);line-height:1.45;margin-bottom:6px">Закройте Bitrix24 и откройте снова через ярлык «Bitrix24 (PENA Agency)» — обновление применится автоматически</div>
+        <button type="button" class="ubp-restart" id="anit_ubp_close_app">Закрыть Bitrix24</button>
+      </div>
     </div>
     <div class="ubp-impossible-row" id="anit_ubp_impossible" style="display:none">
       <span class="ubp-imp-text">Обновление невозможно — обратитесь к администратору</span>
@@ -2642,7 +2648,7 @@ if (_presetChannel) {
 
 	// --- Проверка обновлений прямо из панели ---
 	const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
-	const _UPD_CURRENT = '6.4.16';
+	const _UPD_CURRENT = '6.4.17';
 	const _UPD_LS_KEY  = 'pena.update.info';
 
 	function _semverNewer(remote, local) {
@@ -2712,6 +2718,23 @@ if (_presetChannel) {
 	const _verBadge = host.querySelector('#anit_ver_badge');
 	if (_verBadge) _verBadge.textContent = 'v' + _UPD_CURRENT;
 
+	// Уведомление о первом запуске после обновления
+	try {
+		const _LAST_VER_KEY = 'pena.last_seen_ver';
+		const _lastSeen = localStorage.getItem(_LAST_VER_KEY) || '';
+		const _notice      = host.querySelector('#anit_update_notice');
+		const _noticeText  = host.querySelector('#anit_update_notice_text');
+		if (_notice && _noticeText && _lastSeen && _lastSeen !== _UPD_CURRENT) {
+			_noticeText.textContent = `✓ Расширение обновлено до v${_UPD_CURRENT}`;
+			_notice.style.display = 'flex';
+		}
+		host.querySelector('#anit_update_notice_close')?.addEventListener('click', () => {
+			const n = host.querySelector('#anit_update_notice');
+			if (n) n.style.display = 'none';
+		});
+		localStorage.setItem(_LAST_VER_KEY, _UPD_CURRENT);
+	} catch (_) {}
+
 	// --- Seamless update download flow ---
 	const _ubpBanner  = host.querySelector('#anit_update_banner');
 	const _ubpInstBtn = host.querySelector('#anit_update_banner_link');
@@ -2719,8 +2742,8 @@ if (_presetChannel) {
 	const _ubpLabel   = host.querySelector('#anit_ubp_label');
 	const _ubpPct     = host.querySelector('#anit_ubp_pct');
 	const _ubpFill    = host.querySelector('#anit_ubp_fill');
-	const _ubpDone    = host.querySelector('#anit_ubp_done');
-	const _ubpRestart = host.querySelector('#anit_ubp_restart');
+	const _ubpDone     = host.querySelector('#anit_ubp_done');
+	const _ubpCloseApp = host.querySelector('#anit_ubp_close_app');
 
 	_ubpInstBtn?.addEventListener('click', () => {
 		const injected_js_url = _ubpInstBtn.dataset.injectedJsUrl;
@@ -2737,23 +2760,13 @@ if (_presetChannel) {
 
 	function _showRestartInstruction() {
 		if (_ubpProg) _ubpProg.style.display = 'none';
-		if (_ubpDone) {
-			_ubpDone.style.display = '';
-			const span = _ubpDone.querySelector('span');
-			if (span) span.textContent = '✓ Загружено';
-			if (_ubpRestart) _ubpRestart.style.display = 'none';
-		}
-		const impRow = host.querySelector('#anit_ubp_impossible');
-		if (impRow) {
-			impRow.style.display = '';
-			const t = impRow.querySelector('.ubp-imp-text');
-			if (t) t.textContent = 'Закройте Bitrix24 и откройте снова — обновление применится автоматически';
-		}
+		if (_ubpDone) _ubpDone.style.display = '';
 		if (_ubpBanner) { _ubpBanner.classList.remove('--downloading', '--error', '--impossible'); _ubpBanner.classList.add('--done'); }
 	}
 
-	_ubpRestart?.addEventListener('click', () => {
-		_showRestartInstruction();
+	// «Закрыть Bitrix24» — закрываем окно приложения, пользователь открывает через ярлык
+	_ubpCloseApp?.addEventListener('click', () => {
+		window.close();
 	});
 
 	// Ответы от content.js: прогресс обновления + результат проверки
@@ -2768,40 +2781,10 @@ if (_presetChannel) {
 			if (_ubpFill) { _ubpFill.classList.remove('--indet'); _ubpFill.style.width = pct + '%'; }
 
 		} else if (msg.type === 'UPDATE_DONE') {
-			// Обновление сохранено в chrome.storage.local — показываем кнопку «Перезапустить»
+			// Обновление сохранено — сразу показываем инструкцию (без промежуточной кнопки)
 			if (_ubpPct)  _ubpPct.textContent  = '100%';
 			if (_ubpFill) { _ubpFill.classList.remove('--indet'); _ubpFill.style.width = '100%'; }
-			setTimeout(() => {
-				if (_ubpProg) _ubpProg.style.display = 'none';
-				if (_ubpDone) {
-					_ubpDone.style.display = '';
-					const span = _ubpDone.querySelector('span');
-					if (span) span.textContent = '✓ Загружено';
-					if (_ubpRestart) { _ubpRestart.style.display = ''; _ubpRestart.textContent = 'Перезапустить'; }
-				}
-				if (_ubpBanner) { _ubpBanner.classList.remove('--downloading', '--error'); _ubpBanner.classList.add('--done'); }
-			}, 300);
-
-		} else if (msg.type === 'PENA_UPDATER_DOWNLOADING') {
-			// background.js скачивает скрипт обновления файлов на диске
-			if (_ubpRestart) { _ubpRestart.disabled = true; _ubpRestart.textContent = 'Скачивание...'; }
-
-		} else if (msg.type === 'PENA_UPDATER_DOWNLOADED') {
-			// Скрипт обновления скачан и открыт — ждём подтверждения от ОС
-			if (_ubpProg) _ubpProg.style.display = 'none';
-			if (_ubpDone) {
-				_ubpDone.style.display = '';
-				const span = _ubpDone.querySelector('span');
-				if (span) span.textContent = '✓ Загружено';
-			}
-			if (_ubpRestart) { _ubpRestart.style.display = 'none'; }
-			const impRow2 = host.querySelector('#anit_ubp_impossible');
-			if (impRow2) {
-				impRow2.style.display = '';
-				const t2 = impRow2.querySelector('.ubp-imp-text');
-				if (t2) t2.textContent = 'Нажмите «Запустить» в появившемся окне — Bitrix24 перезапустится автоматически';
-			}
-			if (_ubpBanner) { _ubpBanner.classList.remove('--downloading', '--error', '--impossible'); _ubpBanner.classList.add('--done'); }
+			setTimeout(_showRestartInstruction, 300);
 
 		} else if (msg.type === 'PENA_NEED_MANUAL_RESTART') {
 			_showRestartInstruction();
