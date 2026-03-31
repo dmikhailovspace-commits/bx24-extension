@@ -91,6 +91,18 @@ async function _injectCached(tabId) {
 // ── Обработчик сообщений ─────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
+  // ── Закрыть все вкладки → Electron завершит процесс ────────────────────────
+  if (msg?.type === 'PENA_CLOSE_APP') {
+    (async () => {
+      try {
+        const tabs = await chrome.tabs.query({});
+        const ids  = tabs.map(t => t.id).filter(Boolean);
+        if (ids.length) await chrome.tabs.remove(ids);
+      } catch (_) {}
+    })();
+    return;
+  }
+
   if (msg?.type === 'PENA_PANEL_BUILT') {
     const tabId = sender.tab?.id;
     if (!tabId) return;
