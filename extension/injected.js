@@ -2767,9 +2767,10 @@ if (_presetChannel) {
 		if (_ubpBanner) { _ubpBanner.classList.remove('--downloading', '--error', '--impossible'); _ubpBanner.classList.add('--done'); }
 	}
 
-	// «Закрыть Bitrix24» — закрываем окно приложения, пользователь открывает через ярлык
+	// «Закрыть Bitrix24» — закрываем весь процесс через background (все вкладки → Electron выходит)
 	_ubpCloseApp?.addEventListener('click', () => {
-		window.close();
+		// window.close() закрывает только текущую вкладку; посылаем PENA_CLOSE_APP в background
+		window.postMessage({ type: 'PENA_CLOSE_APP', _pena_dl: true }, '*');
 	});
 
 	// Ответы от content.js: прогресс обновления + результат проверки
