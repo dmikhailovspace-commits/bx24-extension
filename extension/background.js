@@ -11,6 +11,18 @@ function isNewer(remote, local) {
   return rc > lc;
 }
 
+// Уведомить все открытые вкладки о доступном обновлении
+async function _notifyTabs(version, injected_js_url) {
+  try {
+    const tabs = await chrome.tabs.query({});
+    for (const tab of tabs) {
+      chrome.tabs.sendMessage(tab.id, {
+        type: 'UPDATE_AVAILABLE', version, injected_js_url,
+      }).catch(() => {});
+    }
+  } catch (_) {}
+}
+
 async function checkForUpdates() {
   try {
     const ctrl = new AbortController();
@@ -22,13 +34,14 @@ async function checkForUpdates() {
     const remoteVer = String(data.version || '');
     const localVer  = chrome.runtime.getManifest().version;
     if (remoteVer && isNewer(remoteVer, localVer)) {
-      chrome.storage.local.set({
-        anit_update_info: {
-          hasUpdate: true,
-          version: remoteVer,
-          injected_js_url: data.injected_js_url || '',
-        }
-      });
+      const info = {
+        hasUpdate: true,
+        version: remoteVer,
+        injected_js_url: data.injected_js_url || '',
+      };
+      chrome.storage.local.set({ anit_update_info: info });
+      // Немедленно показываем баннер во всех открытых вкладках
+      _notifyTabs(remoteVer, data.injected_js_url || '');
     } else {
       chrome.storage.local.set({ anit_update_info: { hasUpdate: false } });
     }
@@ -36,8 +49,6 @@ async function checkForUpdates() {
 }
 
 // ── Инжект кешированного injected.js в MAIN мир страницы ─────────────────────
-// executeScript(world:'MAIN') обходит CSP страницы — единственный надёжный путь.
-// Старая панель удаляется ТОЛЬКО если новый код успешно запустился (ok=true).
 async function _injectCached(tabId) {
   let stored;
   try {
@@ -80,8 +91,6 @@ async function _injectCached(tabId) {
 // ── Обработчик сообщений ─────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
-  // Панель построена (injected.js → content.js → сюда).
-  // Если пользователь одобрил обновление — применяем кеш немедленно.
   if (msg?.type === 'PENA_PANEL_BUILT') {
     const tabId = sender.tab?.id;
     if (!tabId) return;
@@ -98,11 +107,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 
-  // Пользователь нажал «Перезапустить».
-  // Пробуем in-place inject. Если CSP блокирует eval — говорим «перезапустите Bitrix24».
-  // chrome.downloads/bat-скрипты НЕ работают в Electron (Bitrix24 Desktop) —
-  // обновление файлов на диске делает updater.ps1, который запускается
-  // ярлыком «Bitrix24 (PENA Agency)» при каждом старте.
   if (msg?.type === 'EXEC_CACHED_INJECTED') {
     const tabId = sender.tab?.id;
     if (!tabId) { sendResponse({ ok: false }); return; }
@@ -116,9 +120,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return;
       }
 
-      // eval не сработал → обновление файлов на диске сделает updater.ps1
-      // при следующем запуске Bitrix24 через ярлык.
-      // Говорим пользователю перезапустить Bitrix24 вручную.
       chrome.tabs.sendMessage(tabId, {
         type: 'PENA_NEED_MANUAL_RESTART', _pena_dl: true,
       }).catch(() => {});
@@ -126,9 +127,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       try { sendResponse({ ok: false, needRestart: true }); } catch (_) {}
     })();
 
-    return true; // async sendResponse
+    return true;
   }
 });
 
-chrome.runtime.onStartup.addListener(checkForUpdates);
-chrome.runtime.onInstalled.addListener(checkForUpdates);
+// ── Периодическая проверка обновлений (каждые 30 мин) ───────────────────────
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'pena_update_check') checkForUpdates();
+});
+
+function _initAlarm() {
+  chrome.alarms.get('pena_update_check', (alarm) => {
+    if (!alarm) {
+      chrome.alarms.create('pena_update_check', { periodInMinutes: 30 });
+    }
+  });
+}
+
+chrome.runtime.onStartup.addListener(() => {
+  checkForUpdates();
+  _initAlarm();
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+  checkForUpdates();
+  _initAlarm();
+});

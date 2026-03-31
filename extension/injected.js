@@ -2721,10 +2721,13 @@ if (_presetChannel) {
 	// Уведомление о первом запуске после обновления
 	try {
 		const _LAST_VER_KEY = 'pena.last_seen_ver';
-		const _lastSeen = localStorage.getItem(_LAST_VER_KEY) || '';
+		const _lastSeen = localStorage.getItem(_LAST_VER_KEY); // null если ключа нет
 		const _notice      = host.querySelector('#anit_update_notice');
 		const _noticeText  = host.querySelector('#anit_update_notice_text');
-		if (_notice && _noticeText && _lastSeen && _lastSeen !== _UPD_CURRENT) {
+		// Показываем если: ключ уже был (не первая установка) И версия изменилась
+		// _lastSeen === null → первая установка → не показываем
+		// _lastSeen === '' → не должно быть, но на всякий случай пропускаем
+		if (_notice && _noticeText && _lastSeen !== null && _lastSeen !== _UPD_CURRENT) {
 			_noticeText.textContent = `✓ Расширение обновлено до v${_UPD_CURRENT}`;
 			_notice.style.display = 'flex';
 		}
