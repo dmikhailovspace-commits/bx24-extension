@@ -184,6 +184,12 @@
       return;
     }
 
+    // ── Закрыть всё приложение Bitrix24 (убиваем все вкладки через background) ─
+    if (d.type === 'PENA_CLOSE_APP') {
+      try { chrome.runtime.sendMessage({ type: 'PENA_CLOSE_APP' }).catch(() => {}); } catch (_) {}
+      return;
+    }
+
     // ── Применить обновление (нажата кнопка «Перезапустить») ────────────────
     // Пробуем in-place inject через eval (быстро, без reload).
     // Если CSP блокирует eval — background.js отправляет PENA_NEED_MANUAL_RESTART,
