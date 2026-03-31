@@ -1,7 +1,7 @@
 {
-  "version": "6.4.15",
-  "release_date": "2026-03-30",
+  "version": "6.4.17",
+  "release_date": "2026-03-31",
   "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.4.15",
   "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension/injected.js",
-  "changelog": "Тест self-update: полоса UPDATE APPLIED v6.4.15 должна появиться после обновления"
+  "changelog": "Тест self-update: полоса UPDATE APPLIED v6.4.16 должна появиться после обновления"
 }

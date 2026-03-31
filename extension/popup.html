@@ -32,23 +32,9 @@
     #st-update { padding:10px 12px; background:rgba(230,168,0,.09); border:1px solid rgba(230,168,0,.28); border-radius:9px; }
     .u-title { font-weight:600; color:#e6a800; font-size:12px; margin-bottom:4px; }
     .u-ver   { font-size:11px; color:rgba(255,255,255,.5); margin-bottom:10px; }
-    .install-btn { width:100%; padding:7px; border-radius:7px; border:1px solid rgba(230,168,0,.45); background:rgba(230,168,0,.18); color:#f0b820; font-size:12px; font-weight:600; cursor:pointer; transition:background .15s; }
-    .install-btn:hover { background:rgba(230,168,0,.3); }
-
-    /* downloading */
-    #st-dl { padding:8px 0; }
-    .dl-row { font-size:12px; color:rgba(255,255,255,.6); margin-bottom:8px; display:flex; justify-content:space-between; }
-    .dl-pct { color:#6ab0ff; font-weight:600; }
-    .bar-track { height:4px; background:rgba(255,255,255,.1); border-radius:2px; overflow:hidden; }
-    .bar-fill  { height:100%; width:0%; background:linear-gradient(90deg,#1587fa,#4fb6ff); border-radius:2px; transition:width .25s ease; }
-
-    /* done */
-    #st-done { padding:10px 12px; background:rgba(93,200,126,.07); border:1px solid rgba(93,200,126,.22); border-radius:9px; }
-    .done-row { display:flex; align-items:flex-start; gap:8px; }
-    .done-chk { flex-shrink:0; margin-top:1px; }
-    .done-title { font-size:12px; font-weight:600; color:#5dc87e; margin-bottom:3px; }
-    .done-sub   { font-size:11px; color:rgba(255,255,255,.45); line-height:1.45; }
-    .re-check { margin-top:8px; padding:0; background:none; border:none; color:rgba(255,255,255,.3); font-size:11px; cursor:pointer; text-decoration:underline; }
+    .u-instruction { font-size:11px; color:rgba(255,255,255,.65); line-height:1.55; }
+    .u-instruction strong { color:#e6a800; }
+    .re-check { margin-top:10px; padding:0; background:none; border:none; color:rgba(255,255,255,.3); font-size:11px; cursor:pointer; text-decoration:underline; display:block; }
     .re-check:hover { color:rgba(255,255,255,.6); }
 
     /* error */
@@ -92,29 +78,10 @@
   <div id="st-update" class="state" style="display:none">
     <div class="u-title">Доступно обновление</div>
     <div class="u-ver" id="updateVerText"></div>
-    <button class="install-btn" id="installBtn">Установить обновление</button>
-  </div>
-
-  <!-- downloading progress -->
-  <div id="st-dl" class="state" style="display:none">
-    <div class="dl-row">
-      <span id="dlText">Загружаю установщик...</span>
-      <span class="dl-pct" id="dlPct"></span>
-    </div>
-    <div class="bar-track"><div class="bar-fill" id="dlBar"></div></div>
-  </div>
-
-  <!-- done -->
-  <div id="st-done" class="state" style="display:none">
-    <div class="done-row">
-      <svg class="done-chk" width="18" height="18" viewBox="0 0 18 18" fill="none">
-        <circle cx="9" cy="9" r="8" fill="rgba(93,200,126,.18)"/>
-        <path d="M5.5 9l2.8 2.8L13 6" stroke="#5dc87e" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-      <div>
-        <div class="done-title">Установщик скачан!</div>
-        <div class="done-sub">Откройте загруженный файл для завершения установки.</div>
-      </div>
+    <div class="u-instruction">
+      Закройте Bitrix24 и откройте снова через ярлык<br>
+      <strong>«Bitrix24 (PENA Agency)»</strong> в меню Пуск —<br>
+      обновление применится автоматически.
     </div>
     <button class="re-check" id="reCheckBtn">Проверить снова</button>
   </div>
