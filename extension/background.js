@@ -91,13 +91,22 @@ async function _injectCached(tabId) {
 // ── Обработчик сообщений ─────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
-  // ── Закрыть все вкладки → Electron завершит процесс ────────────────────────
+  // ── Закрыть всё приложение Bitrix24 ─────────────────────────────────────────
   if (msg?.type === 'PENA_CLOSE_APP') {
     (async () => {
+      // Метод A: закрыть каждую вкладку по отдельности
       try {
         const tabs = await chrome.tabs.query({});
-        const ids  = tabs.map(t => t.id).filter(Boolean);
-        if (ids.length) await chrome.tabs.remove(ids);
+        for (const tab of tabs) {
+          chrome.tabs.remove(tab.id).catch(() => {});
+        }
+      } catch (_) {}
+      // Метод B: закрыть все окна (перекрывает Electron windows)
+      try {
+        const wins = await chrome.windows.getAll({});
+        for (const w of wins) {
+          chrome.windows.remove(w.id).catch(() => {});
+        }
       } catch (_) {}
     })();
     return;
