@@ -2767,28 +2767,53 @@ if (_presetChannel) {
 		if (_ubpBanner) { _ubpBanner.classList.remove('--downloading', '--error', '--impossible'); _ubpBanner.classList.add('--done'); }
 	}
 
-	// «Перезапустить Bitrix24» — запускаем updater.ps1 -LaunchWithUpdate в фоне, затем убиваем процесс
+	// «Перезапустить Bitrix24» — многоуровневое закрытие + перезапуск через ярлык
 	_ubpCloseApp?.addEventListener('click', () => {
-		// Шаг 1: пробуем запустить updater.ps1 через Node.js child_process
-		// (доступен в Electron с nodeIntegration: true)
+		// ── Уровень 1: Node.js child_process (Electron с nodeIntegration) ─────────
+		// Запускаем updater.ps1 -LaunchWithUpdate ДО закрытия,
+		// чтобы новый процесс Bitrix24 стартовал пока текущий ещё жив.
 		let _relaunching = false;
 		try {
 			let _req;
-			try { _req = (0, eval)('require'); } catch (_) {} // не определён → undefined
+			try { _req = (0, eval)('require'); } catch (_) {}
 			if (typeof _req === 'function') {
-				const { exec } = _req('child_process');
-				// cmd.exe раскрывает %LOCALAPPDATA% автоматически
-				exec('powershell.exe -WindowStyle Hidden -File "%LOCALAPPDATA%\\PENA Agency\\Extension\\updater.ps1" -LaunchWithUpdate');
+				// cmd.exe раскрывает %LOCALAPPDATA% → путь к updater.ps1
+				_req('child_process').exec(
+					'powershell.exe -WindowStyle Hidden -File "%LOCALAPPDATA%\\PENA Agency\\Extension\\updater.ps1" -LaunchWithUpdate'
+				);
 				_relaunching = true;
 			}
 		} catch (_) {}
 
-		// Шаг 2: закрываем все вкладки через background.js
-		// Если updater.ps1 запущен — ждём 1.5с, чтобы он успел стартовать
-		setTimeout(
-			() => window.postMessage({ type: 'PENA_CLOSE_APP', _pena_dl: true }, '*'),
-			_relaunching ? 1500 : 0
-		);
+		// ── Уровень 2: Bitrix24 Desktop API ─────────────────────────────────────
+		try {
+			if (window.BXDesktopSystem?.ExecAction) {
+				// Если updater уже запущен — сначала даём ему 1.5с, потом quit
+				setTimeout(() => {
+					try { window.BXDesktopSystem.ExecAction('quit'); } catch (_) {}
+				}, _relaunching ? 1500 : 0);
+			}
+		} catch (_) {}
+
+		// ── Уровень 3: Electron remote / process.exit ────────────────────────────
+		setTimeout(() => {
+			try {
+				let _req;
+				try { _req = (0, eval)('require'); } catch (_) {}
+				if (typeof _req === 'function') {
+					// Метод A: remote.app.quit() (Electron < 14 с enableRemoteModule)
+					try { _req('electron').remote.app.quit(); return; } catch (_) {}
+					// Метод B: убить процесс напрямую
+					try { _req('process').exit(0); return; } catch (_) {}
+				}
+			} catch (_) {}
+
+			// ── Уровень 4: window.close() — закрыть текущее окно ────────────────
+			try { window.close(); } catch (_) {}
+
+			// ── Уровень 5: background.js — закрыть все вкладки и окна ────────────
+			window.postMessage({ type: 'PENA_CLOSE_APP', _pena_dl: true }, '*');
+		}, _relaunching ? 1500 : 0);
 	});
 
 	// Ответы от content.js: прогресс обновления + результат проверки
