@@ -1831,8 +1831,8 @@ if (_presetChannel) {
     <div class="ubp-done-row" id="anit_ubp_done" style="display:none">
       <div style="flex:1">
         <div style="color:#5dc87e;font-size:11px;margin-bottom:4px">✓ Загружено</div>
-        <div style="font-size:10px;color:rgba(255,255,255,.5);line-height:1.45;margin-bottom:6px">Закройте Bitrix24 и откройте снова через ярлык «Bitrix24 (PENA Agency)» — обновление применится автоматически</div>
-        <button type="button" class="ubp-restart" id="anit_ubp_close_app">Закрыть Bitrix24</button>
+        <div style="font-size:10px;color:rgba(255,255,255,.5);line-height:1.45;margin-bottom:6px">Bitrix24 закроется и автоматически откроется снова через ярлык с обновлением</div>
+        <button type="button" class="ubp-restart" id="anit_ubp_close_app">Перезапустить Bitrix24</button>
       </div>
     </div>
     <div class="ubp-impossible-row" id="anit_ubp_impossible" style="display:none">
@@ -2648,7 +2648,7 @@ if (_presetChannel) {
 
 	// --- Проверка обновлений прямо из панели ---
 	const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
-	const _UPD_CURRENT = '6.4.19';
+	const _UPD_CURRENT = '6.4.20';
 	const _UPD_LS_KEY  = 'pena.update.info';
 
 	function _semverNewer(remote, local) {
@@ -2767,10 +2767,28 @@ if (_presetChannel) {
 		if (_ubpBanner) { _ubpBanner.classList.remove('--downloading', '--error', '--impossible'); _ubpBanner.classList.add('--done'); }
 	}
 
-	// «Закрыть Bitrix24» — закрываем весь процесс через background (все вкладки → Electron выходит)
+	// «Перезапустить Bitrix24» — запускаем updater.ps1 -LaunchWithUpdate в фоне, затем убиваем процесс
 	_ubpCloseApp?.addEventListener('click', () => {
-		// window.close() закрывает только текущую вкладку; посылаем PENA_CLOSE_APP в background
-		window.postMessage({ type: 'PENA_CLOSE_APP', _pena_dl: true }, '*');
+		// Шаг 1: пробуем запустить updater.ps1 через Node.js child_process
+		// (доступен в Electron с nodeIntegration: true)
+		let _relaunching = false;
+		try {
+			let _req;
+			try { _req = (0, eval)('require'); } catch (_) {} // не определён → undefined
+			if (typeof _req === 'function') {
+				const { exec } = _req('child_process');
+				// cmd.exe раскрывает %LOCALAPPDATA% автоматически
+				exec('powershell.exe -WindowStyle Hidden -File "%LOCALAPPDATA%\\PENA Agency\\Extension\\updater.ps1" -LaunchWithUpdate');
+				_relaunching = true;
+			}
+		} catch (_) {}
+
+		// Шаг 2: закрываем все вкладки через background.js
+		// Если updater.ps1 запущен — ждём 1.5с, чтобы он успел стартовать
+		setTimeout(
+			() => window.postMessage({ type: 'PENA_CLOSE_APP', _pena_dl: true }, '*'),
+			_relaunching ? 1500 : 0
+		);
 	});
 
 	// Ответы от content.js: прогресс обновления + результат проверки
