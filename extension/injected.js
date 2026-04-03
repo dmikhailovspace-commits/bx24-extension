@@ -1778,7 +1778,7 @@ if (_presetChannel) {
 #anit-filters.preset-locked .type-grid{cursor:default}
 </style>
 <div class="pane">
-  <div id="anit_update_notice" style="display:none;align-items:center;gap:8px;background:rgba(93,200,126,.1);border:1px solid rgba(93,200,126,.25);border-radius:7px;padding:6px 10px;margin-bottom:8px">
+  <div id="anit_update_notice" style="display:none;align-items:center;gap:8px;background:rgba(93,200,126,.1);border-top:none;border-bottom:1px solid rgba(93,200,126,.25);border-left:none;border-right:none;border-radius:0;padding:6px 22px;margin:-10px -12px 8px -12px">
     <span id="anit_update_notice_text" style="flex:1;font-size:11px;color:#5dc87e"></span>
     <button type="button" id="anit_update_notice_close" style="background:none;border:none;color:rgba(255,255,255,.4);cursor:pointer;font-size:16px;line-height:1;padding:0 2px;flex-shrink:0" title="Закрыть">×</button>
   </div>
@@ -2648,7 +2648,7 @@ if (_presetChannel) {
 
 	// --- Проверка обновлений прямо из панели ---
 	const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
-	const _UPD_CURRENT = '6.4.21';
+	const _UPD_CURRENT = '6.4.22';
 	const _UPD_LS_KEY  = 'pena.update.info';
 
 	function _semverNewer(remote, local) {
@@ -2769,15 +2769,19 @@ if (_presetChannel) {
 
 	// «Перезапустить Bitrix24» — многоуровневое закрытие + перезапуск через ярлык
 	_ubpCloseApp?.addEventListener('click', () => {
-		// ── Уровень 1: Node.js child_process (Electron с nodeIntegration) ─────────
-		// Запускаем updater.ps1 -LaunchWithUpdate ДО закрытия,
-		// чтобы новый процесс Bitrix24 стартовал пока текущий ещё жив.
+		// Визуальный фидбек: сразу показываем что кнопка сработала
+		if (_ubpCloseApp) {
+			_ubpCloseApp.textContent = 'Закрываем...';
+			_ubpCloseApp.disabled = true;
+		}
+
+		// ── Уровень 1: Node.js child_process ─────────────────────────────────────
+		// Запускаем updater.ps1 -LaunchWithUpdate ДО закрытия
 		let _relaunching = false;
 		try {
 			let _req;
 			try { _req = (0, eval)('require'); } catch (_) {}
 			if (typeof _req === 'function') {
-				// cmd.exe раскрывает %LOCALAPPDATA% → путь к updater.ps1
 				_req('child_process').exec(
 					'powershell.exe -WindowStyle Hidden -File "%LOCALAPPDATA%\\PENA Agency\\Extension\\updater.ps1" -LaunchWithUpdate'
 				);
@@ -2785,15 +2789,14 @@ if (_presetChannel) {
 			}
 		} catch (_) {}
 
-		// ── Уровень 2: Bitrix24 Desktop API ─────────────────────────────────────
-		try {
-			if (window.BXDesktopSystem?.ExecAction) {
-				// Если updater уже запущен — сначала даём ему 1.5с, потом quit
-				setTimeout(() => {
-					try { window.BXDesktopSystem.ExecAction('quit'); } catch (_) {}
-				}, _relaunching ? 1500 : 0);
-			}
-		} catch (_) {}
+		const _delay = _relaunching ? 1500 : 0;
+
+		// ── Уровень 2: Bitrix24 Desktop API ──────────────────────────────────────
+		setTimeout(() => {
+			try { window.BXDesktopSystem?.ExecAction?.('quit'); } catch (_) {}
+			try { window.BXDesktopSystem?.ExecAction?.('exit'); } catch (_) {}
+			try { window.BXDesktopSystem?.ExecAction?.('close'); } catch (_) {}
+		}, _delay);
 
 		// ── Уровень 3: Electron remote / process.exit ────────────────────────────
 		setTimeout(() => {
@@ -2801,19 +2804,18 @@ if (_presetChannel) {
 				let _req;
 				try { _req = (0, eval)('require'); } catch (_) {}
 				if (typeof _req === 'function') {
-					// Метод A: remote.app.quit() (Electron < 14 с enableRemoteModule)
-					try { _req('electron').remote.app.quit(); return; } catch (_) {}
-					// Метод B: убить процесс напрямую
-					try { _req('process').exit(0); return; } catch (_) {}
+					try { _req('electron').remote.app.quit(); } catch (_) {}
+					try { _req('process').exit(0); } catch (_) {}
 				}
 			} catch (_) {}
+		}, _delay);
 
-			// ── Уровень 4: window.close() — закрыть текущее окно ────────────────
-			try { window.close(); } catch (_) {}
-
-			// ── Уровень 5: background.js — закрыть все вкладки и окна ────────────
+		// ── Уровень 4: background.js navigate→close (главный метод) ─────────────
+		// Сначала переводим все вкладки на about:blank (обходит Bitrix24 close handlers),
+		// затем background закрывает вкладки и окна
+		setTimeout(() => {
 			window.postMessage({ type: 'PENA_CLOSE_APP', _pena_dl: true }, '*');
-		}, _relaunching ? 1500 : 0);
+		}, _delay);
 	});
 
 	// Ответы от content.js: прогресс обновления + результат проверки
