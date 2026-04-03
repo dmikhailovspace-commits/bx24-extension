@@ -65,6 +65,48 @@ function CompareVersions($a, $b) {
     } catch { return 0 }
 }
 
+function Register-NativeHost {
+    # Копируем скрипт хоста и регистрируем Native Messaging Host для расширения
+    $hostDir     = "$env:LOCALAPPDATA\PENA Agency"
+    $hostPs1Src  = "$INSTALL_DIR\pena_host.ps1"
+    $hostBatSrc  = "$INSTALL_DIR\pena_host.bat"
+    $hostPs1Dst  = "$hostDir\pena_host.ps1"
+    $hostBatDst  = "$hostDir\pena_host.bat"
+    $manifestDst = "$hostDir\com.pena.agency.helper.json"
+
+    try {
+        if (-not (Test-Path $hostDir)) { New-Item $hostDir -ItemType Directory -Force | Out-Null }
+
+        # Копируем файлы хоста (если есть в INSTALL_DIR)
+        if (Test-Path $hostPs1Src) { Copy-Item $hostPs1Src $hostPs1Dst -Force }
+        if (Test-Path $hostBatSrc) { Copy-Item $hostBatSrc $hostBatDst -Force }
+
+        # Генерируем манифест с абсолютным путём (env-переменные здесь не работают)
+        $manifest = @{
+            name            = 'com.pena.agency.helper'
+            description     = 'PENA Agency native helper'
+            path            = $hostBatDst
+            type            = 'stdio'
+            allowed_origins = @('chrome-extension://hlhefpcndfepdlgbjcokkcodcbfnnepm/')
+        } | ConvertTo-Json -Compress
+        [System.IO.File]::WriteAllText($manifestDst, $manifest, [System.Text.Encoding]::UTF8)
+
+        # Регистрируем в реестре для Chrome / Chromium / Edge (Bitrix24 использует Chromium)
+        foreach ($base in @(
+            'HKCU:\Software\Google\Chrome\NativeMessagingHosts',
+            'HKCU:\Software\Chromium\NativeMessagingHosts',
+            'HKCU:\Software\Microsoft\Edge\NativeMessagingHosts'
+        )) {
+            $key = "$base\com.pena.agency.helper"
+            New-Item -Path $key -Force -ErrorAction SilentlyContinue | Out-Null
+            Set-ItemProperty -Path $key -Name '(Default)' -Value $manifestDst -ErrorAction SilentlyContinue
+        }
+        Log "Native Messaging Host зарегистрирован: $manifestDst"
+    } catch {
+        Log "ПРЕДУПРЕЖДЕНИЕ: Не удалось зарегистрировать Native Messaging Host: $($_.Exception.Message)"
+    }
+}
+
 function MakeShortcut($Path, $Target, $LnkArgs, $WorkDir, $Desc, $Icon) {
     try {
         $sc = (New-Object -ComObject WScript.Shell).CreateShortcut($Path)
@@ -215,6 +257,9 @@ if ($Setup) {
         Log "ПРЕДУПРЕЖДЕНИЕ: Не удалось создать задачу планировщика: $($_.Exception.Message)"
     }
 
+    # -- Регистрируем Native Messaging Host --
+    Register-NativeHost
+
     Log "Настройка завершена."
     exit 0
 }
@@ -306,6 +351,9 @@ if ($Launch) {
 # 3. Запускает Bitrix24 с --load-extension
 # ==============================================================
 if ($LaunchWithUpdate) {
+    # Убеждаемся что Native Messaging Host зарегистрирован (на случай если -Setup не запускался)
+    Register-NativeHost
+
     $RAW_BASE = "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension"
     $UPD_FILES = @("background.js", "content.js", "injected.js", "manifest.json")
 
