@@ -95,16 +95,34 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type === 'PENA_CLOSE_APP') {
     (async () => {
       const tabs = await chrome.tabs.query({}).catch(() => []);
-      // Шаг 1: навигируем все вкладки на about:blank
-      // Это обходит beforeunload/close-handlers Bitrix24 (которые иначе уводят в трей)
-      await Promise.all(
-        tabs.map(t => chrome.tabs.update(t.id, { url: 'about:blank' }).catch(() => {}))
-      );
-      // Шаг 2: ждём пока about:blank загрузится
-      await new Promise(r => setTimeout(r, 800));
-      // Шаг 3: закрываем вкладки — теперь без Bitrix24-обработчиков
+
+      // Шаг 1: через executeScript навигируем каждую вкладку на about:blank
+      // прямо в её контексте — это обходит Bitrix24 beforeunload/tray-handler,
+      // потому что навигация идёт изнутри страницы, а не через Chrome API
+      await Promise.all(tabs.map(t =>
+        chrome.scripting.executeScript({
+          target: { tabId: t.id },
+          world: 'MAIN',
+          func: () => { try { window.location.replace('about:blank'); } catch (_) {} },
+        }).catch(() => {})
+      ));
+
+      // Шаг 2: ждём пока все вкладки навигируются
+      await new Promise(r => setTimeout(r, 1200));
+
+      // Шаг 3: вызываем window.close() в каждой уже чистой вкладке (about:blank)
+      // У about:blank нет Bitrix24-обработчиков — close срабатывает честно
+      await Promise.all(tabs.map(t =>
+        chrome.scripting.executeScript({
+          target: { tabId: t.id },
+          world: 'MAIN',
+          func: () => { try { window.close(); } catch (_) {} },
+        }).catch(() => {})
+      ));
+
+      // Шаг 4: на случай если executeScript не помог — force-remove вкладок и окон
+      await new Promise(r => setTimeout(r, 400));
       await Promise.all(tabs.map(t => chrome.tabs.remove(t.id).catch(() => {})));
-      // Шаг 4: закрываем окна
       try {
         const wins = await chrome.windows.getAll({}).catch(() => []);
         for (const w of wins) chrome.windows.remove(w.id).catch(() => {});
