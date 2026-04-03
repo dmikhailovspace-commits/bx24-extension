@@ -94,33 +94,43 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // ── Закрыть всё приложение Bitrix24 ─────────────────────────────────────────
   if (msg?.type === 'PENA_CLOSE_APP') {
     (async () => {
+      // ── Уровень 1: Native Messaging Host → taskkill + relaunch ───────────────
+      // pena_host.ps1 убивает процесс Bitrix24 и запускает updater.ps1 -LaunchWithUpdate
+      const nativeOk = await new Promise(resolve => {
+        const timer = setTimeout(() => resolve(false), 5000);
+        try {
+          chrome.runtime.sendNativeMessage(
+            'com.pena.agency.helper',
+            { action: 'relaunch' },
+            (resp) => {
+              clearTimeout(timer);
+              resolve(!chrome.runtime.lastError && resp?.ok === true);
+            }
+          );
+        } catch (_) { clearTimeout(timer); resolve(false); }
+      });
+
+      if (nativeOk) return; // нативный хост сделал всё сам
+
+      // ── Уровень 2: executeScript navigate→close (fallback) ───────────────────
       const tabs = await chrome.tabs.query({}).catch(() => []);
 
-      // Шаг 1: через executeScript навигируем каждую вкладку на about:blank
-      // прямо в её контексте — это обходит Bitrix24 beforeunload/tray-handler,
-      // потому что навигация идёт изнутри страницы, а не через Chrome API
+      // Навигируем каждую вкладку на about:blank изнутри её контекста
       await Promise.all(tabs.map(t =>
         chrome.scripting.executeScript({
-          target: { tabId: t.id },
-          world: 'MAIN',
+          target: { tabId: t.id }, world: 'MAIN',
           func: () => { try { window.location.replace('about:blank'); } catch (_) {} },
         }).catch(() => {})
       ));
-
-      // Шаг 2: ждём пока все вкладки навигируются
       await new Promise(r => setTimeout(r, 1200));
 
-      // Шаг 3: вызываем window.close() в каждой уже чистой вкладке (about:blank)
-      // У about:blank нет Bitrix24-обработчиков — close срабатывает честно
+      // Закрываем уже чистые вкладки (about:blank без Bitrix24-обработчиков)
       await Promise.all(tabs.map(t =>
         chrome.scripting.executeScript({
-          target: { tabId: t.id },
-          world: 'MAIN',
+          target: { tabId: t.id }, world: 'MAIN',
           func: () => { try { window.close(); } catch (_) {} },
         }).catch(() => {})
       ));
-
-      // Шаг 4: на случай если executeScript не помог — force-remove вкладок и окон
       await new Promise(r => setTimeout(r, 400));
       await Promise.all(tabs.map(t => chrome.tabs.remove(t.id).catch(() => {})));
       try {
