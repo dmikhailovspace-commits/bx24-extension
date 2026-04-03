@@ -1831,8 +1831,8 @@ if (_presetChannel) {
     <div class="ubp-done-row" id="anit_ubp_done" style="display:none">
       <div style="flex:1">
         <div style="color:#5dc87e;font-size:11px;margin-bottom:4px">✓ Загружено</div>
-        <div style="font-size:10px;color:rgba(255,255,255,.5);line-height:1.45;margin-bottom:6px">Bitrix24 закроется и автоматически откроется снова через ярлык с обновлением</div>
-        <button type="button" class="ubp-restart" id="anit_ubp_close_app">Перезапустить Bitrix24</button>
+        <div style="font-size:10px;color:rgba(255,255,255,.5);line-height:1.45;margin-bottom:6px">Приложение закроется и автоматически откроется снова</div>
+        <button type="button" class="ubp-restart" id="anit_ubp_close_app">Перезапустить</button>
       </div>
     </div>
     <div class="ubp-impossible-row" id="anit_ubp_impossible" style="display:none">
@@ -2648,7 +2648,7 @@ if (_presetChannel) {
 
 	// --- Проверка обновлений прямо из панели ---
 	const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
-	const _UPD_CURRENT = '6.4.22';
+	const _UPD_CURRENT = '6.4.23';
 	const _UPD_LS_KEY  = 'pena.update.info';
 
 	function _semverNewer(remote, local) {
