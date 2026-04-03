@@ -1718,7 +1718,7 @@ if (_presetChannel) {
 #anit-filters #anit_update_btn.--checking svg{animation:anit-spin .7s linear infinite}
 @keyframes anit-spin{to{transform:rotate(360deg)}}
 /* Update banner — multi-state */
-#anit-filters .update-banner{margin-top:6px;padding:7px 10px;background:rgba(230,168,0,.09);border:1px solid rgba(230,168,0,.28);border-radius:8px;font-size:11px;color:#e6a800}
+#anit-filters .update-banner{margin-top:4px;margin-left:-12px;margin-right:-12px;padding:8px 22px;background:rgba(230,168,0,.09);border-top:1px solid rgba(230,168,0,.28);border-bottom:1px solid rgba(230,168,0,.28);border-left:none;border-right:none;border-radius:0;font-size:11px;color:#e6a800}
 #anit-filters .ubp-top-row{display:flex;align-items:center;gap:6px}
 #anit-filters .update-banner-text{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #anit-filters .ubp-install-btn{flex-shrink:0;padding:3px 9px;border-radius:6px;border:1px solid rgba(230,168,0,.5);background:rgba(230,168,0,.12);color:#f0b820;font-size:11px;cursor:pointer;white-space:nowrap;font-family:inherit;transition:all .15s}
@@ -2648,7 +2648,7 @@ if (_presetChannel) {
 
 	// --- Проверка обновлений прямо из панели ---
 	const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
-	const _UPD_CURRENT = '6.4.20';
+	const _UPD_CURRENT = '6.4.21';
 	const _UPD_LS_KEY  = 'pena.update.info';
 
 	function _semverNewer(remote, local) {
