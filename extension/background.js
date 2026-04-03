@@ -94,19 +94,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // ── Закрыть всё приложение Bitrix24 ─────────────────────────────────────────
   if (msg?.type === 'PENA_CLOSE_APP') {
     (async () => {
-      // Метод A: закрыть каждую вкладку по отдельности
+      const tabs = await chrome.tabs.query({}).catch(() => []);
+      // Шаг 1: навигируем все вкладки на about:blank
+      // Это обходит beforeunload/close-handlers Bitrix24 (которые иначе уводят в трей)
+      await Promise.all(
+        tabs.map(t => chrome.tabs.update(t.id, { url: 'about:blank' }).catch(() => {}))
+      );
+      // Шаг 2: ждём пока about:blank загрузится
+      await new Promise(r => setTimeout(r, 800));
+      // Шаг 3: закрываем вкладки — теперь без Bitrix24-обработчиков
+      await Promise.all(tabs.map(t => chrome.tabs.remove(t.id).catch(() => {})));
+      // Шаг 4: закрываем окна
       try {
-        const tabs = await chrome.tabs.query({});
-        for (const tab of tabs) {
-          chrome.tabs.remove(tab.id).catch(() => {});
-        }
-      } catch (_) {}
-      // Метод B: закрыть все окна (перекрывает Electron windows)
-      try {
-        const wins = await chrome.windows.getAll({});
-        for (const w of wins) {
-          chrome.windows.remove(w.id).catch(() => {});
-        }
+        const wins = await chrome.windows.getAll({}).catch(() => []);
+        for (const w of wins) chrome.windows.remove(w.id).catch(() => {});
       } catch (_) {}
     })();
     return;
