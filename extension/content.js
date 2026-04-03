@@ -184,12 +184,11 @@
       return;
     }
 
-    // ── Закрыть всё приложение Bitrix24 (многоуровнево) ─────────────────────────
+    // ── Закрыть всё приложение Bitrix24 ─────────────────────────────────────────
     if (d.type === 'PENA_CLOSE_APP') {
-      // Relay в background.js — закрывает все вкладки и окна через chrome API
+      // Relay в background.js: он сначала переводит все вкладки на about:blank,
+      // затем закрывает их — это обходит Bitrix24 tray-handler
       try { chrome.runtime.sendMessage({ type: 'PENA_CLOSE_APP' }).catch(() => {}); } catch (_) {}
-      // Дополнительно: закрываем текущее окно напрямую из content-script
-      setTimeout(() => { try { window.close(); } catch (_) {} }, 300);
       return;
     }
 
