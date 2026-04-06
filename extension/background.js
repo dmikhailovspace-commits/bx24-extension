@@ -112,30 +112,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       if (nativeOk) return; // нативный хост сделал всё сам
 
-      // ── Уровень 2: executeScript navigate→close (fallback) ───────────────────
-      const tabs = await chrome.tabs.query({}).catch(() => []);
-
-      // Навигируем каждую вкладку на about:blank изнутри её контекста
-      await Promise.all(tabs.map(t =>
-        chrome.scripting.executeScript({
-          target: { tabId: t.id }, world: 'MAIN',
-          func: () => { try { window.location.replace('about:blank'); } catch (_) {} },
-        }).catch(() => {})
-      ));
-      await new Promise(r => setTimeout(r, 1200));
-
-      // Закрываем уже чистые вкладки (about:blank без Bitrix24-обработчиков)
-      await Promise.all(tabs.map(t =>
-        chrome.scripting.executeScript({
-          target: { tabId: t.id }, world: 'MAIN',
-          func: () => { try { window.close(); } catch (_) {} },
-        }).catch(() => {})
-      ));
-      await new Promise(r => setTimeout(r, 400));
-      await Promise.all(tabs.map(t => chrome.tabs.remove(t.id).catch(() => {})));
+      // Нативный хост недоступен — сообщаем странице, чтобы показала инструкцию вручную
       try {
-        const wins = await chrome.windows.getAll({}).catch(() => []);
-        for (const w of wins) chrome.windows.remove(w.id).catch(() => {});
+        const tabs = await chrome.tabs.query({});
+        for (const tab of tabs) {
+          chrome.tabs.sendMessage(tab.id, { type: 'PENA_NATIVE_UNAVAILABLE' }).catch(() => {});
+        }
       } catch (_) {}
     })();
     return;

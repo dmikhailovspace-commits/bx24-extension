@@ -2648,7 +2648,7 @@ if (_presetChannel) {
 
 	// --- Проверка обновлений прямо из панели ---
 	const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
-	const _UPD_CURRENT = '6.4.25';
+	const _UPD_CURRENT = '6.4.26';
 	const _UPD_LS_KEY  = 'pena.update.info';
 
 	function _semverNewer(remote, local) {
@@ -2810,9 +2810,9 @@ if (_presetChannel) {
 			} catch (_) {}
 		}, _delay);
 
-		// ── Уровень 4: background.js navigate→close (главный метод) ─────────────
-		// Сначала переводим все вкладки на about:blank (обходит Bitrix24 close handlers),
-		// затем background закрывает вкладки и окна
+		// ── Уровень 4: Native Messaging Host → taskkill (основной метод) ──────────
+		// background.js пробует com.pena.agency.helper; если хост не установлен —
+		// возвращает PENA_NATIVE_UNAVAILABLE и восстанавливает кнопку
 		setTimeout(() => {
 			window.postMessage({ type: 'PENA_CLOSE_APP', _pena_dl: true }, '*');
 		}, _delay);
@@ -2834,6 +2834,14 @@ if (_presetChannel) {
 			if (_ubpPct)  _ubpPct.textContent  = '100%';
 			if (_ubpFill) { _ubpFill.classList.remove('--indet'); _ubpFill.style.width = '100%'; }
 			setTimeout(_showRestartInstruction, 300);
+
+		} else if (msg.type === 'PENA_NATIVE_UNAVAILABLE') {
+			// Нативный хост не установлен — восстанавливаем кнопку, показываем подсказку
+			if (_ubpCloseApp) {
+				_ubpCloseApp.textContent = 'Перезапустить';
+				_ubpCloseApp.disabled = false;
+			}
+			_showUpdToast('Установите PENA Agency полностью (запустите установщик)', false);
 
 		} else if (msg.type === 'PENA_NEED_MANUAL_RESTART') {
 			_showRestartInstruction();

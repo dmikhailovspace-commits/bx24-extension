@@ -77,6 +77,7 @@
       'DL_PROGRESS', 'DL_DONE', 'DL_ERROR',
       'PENA_NEED_MANUAL_RESTART',
       'PENA_UPDATE_IMPOSSIBLE',
+      'PENA_NATIVE_UNAVAILABLE',
     ];
     if (RELAY_TYPES.includes(msg.type)) {
       window.postMessage({ ...msg, _pena_dl: true }, '*');
