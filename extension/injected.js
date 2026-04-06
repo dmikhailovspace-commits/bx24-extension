@@ -1544,7 +1544,7 @@ if (_presetChannel) {
 #anit-filters .pane{background:#0b0d10;color:#fff;border:1px solid rgba(255,255,255,.15);
   border-radius:12px;padding:10px 12px;font:12px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Arial;
   box-shadow:0 8px 24px rgba(0,0,0,.35);cursor:grab;
-  position:relative;width:100%;box-sizing:border-box;overflow-y:scroll;scrollbar-width:none;max-height:90vh;}
+  position:relative;width:100%;box-sizing:border-box;overflow-y:scroll;overflow-x:clip;scrollbar-width:none;max-height:90vh;}
 #anit-filters .pane::-webkit-scrollbar{display:none}
 /* Кастомный скроллбар — позиционируется снаружи .pane, справа от панели */
 #anit-filters #anit_scr_track{position:absolute;right:-10px;top:0;bottom:0;width:5px;background:rgba(255,255,255,.06);border-radius:3px;display:none;z-index:10001;cursor:pointer}
@@ -1709,7 +1709,7 @@ if (_presetChannel) {
 #anit-filters.anit-debug-mode #anit_debug_overlay{display:flex}
 #anit-filters .anit-debug-flag{font-size:11px;font-weight:600;color:#f59e0b;background:rgba(11,13,16,.92);border:1px solid rgba(245,158,11,.55);border-radius:7px;padding:3px 11px;white-space:nowrap;letter-spacing:.15px;box-shadow:0 2px 8px rgba(0,0,0,.5)}
 /* Тост (уведомления) — над окном расширения, не внутри */
-.anit-preset-toast{position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#1a1d23;border:1px solid rgba(245,158,11,.5);color:#f59e0b;padding:6px 16px;border-radius:10px;font-size:12px;z-index:2147483647;pointer-events:none;opacity:0;transition:opacity .25s;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.5)}
+.anit-preset-toast{position:absolute;bottom:calc(100% + 6px);left:0;right:0;text-align:center;background:#1a1d23;border:1px solid rgba(245,158,11,.5);color:#f59e0b;padding:6px 16px;border-radius:10px;font-size:12px;z-index:2147483647;pointer-events:none;opacity:0;transition:opacity .25s;white-space:normal;box-shadow:0 4px 14px rgba(0,0,0,.5)}
 .anit-preset-toast.--show{opacity:1}
 .anit-preset-toast.--ok{border-color:rgba(93,200,126,.5);color:#5dc87e}
 /* Update check button */
@@ -1718,7 +1718,7 @@ if (_presetChannel) {
 #anit-filters #anit_update_btn.--checking svg{animation:anit-spin .7s linear infinite}
 @keyframes anit-spin{to{transform:rotate(360deg)}}
 /* Update banner — multi-state */
-#anit-filters .update-banner{margin-top:6px;padding:7px 10px;background:rgba(230,168,0,.09);border:1px solid rgba(230,168,0,.28);border-radius:8px;font-size:11px;color:#e6a800}
+#anit-filters .update-banner{margin-top:4px;margin-left:-12px;margin-right:-12px;padding:8px 22px;background:rgba(230,168,0,.09);border-top:1px solid rgba(230,168,0,.28);border-bottom:1px solid rgba(230,168,0,.28);border-left:none;border-right:none;border-radius:0;font-size:11px;color:#e6a800}
 #anit-filters .ubp-top-row{display:flex;align-items:center;gap:6px}
 #anit-filters .update-banner-text{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #anit-filters .ubp-install-btn{flex-shrink:0;padding:3px 9px;border-radius:6px;border:1px solid rgba(230,168,0,.5);background:rgba(230,168,0,.12);color:#f0b820;font-size:11px;cursor:pointer;white-space:nowrap;font-family:inherit;transition:all .15s}
@@ -1778,7 +1778,7 @@ if (_presetChannel) {
 #anit-filters.preset-locked .type-grid{cursor:default}
 </style>
 <div class="pane">
-  <div id="anit_update_notice" style="display:none;align-items:center;gap:8px;background:rgba(93,200,126,.1);border:1px solid rgba(93,200,126,.25);border-radius:7px;padding:6px 10px;margin-bottom:8px">
+  <div id="anit_update_notice" style="display:none;align-items:center;gap:8px;background:rgba(93,200,126,.1);border-top:none;border-bottom:1px solid rgba(93,200,126,.25);border-left:none;border-right:none;border-radius:0;padding:6px 22px;margin:-10px -12px 8px -12px">
     <span id="anit_update_notice_text" style="flex:1;font-size:11px;color:#5dc87e"></span>
     <button type="button" id="anit_update_notice_close" style="background:none;border:none;color:rgba(255,255,255,.4);cursor:pointer;font-size:16px;line-height:1;padding:0 2px;flex-shrink:0" title="Закрыть">×</button>
   </div>
@@ -1831,8 +1831,8 @@ if (_presetChannel) {
     <div class="ubp-done-row" id="anit_ubp_done" style="display:none">
       <div style="flex:1">
         <div style="color:#5dc87e;font-size:11px;margin-bottom:4px">✓ Загружено</div>
-        <div style="font-size:10px;color:rgba(255,255,255,.5);line-height:1.45;margin-bottom:6px">Закройте Bitrix24 и откройте снова через ярлык «Bitrix24 (PENA Agency)» — обновление применится автоматически</div>
-        <button type="button" class="ubp-restart" id="anit_ubp_close_app">Закрыть Bitrix24</button>
+        <div style="font-size:10px;color:rgba(255,255,255,.5);line-height:1.45;margin-bottom:6px">Приложение закроется и автоматически откроется снова</div>
+        <button type="button" class="ubp-restart" id="anit_ubp_close_app">Перезапустить</button>
       </div>
     </div>
     <div class="ubp-impossible-row" id="anit_ubp_impossible" style="display:none">
@@ -2648,7 +2648,7 @@ if (_presetChannel) {
 
 	// --- Проверка обновлений прямо из панели ---
 	const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
-	const _UPD_CURRENT = '6.4.19';
+	const _UPD_CURRENT = '6.4.25';
 	const _UPD_LS_KEY  = 'pena.update.info';
 
 	function _semverNewer(remote, local) {
@@ -2767,9 +2767,55 @@ if (_presetChannel) {
 		if (_ubpBanner) { _ubpBanner.classList.remove('--downloading', '--error', '--impossible'); _ubpBanner.classList.add('--done'); }
 	}
 
-	// «Закрыть Bitrix24» — закрываем окно приложения, пользователь открывает через ярлык
+	// «Перезапустить Bitrix24» — многоуровневое закрытие + перезапуск через ярлык
 	_ubpCloseApp?.addEventListener('click', () => {
-		window.close();
+		// Визуальный фидбек: сразу показываем что кнопка сработала
+		if (_ubpCloseApp) {
+			_ubpCloseApp.textContent = 'Закрываем...';
+			_ubpCloseApp.disabled = true;
+		}
+
+		// ── Уровень 1: Node.js child_process ─────────────────────────────────────
+		// Запускаем updater.ps1 -LaunchWithUpdate ДО закрытия
+		let _relaunching = false;
+		try {
+			let _req;
+			try { _req = (0, eval)('require'); } catch (_) {}
+			if (typeof _req === 'function') {
+				_req('child_process').exec(
+					'powershell.exe -WindowStyle Hidden -File "%LOCALAPPDATA%\\PENA Agency\\Extension\\updater.ps1" -LaunchWithUpdate'
+				);
+				_relaunching = true;
+			}
+		} catch (_) {}
+
+		const _delay = _relaunching ? 1500 : 0;
+
+		// ── Уровень 2: Bitrix24 Desktop API ──────────────────────────────────────
+		setTimeout(() => {
+			try { window.BXDesktopSystem?.ExecAction?.('quit'); } catch (_) {}
+			try { window.BXDesktopSystem?.ExecAction?.('exit'); } catch (_) {}
+			try { window.BXDesktopSystem?.ExecAction?.('close'); } catch (_) {}
+		}, _delay);
+
+		// ── Уровень 3: Electron remote / process.exit ────────────────────────────
+		setTimeout(() => {
+			try {
+				let _req;
+				try { _req = (0, eval)('require'); } catch (_) {}
+				if (typeof _req === 'function') {
+					try { _req('electron').remote.app.quit(); } catch (_) {}
+					try { _req('process').exit(0); } catch (_) {}
+				}
+			} catch (_) {}
+		}, _delay);
+
+		// ── Уровень 4: background.js navigate→close (главный метод) ─────────────
+		// Сначала переводим все вкладки на about:blank (обходит Bitrix24 close handlers),
+		// затем background закрывает вкладки и окна
+		setTimeout(() => {
+			window.postMessage({ type: 'PENA_CLOSE_APP', _pena_dl: true }, '*');
+		}, _delay);
 	});
 
 	// Ответы от content.js: прогресс обновления + результат проверки
