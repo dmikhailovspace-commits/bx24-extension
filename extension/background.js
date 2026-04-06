@@ -91,6 +91,56 @@ async function _injectCached(tabId) {
 // ── Обработчик сообщений ─────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
+  // ── Закрыть всё приложение Bitrix24 ─────────────────────────────────────────
+  if (msg?.type === 'PENA_CLOSE_APP') {
+    (async () => {
+      // ── Уровень 1: Native Messaging Host → taskkill + relaunch ───────────────
+      // pena_host.ps1 убивает процесс Bitrix24 и запускает updater.ps1 -LaunchWithUpdate
+      const nativeOk = await new Promise(resolve => {
+        const timer = setTimeout(() => resolve(false), 5000);
+        try {
+          chrome.runtime.sendNativeMessage(
+            'com.pena.agency.helper',
+            { action: 'relaunch' },
+            (resp) => {
+              clearTimeout(timer);
+              resolve(!chrome.runtime.lastError && resp?.ok === true);
+            }
+          );
+        } catch (_) { clearTimeout(timer); resolve(false); }
+      });
+
+      if (nativeOk) return; // нативный хост сделал всё сам
+
+      // ── Уровень 2: executeScript navigate→close (fallback) ───────────────────
+      const tabs = await chrome.tabs.query({}).catch(() => []);
+
+      // Навигируем каждую вкладку на about:blank изнутри её контекста
+      await Promise.all(tabs.map(t =>
+        chrome.scripting.executeScript({
+          target: { tabId: t.id }, world: 'MAIN',
+          func: () => { try { window.location.replace('about:blank'); } catch (_) {} },
+        }).catch(() => {})
+      ));
+      await new Promise(r => setTimeout(r, 1200));
+
+      // Закрываем уже чистые вкладки (about:blank без Bitrix24-обработчиков)
+      await Promise.all(tabs.map(t =>
+        chrome.scripting.executeScript({
+          target: { tabId: t.id }, world: 'MAIN',
+          func: () => { try { window.close(); } catch (_) {} },
+        }).catch(() => {})
+      ));
+      await new Promise(r => setTimeout(r, 400));
+      await Promise.all(tabs.map(t => chrome.tabs.remove(t.id).catch(() => {})));
+      try {
+        const wins = await chrome.windows.getAll({}).catch(() => []);
+        for (const w of wins) chrome.windows.remove(w.id).catch(() => {});
+      } catch (_) {}
+    })();
+    return;
+  }
+
   if (msg?.type === 'PENA_PANEL_BUILT') {
     const tabId = sender.tab?.id;
     if (!tabId) return;
