@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Сортировщик чатов BX24",
-  "version": "6.4.26",
+  "version": "6.4.27",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAl1APvKV9oER0+YgDxdJxNU9caXcczTsEdxr3E/2QdhhSJDl22Hkm4HVyIcn3D+5WrgxOUZTqHCdqs0dNaAONAVMSuXLN25z9uAEL65qcWoU8S9+d09RFTGa/SScZbNB+9GcZtvqarp4Kb8BiUM4EyibKbiePSYB5oPYfxRbe+n+Wpjj7mMAZvQM9dfFqZu6Kisbnty6L9PiD/UUOIBqESz4XPKcOzIzJY9t5GQkF0iv8xQG79FD4qiDWHu2ksoKyXSCryFn80qh3ftncz4jwJNf0CoDjWl8SEIIrVZ2ir1MiM3KxS5z60dj6gWluIrtLrM4JVnnGohjjYD+Wf+PTYwIDAQAB",
   "description": "Фильтрация и сортировка чатов Bitrix24 по ключевым словам, тегам и категориям",
   "permissions": [

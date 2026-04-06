@@ -1709,7 +1709,7 @@ if (_presetChannel) {
 #anit-filters.anit-debug-mode #anit_debug_overlay{display:flex}
 #anit-filters .anit-debug-flag{font-size:11px;font-weight:600;color:#f59e0b;background:rgba(11,13,16,.92);border:1px solid rgba(245,158,11,.55);border-radius:7px;padding:3px 11px;white-space:nowrap;letter-spacing:.15px;box-shadow:0 2px 8px rgba(0,0,0,.5)}
 /* Тост (уведомления) — над окном расширения, не внутри */
-.anit-preset-toast{position:absolute;bottom:calc(100% + 6px);left:0;right:0;text-align:center;background:#1a1d23;border:1px solid rgba(245,158,11,.5);color:#f59e0b;padding:6px 16px;border-radius:10px;font-size:12px;z-index:2147483647;pointer-events:none;opacity:0;transition:opacity .25s;white-space:normal;box-shadow:0 4px 14px rgba(0,0,0,.5)}
+.anit-preset-toast{position:absolute;bottom:calc(100% + 6px);left:0;right:0;text-align:center;background:#0b0d10;border:1px solid rgba(245,158,11,.5);color:#f59e0b;padding:6px 16px;border-radius:10px;font-size:12px;z-index:2147483647;pointer-events:none;opacity:0;transition:opacity .25s;white-space:normal;box-shadow:0 4px 14px rgba(0,0,0,.5)}
 .anit-preset-toast.--show{opacity:1}
 .anit-preset-toast.--ok{border-color:rgba(93,200,126,.5);color:#5dc87e}
 /* Update check button */
@@ -1718,7 +1718,7 @@ if (_presetChannel) {
 #anit-filters #anit_update_btn.--checking svg{animation:anit-spin .7s linear infinite}
 @keyframes anit-spin{to{transform:rotate(360deg)}}
 /* Update banner — multi-state */
-#anit-filters .update-banner{margin-top:4px;margin-left:-12px;margin-right:-12px;padding:8px 22px;background:rgba(230,168,0,.09);border-top:1px solid rgba(230,168,0,.28);border-bottom:1px solid rgba(230,168,0,.28);border-left:none;border-right:none;border-radius:0;font-size:11px;color:#e6a800}
+#anit-filters .update-banner{margin-top:4px;margin-left:-12px;margin-right:-12px;padding:8px 22px;background:#0b0d10;border-top:1px solid rgba(230,168,0,.28);border-bottom:1px solid rgba(230,168,0,.28);border-left:none;border-right:none;border-radius:0;font-size:11px;color:#e6a800}
 #anit-filters .ubp-top-row{display:flex;align-items:center;gap:6px}
 #anit-filters .update-banner-text{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #anit-filters .ubp-install-btn{flex-shrink:0;padding:3px 9px;border-radius:6px;border:1px solid rgba(230,168,0,.5);background:rgba(230,168,0,.12);color:#f0b820;font-size:11px;cursor:pointer;white-space:nowrap;font-family:inherit;transition:all .15s}
@@ -1741,11 +1741,11 @@ if (_presetChannel) {
 #anit-filters .ubp-imp-close{flex-shrink:0;background:none;border:none;color:rgba(255,255,255,.35);font-size:15px;cursor:pointer;line-height:1;padding:0;font-family:inherit}
 #anit-filters .ubp-imp-close:hover{color:rgba(255,255,255,.65)}
 #anit-filters .update-banner.--downloading{border-color:rgba(230,168,0,.45)}
-#anit-filters .update-banner.--done{background:rgba(93,200,126,.07);border-color:rgba(93,200,126,.3);color:#5dc87e}
+#anit-filters .update-banner.--done{background:#0b0d10;border-color:rgba(93,200,126,.3);color:#5dc87e}
 #anit-filters .update-banner.--done .ubp-install-btn{display:none}
-#anit-filters .update-banner.--impossible{background:rgba(255,60,60,.07);border-color:rgba(255,60,60,.25);color:#ef9090}
+#anit-filters .update-banner.--impossible{background:#0b0d10;border-color:rgba(255,60,60,.25);color:#ef9090}
 #anit-filters .update-banner.--impossible .ubp-install-btn{display:none}
-#anit-filters .update-banner.--error{background:rgba(255,60,60,.08);border-color:rgba(255,60,60,.25);color:#ef9090}
+#anit-filters .update-banner.--error{background:#0b0d10;border-color:rgba(255,60,60,.25);color:#ef9090}
 /* Версия — нижний правый угол панели */
 #anit-filters .pena-ver-badge{position:sticky;bottom:4px;text-align:right;font-size:9px;color:rgba(255,255,255,.22);pointer-events:none;user-select:none;padding:6px 2px 0;line-height:1;letter-spacing:.2px}
 .anit-preset-confirm{position:absolute;inset:0;background:rgba(5,6,9,.92);border-radius:12px;display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:10;padding:20px;text-align:center}
@@ -1778,7 +1778,7 @@ if (_presetChannel) {
 #anit-filters.preset-locked .type-grid{cursor:default}
 </style>
 <div class="pane">
-  <div id="anit_update_notice" style="display:none;align-items:center;gap:8px;background:rgba(93,200,126,.1);border-top:none;border-bottom:1px solid rgba(93,200,126,.25);border-left:none;border-right:none;border-radius:0;padding:6px 22px;margin:-10px -12px 8px -12px">
+  <div id="anit_update_notice" style="display:none;align-items:center;gap:8px;background:#0b0d10;border-top:none;border-bottom:1px solid rgba(93,200,126,.25);border-left:none;border-right:none;border-radius:0;padding:6px 22px;margin:-10px -12px 8px -12px">
     <span id="anit_update_notice_text" style="flex:1;font-size:11px;color:#5dc87e"></span>
     <button type="button" id="anit_update_notice_close" style="background:none;border:none;color:rgba(255,255,255,.4);cursor:pointer;font-size:16px;line-height:1;padding:0 2px;flex-shrink:0" title="Закрыть">×</button>
   </div>
@@ -2648,7 +2648,7 @@ if (_presetChannel) {
 
 	// --- Проверка обновлений прямо из панели ---
 	const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
-	const _UPD_CURRENT = '6.4.26';
+	const _UPD_CURRENT = '6.4.27';
 	const _UPD_LS_KEY  = 'pena.update.info';
 
 	function _semverNewer(remote, local) {
