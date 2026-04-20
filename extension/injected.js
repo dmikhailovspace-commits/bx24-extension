@@ -1712,40 +1712,6 @@ if (_presetChannel) {
 .anit-preset-toast{position:absolute;bottom:calc(100% + 6px);left:0;right:0;text-align:center;background:#0b0d10;border:1px solid rgba(245,158,11,.5);color:#f59e0b;padding:6px 16px;border-radius:10px;font-size:12px;z-index:2147483647;pointer-events:none;opacity:0;transition:opacity .25s;white-space:normal;box-shadow:0 4px 14px rgba(0,0,0,.5)}
 .anit-preset-toast.--show{opacity:1}
 .anit-preset-toast.--ok{border-color:rgba(93,200,126,.5);color:#5dc87e}
-/* Update check button */
-#anit-filters #anit_update_btn{position:relative}
-#anit-filters .update-dot{position:absolute;top:-3px;right:-3px;width:7px;height:7px;background:#ef4444;border-radius:50%;border:1px solid #0b0d10;pointer-events:none;display:none}
-#anit-filters #anit_update_btn.--checking svg{animation:anit-spin .7s linear infinite}
-@keyframes anit-spin{to{transform:rotate(360deg)}}
-/* Update banner — multi-state */
-#anit-filters .update-banner{margin-top:4px;margin-left:-12px;margin-right:-12px;padding:8px 22px;background:#0b0d10;border-top:1px solid rgba(230,168,0,.28);border-bottom:1px solid rgba(230,168,0,.28);border-left:none;border-right:none;border-radius:0;font-size:11px;color:#e6a800}
-#anit-filters .ubp-top-row{display:flex;align-items:center;gap:6px}
-#anit-filters .update-banner-text{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#anit-filters .ubp-install-btn{flex-shrink:0;padding:3px 9px;border-radius:6px;border:1px solid rgba(230,168,0,.5);background:rgba(230,168,0,.12);color:#f0b820;font-size:11px;cursor:pointer;white-space:nowrap;font-family:inherit;transition:all .15s}
-#anit-filters .ubp-install-btn:hover:not(:disabled){background:rgba(230,168,0,.22);color:#fcd34d}
-#anit-filters .ubp-install-btn:disabled{opacity:.45;cursor:default}
-#anit-filters .update-banner-close{flex-shrink:0;background:none;border:none;color:rgba(255,255,255,.35);font-size:15px;cursor:pointer;line-height:1;padding:0;font-family:inherit}
-#anit-filters .update-banner-close:hover{color:rgba(255,255,255,.65)}
-#anit-filters .ubp-progress{margin-top:6px}
-#anit-filters .ubp-label-row{display:flex;justify-content:space-between;margin-bottom:3px;font-size:10px;opacity:.7}
-#anit-filters .ubp-track{height:4px;background:rgba(255,255,255,.1);border-radius:2px;overflow:hidden}
-#anit-filters .ubp-fill{height:100%;background:#f0b820;border-radius:2px;transition:width .3s ease;width:0%}
-@keyframes anit-dl-slide{to{background-position:32px 0}}
-#anit-filters .ubp-fill.--indet{width:100% !important;transition:none;background:repeating-linear-gradient(90deg,#e6a800 0,#f0b820 16px,#e6a800 32px);background-size:32px 100%;animation:anit-dl-slide .8s linear infinite}
-#anit-filters .ubp-done-row{display:flex;align-items:center;justify-content:space-between;margin-top:6px;gap:8px}
-#anit-filters .ubp-done-row>span{color:#5dc87e;font-size:11px}
-#anit-filters .ubp-restart{padding:3px 10px;border-radius:6px;border:1px solid rgba(93,200,126,.4);background:rgba(93,200,126,.12);color:#5dc87e;font-size:11px;cursor:pointer;font-family:inherit;transition:all .15s}
-#anit-filters .ubp-restart:hover{background:rgba(93,200,126,.24);color:#7ddfa0}
-#anit-filters .ubp-impossible-row{display:flex;align-items:center;justify-content:space-between;margin-top:6px;gap:8px}
-#anit-filters .ubp-imp-text{flex:1;font-size:11px;color:#ef9090}
-#anit-filters .ubp-imp-close{flex-shrink:0;background:none;border:none;color:rgba(255,255,255,.35);font-size:15px;cursor:pointer;line-height:1;padding:0;font-family:inherit}
-#anit-filters .ubp-imp-close:hover{color:rgba(255,255,255,.65)}
-#anit-filters .update-banner.--downloading{border-color:rgba(230,168,0,.45)}
-#anit-filters .update-banner.--done{background:#0b0d10;border-color:rgba(93,200,126,.3);color:#5dc87e}
-#anit-filters .update-banner.--done .ubp-install-btn{display:none}
-#anit-filters .update-banner.--impossible{background:#0b0d10;border-color:rgba(255,60,60,.25);color:#ef9090}
-#anit-filters .update-banner.--impossible .ubp-install-btn{display:none}
-#anit-filters .update-banner.--error{background:#0b0d10;border-color:rgba(255,60,60,.25);color:#ef9090}
 /* Версия — нижний правый угол панели */
 #anit-filters .pena-ver-badge{position:sticky;bottom:4px;text-align:right;font-size:9px;color:rgba(255,255,255,.22);pointer-events:none;user-select:none;padding:6px 2px 0;line-height:1;letter-spacing:.2px}
 .anit-preset-confirm{position:absolute;inset:0;background:rgba(5,6,9,.92);border-radius:12px;display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:10;padding:20px;text-align:center}
@@ -1778,10 +1744,6 @@ if (_presetChannel) {
 #anit-filters.preset-locked .type-grid{cursor:default}
 </style>
 <div class="pane">
-  <div id="anit_update_notice" style="display:none;align-items:center;gap:8px;background:#0b0d10;border-top:none;border-bottom:1px solid rgba(93,200,126,.25);border-left:none;border-right:none;border-radius:0;padding:6px 22px;margin:-10px -12px 8px -12px">
-    <span id="anit_update_notice_text" style="flex:1;font-size:11px;color:#5dc87e"></span>
-    <button type="button" id="anit_update_notice_close" style="background:none;border:none;color:rgba(255,255,255,.4);cursor:pointer;font-size:16px;line-height:1;padding:0 2px;flex-shrink:0" title="Закрыть">×</button>
-  </div>
   <div class="header">
     <div class="brand">
       ${_PENA_LOGO_URL
@@ -1808,39 +1770,9 @@ if (_presetChannel) {
           <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">1</span>…<span class="kbd">9</span></td><td>Быстрый выбор пресета</td></tr>
         </table>
       </div>
-      <button id="anit_update_btn" class="icon-btn" type="button" title="Проверить обновления">
-        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:13px;height:13px;fill:#fff;opacity:.75;display:block"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
-        <span class="update-dot" id="anit_update_dot"></span>
-      </button>
       <button id="anit_toggle_btn" class="anit-toggle icon-btn" type="button" title="Скрыть/показать (Ctrl+Alt+F)"><svg viewBox="0 0 24 24" style="width:12px;height:12px;display:block;fill:#fff" aria-hidden="true"><path d="M19 13H5v-2h14v2z"/></svg></button>
     </div>
   </div>
-  <div class="update-banner" id="anit_update_banner" style="display:none">
-    <div class="ubp-top-row">
-      <span class="update-banner-text" id="anit_update_banner_text">Доступно обновление</span>
-      <button type="button" class="ubp-install-btn" id="anit_update_banner_link">Установить</button>
-      <button type="button" class="update-banner-close" id="anit_update_banner_close" title="Закрыть">×</button>
-    </div>
-    <div class="ubp-progress" id="anit_ubp_progress" style="display:none">
-      <div class="ubp-label-row">
-        <span id="anit_ubp_label">Загрузка...</span>
-        <span id="anit_ubp_pct">0%</span>
-      </div>
-      <div class="ubp-track"><div class="ubp-fill" id="anit_ubp_fill"></div></div>
-    </div>
-    <div class="ubp-done-row" id="anit_ubp_done" style="display:none">
-      <div style="flex:1">
-        <div style="color:#5dc87e;font-size:11px;margin-bottom:4px">✓ Загружено</div>
-        <div style="font-size:10px;color:rgba(255,255,255,.5);line-height:1.45;margin-bottom:6px">Приложение закроется и автоматически откроется снова</div>
-        <button type="button" class="ubp-restart" id="anit_ubp_close_app">Перезапустить</button>
-      </div>
-    </div>
-    <div class="ubp-impossible-row" id="anit_ubp_impossible" style="display:none">
-      <span class="ubp-imp-text">Обновление невозможно — обратитесь к администратору</span>
-      <button type="button" class="ubp-imp-close" id="anit_ubp_impossible_close" title="Закрыть">×</button>
-    </div>
-  </div>
-
   <div class="anit-preset-confirm" id="anit_preset_confirm"></div>
   <div class="group">
     <div class="group-head">
@@ -2646,273 +2578,13 @@ if (_presetChannel) {
 			togglePanel();
 		});
 
-	// --- Проверка обновлений прямо из панели ---
-	const _UPD_URL = 'https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
-	const _UPD_CURRENT = '6.4.27';
-	const _UPD_LS_KEY  = 'pena.update.info';
-
-	function _semverNewer(remote, local) {
-		const p = v => String(v).split('.').map(Number);
-		const [ra, rb, rc] = p(remote), [la, lb, lc] = p(local);
-		if (ra !== la) return ra > la;
-		if (rb !== lb) return rb > lb;
-		return rc > lc;
-	}
-	function _showUpdToast(msg, ok) {
-		const toast = host.querySelector('#anit_preset_toast');
-		if (!toast) return;
-		toast.textContent = msg;
-		toast.classList.toggle('--ok', !!ok);
-		toast.classList.add('--show');
-		if (_toastTimer) clearTimeout(_toastTimer);
-		_toastTimer = setTimeout(() => { toast.classList.remove('--show'); setTimeout(() => toast.classList.remove('--ok'), 350); }, 2800);
-	}
-	function _applyUpdateBanner(version, injected_js_url) {
-		const dot    = host.querySelector('#anit_update_dot');
-		const banner = host.querySelector('#anit_update_banner');
-		const txt    = host.querySelector('#anit_update_banner_text');
-		const lnk    = host.querySelector('#anit_update_banner_link');
-		if (dot)    dot.style.display = '';
-		if (txt)    txt.textContent = `Доступно обновление v${version}`;
-		if (lnk)  { lnk.dataset.injectedJsUrl = injected_js_url || ''; lnk.dataset.version = version || ''; lnk.disabled = false; lnk.textContent = 'Обновить'; }
-		if (banner) { banner.style.display = ''; banner.className = 'update-banner'; }
-		const prog = host.querySelector('#anit_ubp_progress');
-		const done = host.querySelector('#anit_ubp_done');
-		if (prog) prog.style.display = 'none';
-		if (done) done.style.display = 'none';
-	}
-	function _clearUpdateBanner() {
-		const dot    = host.querySelector('#anit_update_dot');
-		const banner = host.querySelector('#anit_update_banner');
-		if (dot)    dot.style.display = 'none';
-		if (banner) banner.style.display = 'none';
-	}
-
-	// Восстановить состояние из localStorage
-	try {
-		const saved = JSON.parse(localStorage.getItem(_UPD_LS_KEY) || 'null');
-		if (saved?.hasUpdate && saved.version && saved.injected_js_url) _applyUpdateBanner(saved.version, saved.injected_js_url);
-	} catch {}
-
-	let _lastCheckResultTs = 0; // дедупликация дублей по ts
-
-	// Автопроверка при загрузке — content.js делает fetch напрямую (минуя CSP)
-	setTimeout(() => {
-		const _chkBtn = host.querySelector('#anit_update_btn');
-		if (_chkBtn && !_chkBtn.classList.contains('--checking')) {
-			_chkBtn.classList.add('--checking');
-			_chkBtn.disabled = true;
-		}
-		window.postMessage({ type: 'PENA_CHECK_UPDATES', silent: true }, '*');
-		// Сброс кнопки если ответ не пришёл за 15 сек
-		setTimeout(() => {
-			const _b = host.querySelector('#anit_update_btn');
-			if (_b && _b.classList.contains('--checking')) {
-				_b.classList.remove('--checking');
-				_b.disabled = false;
-			}
-		}, 15000);
-	}, 3000);
-
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v' + _UPD_CURRENT;
+	if (_verBadge) _verBadge.textContent = 'v6.4.28';
 
-	// Уведомление о первом запуске после обновления
-	try {
-		const _LAST_VER_KEY = 'pena.last_seen_ver';
-		const _lastSeen = localStorage.getItem(_LAST_VER_KEY); // null если ключа нет
-		const _notice      = host.querySelector('#anit_update_notice');
-		const _noticeText  = host.querySelector('#anit_update_notice_text');
-		// Показываем если: ключ уже был (не первая установка) И версия изменилась
-		// _lastSeen === null → первая установка → не показываем
-		// _lastSeen === '' → не должно быть, но на всякий случай пропускаем
-		if (_notice && _noticeText && _lastSeen !== null && _lastSeen !== _UPD_CURRENT) {
-			_noticeText.textContent = `✓ Расширение обновлено до v${_UPD_CURRENT}`;
-			_notice.style.display = 'flex';
-		}
-		host.querySelector('#anit_update_notice_close')?.addEventListener('click', () => {
-			const n = host.querySelector('#anit_update_notice');
-			if (n) n.style.display = 'none';
-		});
-		localStorage.setItem(_LAST_VER_KEY, _UPD_CURRENT);
-	} catch (_) {}
-
-	// --- Seamless update download flow ---
-	const _ubpBanner  = host.querySelector('#anit_update_banner');
-	const _ubpInstBtn = host.querySelector('#anit_update_banner_link');
-	const _ubpProg    = host.querySelector('#anit_ubp_progress');
-	const _ubpLabel   = host.querySelector('#anit_ubp_label');
-	const _ubpPct     = host.querySelector('#anit_ubp_pct');
-	const _ubpFill    = host.querySelector('#anit_ubp_fill');
-	const _ubpDone     = host.querySelector('#anit_ubp_done');
-	const _ubpCloseApp = host.querySelector('#anit_ubp_close_app');
-
-	_ubpInstBtn?.addEventListener('click', () => {
-		const injected_js_url = _ubpInstBtn.dataset.injectedJsUrl;
-		const version         = _ubpInstBtn.dataset.version;
-		if (!injected_js_url) return;
-		_ubpInstBtn.disabled = true;
-		if (_ubpLabel) _ubpLabel.textContent = 'Загрузка обновления...';
-		if (_ubpProg)  _ubpProg.style.display = '';
-		if (_ubpPct)   _ubpPct.textContent = '0%';
-		if (_ubpFill)  { _ubpFill.classList.remove('--indet'); _ubpFill.style.width = '0%'; }
-		if (_ubpBanner) _ubpBanner.classList.add('--downloading');
-		window.postMessage({ type: 'PENA_APPLY_UPDATE', injected_js_url, version }, '*');
-	});
-
-	function _showRestartInstruction() {
-		if (_ubpProg) _ubpProg.style.display = 'none';
-		if (_ubpDone) _ubpDone.style.display = '';
-		if (_ubpBanner) { _ubpBanner.classList.remove('--downloading', '--error', '--impossible'); _ubpBanner.classList.add('--done'); }
-	}
-
-	// «Перезапустить Bitrix24» — многоуровневое закрытие + перезапуск через ярлык
-	_ubpCloseApp?.addEventListener('click', () => {
-		// Визуальный фидбек: сразу показываем что кнопка сработала
-		if (_ubpCloseApp) {
-			_ubpCloseApp.textContent = 'Закрываем...';
-			_ubpCloseApp.disabled = true;
-		}
-
-		// ── Уровень 1: Node.js child_process ─────────────────────────────────────
-		// Запускаем updater.ps1 -LaunchWithUpdate ДО закрытия
-		let _relaunching = false;
-		try {
-			let _req;
-			try { _req = (0, eval)('require'); } catch (_) {}
-			if (typeof _req === 'function') {
-				_req('child_process').exec(
-					'powershell.exe -WindowStyle Hidden -File "%LOCALAPPDATA%\\PENA Agency\\Extension\\updater.ps1" -LaunchWithUpdate'
-				);
-				_relaunching = true;
-			}
-		} catch (_) {}
-
-		const _delay = _relaunching ? 1500 : 0;
-
-		// ── Уровень 2: Bitrix24 Desktop API ──────────────────────────────────────
-		setTimeout(() => {
-			try { window.BXDesktopSystem?.ExecAction?.('quit'); } catch (_) {}
-			try { window.BXDesktopSystem?.ExecAction?.('exit'); } catch (_) {}
-			try { window.BXDesktopSystem?.ExecAction?.('close'); } catch (_) {}
-		}, _delay);
-
-		// ── Уровень 3: Electron remote / process.exit ────────────────────────────
-		setTimeout(() => {
-			try {
-				let _req;
-				try { _req = (0, eval)('require'); } catch (_) {}
-				if (typeof _req === 'function') {
-					try { _req('electron').remote.app.quit(); } catch (_) {}
-					try { _req('process').exit(0); } catch (_) {}
-				}
-			} catch (_) {}
-		}, _delay);
-
-		// ── Уровень 4: Native Messaging Host → taskkill (основной метод) ──────────
-		// background.js пробует com.pena.agency.helper; если хост не установлен —
-		// возвращает PENA_NATIVE_UNAVAILABLE и восстанавливает кнопку
-		setTimeout(() => {
-			window.postMessage({ type: 'PENA_CLOSE_APP', _pena_dl: true }, '*');
-		}, _delay);
-	});
-
-	// Ответы от content.js: прогресс обновления + результат проверки
-	window.addEventListener('message', (ev) => {
-		if (!ev.data || !ev.data._pena_dl) return;
-		const msg = ev.data;
-
-		if (msg.type === 'UPDATE_PROGRESS') {
-			// Прогресс загрузки нового injected.js
-			const pct = Math.min(99, msg.pct >= 0 ? msg.pct : 0);
-			if (_ubpPct)  _ubpPct.textContent  = pct + '%';
-			if (_ubpFill) { _ubpFill.classList.remove('--indet'); _ubpFill.style.width = pct + '%'; }
-
-		} else if (msg.type === 'UPDATE_DONE') {
-			// Обновление сохранено — сразу показываем инструкцию (без промежуточной кнопки)
-			if (_ubpPct)  _ubpPct.textContent  = '100%';
-			if (_ubpFill) { _ubpFill.classList.remove('--indet'); _ubpFill.style.width = '100%'; }
-			setTimeout(_showRestartInstruction, 300);
-
-		} else if (msg.type === 'PENA_NATIVE_UNAVAILABLE') {
-			// Нативный хост не установлен — восстанавливаем кнопку, показываем подсказку
-			if (_ubpCloseApp) {
-				_ubpCloseApp.textContent = 'Перезапустить';
-				_ubpCloseApp.disabled = false;
-			}
-			_showUpdToast('Установите PENA Agency полностью (запустите установщик)', false);
-
-		} else if (msg.type === 'PENA_NEED_MANUAL_RESTART') {
-			_showRestartInstruction();
-
-		} else if (msg.type === 'PENA_UPDATE_IMPOSSIBLE') {
-			// Инжект нового injected.js не удался — просим обратиться к администратору
-			if (_ubpProg) _ubpProg.style.display = 'none';
-			if (_ubpDone) _ubpDone.style.display = 'none';
-			const impRow = host.querySelector('#anit_ubp_impossible');
-			if (impRow) {
-				impRow.style.display = '';
-				const t = impRow.querySelector('.ubp-imp-text');
-				if (t) t.textContent = 'Обновление невозможно — обратитесь к администратору';
-			}
-			if (_ubpBanner) { _ubpBanner.style.display = ''; _ubpBanner.classList.remove('--downloading', '--done', '--error'); _ubpBanner.classList.add('--impossible'); }
-
-		} else if (msg.type === 'UPDATE_ERROR') {
-			if (_ubpBanner)  { _ubpBanner.classList.remove('--downloading', '--done'); _ubpBanner.classList.add('--error'); }
-			if (_ubpProg)    _ubpProg.style.display = 'none';
-			if (_ubpInstBtn) { _ubpInstBtn.disabled = false; _ubpInstBtn.textContent = 'Повторить'; }
-			_showUpdToast('Ошибка загрузки обновления');
-
-		} else if (msg.type === 'PENA_UPDATE_AVAILABLE') {
-			// Пришло от content.js: в chrome.storage найдена информация об обновлении
-			if (msg.version && msg.injected_js_url) _applyUpdateBanner(msg.version, msg.injected_js_url);
-
-		} else if (msg.type === 'CHECK_RESULT') {
-			// Дедупликация: оба канала могут доставить один и тот же результат
-			if (msg.ts && msg.ts === _lastCheckResultTs) return;
-			if (msg.ts) _lastCheckResultTs = msg.ts;
-			const btn = host.querySelector('#anit_update_btn');
-			if (btn) { btn.classList.remove('--checking'); btn.disabled = false; }
-			if (msg.hasUpdate && msg.version && msg.injected_js_url && _semverNewer(msg.version, _UPD_CURRENT)) {
-				// Обновление доступно и его версия новее той, что сейчас запущена
-				try { localStorage.setItem(_UPD_LS_KEY, JSON.stringify({ hasUpdate: true, version: msg.version, injected_js_url: msg.injected_js_url })); } catch {}
-				_applyUpdateBanner(msg.version, msg.injected_js_url);
-				if (!msg.silent) _showUpdToast('⬆ Обновление v' + msg.version + ' доступно — нажмите «Обновить»');
-			} else if (msg.ok || (msg.hasUpdate && !_semverNewer(msg.version, _UPD_CURRENT))) {
-				// Актуальная версия уже запущена
-				try { localStorage.setItem(_UPD_LS_KEY, JSON.stringify({ hasUpdate: false })); } catch {}
-				_clearUpdateBanner();
-				if (!msg.silent) _showUpdToast('✓ Установлена актуальная версия', true);
-			} else {
-				if (!msg.silent) _showUpdToast('Нет соединения — проверьте позже');
-			}
-		}
-	});
-
-	host.querySelector('#anit_update_banner_close')?.addEventListener('click', () => {
-		if (_ubpBanner) _ubpBanner.style.display = 'none';
-	});
-	host.querySelector('#anit_ubp_impossible_close')?.addEventListener('click', () => {
-		if (_ubpBanner) _ubpBanner.style.display = 'none';
-	});
-	host.querySelector('#anit_update_btn')?.addEventListener('click', () => {
-		const btn = host.querySelector('#anit_update_btn');
-		if (!btn || btn.classList.contains('--checking')) return;
-		btn.classList.add('--checking');
-		btn.disabled = true;
-		// Запрос идёт через content.js → background.js (CSP не мешает)
-		window.postMessage({ type: 'PENA_CHECK_UPDATES', silent: false }, '*');
-		// Таймаут: если результат не пришёл за 15 сек — сбрасываем кнопку
-		setTimeout(() => {
-			if (btn.classList.contains('--checking')) {
-				btn.classList.remove('--checking');
-				btn.disabled = false;
-				_showUpdToast('Нет соединения — проверьте позже');
-			}
-		}, 15000);
-	});
-	// --- конец блока проверки обновлений ---
+	// Очистка устаревших ключей localStorage от прежнего механизма обновлений
+	try { localStorage.removeItem('pena.update.info'); } catch (_) {}
+	try { localStorage.removeItem('pena.last_seen_ver'); } catch (_) {}
 
 	// --- Help popup (горячие клавиши) ---
 	const _helpBtn = host.querySelector('#anit_help_btn');
@@ -3671,8 +3343,6 @@ if (_presetChannel) {
 		});
 	}
 
-	// Сигнал: панель построена (content.js → background.js → авто-инжект обновления)
-	try { window.postMessage({ type: 'PENA_PANEL_BUILT', _pena_dl: true }, '*'); } catch (_) {}
 }
 
 
