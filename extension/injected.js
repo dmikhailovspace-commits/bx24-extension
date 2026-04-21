@@ -1349,6 +1349,9 @@ if (_presetChannel) {
 	let dragging = false, moved = false, startX=0, startY=0, startLeft=0, startTop=0;
 
 	const keepInsideViewport = () => {
+	// При сужении окна браузера — тоже сужаем панель, если она шире
+	const maxW = window.innerWidth - 8;
+	if (host.offsetWidth > maxW) host.style.width = maxW + 'px';
 	const r = host.getBoundingClientRect();
 	let left = parseInt(host.style.left || '0', 10) || 0;
 	let top  = parseInt(host.style.top  || '0', 10) || 0;
@@ -1534,7 +1537,7 @@ if (_presetChannel) {
 	host.id = 'anit-filters';
 	host.innerHTML = `
 <style>
-#anit-filters{position:fixed;top:8px;left:8px;z-index:9999;width:360px;min-width:360px;max-width:90vw;transition:opacity .4s ease}
+#anit-filters{position:fixed;top:8px;left:8px;z-index:9999;width:clamp(260px,30vw,420px);max-width:90vw;transition:opacity .4s ease}
 #anit-filters.anit-hidden{max-width:none !important;width:24px !important;height:24px !important}
 #anit-filters.anit-hidden .pane{display:none !important}
 #anit-filters .mini-toggle{display:none;width:30px;height:30px;border:1px solid rgba(255,255,255,.3);border-radius:9px;background:#0b0d10;color:#fff;align-items:center;justify-content:center;cursor:move;box-shadow:0 4px 18px rgba(0,0,0,.6);transition:border-color .15s,box-shadow .15s}
@@ -1561,8 +1564,8 @@ if (_presetChannel) {
 #anit-filters.rz-s,#anit-filters.rz-s *{cursor:s-resize!important}
 #anit-filters.rz-se,#anit-filters.rz-se *{cursor:se-resize!important}
 #anit-filters.rz-sw,#anit-filters.rz-sw *{cursor:sw-resize!important}
-#anit-filters .header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 8px 0;cursor:move}
-#anit-filters .header-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto;position:relative}
+#anit-filters .header{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:0 0 8px 0;cursor:move;flex-wrap:wrap}
+#anit-filters .header-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto;position:relative;flex-shrink:0}
 #anit-filters .icon-btn{width:22px;height:22px;border:1px solid rgba(255,255,255,.25);border-radius:6px;background:#070809;color:#fff;cursor:pointer;line-height:1;display:inline-flex;align-items:center;justify-content:center;padding:0}
 #anit-filters .icon-btn svg{width:14px;height:14px;display:block;fill:#ffffff;opacity:.92}
 #anit-filters .icon-btn:hover{border-color:rgba(255,255,255,.45)}
@@ -1575,7 +1578,7 @@ if (_presetChannel) {
 #anit-filters .opts-field input{width:90%}
 #anit-filters .opts-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 #anit-filters .opts-status{margin-top:6px;min-height:14px}
-#anit-filters .brand{display:flex;align-items:center;gap:8px;min-width:0}
+#anit-filters .brand{display:flex;align-items:center;gap:8px;min-width:0;flex:1 1 auto;overflow:hidden}
 #anit-filters .brand-icon{width:20px;height:20px;display:inline-flex;flex:0 0 20px}
 #anit-filters .brand-logo{height:20px;width:auto;max-width:120px;filter:invert(1);mix-blend-mode:screen;flex-shrink:0;display:block}
 #anit-filters .brand-title{font-size:12px;font-weight:700;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -1660,12 +1663,12 @@ if (_presetChannel) {
 #anit-filters .pena-prefetch-bar{height:100%;width:0%;background:linear-gradient(90deg,#1587fa,#4fb6ff);border-radius:3px;transition:width .15s ease}
 #anit-filters .pena-prefetch-cancel{margin-top:8px;width:100%;padding:5px;border-radius:6px;border:1px solid rgba(255,255,255,.2);background:transparent;color:#9ab;cursor:pointer;font-size:11px;box-sizing:border-box}
 #anit-filters .pena-prefetch-cancel:hover{border-color:#f66;color:#f88}
-#anit-filters .type-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;width:100%}
+#anit-filters .type-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:6px;width:100%}
 #anit-filters .anit-type-chip{display:flex;align-items:center;justify-content:center;width:100%;min-height:26px;padding:4px 6px;border-radius:7px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.04);color:#bac7da;cursor:pointer;font-size:11px;line-height:1.2;text-align:center;transition:background .12s,border-color .12s,color .12s;box-sizing:border-box}
 #anit-filters .anit-type-chip:hover{border-color:rgba(255,255,255,.32);background:rgba(255,255,255,.09);color:#e2eaf5}
 #anit-filters .anit-type-chip.is-selected{background:rgba(21,135,250,.22);border-color:#1587fa;color:#fff}
 #anit-filters .group{position:relative}
-#anit-filters .group-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+#anit-filters .group-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
 #anit-filters .category-toggle{width:22px;height:22px;border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.04);color:#9ab;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:border-color .15s,background .15s}
 #anit-filters .category-toggle:hover{border-color:rgba(255,255,255,.4);background:rgba(255,255,255,.09)}
 #anit-filters .category-toggle svg{display:block;width:11px;height:11px;fill:none;stroke:#b8c4d4;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;transition:transform .18s ease}
@@ -1723,7 +1726,7 @@ if (_presetChannel) {
 .anit-preset-confirm .confirm-btns button.--ok:hover{background:rgba(245,158,11,.32)}
 #anit-filters .opacity-wrap{display:inline-flex;align-items:center;gap:3px;cursor:default;opacity:.65;transition:opacity .15s}
 #anit-filters .opacity-wrap:hover{opacity:1}
-#anit-filters #anit_opacity_slider{-webkit-appearance:none;appearance:none;width:54px;height:2px;border-radius:2px;background:rgba(255,255,255,.2);cursor:pointer;outline:none;border:none;padding:0;margin:0;vertical-align:middle;flex-shrink:0}
+#anit-filters #anit_opacity_slider{-webkit-appearance:none;appearance:none;width:clamp(32px,4vw,54px);height:2px;border-radius:2px;background:rgba(255,255,255,.2);cursor:pointer;outline:none;border:none;padding:0;margin:0;vertical-align:middle;flex-shrink:0}
 #anit-filters #anit_opacity_slider::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:#4a90d9;border:2px solid #1d3550;cursor:pointer;transition:background .15s,transform .1s;box-shadow:0 1px 4px rgba(0,0,0,.5)}
 #anit-filters #anit_opacity_slider::-webkit-slider-thumb:hover{background:#6ab0ff;transform:scale(1.2)}
 #anit-filters #anit_opacity_slider::-moz-range-thumb{width:12px;height:12px;border-radius:50%;background:#4a90d9;border:2px solid #1d3550;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.5)}
@@ -2580,7 +2583,7 @@ if (_presetChannel) {
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v6.4.28';
+	if (_verBadge) _verBadge.textContent = 'v6.4.29';
 
 	// Очистка устаревших ключей localStorage от прежнего механизма обновлений
 	try { localStorage.removeItem('pena.update.info'); } catch (_) {}
@@ -3291,10 +3294,10 @@ if (_presetChannel) {
 			const dx = e.clientX - _rzStartX, dy = e.clientY - _rzStartY;
 			const pane = host.querySelector('.pane');
 			if (_rzEdges.r) {
-				host.style.width = Math.max(360, Math.min(window.innerWidth * 0.9, _rzStartW + dx)) + 'px';
+				host.style.width = Math.max(80, Math.min(window.innerWidth - 8, _rzStartW + dx)) + 'px';
 			}
 			if (_rzEdges.l) {
-				const newW = Math.max(360, Math.min(window.innerWidth * 0.9, _rzStartW - dx));
+				const newW = Math.max(80, Math.min(window.innerWidth - 8, _rzStartW - dx));
 				host.style.width = newW + 'px';
 				host.style.left = Math.max(0, _rzStartLeft + (_rzStartW - newW)) + 'px';
 			}
