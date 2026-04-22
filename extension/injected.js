@@ -1425,26 +1425,6 @@ if (_presetChannel) {
 	});
 
 
-	(host.querySelector('.header') || host).addEventListener('dblclick', () => {
-	const listCol = IS_OL_FRAME
-	? findContainerOL()
-	: document.querySelector('.bx-im-list-container-recent__elements')?.closest('.bx-im-list-container-recent__container')
-	|| document.querySelector('.bx-im-list-container-recent__elements');
-
-	const vr = document.documentElement.getBoundingClientRect();
-	const rr = listCol?.getBoundingClientRect();
-	const currentLeft = parseInt(host.style.left || '0', 10) || 0;
-	let top = 8, left = (vr.width - host.offsetWidth - 10);
-	if (rr) {
-	top  = Math.max(8, rr.top + 8);
-	left = Math.min(vr.width - host.offsetWidth - 10, rr.right - host.offsetWidth - 10);
-}
-	const maxLeft = Math.max(0, vr.width - host.offsetWidth);
-	if (left < 8) left = currentLeft > 8 ? currentLeft : 8;
-	host.style.left  = `${clamp(left, 8, maxLeft)}px`;
-	host.style.top   = `${Math.max(0, top)}px`;
-	try { localStorage.removeItem(POS_LS_KEY(mode)); } catch{}
-});
 
 
 		function hotkeyHandler(e){
@@ -1648,13 +1628,16 @@ if (_presetChannel) {
 #anit-filters #anit_itag_add_input{flex:1;min-width:80px;padding:6px 8px;border-radius:8px;border:1px solid rgba(255,255,255,.25);background:#070809;color:#fff;outline:none;font-size:12px}
 #anit-filters #anit_itag_add_btn{flex-shrink:0;align-self:stretch;display:flex;align-items:center;justify-content:center;padding:0 12px;border-radius:8px;border:1px solid rgba(255,255,255,.25);background:#070809;color:#b8c6dc;cursor:pointer;font-size:14px;line-height:1}
 #anit-filters #anit_itag_add_btn:hover{border-color:#1587fa;color:#fff}
-/* Help popup */
-#anit-filters .help-popup{display:none;position:absolute;top:28px;right:0;background:#0f1117;border:1px solid rgba(255,255,255,.15);border-radius:10px;padding:10px 12px;box-shadow:0 8px 28px rgba(0,0,0,.55);z-index:10001;white-space:nowrap}
-#anit-filters .help-popup.--show{display:block}
-#anit-filters .help-popup .hp-title{font-size:10px;font-weight:700;color:rgba(255,255,255,.32);text-transform:uppercase;letter-spacing:.07em;margin-bottom:7px}
-#anit-filters .help-popup table{border-collapse:collapse;font-size:11px}
-#anit-filters .help-popup td{padding:2px 0;color:#b8c6dc;vertical-align:middle}
-#anit-filters .help-popup td:first-child{padding-right:10px;white-space:nowrap}
+/* Floating popups (.pena-fpop) */
+.pena-fpop{position:fixed;background:#0b0d10;border:1px solid rgba(255,255,255,.15);border-radius:10px;padding:10px 12px;box-shadow:0 8px 28px rgba(0,0,0,.55);z-index:2147483648;min-width:180px;display:none}
+.pena-fpop.--show{display:block}
+.pena-fpop-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.pena-fpop-title{font-size:10px;font-weight:700;color:rgba(255,255,255,.32);text-transform:uppercase;letter-spacing:.07em}
+.pena-fpop-close{background:none;border:none;color:rgba(255,255,255,.4);cursor:pointer;font-size:16px;line-height:1;padding:0;margin:0}
+.pena-fpop-close:hover{color:#fff}
+#anit-filters .pena-fpop table{border-collapse:collapse;font-size:11px}
+#anit-filters .pena-fpop td{padding:2px 0;color:#b8c6dc;vertical-align:middle}
+#anit-filters .pena-fpop td:first-child{padding-right:10px;white-space:nowrap}
 #anit-filters .pena-prefetch-popup{position:absolute;inset:0;z-index:1000;background:rgba(11,13,16,.88);display:flex;align-items:center;justify-content:center;border-radius:12px}
 #anit-filters .pena-prefetch-box{background:#1a1f2a;border:1px solid rgba(255,255,255,.18);border-radius:10px;padding:12px 16px;width:190px;box-shadow:0 4px 20px rgba(0,0,0,.55)}
 #anit-filters .pena-prefetch-handle{font-size:13px;font-weight:600;color:#fff;margin-bottom:10px;cursor:move;user-select:none}
@@ -1702,15 +1685,15 @@ if (_presetChannel) {
 #anit-filters .pm-add-btn{padding:5px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:#c8d0dc;cursor:pointer;font-size:11px;white-space:nowrap;transition:all .15s}
 #anit-filters .pm-add-btn:hover{background:rgba(255,255,255,.14);color:#fff}
 #anit-filters .pm-empty{font-size:11px;color:rgba(255,255,255,.28);padding:4px 2px 6px;text-align:center}
-#anit-filters #anit_preset_manage_panel,#anit-filters #anit_cat_manage_panel{position:absolute;left:0;right:0;top:30px;z-index:200;background:#0c0e14;border:1px solid rgba(255,255,255,.18);border-radius:9px;padding:10px;box-shadow:0 10px 30px rgba(0,0,0,.6)}
+#anit-filters #anit_preset_manage_panel,#anit-filters #anit_cat_manage_panel{position:fixed;z-index:2147483640;background:#0c0e14;border:1px solid rgba(255,255,255,.18);border-radius:9px;padding:10px;box-shadow:0 10px 30px rgba(0,0,0,.6);min-width:220px;max-width:340px}
 #anit-filters.anit-debug-mode .pane{outline:4px solid #f59e0b;outline-offset:-2px;border-radius:12px}
 #anit-filters.anit-dragging,#anit-filters.anit-dragging .pane{cursor:grabbing !important;user-select:none}
 /* debug-badge внутри панели скрыт — индикатор вынесен над окном (#anit_debug_overlay) */
 #anit-filters .debug-badge{display:none !important}
 /* Overlay «Режим отладки» — над окном расширения */
-#anit-filters #anit_debug_overlay{position:absolute;bottom:calc(100% + 5px);left:0;right:0;display:none;justify-content:center;pointer-events:none;z-index:2147483647}
-#anit-filters.anit-debug-mode #anit_debug_overlay{display:flex}
-#anit-filters .anit-debug-flag{font-size:11px;font-weight:600;color:#f59e0b;background:rgba(11,13,16,.92);border:1px solid rgba(245,158,11,.55);border-radius:7px;padding:3px 11px;white-space:nowrap;letter-spacing:.15px;box-shadow:0 2px 8px rgba(0,0,0,.5)}
+#anit-filters #anit_debug_overlay{position:absolute;bottom:calc(100% + 5px);left:0;right:0;display:none;align-items:center;justify-content:space-between;pointer-events:none;z-index:2147483647;gap:8px}
+#anit-filters.anit-debug-mode #anit_debug_overlay{display:flex;pointer-events:auto}
+#anit-filters .anit-debug-flag{flex:1;font-size:13px;font-weight:700;color:#f59e0b;background:#0b0d10;border:1px solid rgba(245,158,11,.6);border-radius:8px;padding:7px 14px;letter-spacing:.2px;box-shadow:0 3px 12px rgba(0,0,0,.6)}
 /* Тост (уведомления) — над окном расширения, не внутри */
 .anit-preset-toast{position:absolute;bottom:calc(100% + 6px);left:0;right:0;text-align:center;background:#0b0d10;border:1px solid rgba(245,158,11,.5);color:#f59e0b;padding:6px 16px;border-radius:10px;font-size:12px;z-index:2147483647;pointer-events:none;opacity:0;transition:opacity .25s;white-space:normal;box-shadow:0 4px 14px rgba(0,0,0,.5)}
 .anit-preset-toast.--show{opacity:1}
@@ -1765,14 +1748,6 @@ if (_presetChannel) {
       <button id="anit_help_btn" class="icon-btn" type="button" title="Горячие клавиши">
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:13px;height:13px;fill:#fff;opacity:.65;display:block"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/></svg>
       </button>
-      <div id="anit_help_popup" class="help-popup">
-        <div class="hp-title">Горячие клавиши</div>
-        <table>
-          <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">Alt</span>+<span class="kbd">F</span></td><td>Показать / скрыть панель</td></tr>
-          <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">Shift</span>+<span class="kbd">A</span></td><td>Сброс всех фильтров</td></tr>
-          <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">1</span>…<span class="kbd">9</span></td><td>Быстрый выбор пресета</td></tr>
-        </table>
-      </div>
       <button id="anit_toggle_btn" class="anit-toggle icon-btn" type="button" title="Скрыть/показать (Ctrl+Alt+F)"><svg viewBox="0 0 24 24" style="width:12px;height:12px;display:block;fill:#fff" aria-hidden="true"><path d="M19 13H5v-2h14v2z"/></svg></button>
     </div>
   </div>
@@ -1794,7 +1769,10 @@ if (_presetChannel) {
     </div>
     <div class="presets-row" id="anit_presets_row"></div>
     <div id="anit_preset_manage_panel" style="display:none">
-      <div class="pm-header">Управление пресетами</div>
+      <div class="pm-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <span>Управление пресетами</span>
+        <button type="button" id="anit_preset_manage_close" class="pena-fpop-close" title="Закрыть">×</button>
+      </div>
       <div id="anit_preset_list_edit"></div>
       <div class="pm-add-section">
         <div class="pm-add-label">Новый пресет</div>
@@ -1847,7 +1825,10 @@ if (_presetChannel) {
       </div>
     </div>
     <div id="anit_cat_manage_panel" style="display:none">
-      <div style="font-size:11px;font-weight:700;margin-bottom:6px;opacity:.9">Показывать категории</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <span style="font-size:11px;font-weight:700;opacity:.9">Показывать категории</span>
+        <button type="button" id="anit_cat_manage_close" class="pena-fpop-close" title="Закрыть">×</button>
+      </div>
       <div id="anit_cat_vis_list" style="display:flex;flex-wrap:wrap;gap:4px"></div>
       <div id="anit_cat_custom_list" style="margin-top:4px"></div>
     </div>
@@ -1889,6 +1870,17 @@ if (_presetChannel) {
     </div>
   </div>
   <div class="pena-ver-badge" id="anit_ver_badge"></div>
+</div>
+<div id="anit_help_popup" class="pena-fpop">
+  <div class="pena-fpop-header">
+    <span class="pena-fpop-title">Горячие клавиши</span>
+    <button type="button" class="pena-fpop-close" id="anit_help_popup_close" title="Закрыть">×</button>
+  </div>
+  <table>
+    <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">Alt</span>+<span class="kbd">F</span></td><td>Показать / скрыть панель</td></tr>
+    <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">Shift</span>+<span class="kbd">A</span></td><td>Сброс всех фильтров</td></tr>
+    <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">1</span>…<span class="kbd">9</span></td><td>Быстрый выбор пресета</td></tr>
+  </table>
 </div>
 <div class="anit-preset-toast" id="anit_preset_toast"></div>
 <div id="anit_debug_overlay"><span class="anit-debug-flag">⚙ Режим отладки</span></div>
@@ -2583,7 +2575,7 @@ if (_presetChannel) {
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v6.4.29';
+	if (_verBadge) _verBadge.textContent = 'v6.4.30';
 
 	// Очистка устаревших ключей localStorage от прежнего механизма обновлений
 	try { localStorage.removeItem('pena.update.info'); } catch (_) {}
@@ -2592,16 +2584,38 @@ if (_presetChannel) {
 	// --- Help popup (горячие клавиши) ---
 	const _helpBtn = host.querySelector('#anit_help_btn');
 	const _helpPop = host.querySelector('#anit_help_popup');
+	let _helpDismissTimer = null;
+	function _positionFpop(popup, anchorBtn) {
+		const br = anchorBtn.getBoundingClientRect();
+		const pw = popup.offsetWidth || 200;
+		const ph = popup.offsetHeight || 120;
+		let left = br.right - pw;
+		let top  = br.bottom + 6;
+		if (left < 6) left = 6;
+		if (left + pw > window.innerWidth - 6) left = window.innerWidth - pw - 6;
+		if (top + ph > window.innerHeight - 6) top = br.top - ph - 6;
+		popup.style.left = left + 'px';
+		popup.style.top  = top  + 'px';
+	}
 	if (_helpBtn && _helpPop) {
 		_helpBtn.addEventListener('click', (e) => {
 			e.stopPropagation();
-			_helpPop.classList.toggle('--show');
+			const isShown = _helpPop.classList.contains('--show');
+			if (isShown) { _helpPop.classList.remove('--show'); return; }
+			_helpPop.classList.add('--show');
+			requestAnimationFrame(() => _positionFpop(_helpPop, _helpBtn));
 		});
+		_helpPop.querySelector('#anit_help_popup_close')?.addEventListener('click', () => _helpPop.classList.remove('--show'));
+		_helpPop.addEventListener('mouseenter', () => { if (_helpDismissTimer) { clearTimeout(_helpDismissTimer); _helpDismissTimer = null; } });
+		_helpPop.addEventListener('mouseleave', () => { _helpDismissTimer = setTimeout(() => _helpPop.classList.remove('--show'), 2000); });
+		_helpBtn.addEventListener('mouseleave', () => {
+			if (!_helpPop.classList.contains('--show')) return;
+			_helpDismissTimer = setTimeout(() => _helpPop.classList.remove('--show'), 2000);
+		});
+		_helpBtn.addEventListener('mouseenter', () => { if (_helpDismissTimer) { clearTimeout(_helpDismissTimer); _helpDismissTimer = null; } });
 		document.addEventListener('click', (e) => {
 			if (!_helpPop.classList.contains('--show')) return;
-			if (!_helpPop.contains(e.target) && e.target !== _helpBtn) {
-				_helpPop.classList.remove('--show');
-			}
+			if (!_helpPop.contains(e.target) && e.target !== _helpBtn) _helpPop.classList.remove('--show');
 		}, true);
 	}
 
@@ -2913,12 +2927,22 @@ if (_presetChannel) {
 	// -- Панель управления пресетами ------------------------------------------------
 	const presetManageBtn = host.querySelector('#anit_preset_manage_btn');
 	const presetManagePanel = host.querySelector('#anit_preset_manage_panel');
+	let _presetDismissTimer = null;
 	if (presetManageBtn && presetManagePanel) {
 		presetManageBtn.addEventListener('click', (e) => {
 			e.preventDefault(); e.stopPropagation();
 			const nowVisible = presetManagePanel.style.display !== 'none';
 			presetManagePanel.style.display = nowVisible ? 'none' : 'block';
-			if (!nowVisible) renderPresetManagePanel(host);
+			if (!nowVisible) {
+				renderPresetManagePanel(host);
+				requestAnimationFrame(() => _positionFpop(presetManagePanel, presetManageBtn));
+			}
+		});
+		host.querySelector('#anit_preset_manage_close')?.addEventListener('click', () => { presetManagePanel.style.display = 'none'; });
+		presetManagePanel.addEventListener('mouseenter', () => { if (_presetDismissTimer) { clearTimeout(_presetDismissTimer); _presetDismissTimer = null; } });
+		presetManagePanel.addEventListener('mouseleave', () => {
+			if (presetManagePanel.contains(document.activeElement)) return;
+			_presetDismissTimer = setTimeout(() => { presetManagePanel.style.display = 'none'; }, 2000);
 		});
 		document.addEventListener('click', (e) => {
 			if (!presetManagePanel || presetManagePanel.style.display === 'none') return;
@@ -2978,13 +3002,23 @@ if (_presetChannel) {
 
 	const catManageBtn = host.querySelector('#anit_cat_manage_btn');
 	const catManagePanel = host.querySelector('#anit_cat_manage_panel');
+	let _catDismissTimer = null;
 	if (catManageBtn && catManagePanel) {
 		catManageBtn.addEventListener('click', (e) => {
 			e.preventDefault();
 			e.stopPropagation();
 			const nowVisible = catManagePanel.style.display !== 'none';
 			catManagePanel.style.display = nowVisible ? 'none' : 'block';
-			if (!nowVisible) renderCatManagePanel();
+			if (!nowVisible) {
+				renderCatManagePanel();
+				requestAnimationFrame(() => _positionFpop(catManagePanel, catManageBtn));
+			}
+		});
+		host.querySelector('#anit_cat_manage_close')?.addEventListener('click', () => { catManagePanel.style.display = 'none'; });
+		catManagePanel.addEventListener('mouseenter', () => { if (_catDismissTimer) { clearTimeout(_catDismissTimer); _catDismissTimer = null; } });
+		catManagePanel.addEventListener('mouseleave', () => {
+			if (catManagePanel.contains(document.activeElement)) return;
+			_catDismissTimer = setTimeout(() => { catManagePanel.style.display = 'none'; }, 2000);
 		});
 		document.addEventListener('click', (e) => {
 			if (!catManagePanel || catManagePanel.style.display === 'none') return;
