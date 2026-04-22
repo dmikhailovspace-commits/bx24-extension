@@ -1629,12 +1629,12 @@ if (_presetChannel) {
 #anit-filters #anit_itag_add_btn{flex-shrink:0;align-self:stretch;display:flex;align-items:center;justify-content:center;padding:0 12px;border-radius:8px;border:1px solid rgba(255,255,255,.25);background:#070809;color:#b8c6dc;cursor:pointer;font-size:14px;line-height:1}
 #anit-filters #anit_itag_add_btn:hover{border-color:#1587fa;color:#fff}
 /* Floating popups (.pena-fpop) */
-.pena-fpop{position:fixed;background:#0b0d10;border:1px solid rgba(255,255,255,.15);border-radius:10px;padding:10px 12px;box-shadow:0 8px 28px rgba(0,0,0,.55);z-index:2147483648;min-width:180px;display:none}
+.pena-fpop{position:absolute;background:#0b0d10;border:1px solid rgba(255,255,255,.15);border-radius:10px;padding:10px 12px;box-shadow:0 8px 28px rgba(0,0,0,.55);z-index:2147483648;min-width:180px;display:none}
 .pena-fpop.--show{display:block}
 .pena-fpop-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
 .pena-fpop-title{font-size:10px;font-weight:700;color:rgba(255,255,255,.32);text-transform:uppercase;letter-spacing:.07em}
-.pena-fpop-close{background:none;border:none;color:rgba(255,255,255,.4);cursor:pointer;font-size:16px;line-height:1;padding:0;margin:0}
-.pena-fpop-close:hover{color:#fff}
+.pena-fpop-close{background:none;border:none;color:rgba(200,70,70,.75);cursor:pointer;font-size:13px;line-height:1;padding:0;margin:0}
+.pena-fpop-close:hover{color:#ff7070}
 #anit-filters .pena-fpop table{border-collapse:collapse;font-size:11px}
 #anit-filters .pena-fpop td{padding:2px 0;color:#b8c6dc;vertical-align:middle}
 #anit-filters .pena-fpop td:first-child{padding-right:10px;white-space:nowrap}
@@ -1685,7 +1685,7 @@ if (_presetChannel) {
 #anit-filters .pm-add-btn{padding:5px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:#c8d0dc;cursor:pointer;font-size:11px;white-space:nowrap;transition:all .15s}
 #anit-filters .pm-add-btn:hover{background:rgba(255,255,255,.14);color:#fff}
 #anit-filters .pm-empty{font-size:11px;color:rgba(255,255,255,.28);padding:4px 2px 6px;text-align:center}
-#anit-filters #anit_preset_manage_panel,#anit-filters #anit_cat_manage_panel{position:fixed;z-index:2147483640;background:#0c0e14;border:1px solid rgba(255,255,255,.18);border-radius:9px;padding:10px;box-shadow:0 10px 30px rgba(0,0,0,.6);min-width:220px;max-width:340px}
+#anit-filters #anit_preset_manage_panel,#anit-filters #anit_cat_manage_panel{position:absolute;z-index:2147483640;background:#0c0e14;border:1px solid rgba(255,255,255,.18);border-radius:9px;padding:10px;box-shadow:0 10px 30px rgba(0,0,0,.6);min-width:220px;max-width:340px}
 #anit-filters.anit-debug-mode .pane{outline:4px solid #f59e0b;outline-offset:-2px;border-radius:12px}
 #anit-filters.anit-dragging,#anit-filters.anit-dragging .pane{cursor:grabbing !important;user-select:none}
 /* debug-badge внутри панели скрыт — индикатор вынесен над окном (#anit_debug_overlay) */
@@ -1892,6 +1892,11 @@ if (_presetChannel) {
 	document.body.appendChild(host);
 	filtersHost = host;
 	host.dataset.mode = _currentPanelMode;
+	// Перемещаем плавающие панели из .pane в host (position:absolute, не обрезаются .pane)
+	['#anit_preset_manage_panel','#anit_cat_manage_panel'].forEach(sel => {
+		const el = host.querySelector(sel);
+		if (el) host.appendChild(el);
+	});
 	// Apply saved opacity immediately — prevents flicker on tab switch
 	try {
 		const _initOp = parseInt(localStorage.getItem('pena.panel.opacity') || '100', 10);
@@ -2575,7 +2580,7 @@ if (_presetChannel) {
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v6.4.30';
+	if (_verBadge) _verBadge.textContent = 'v6.4.31';
 
 	// Очистка устаревших ключей localStorage от прежнего механизма обновлений
 	try { localStorage.removeItem('pena.update.info'); } catch (_) {}
@@ -2586,16 +2591,19 @@ if (_presetChannel) {
 	const _helpPop = host.querySelector('#anit_help_popup');
 	let _helpDismissTimer = null;
 	function _positionFpop(popup, anchorBtn) {
-		const br = anchorBtn.getBoundingClientRect();
-		const pw = popup.offsetWidth || 200;
-		const ph = popup.offsetHeight || 120;
-		let left = br.right - pw;
-		let top  = br.bottom + 6;
-		if (left < 6) left = 6;
-		if (left + pw > window.innerWidth - 6) left = window.innerWidth - pw - 6;
-		if (top + ph > window.innerHeight - 6) top = br.top - ph - 6;
-		popup.style.left = left + 'px';
-		popup.style.top  = top  + 'px';
+		const hr = host.getBoundingClientRect(); // позиция панели в viewport
+		const br = anchorBtn.getBoundingClientRect(); // позиция кнопки в viewport
+		const pw = popup.offsetWidth  || 220;
+		const ph = popup.offsetHeight || 150;
+		// Желаемая позиция в viewport: под кнопкой, выравнивание по правому краю
+		let vl = br.right - pw;
+		let vt = br.bottom + 6;
+		if (vl < 6) vl = br.left;
+		if (vl + pw > window.innerWidth  - 6) vl = window.innerWidth  - pw - 6;
+		if (vt + ph > window.innerHeight - 6) vt = br.top - ph - 6;
+		// Переводим в координаты относительно host (position:absolute)
+		popup.style.left = (vl - hr.left) + 'px';
+		popup.style.top  = (vt - hr.top)  + 'px';
 	}
 	if (_helpBtn && _helpPop) {
 		_helpBtn.addEventListener('click', (e) => {
