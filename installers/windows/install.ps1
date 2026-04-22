@@ -29,7 +29,7 @@ try {
 
 Div
 Info "BX24 Chat Sorter installer"
-Info "Windows | v5.0.0"
+Info "Windows | v6.4.32"
 Div
 Write-Host ""
 

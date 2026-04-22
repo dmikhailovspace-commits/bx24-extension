@@ -1,7 +1,7 @@
 {
-  "version": "6.4.29",
-  "release_date": "2026-04-22",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.4.29",
+  "version": "6.4.32",
+  "release_date": "2026-04-21",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.4.32",
   "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension/injected.js",
-  "changelog": "v6.4.29: адаптивная ширина панели, свободный ресайз за края, flex-wrap шапки и сетки категорий"
+  "changelog": "v6.4.32: плавная macOS-анимация поп-апов, центрирование текста «Режим отладки»"
 }
