@@ -1547,7 +1547,7 @@ if (_presetChannel) {
 #anit-filters .header{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:0 0 8px 0;cursor:move;flex-wrap:wrap}
 #anit-filters .header-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto;position:relative;flex-shrink:0}
 #anit-filters .icon-btn{width:22px;height:22px;border:1px solid rgba(255,255,255,.25);border-radius:6px;background:#070809;color:#fff;cursor:pointer;line-height:1;display:inline-flex;align-items:center;justify-content:center;padding:0}
-#anit-filters .icon-btn svg{width:14px;height:14px;display:block;fill:#ffffff;opacity:.92}
+#anit-filters .icon-btn svg{width:13px;height:13px;display:block;fill:#ffffff;opacity:.88}
 #anit-filters .icon-btn:hover{border-color:rgba(255,255,255,.45)}
 #anit-filters .opts-pop{display:none;position:absolute;top:26px;right:0;width:292px;max-width:calc(100vw - 24px);background:#0b0d10;color:#fff;border:1px solid rgba(255,255,255,.15);border-radius:12px;padding:10px;box-shadow:0 12px 34px rgba(0,0,0,.45);z-index:10001}
 #anit-filters .opts-pop.show{display:block}
@@ -1633,8 +1633,8 @@ if (_presetChannel) {
 .pena-fpop.--show{opacity:1;pointer-events:auto;transform:translateY(0) scale(1)}
 .pena-fpop-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
 .pena-fpop-title{font-size:10px;font-weight:700;color:rgba(255,255,255,.32);text-transform:uppercase;letter-spacing:.07em}
-.pena-fpop-close{background:none;border:none;color:rgba(200,70,70,.75);cursor:pointer;font-size:13px;line-height:1;padding:0;margin:0}
-.pena-fpop-close:hover{color:#ff7070}
+.pena-fpop-close{background:none;border:none;color:rgba(215,50,50,.9);cursor:pointer;font-size:11px;line-height:1;padding:0;margin:0;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+.pena-fpop-close:hover{color:#ff5555}
 #anit-filters .pena-fpop table{border-collapse:collapse;font-size:11px}
 #anit-filters .pena-fpop td{padding:2px 0;color:#b8c6dc;vertical-align:middle}
 #anit-filters .pena-fpop td:first-child{padding-right:10px;white-space:nowrap}
@@ -1685,7 +1685,8 @@ if (_presetChannel) {
 #anit-filters .pm-add-btn{padding:5px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:#c8d0dc;cursor:pointer;font-size:11px;white-space:nowrap;transition:all .15s}
 #anit-filters .pm-add-btn:hover{background:rgba(255,255,255,.14);color:#fff}
 #anit-filters .pm-empty{font-size:11px;color:rgba(255,255,255,.28);padding:4px 2px 6px;text-align:center}
-#anit-filters #anit_preset_manage_panel,#anit-filters #anit_cat_manage_panel{position:absolute;z-index:2147483640;background:#0c0e14;border:1px solid rgba(255,255,255,.18);border-radius:9px;padding:10px;box-shadow:0 10px 30px rgba(0,0,0,.6);min-width:220px;max-width:340px}
+#anit-filters #anit_preset_manage_panel,#anit-filters #anit_cat_manage_panel{position:absolute;z-index:2147483640;background:#0c0e14;border:1px solid rgba(255,255,255,.18);border-radius:9px;padding:10px;box-shadow:0 10px 30px rgba(0,0,0,.6);min-width:220px;max-width:340px;opacity:0;pointer-events:none;transform:translateY(-6px) scale(0.96);transform-origin:top left;transition:opacity .18s ease,transform .18s ease}
+#anit-filters #anit_preset_manage_panel.--show,#anit-filters #anit_cat_manage_panel.--show{opacity:1;pointer-events:auto;transform:translateY(0) scale(1)}
 #anit-filters.anit-debug-mode .pane{outline:4px solid #f59e0b;outline-offset:-2px;border-radius:12px}
 #anit-filters.anit-dragging,#anit-filters.anit-dragging .pane{cursor:grabbing !important;user-select:none}
 /* debug-badge внутри панели скрыт — индикатор вынесен над окном (#anit_debug_overlay) */
@@ -1693,7 +1694,7 @@ if (_presetChannel) {
 /* Overlay «Режим отладки» — над окном расширения */
 #anit-filters #anit_debug_overlay{position:absolute;bottom:calc(100% + 5px);left:0;right:0;display:none;align-items:center;justify-content:space-between;pointer-events:none;z-index:2147483647;gap:8px}
 #anit-filters.anit-debug-mode #anit_debug_overlay{display:flex;pointer-events:auto}
-#anit-filters .anit-debug-flag{flex:1;font-size:13px;font-weight:700;color:#f59e0b;background:#0b0d10;border:1px solid rgba(245,158,11,.6);border-radius:8px;padding:7px 14px;letter-spacing:.2px;box-shadow:0 3px 12px rgba(0,0,0,.6);text-align:center}
+#anit-filters .anit-debug-flag{flex:1;font-size:13px;font-weight:700;color:#f59e0b;background:#0b0d10;border:4px solid #f59e0b;border-radius:8px;padding:4px 12px;letter-spacing:.2px;box-shadow:0 3px 12px rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center}
 /* Тост (уведомления) — над окном расширения, не внутри */
 .anit-preset-toast{position:absolute;bottom:calc(100% + 6px);left:0;right:0;text-align:center;background:#0b0d10;border:1px solid rgba(245,158,11,.5);color:#f59e0b;padding:6px 16px;border-radius:10px;font-size:12px;z-index:2147483647;pointer-events:none;opacity:0;transition:opacity .25s;white-space:normal;box-shadow:0 4px 14px rgba(0,0,0,.5)}
 .anit-preset-toast.--show{opacity:1}
@@ -1746,9 +1747,9 @@ if (_presetChannel) {
         <input type="range" id="anit_opacity_slider" min="20" max="100" step="5">
       </div>
       <button id="anit_help_btn" class="icon-btn" type="button" title="Горячие клавиши">
-        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:13px;height:13px;fill:#fff;opacity:.65;display:block"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/></svg>
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="opacity:.65"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/></svg>
       </button>
-      <button id="anit_toggle_btn" class="anit-toggle icon-btn" type="button" title="Скрыть/показать (Ctrl+Alt+F)"><svg viewBox="0 0 24 24" style="width:12px;height:12px;display:block;fill:#fff" aria-hidden="true"><path d="M19 13H5v-2h14v2z"/></svg></button>
+      <button id="anit_toggle_btn" class="anit-toggle icon-btn" type="button" title="Скрыть/показать (Ctrl+Alt+F)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 13H5v-2h14v2z"/></svg></button>
     </div>
   </div>
   <div class="anit-preset-confirm" id="anit_preset_confirm"></div>
@@ -1758,17 +1759,17 @@ if (_presetChannel) {
       <div style="display:flex;gap:4px;align-items:center">
         <span class="debug-badge" id="anit_debug_badge">&#9881; Отладка</span>
         <button type="button" id="anit_preset_debug_btn" class="icon-btn" title="Войти в режим отладки (разблокировать фильтры)">
-          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:14px;height:14px;fill:#f59e0b;display:block"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>
+          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="fill:#f59e0b"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>
         </button>
         <button type="button" id="anit_preset_manage_btn" class="icon-btn" title="Управление пресетами">
-          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:13px;height:13px;display:block;fill:#fff;opacity:.8">
+          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="fill:#fff;opacity:.8">
             <path d="M19.43 12.98c.04-.32.07-.64.07-.98 0-.34-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.58-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98 0 .33.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.58 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
           </svg>
         </button>
       </div>
     </div>
     <div class="presets-row" id="anit_presets_row"></div>
-    <div id="anit_preset_manage_panel" style="display:none">
+    <div id="anit_preset_manage_panel">
       <div class="pm-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
         <span>Управление пресетами</span>
         <button type="button" id="anit_preset_manage_close" class="pena-fpop-close" title="Закрыть">×</button>
@@ -1812,7 +1813,7 @@ if (_presetChannel) {
       <div class="group-title">Категории</div>
       <div style="display:flex;gap:4px;align-items:center">
         <button type="button" id="anit_cat_manage_btn" class="icon-btn" title="Настроить категории">
-          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="width:13px;height:13px;display:block;fill:#fff;opacity:.8">
+          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="fill:#fff;opacity:.8">
             <path d="M19.43 12.98c.04-.32.07-.64.07-.98 0-.34-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.58-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98 0 .33.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.58 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
           </svg>
         </button>
@@ -1824,7 +1825,7 @@ if (_presetChannel) {
         <div class="type-grid" id="anit_types"></div>
       </div>
     </div>
-    <div id="anit_cat_manage_panel" style="display:none">
+    <div id="anit_cat_manage_panel">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
         <span style="font-size:11px;font-weight:700;opacity:.9">Показывать категории</span>
         <button type="button" id="anit_cat_manage_close" class="pena-fpop-close" title="Закрыть">×</button>
@@ -2580,7 +2581,7 @@ if (_presetChannel) {
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v6.4.32';
+	if (_verBadge) _verBadge.textContent = 'v6.4.33';
 
 	// Очистка устаревших ключей localStorage от прежнего механизма обновлений
 	try { localStorage.removeItem('pena.update.info'); } catch (_) {}
@@ -2939,23 +2940,23 @@ if (_presetChannel) {
 	if (presetManageBtn && presetManagePanel) {
 		presetManageBtn.addEventListener('click', (e) => {
 			e.preventDefault(); e.stopPropagation();
-			const nowVisible = presetManagePanel.style.display !== 'none';
-			presetManagePanel.style.display = nowVisible ? 'none' : 'block';
+			const nowVisible = presetManagePanel.classList.contains('--show');
+			presetManagePanel.classList.toggle('--show', !nowVisible);
 			if (!nowVisible) {
 				renderPresetManagePanel(host);
 				requestAnimationFrame(() => _positionFpop(presetManagePanel, presetManageBtn));
 			}
 		});
-		host.querySelector('#anit_preset_manage_close')?.addEventListener('click', () => { presetManagePanel.style.display = 'none'; });
+		host.querySelector('#anit_preset_manage_close')?.addEventListener('click', () => { presetManagePanel.classList.remove('--show'); });
 		presetManagePanel.addEventListener('mouseenter', () => { if (_presetDismissTimer) { clearTimeout(_presetDismissTimer); _presetDismissTimer = null; } });
 		presetManagePanel.addEventListener('mouseleave', () => {
 			if (presetManagePanel.contains(document.activeElement)) return;
-			_presetDismissTimer = setTimeout(() => { presetManagePanel.style.display = 'none'; }, 2000);
+			_presetDismissTimer = setTimeout(() => { presetManagePanel.classList.remove('--show'); }, 2000);
 		});
 		document.addEventListener('click', (e) => {
-			if (!presetManagePanel || presetManagePanel.style.display === 'none') return;
+			if (!presetManagePanel || !presetManagePanel.classList.contains('--show')) return;
 			if (!presetManagePanel.contains(e.target) && !presetManageBtn.contains(e.target)) {
-				presetManagePanel.style.display = 'none';
+				presetManagePanel.classList.remove('--show');
 			}
 		}, true);
 		const presetAddBtn = host.querySelector('#anit_preset_add_btn');
@@ -3015,23 +3016,23 @@ if (_presetChannel) {
 		catManageBtn.addEventListener('click', (e) => {
 			e.preventDefault();
 			e.stopPropagation();
-			const nowVisible = catManagePanel.style.display !== 'none';
-			catManagePanel.style.display = nowVisible ? 'none' : 'block';
+			const nowVisible = catManagePanel.classList.contains('--show');
+			catManagePanel.classList.toggle('--show', !nowVisible);
 			if (!nowVisible) {
 				renderCatManagePanel();
 				requestAnimationFrame(() => _positionFpop(catManagePanel, catManageBtn));
 			}
 		});
-		host.querySelector('#anit_cat_manage_close')?.addEventListener('click', () => { catManagePanel.style.display = 'none'; });
+		host.querySelector('#anit_cat_manage_close')?.addEventListener('click', () => { catManagePanel.classList.remove('--show'); });
 		catManagePanel.addEventListener('mouseenter', () => { if (_catDismissTimer) { clearTimeout(_catDismissTimer); _catDismissTimer = null; } });
 		catManagePanel.addEventListener('mouseleave', () => {
 			if (catManagePanel.contains(document.activeElement)) return;
-			_catDismissTimer = setTimeout(() => { catManagePanel.style.display = 'none'; }, 2000);
+			_catDismissTimer = setTimeout(() => { catManagePanel.classList.remove('--show'); }, 2000);
 		});
 		document.addEventListener('click', (e) => {
-			if (!catManagePanel || catManagePanel.style.display === 'none') return;
+			if (!catManagePanel || !catManagePanel.classList.contains('--show')) return;
 			if (!catManagePanel.contains(e.target) && !catManageBtn.contains(e.target)) {
-				catManagePanel.style.display = 'none';
+				catManagePanel.classList.remove('--show');
 			}
 		}, true);
 	}
