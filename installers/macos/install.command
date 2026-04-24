@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================
 # PENA Agency — Установщик расширения для Битрикс24
-# Версия: 6.4.32  |  Платформа: macOS
+# Платформа: macOS
 # ==============================================================
 # Запуск:
 #   chmod +x installers/install_macos.sh
@@ -38,7 +38,7 @@ error_exit() {
 
 div
 echo -e "${CYAN}  Сортировщик чатов BX24 — Установщик${NC}"
-echo -e "${CYAN}  для PENA Agency  |  macOS  |  v6.4.32${NC}"
+echo -e "${CYAN}  для PENA Agency  |  macOS${NC}"
 div
 echo ""
 

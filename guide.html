@@ -273,7 +273,7 @@
   <!-- ══ PAGE 0 — Выбор платформы ══ -->
   <div class="page active" id="page-0">
     <h1>Установка сортировщика чатов</h1>
-    <p class="sub">Фильтр и сортировщик чатов Bitrix24 · v5.0.0</p>
+    <p class="sub">Фильтр и сортировщик чатов Bitrix24</p>
 
     <div class="platform-grid">
       <div class="plat-card" id="plat-win" onclick="selectPlat('win')">
@@ -304,8 +304,8 @@
           <li>
             <div class="snum">1</div>
             <div class="sbody">
-              Откройте папку <code>dist\</code> и дважды кликните
-              <strong>PENA_Agency_Setup_v5.0.0.exe</strong>.
+              Откройте папку <code>installers\windows\</code> и дважды кликните
+              <strong>install.bat</strong>.
             </div>
           </li>
           <li>
@@ -318,7 +318,7 @@
           <li>
             <div class="snum">3</div>
             <div class="sbody">
-              Следуйте инструкциям мастера установки. Если Bitrix24 не найден автоматически —
+              Следуйте инструкциям. Если Bitrix24 не найден автоматически —
               введите путь к <code>Bitrix24.exe</code> в появившемся диалоге.
             </div>
           </li>
@@ -326,19 +326,11 @@
             <div class="snum">4</div>
             <div class="sbody">
               По завершении будет создан ярлык <strong>«Bitrix24 + Фильтр чатов»</strong>
-              на рабочем столе и в меню Пуск. Отметьте «Запустить Bitrix24» для немедленного запуска.
+              на рабочем столе и в меню Пуск.
             </div>
           </li>
         </ol>
       </div>
-
-      <details>
-        <summary>Альтернатива: установка через скрипт</summary>
-        <div class="details-body">
-          <p>Откройте папку <code>installers\windows\</code> и дважды кликните <strong>install.bat</strong>.
-          Если появится предупреждение SmartScreen — нажмите «Подробнее» → «Выполнить в любом случае».</p>
-        </div>
-      </details>
 
       <details>
         <summary>Ручная установка</summary>
@@ -768,7 +760,7 @@ function setupDonePage() {
           <strong>Системные настройки → Конфиденциальность и безопасность</strong>
           и нажмите <strong>«Открыть в любом случае»</strong>.</li>
       <li><strong>Расширение перестало работать после обновления Bitrix24:</strong>
-          запустите <code>installers/macos/install.sh</code> повторно через Терминал
+          запустите <code>installers/macos/install.command</code> повторно через Терминал
           (<span class="hotkey" style="font-size:12px">⌘ Пробел</span> → Terminal → Enter,
           затем введите <code>bash </code> и перетащите файл) — пересоздаст приложение.</li>
       <li><strong>Панель исчезла:</strong> нажмите <span class="hotkey" style="font-size:12px">⌘+⌥+F</span>.</li>

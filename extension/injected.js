@@ -1633,8 +1633,8 @@ if (_presetChannel) {
 .pena-fpop.--show{opacity:1;pointer-events:auto;transform:translateY(0) scale(1)}
 .pena-fpop-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
 .pena-fpop-title{font-size:10px;font-weight:700;color:rgba(255,255,255,.32);text-transform:uppercase;letter-spacing:.07em}
-.pena-fpop-close{background:none;border:none;color:rgba(215,50,50,.9);cursor:pointer;font-size:11px;line-height:1;padding:0;margin:0;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
-.pena-fpop-close:hover{color:#ff5555}
+#anit-filters .pena-fpop-close{background:none;border:0;outline:0;-webkit-appearance:none;appearance:none;color:rgba(215,50,50,.9);cursor:pointer;font-size:11px;line-height:1;padding:0;margin:0;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+#anit-filters .pena-fpop-close:hover{color:#ff5555}
 #anit-filters .pena-fpop table{border-collapse:collapse;font-size:11px}
 #anit-filters .pena-fpop td{padding:2px 0;color:#b8c6dc;vertical-align:middle}
 #anit-filters .pena-fpop td:first-child{padding-right:10px;white-space:nowrap}
@@ -1694,7 +1694,7 @@ if (_presetChannel) {
 /* Overlay «Режим отладки» — над окном расширения */
 #anit-filters #anit_debug_overlay{position:absolute;bottom:calc(100% + 5px);left:0;right:0;display:none;align-items:center;justify-content:space-between;pointer-events:none;z-index:2147483647;gap:8px}
 #anit-filters.anit-debug-mode #anit_debug_overlay{display:flex;pointer-events:auto}
-#anit-filters .anit-debug-flag{flex:1;font-size:13px;font-weight:700;color:#f59e0b;background:#0b0d10;border:4px solid #f59e0b;border-radius:8px;padding:4px 12px;letter-spacing:.2px;box-shadow:0 3px 12px rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center}
+#anit-filters .anit-debug-flag{flex:1;font-size:13px;font-weight:700;color:#f59e0b;background:#0b0d10;border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:7px 14px;letter-spacing:.2px;box-shadow:0 3px 12px rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center}
 /* Тост (уведомления) — над окном расширения, не внутри */
 .anit-preset-toast{position:absolute;bottom:calc(100% + 6px);left:0;right:0;text-align:center;background:#0b0d10;border:1px solid rgba(245,158,11,.5);color:#f59e0b;padding:6px 16px;border-radius:10px;font-size:12px;z-index:2147483647;pointer-events:none;opacity:0;transition:opacity .25s;white-space:normal;box-shadow:0 4px 14px rgba(0,0,0,.5)}
 .anit-preset-toast.--show{opacity:1}
@@ -2581,11 +2581,13 @@ if (_presetChannel) {
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v6.4.33';
+	if (_verBadge) _verBadge.textContent = 'v6.4.34';
 
-	// Очистка устаревших ключей localStorage от прежнего механизма обновлений
-	try { localStorage.removeItem('pena.update.info'); } catch (_) {}
-	try { localStorage.removeItem('pena.last_seen_ver'); } catch (_) {}
+	// Очистка устаревших ключей localStorage
+	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
+	 'pena.injected_cache','pena.injected_ver','anit_update_info',
+	 'pena.update_pending','anit.opt.collapseHidden','anit.opt.collapseCategories'
+	].forEach(k => { try { localStorage.removeItem(k); } catch (_) {} });
 
 	// --- Help popup (горячие клавиши) ---
 	const _helpBtn = host.querySelector('#anit_help_btn');
