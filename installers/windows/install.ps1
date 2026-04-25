@@ -1,5 +1,4 @@
-﻿\
-# ==============================================================
+﻿# ==============================================================
 # Sortировщик чатов BX24 — установщик (запасной, без .exe)
 # Запуск: дважды кликните install.bat
 # ==============================================================
@@ -134,16 +133,16 @@ $ExtArgs  = "--disable-extensions-except=`"$InstallDir`" --load-extension=`"$Ins
 $Desktop  = [Environment]::GetFolderPath('Desktop')
 
 # Новый ярлык на рабочем столе
-$DesktopLnk = "$Desktop\Bitrix24 + Chat Filter.lnk"
-if (MakeShortcut $DesktopLnk $BitrixExe $ExtArgs (Split-Path $BitrixExe) "Bitrix24 with BX24 Chat Sorter") {
+$DesktopLnk = "$Desktop\Bitrix24 + Фильтр чатов.lnk"
+if (MakeShortcut $DesktopLnk $BitrixExe $ExtArgs (Split-Path $BitrixExe) "Bitrix24 с фильтром чатов") {
     Ok "Shortcut created: Desktop"
 }
 
 # Меню Пуск
-$StartDir = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\BX24 Chat Sorter"
+$StartDir = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\PENA Agency"
 New-Item -Path $StartDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
-$StartLnk = "$StartDir\Bitrix24 + Chat Filter.lnk"
-if (MakeShortcut $StartLnk $BitrixExe $ExtArgs (Split-Path $BitrixExe) "Bitrix24 with BX24 Chat Sorter") {
+$StartLnk = "$StartDir\Bitrix24 + Фильтр чатов.lnk"
+if (MakeShortcut $StartLnk $BitrixExe $ExtArgs (Split-Path $BitrixExe) "Bitrix24 с фильтром чатов") {
     Ok "Shortcut created: Start Menu"
 }
 
@@ -155,7 +154,7 @@ $StdLinks = @(
 )
 foreach ($lnk in $StdLinks) {
     if (Test-Path $lnk) {
-        if (MakeShortcut $lnk $BitrixExe $ExtArgs (Split-Path $BitrixExe) "Bitrix24 with BX24 Chat Sorter") {
+        if (MakeShortcut $lnk $BitrixExe $ExtArgs (Split-Path $BitrixExe) "Bitrix24 с фильтром чатов") {
             Ok "Updated shortcut: $(Split-Path $lnk -Leaf)"
         }
     }
@@ -196,6 +195,7 @@ $ans = Read-Host "  Launch Bitrix24 now? (y/n)"
 if ($ans -match '^[Yy1]') {
     Ok "Launching..."
     Start-Process -FilePath $BitrixExe -ArgumentList $ExtArgs
+    Start-Sleep -Seconds 2
 }
 
 } catch {

@@ -173,7 +173,7 @@ LAUNCHER_EOF
     <key>CFBundleName</key>         <string>Bitrix24 + Фильтр чатов</string>
     <key>CFBundleDisplayName</key>  <string>Bitrix24 + Фильтр чатов</string>
     <key>CFBundlePackageType</key>  <string>APPL</string>
-    <key>CFBundleShortVersionString</key> <string>6.4.32</string>
+    <key>CFBundleShortVersionString</key> <string>6.4.35</string>
     <key>LSMinimumSystemVersion</key>    <string>10.13</string>
     ${ICON_KEY}
 </dict>
@@ -282,3 +282,6 @@ if [[ "$ANSWER" =~ ^[YyДд]$ ]]; then
     fi
 fi
 echo ""
+echo "  Окно закроется автоматически..."
+sleep 2
+osascript -e 'tell application "Terminal" to close front window' &>/dev/null || true
