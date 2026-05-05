@@ -9,11 +9,10 @@ Thumbs.db
 *.log
 *.tmp
 *Temp*_b64.txt
-CTemp*.txt
+C*Temp*.txt
 
-# Build output (compiled installers — не коммитим в репо)
+# Build output (compiled installers)
 dist/
-!dist/Install_macOS.command
 !dist/Install_Browser.html
 
 # Archives

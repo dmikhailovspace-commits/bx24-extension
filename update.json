@@ -1,7 +1,7 @@
 {
-  "version": "6.4.47",
+  "version": "6.4.48",
   "release_date": "2026-05-06",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.4.47",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.4.48",
   "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension/injected.js",
-  "changelog": "v6.4.47: строка поиска упрощена, описание под поиском удалено, placeholder заменён на «Поиск по названию»"
+  "changelog": "v6.4.48: очищена структура расширения, удалён неиспользуемый macOS bootstrap из dist, правила игнорирования временных файлов приведены в порядок"
 }
