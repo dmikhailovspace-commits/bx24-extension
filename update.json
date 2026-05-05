@@ -1,7 +1,7 @@
 {
-  "version": "6.4.36",
+  "version": "6.4.37",
   "release_date": "2026-05-05",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.4.36",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.4.37",
   "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension/injected.js",
-  "changelog": "v6.4.36: обновление UX панели фильтров, улучшенная визуальная иерархия, активный текстовый поиск задач поверх выбранного пресета без перезаписи пресета"
+  "changelog": "v6.4.37: обновлена вёрстка поп-апов, исправлено наложение элементов при максимальном сужении панели, сохранены текущие механики фильтров и пресетов"
 }
