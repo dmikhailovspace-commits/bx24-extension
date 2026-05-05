@@ -1,7 +1,7 @@
 {
-  "version": "6.4.35",
-  "release_date": "2026-04-25",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.4.35",
+  "version": "6.4.36",
+  "release_date": "2026-05-05",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.4.36",
   "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension/injected.js",
-  "changelog": "v6.4.35: фикс установщиков (стрейдж \\, автозакрытие, русские ярлыки), обновление гайдов (горячие клавиши, удаление, macOS)"
+  "changelog": "v6.4.36: обновление UX панели фильтров, улучшенная визуальная иерархия, активный текстовый поиск задач поверх выбранного пресета без перезаписи пресета"
 }
