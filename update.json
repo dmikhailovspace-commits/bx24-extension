@@ -1,7 +1,7 @@
 {
-  "version": "6.4.37",
+  "version": "6.4.38",
   "release_date": "2026-05-05",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.4.37",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.4.38",
   "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension/injected.js",
-  "changelog": "v6.4.37: обновлена вёрстка поп-апов, исправлено наложение элементов при максимальном сужении панели, сохранены текущие механики фильтров и пресетов"
+  "changelog": "v6.4.38: исправлено выравнивание текста в полях фильтра после выбора подсказки, отключены лишние браузерные подсказки, сохранены текущие механики фильтров и пресетов"
 }

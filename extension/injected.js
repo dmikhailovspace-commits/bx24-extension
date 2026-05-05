@@ -1609,19 +1609,22 @@ if (_presetChannel) {
   transition:transform .12s ease;
 }
 #anit-filters input[type="checkbox"]:checked::before{transform:rotate(45deg) scale(1)}
-#anit-filters input[type="text"]{padding:9px 11px;border-radius:10px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:#fff;outline:none;transition:border-color .15s,background .15s,box-shadow .15s}
+#anit-filters input[type="text"]{height:36px;min-width:0;box-sizing:border-box;padding:0 11px;border-radius:10px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:#fff;outline:none;line-height:20px;-webkit-appearance:none;appearance:none;transition:border-color .15s,background .15s,box-shadow .15s}
 #anit-filters input[type="text"]::placeholder{color:rgba(180,194,214,.62)}
 #anit-filters input[type="text"]:hover,
 #anit-filters select:hover{border-color:rgba(255,255,255,.24)}
 #anit-filters input[type="text"]:focus,
 #anit-filters select:focus{border-color:rgba(77,157,255,.5);background:rgba(77,157,255,.08);box-shadow:0 0 0 3px rgba(77,157,255,.12)}
+#anit-filters input[type="text"]:-webkit-autofill,
+#anit-filters input[type="text"]:-webkit-autofill:hover,
+#anit-filters input[type="text"]:-webkit-autofill:focus{-webkit-text-fill-color:#fff!important;caret-color:#fff!important;line-height:20px!important;box-shadow:0 0 0 1000px rgba(255,255,255,.04) inset!important;-webkit-box-shadow:0 0 0 1000px rgba(255,255,255,.04) inset!important;transition:background-color 9999s ease-out 0s}
 #anit-filters #anit_query{width:100%}
-#anit-filters #anit_project_input,#anit-filters #anit_responsible_input{width:90%}
-#anit-filters .search-field{display:flex;align-items:center;gap:8px;width:100%;padding:0 10px;border-radius:11px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.03);transition:border-color .15s,background .15s,box-shadow .15s}
+#anit-filters #anit_project_input,#anit-filters #anit_responsible_input,#anit-filters #anit_status_input{width:100%}
+#anit-filters .search-field{display:flex;align-items:center;gap:8px;width:100%;min-height:38px;padding:0 10px;border-radius:11px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.03);transition:border-color .15s,background .15s,box-shadow .15s;box-sizing:border-box}
 #anit-filters .search-field:hover{border-color:rgba(255,255,255,.24);background:rgba(255,255,255,.05)}
 #anit-filters .search-field:focus-within{border-color:rgba(77,157,255,.5);background:rgba(77,157,255,.08);box-shadow:0 0 0 3px rgba(77,157,255,.12)}
 #anit-filters .search-field svg{width:14px;height:14px;fill:var(--pena-muted);flex:0 0 auto}
-#anit-filters .search-field #anit_query{border:0;background:transparent;box-shadow:none;padding:9px 0}
+#anit-filters .search-field #anit_query{flex:1 1 auto;border:0;background:transparent;box-shadow:none;padding:0;height:36px;line-height:20px}
 #anit-filters .search-field #anit_query:focus{background:transparent;box-shadow:none}
 #anit-filters .field-hint{margin-top:7px;font-size:11px;line-height:1.4;color:var(--pena-muted)}
 #anit-filters .project-wrap{position:relative;flex:1 1 220px;min-width:0;max-width:100%}
@@ -1643,12 +1646,12 @@ if (_presetChannel) {
 #anit-filters #anit_hidden_responsible_suggest .muted{padding:8px 10px;color:var(--pena-muted);opacity:1}
 #anit-filters #anit_project_suggest button,
 #anit-filters #anit_responsible_suggest button,
-#anit-filters #anit_status_suggest button{border:0;background:transparent;border-radius:9px;color:#dce6f3;box-shadow:none}
+#anit-filters #anit_status_suggest button{display:flex!important;align-items:center;min-height:32px;border:0;background:transparent;border-radius:9px;color:#dce6f3;box-shadow:none;line-height:1.35;white-space:normal}
 #anit-filters #anit_project_suggest button:hover,
 #anit-filters #anit_responsible_suggest button:hover,
 #anit-filters #anit_status_suggest button:hover{background:rgba(77,157,255,.12);transform:none}
 #anit-filters #anit_hidden_project_suggest label,
-#anit-filters #anit_hidden_responsible_suggest label{border-radius:9px;white-space:normal}
+#anit-filters #anit_hidden_responsible_suggest label{border-radius:9px;white-space:normal;line-height:1.35;min-height:32px;box-sizing:border-box}
 #anit-filters #anit_hidden_project_suggest label:hover,
 #anit-filters #anit_hidden_responsible_suggest label:hover{background:rgba(77,157,255,.12)}
 #anit-filters select{padding:8px 10px;border-radius:10px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:#fff}
@@ -1833,7 +1836,7 @@ if (_presetChannel) {
       <div class="pm-add-section">
         <div class="pm-add-label">Новый пресет</div>
         <div class="pm-add-row">
-          <input type="text" id="anit_preset_new_name" class="pm-add-inp" placeholder="Название..." maxlength="30">
+        <input type="text" id="anit_preset_new_name" class="pm-add-inp" placeholder="Название..." maxlength="30" autocomplete="off" spellcheck="false">
           <button type="button" id="anit_preset_add_btn" class="pm-add-btn">+ Добавить</button>
         </div>
       </div>
@@ -1895,7 +1898,7 @@ if (_presetChannel) {
     <div class="row">
       <div class="search-field">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4a6 6 0 1 0 3.87 10.58l4.27 4.27 1.41-1.41-4.27-4.27A6 6 0 0 0 10 4zm0 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8z"/></svg>
-        <input type="text" id="anit_query" placeholder="${isTasksMode ? 'Поиск по названию задачи и последнему сообщению' : 'Поиск по названию чата и последнему сообщению'}">
+        <input type="text" id="anit_query" autocomplete="off" autocapitalize="off" spellcheck="false" aria-autocomplete="none" placeholder="${isTasksMode ? 'Поиск по названию задачи и последнему сообщению' : 'Поиск по названию чата и последнему сообщению'}">
       </div>
     </div>
     <div class="field-hint">${isTasksMode ? 'Работает как быстрый текстовый фильтр поверх активного пресета.' : 'Помогает быстро сузить список, не меняя остальные фильтры.'}</div>
@@ -1906,7 +1909,7 @@ if (_presetChannel) {
     <div class="group-title">Теги</div>
     <div id="anit_kwtags_chips" class="chips" style="gap:6px;flex-wrap:wrap"></div>
     <div class="row" style="margin-top:6px;gap:6px;align-items:center">
-      <input type="text" id="anit_tag_add_input" placeholder="Новый тег...">
+      <input type="text" id="anit_tag_add_input" autocomplete="off" spellcheck="false" placeholder="Новый тег...">
       <button type="button" id="anit_tag_add_btn">+</button>
     </div>
   </div>
@@ -1916,7 +1919,7 @@ if (_presetChannel) {
     <div class="group-title">Теги пересечений</div>
     <div id="anit_itags_chips" class="chips" style="gap:6px;flex-wrap:wrap"></div>
     <div class="row" style="margin-top:6px;gap:6px;align-items:center">
-      <input type="text" id="anit_itag_add_input" placeholder="Новый тег...">
+      <input type="text" id="anit_itag_add_input" autocomplete="off" spellcheck="false" placeholder="Новый тег...">
       <button type="button" id="anit_itag_add_btn">+</button>
     </div>
   </div>
@@ -1952,6 +1955,11 @@ if (_presetChannel) {
 	document.body.appendChild(host);
 	filtersHost = host;
 	host.dataset.mode = _currentPanelMode;
+	host.querySelectorAll('input[type="text"]').forEach(inp => {
+		inp.setAttribute('autocomplete', 'off');
+		inp.setAttribute('spellcheck', 'false');
+		if (!inp.hasAttribute('autocapitalize')) inp.setAttribute('autocapitalize', 'off');
+	});
 	// Перемещаем плавающие панели из .pane в host (position:absolute, не обрезаются .pane)
 	['#anit_preset_manage_panel','#anit_cat_manage_panel'].forEach(sel => {
 		const el = host.querySelector(sel);
@@ -2640,7 +2648,7 @@ if (_presetChannel) {
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v6.4.37';
+	if (_verBadge) _verBadge.textContent = 'v6.4.38';
 
 	// Очистка устаревших ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
