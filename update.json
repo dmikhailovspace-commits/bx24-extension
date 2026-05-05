@@ -1,7 +1,7 @@
 {
-  "version": "6.4.40",
+  "version": "6.4.41",
   "release_date": "2026-05-06",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.4.40",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.4.41",
   "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension/injected.js",
-  "changelog": "v6.4.40: слайдер масштаба теперь масштабирует всю панель, настройки прозрачности и масштаба перенесены в поп-ап, обновлена иконка скрытия, выравнивание при сужении оставлено по левой границе"
+  "changelog": "v6.4.41: исправлена компоновка панели без наложения элементов, введены три уровня типографики, уменьшены и выровнены размеры кнопок и иконок относительно заголовков"
 }
