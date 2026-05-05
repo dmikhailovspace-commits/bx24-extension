@@ -1,7 +1,7 @@
 {
-  "version": "6.4.38",
+  "version": "6.4.39",
   "release_date": "2026-05-05",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.4.38",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.4.39",
   "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension/injected.js",
-  "changelog": "v6.4.38: исправлено выравнивание текста в полях фильтра после выбора подсказки, отключены лишние браузерные подсказки, сохранены текущие механики фильтров и пресетов"
+  "changelog": "v6.4.39: унифицированы скругления и размеры икон-кнопок, добавлен слайдер ширины окна, улучшено горизонтальное сжатие без наложения элементов, обновлена иконка скрытия панели"
 }
