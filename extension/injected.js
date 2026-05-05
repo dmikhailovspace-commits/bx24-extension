@@ -1756,32 +1756,33 @@ if (_presetChannel) {
 /* debug-badge внутри панели скрыт — индикатор вынесен над окном (#anit_debug_overlay) */
 #anit-filters .debug-badge{display:none !important}
 /* Overlay «Режим отладки» — над окном расширения */
-#anit-filters #anit_debug_overlay{position:absolute;bottom:calc(100% + 5px);left:0;right:0;display:none;align-items:center;justify-content:space-between;pointer-events:none;z-index:2147483647;gap:8px}
+#anit-filters #anit_debug_overlay{position:absolute;bottom:calc(100% + 5px);left:0;right:0;display:none;align-items:center;justify-content:center;pointer-events:none;z-index:2147483647;gap:8px}
 #anit-filters.anit-debug-mode #anit_debug_overlay{display:flex;pointer-events:auto}
-#anit-filters .anit-debug-flag{flex:1;font-size:13px;font-weight:700;color:#f8c86c;background:linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));border:1px solid rgba(245,158,11,.42);border-radius:var(--pena-radius);padding:8px 14px;letter-spacing:.2px;box-shadow:0 12px 30px rgba(0,0,0,.38),0 1px 0 rgba(255,255,255,.04) inset;display:flex;align-items:center;justify-content:center}
+#anit-filters .anit-debug-flag{width:100%;font-size:13px;font-weight:700;color:#f8c86c;background:linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));border:1px solid rgba(245,158,11,.42);border-radius:var(--pena-radius);padding:8px 14px;letter-spacing:.2px;box-shadow:0 12px 30px rgba(0,0,0,.38),0 1px 0 rgba(255,255,255,.04) inset;display:inline-flex;align-items:center;justify-content:center;gap:7px;text-align:center;line-height:1.25;box-sizing:border-box}
+#anit-filters .anit-debug-flag svg{width:13px;height:13px;display:block;flex:0 0 13px;stroke:#f8c86c}
 /* Тост (уведомления) — над окном расширения, не внутри */
-.anit-preset-toast{position:absolute;bottom:calc(100% + 6px);left:0;right:0;text-align:center;background:linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));border:1px solid rgba(245,158,11,.42);color:#f8c86c;padding:8px 16px;border-radius:var(--pena-radius);font-size:12px;z-index:2147483647;pointer-events:none;opacity:0;transition:opacity .25s;white-space:normal;box-shadow:0 12px 30px rgba(0,0,0,.38),0 1px 0 rgba(255,255,255,.04) inset;box-sizing:border-box}
+.anit-preset-toast{position:absolute;bottom:calc(100% + 6px);left:0;right:0;text-align:center;background:linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));border:1px solid rgba(245,158,11,.42);color:#f8c86c;padding:8px 16px;border-radius:var(--pena-radius);font-size:12px;z-index:2147483647;pointer-events:none;opacity:0;transition:opacity .25s;white-space:normal;box-shadow:0 12px 30px rgba(0,0,0,.38),0 1px 0 rgba(255,255,255,.04) inset;box-sizing:border-box;display:flex;align-items:center;justify-content:center;line-height:1.35}
 .anit-preset-toast.--show{opacity:1}
 .anit-preset-toast.--ok{border-color:rgba(93,200,126,.5);color:#5dc87e}
 /* Версия — нижний правый угол панели */
 #anit-filters .pena-ver-badge{position:sticky;bottom:4px;text-align:right;font-size:9px;color:rgba(255,255,255,.22);pointer-events:none;user-select:none;padding:6px 2px 0;line-height:1;letter-spacing:.2px}
 .anit-preset-confirm{position:absolute;inset:0;background:rgba(7,10,15,.82);backdrop-filter:blur(5px);border-radius:var(--pena-radius);display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:10;padding:20px;text-align:center}
 .anit-preset-confirm.--show{display:flex}
-.anit-preset-confirm p{color:#c8d0dc;font-size:12px;line-height:1.5;margin:0}
-.anit-preset-confirm .confirm-btns{display:flex;gap:8px}
-.anit-preset-confirm .confirm-btns button{padding:5px 14px;border-radius:var(--pena-radius);border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.07);color:#fff;font-size:11px;cursor:pointer;transition:background .15s}
+.anit-preset-confirm p{color:#c8d0dc;font-size:12px;line-height:1.5;margin:0;max-width:230px;text-align:center}
+.anit-preset-confirm .confirm-btns{display:flex;gap:8px;align-items:center;justify-content:center;width:100%}
+.anit-preset-confirm .confirm-btns button{min-height:28px;padding:5px 14px;border-radius:var(--pena-radius);border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.07);color:#fff;font-size:11px;cursor:pointer;transition:background .15s;display:inline-flex;align-items:center;justify-content:center;text-align:center;line-height:1.2}
 .anit-preset-confirm .confirm-btns button.--ok{background:rgba(245,158,11,.18);border-color:rgba(245,158,11,.5);color:#f59e0b}
 .anit-preset-confirm .confirm-btns button.--ok:hover{background:rgba(245,158,11,.32)}
 #anit-filters .controls-wrap{position:relative;display:inline-flex;flex:0 0 auto}
-#anit-filters .controls-pop{position:absolute;top:0;left:0;z-index:2147483641;width:min(236px,calc(100vw - 24px));padding:12px;background:linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));border:1px solid rgba(255,255,255,.13);border-radius:var(--pena-radius);box-shadow:0 18px 42px rgba(0,0,0,.46),0 1px 0 rgba(255,255,255,.04) inset;opacity:0;pointer-events:none;transform:translateY(-6px) scale(.96);transform-origin:top right;transition:opacity .18s ease,transform .18s ease;box-sizing:border-box}
+#anit-filters .controls-pop{position:absolute;top:0;left:0;z-index:2147483641;width:min(220px,calc(100vw - 24px));padding:14px;background:linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));border:1px solid rgba(255,255,255,.13);border-radius:var(--pena-radius);box-shadow:0 18px 42px rgba(0,0,0,.46),0 1px 0 rgba(255,255,255,.04) inset;opacity:0;pointer-events:none;transform:translateY(-6px) scale(.96);transform-origin:top right;transition:opacity .18s ease,transform .18s ease;box-sizing:border-box}
 #anit-filters .controls-pop.--show{opacity:1;pointer-events:auto;transform:translateY(0) scale(1)}
-#anit-filters .control-row{display:grid;grid-template-columns:minmax(0,1fr) 44px;align-items:center;column-gap:14px;row-gap:8px;margin:10px 0}
+#anit-filters .control-row{display:grid;grid-template-columns:minmax(0,1fr) 44px;align-items:center;column-gap:12px;row-gap:9px;margin:12px 0}
 #anit-filters .control-row:first-child{margin-top:0}
 #anit-filters .control-row:last-child{margin-bottom:0}
 #anit-filters .control-label{font-size:var(--pena-font-subheading);font-weight:700;color:var(--pena-muted);text-transform:uppercase;letter-spacing:.08em;min-width:0}
 #anit-filters .control-value{font-size:var(--pena-font-body);color:#c7d3e4;text-align:right;font-variant-numeric:tabular-nums;justify-self:end;min-width:44px}
-#anit-filters .control-row .pena-range{grid-column:1 / -1;justify-self:center;width:calc(100% - 18px)}
-#anit-filters .pena-range{-webkit-appearance:none;appearance:none;height:3px;border-radius:var(--pena-radius);background:rgba(255,255,255,.2);cursor:pointer;outline:none;border:none;padding:0;margin:0;vertical-align:middle;min-width:0}
+#anit-filters .control-row .pena-range{grid-column:1 / -1;justify-self:center;width:100%}
+#anit-filters .pena-range{-webkit-appearance:none;appearance:none;height:3px;border-radius:var(--pena-radius);background:rgba(255,255,255,.2);cursor:pointer;outline:none;border:none;padding:0;margin:0;vertical-align:middle;min-width:0;box-sizing:border-box}
 #anit-filters .pena-range::-webkit-slider-thumb{-webkit-appearance:none;width:11px;height:11px;border-radius:var(--pena-radius);background:#4a90d9;border:2px solid #1d3550;cursor:pointer;transition:background .15s,transform .1s;box-shadow:0 1px 4px rgba(0,0,0,.5)}
 #anit-filters .pena-range::-webkit-slider-thumb:hover{background:#6ab0ff;transform:scale(1.18)}
 #anit-filters .pena-range::-moz-range-thumb{width:11px;height:11px;border-radius:var(--pena-radius);background:#4a90d9;border:2px solid #1d3550;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.5)}
@@ -1988,7 +1989,7 @@ if (_presetChannel) {
   </table>
 </div>
 <div class="anit-preset-toast" id="anit_preset_toast"></div>
-<div id="anit_debug_overlay"><span class="anit-debug-flag">⚙ Режим отладки</span></div>
+<div id="anit_debug_overlay"><span class="anit-debug-flag"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.04.04a2 2 0 1 1-2.83 2.83l-.04-.04A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.06A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.88.34l-.04.04a2 2 0 1 1-2.83-2.83l.04-.04A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.06A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.88l-.04-.04a2 2 0 1 1 2.83-2.83l.04.04A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.06A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.88-.34l.04-.04a2 2 0 1 1 2.83 2.83l-.04.04A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.06A1.7 1.7 0 0 0 19.4 15Z"/></svg><span>Режим отладки</span></span></div>
 <div id="anit_mini_toggle" class="mini-toggle" title="Показать панель (Ctrl+Alt+F)">
   <svg viewBox="0 0 402.577 402.577" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
     <path d="M400.858,11.427c-3.241-7.421-8.85-11.132-16.854-11.136H18.564c-7.993,0-13.61,3.715-16.846,11.136 c-3.234,7.801-1.903,14.467,3.999,19.985l140.757,140.753v138.755c0,4.955,1.809,9.232,5.424,12.854l73.085,73.083 c3.429,3.614,7.71,5.428,12.851,5.428c2.282,0,4.66-0.479,7.135-1.43c7.426-3.238,11.14-8.851,11.14-16.845V172.166L396.861,31.413 C402.765,25.895,404.093,19.231,400.858,11.427z"/>
@@ -2690,7 +2691,7 @@ if (_presetChannel) {
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v6.4.45';
+	if (_verBadge) _verBadge.textContent = 'v6.4.46';
 
 	// Очистка устаревших ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
