@@ -1,7 +1,7 @@
 {
-  "version": "6.4.42",
+  "version": "6.4.43",
   "release_date": "2026-05-06",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.4.42",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v6.4.43",
   "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension/injected.js",
-  "changelog": "v6.4.42: добавлены отступы между иконками и содержанием, поп-ап настроек окна вынесен из прокручиваемой панели, исправлено обрезание и выравнивание слайдеров"
+  "changelog": "v6.4.43: выровнены иконки в заголовках групп, добавлен воздух между кнопками и содержанием, адаптив больше не растягивает пресеты и категории на всю ширину"
 }
