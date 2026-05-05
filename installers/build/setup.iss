@@ -14,7 +14,7 @@
 ; ================================================================
 
 #define AppName      "BX24 Chat Sorter"
-#define AppVersion   "6.4.43"
+#define AppVersion   "6.4.44"
 #define AppPublisher "PENA Agency"
 #define AppURL       "https://github.com/dmikhailovspace-commits/bx24-extension"
 #define TaskName     "PENAAgencyUpdater"

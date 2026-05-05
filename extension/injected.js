@@ -2690,7 +2690,7 @@ if (_presetChannel) {
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v6.4.43';
+	if (_verBadge) _verBadge.textContent = 'v6.4.44';
 
 	// Очистка устаревших ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
