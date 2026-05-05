@@ -1533,7 +1533,7 @@ if (_presetChannel) {
   --pena-muted:#9dadc3;
   --pena-accent:#4d9dff;
   --pena-accent-soft:rgba(77,157,255,.18);
-  position:fixed;top:8px;left:8px;z-index:9999;width:clamp(260px,32vw,448px);min-width:min(var(--pena-min-width),calc(100vw - 16px));max-width:94vw;transition:opacity .4s ease;box-sizing:border-box;container-type:inline-size
+  position:fixed;top:8px;left:8px;z-index:9999;width:clamp(260px,32vw,448px);min-width:min(var(--pena-min-width),calc(100vw - 16px));max-width:94vw;transition:opacity .4s ease,transform .15s ease;box-sizing:border-box;container-type:inline-size;transform-origin:top left
 }
 #anit-filters.anit-hidden{min-width:0 !important;max-width:none !important;width:var(--pena-icon-size) !important;height:var(--pena-icon-size) !important}
 #anit-filters.anit-hidden .pane{display:none !important}
@@ -1562,7 +1562,7 @@ if (_presetChannel) {
 #anit-filters.rz-se,#anit-filters.rz-se *{cursor:se-resize!important}
 #anit-filters.rz-sw,#anit-filters.rz-sw *{cursor:sw-resize!important}
 #anit-filters .header{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin:0 0 10px 0;cursor:move;flex-wrap:wrap;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,.08)}
-#anit-filters .header-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex:0 1 auto;position:relative;flex-wrap:wrap;max-width:100%}
+#anit-filters .header-actions{display:flex;align-items:center;justify-content:flex-start;gap:8px;flex:0 1 auto;position:relative;flex-wrap:wrap;max-width:100%}
 #anit-filters .icon-btn{width:var(--pena-icon-size);height:var(--pena-icon-size);border:1px solid rgba(255,255,255,.18);border-radius:var(--pena-radius);background:rgba(255,255,255,.04);color:#fff;cursor:pointer;line-height:1;display:inline-flex;align-items:center;justify-content:center;padding:0;transition:border-color .15s,background .15s,transform .15s;box-sizing:border-box;flex:0 0 var(--pena-icon-size)}
 #anit-filters .icon-btn svg{width:14px;height:14px;display:block;fill:#ffffff;opacity:.88}
 #anit-filters .icon-btn:hover{border-color:rgba(255,255,255,.34);background:rgba(255,255,255,.08);transform:translateY(-1px)}
@@ -1706,7 +1706,7 @@ if (_presetChannel) {
 #anit-filters .pena-prefetch-cancel{margin-top:10px;width:100%;padding:8px;border-radius:var(--pena-radius);border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.04);color:#c7d3e4;cursor:pointer;font-size:11px;box-sizing:border-box}
 #anit-filters .pena-prefetch-cancel:hover{border-color:#f66;color:#f88}
 #anit-filters .type-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px;width:100%}
-#anit-filters .anit-type-chip{display:flex;align-items:center;justify-content:center;width:100%;min-height:34px;padding:6px 8px;border-radius:var(--pena-radius);border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.035);color:#c5d1e1;cursor:pointer;font-size:11px;line-height:1.25;text-align:center;transition:background .12s,border-color .12s,color .12s,transform .12s;box-sizing:border-box}
+#anit-filters .anit-type-chip{display:flex;align-items:center;justify-content:flex-start;width:100%;min-height:34px;padding:6px 8px;border-radius:var(--pena-radius);border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.035);color:#c5d1e1;cursor:pointer;font-size:11px;line-height:1.25;text-align:left;transition:background .12s,border-color .12s,color .12s,transform .12s;box-sizing:border-box}
 #anit-filters .anit-type-chip:hover{border-color:rgba(255,255,255,.28);background:rgba(255,255,255,.08);color:#eef4fb;transform:translateY(-1px)}
 #anit-filters .anit-type-chip.is-selected{background:rgba(77,157,255,.22);border-color:#4d9dff;color:#fff}
 #anit-filters .group{position:relative}
@@ -1767,34 +1767,32 @@ if (_presetChannel) {
 .anit-preset-confirm .confirm-btns button{padding:5px 14px;border-radius:var(--pena-radius);border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.07);color:#fff;font-size:11px;cursor:pointer;transition:background .15s}
 .anit-preset-confirm .confirm-btns button.--ok{background:rgba(245,158,11,.18);border-color:rgba(245,158,11,.5);color:#f59e0b}
 .anit-preset-confirm .confirm-btns button.--ok:hover{background:rgba(245,158,11,.32)}
-#anit-filters .range-wrap{display:inline-flex;align-items:center;gap:4px;height:var(--pena-icon-size);cursor:default;opacity:.72;transition:opacity .15s;flex:0 1 auto}
-#anit-filters .range-wrap:hover{opacity:1}
-#anit-filters .range-wrap svg{width:12px;height:12px;fill:#aeb9c8;flex-shrink:0}
-#anit-filters .pena-range{-webkit-appearance:none;appearance:none;width:50px;height:3px;border-radius:var(--pena-radius);background:rgba(255,255,255,.2);cursor:pointer;outline:none;border:none;padding:0;margin:0;vertical-align:middle;flex-shrink:1;min-width:36px}
-#anit-filters #anit_size_slider{width:58px}
+#anit-filters .controls-wrap{position:relative;display:inline-flex}
+#anit-filters .controls-pop{position:absolute;top:calc(100% + 8px);right:0;z-index:2147483641;width:min(230px,calc(100vw - 24px));padding:12px;background:linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));border:1px solid rgba(255,255,255,.13);border-radius:var(--pena-radius);box-shadow:0 18px 42px rgba(0,0,0,.46),0 1px 0 rgba(255,255,255,.04) inset;opacity:0;pointer-events:none;transform:translateY(-6px) scale(.96);transform-origin:top right;transition:opacity .18s ease,transform .18s ease;box-sizing:border-box}
+#anit-filters .controls-pop.--show{opacity:1;pointer-events:auto;transform:translateY(0) scale(1)}
+#anit-filters .control-row{display:grid;grid-template-columns:72px 1fr 34px;align-items:center;gap:10px;margin:8px 0}
+#anit-filters .control-row:first-child{margin-top:0}
+#anit-filters .control-row:last-child{margin-bottom:0}
+#anit-filters .control-label{font-size:10px;font-weight:700;color:var(--pena-muted);text-transform:uppercase;letter-spacing:.08em}
+#anit-filters .control-value{font-size:11px;color:#c7d3e4;text-align:right;font-variant-numeric:tabular-nums}
+#anit-filters .pena-range{-webkit-appearance:none;appearance:none;width:100%;height:3px;border-radius:var(--pena-radius);background:rgba(255,255,255,.2);cursor:pointer;outline:none;border:none;padding:0;margin:0;vertical-align:middle;min-width:0}
 #anit-filters .pena-range::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:var(--pena-radius);background:#4a90d9;border:2px solid #1d3550;cursor:pointer;transition:background .15s,transform .1s;box-shadow:0 1px 4px rgba(0,0,0,.5)}
 #anit-filters .pena-range::-webkit-slider-thumb:hover{background:#6ab0ff;transform:scale(1.18)}
 #anit-filters .pena-range::-moz-range-thumb{width:12px;height:12px;border-radius:var(--pena-radius);background:#4a90d9;border:2px solid #1d3550;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.5)}
 #anit-filters .pena-range::-moz-range-track{height:3px;border-radius:var(--pena-radius);background:rgba(255,255,255,.2);border:none}
-#anit-filters .presets-row:has(> .preset-btn:only-child),
-#anit-filters .chips:has(> .kw-tag-chip:only-child),
-#anit-filters .actions:has(> button:only-child){justify-content:center}
-#anit-filters .type-grid:has(> .anit-type-chip:only-child){display:flex;justify-content:center}
-#anit-filters .type-grid:has(> .anit-type-chip:only-child) .anit-type-chip{max-width:160px}
 @container (max-width:260px){
   #anit-filters .pane{padding:10px}
   #anit-filters .header{gap:8px}
-  #anit-filters .brand{flex:1 1 100%;justify-content:center;text-align:center}
+  #anit-filters .brand{flex:1 1 100%;justify-content:flex-start;text-align:left}
   #anit-filters .brand-logo{max-width:92px}
   #anit-filters .brand-sub{font-size:12px}
-  #anit-filters .header-actions{width:100%;justify-content:center;gap:6px}
-  #anit-filters .range-wrap{flex:1 1 82px;justify-content:center}
-  #anit-filters .pena-range,#anit-filters #anit_size_slider{width:44px}
+  #anit-filters .header-actions{width:100%;justify-content:flex-start;gap:6px}
+  #anit-filters .controls-pop{left:0;right:auto;transform-origin:top left}
   #anit-filters .row{gap:8px}
   #anit-filters label{white-space:normal;line-height:1.3}
   #anit-filters .project-wrap{flex-basis:100%}
   #anit-filters .type-grid{grid-template-columns:1fr}
-  #anit-filters .preset-btn{flex:1 1 calc(50% - 6px);text-align:center}
+  #anit-filters .preset-btn{flex:1 1 calc(50% - 6px);text-align:left}
 }
 
 /* Locked state: пресет активен, режим отладки не включён */
@@ -1824,18 +1822,27 @@ if (_presetChannel) {
       </div>
     </div>
     <div class="header-actions">
-      <div class="range-wrap opacity-wrap" title="Прозрачность панели">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
-        <input type="range" id="anit_opacity_slider" class="pena-range" min="20" max="100" step="5">
-      </div>
-      <div class="range-wrap size-wrap" title="Ширина окна">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v10H4V7zm2 2v6h12V9H6zm3.4 1.6L7 13l2.4 2.4 1.1-1.1-.5-.5h4l-.5.5 1.1 1.1L17 13l-2.4-2.4-1.1 1.1.5.5h-4l.5-.5-1.1-1.1z"/></svg>
-        <input type="range" id="anit_size_slider" class="pena-range" min="224" max="520" step="4">
+      <div class="controls-wrap">
+        <button id="anit_controls_btn" class="icon-btn" type="button" title="Прозрачность и масштаб">
+          <svg viewBox="0 0 24 24" aria-hidden="true" style="fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><path d="M4 7h10"/><path d="M18 7h2"/><circle cx="16" cy="7" r="2"/><path d="M4 17h2"/><path d="M10 17h10"/><circle cx="8" cy="17" r="2"/></svg>
+        </button>
+        <div id="anit_controls_pop" class="controls-pop">
+          <div class="control-row">
+            <span class="control-label">Прозрачность</span>
+            <input type="range" id="anit_opacity_slider" class="pena-range" min="20" max="100" step="5">
+            <span class="control-value" id="anit_opacity_value">100%</span>
+          </div>
+          <div class="control-row">
+            <span class="control-label">Масштаб</span>
+            <input type="range" id="anit_size_slider" class="pena-range" min="75" max="125" step="5">
+            <span class="control-value" id="anit_size_value">100%</span>
+          </div>
+        </div>
       </div>
       <button id="anit_help_btn" class="icon-btn" type="button" title="Горячие клавиши">
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="opacity:.65"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/></svg>
       </button>
-      <button id="anit_toggle_btn" class="anit-toggle icon-btn" type="button" title="Скрыть/показать (Ctrl+Alt+F)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.1 4.3 3.4 3 21 20.6 19.7 22l-3-3A11.4 11.4 0 0 1 12 20C7 20 2.7 16.9 1 12a12.5 12.5 0 0 1 4-5.4L2.1 4.3zM8.2 9.5A4 4 0 0 0 12 16c.8 0 1.5-.2 2.1-.6l-1.5-1.5A2 2 0 0 1 10.1 11.4L8.2 9.5zM12 4c5 0 9.3 3.1 11 8a12.7 12.7 0 0 1-3.2 4.6l-2.1-2.1A4 4 0 0 0 12 6c-.7 0-1.4.2-2 .5L8.4 4.9A11.5 11.5 0 0 1 12 4z"/></svg></button>
+      <button id="anit_toggle_btn" class="anit-toggle icon-btn" type="button" title="Скрыть/показать (Ctrl+Alt+F)"><svg viewBox="0 0 24 24" aria-hidden="true" style="fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M9 5v14"/><path d="m15 9-3 3 3 3"/></svg></button>
     </div>
   </div>
   <div class="anit-preset-confirm" id="anit_preset_confirm"></div>
@@ -2646,8 +2653,8 @@ if (_presetChannel) {
 			const full = host.querySelector('#anit_toggle_btn');
 			if (mini) mini.title = hidden ? 'Показать панель (Ctrl+Alt+F)' : 'Скрыть панель (Ctrl+Alt+F)';
 			if (full) full.innerHTML = hidden
-			? '<svg viewBox="0 0 24 24" style="width:14px;height:14px;display:block;fill:#fff" aria-hidden="true"><path d="M12 4c5 0 9.3 3.1 11 8-1.7 4.9-6 8-11 8S2.7 16.9 1 12c1.7-4.9 6-8 11-8zm0 2a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm0 2a2 2 0 1 1 0 4 2 2 0 0 1 0-4z"/></svg>'
-			: '<svg viewBox="0 0 24 24" style="width:14px;height:14px;display:block;fill:#fff" aria-hidden="true"><path d="M2.1 4.3 3.4 3 21 20.6 19.7 22l-3-3A11.4 11.4 0 0 1 12 20C7 20 2.7 16.9 1 12a12.5 12.5 0 0 1 4-5.4L2.1 4.3zM8.2 9.5A4 4 0 0 0 12 16c.8 0 1.5-.2 2.1-.6l-1.5-1.5A2 2 0 0 1 10.1 11.4L8.2 9.5zM12 4c5 0 9.3 3.1 11 8a12.7 12.7 0 0 1-3.2 4.6l-2.1-2.1A4 4 0 0 0 12 6c-.7 0-1.4.2-2 .5L8.4 4.9A11.5 11.5 0 0 1 12 4z"/></svg>';
+			? '<svg viewBox="0 0 24 24" style="width:14px;height:14px;display:block;fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M9 5v14"/><path d="m13 9 3 3-3 3"/></svg>'
+			: '<svg viewBox="0 0 24 24" style="width:14px;height:14px;display:block;fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M9 5v14"/><path d="m15 9-3 3 3 3"/></svg>';
 			try { localStorage.setItem(HIDE_LS_KEY, hidden ? '1' : '0'); } catch {}
 		}
 		function togglePanel() {
@@ -2676,7 +2683,7 @@ if (_presetChannel) {
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v6.4.39';
+	if (_verBadge) _verBadge.textContent = 'v6.4.40';
 
 	// Очистка устаревших ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
@@ -2722,6 +2729,23 @@ if (_presetChannel) {
 		document.addEventListener('click', (e) => {
 			if (!_helpPop.classList.contains('--show')) return;
 			if (!_helpPop.contains(e.target) && e.target !== _helpBtn) _helpPop.classList.remove('--show');
+		}, true);
+	}
+
+	const controlsBtn = host.querySelector('#anit_controls_btn');
+	const controlsPop = host.querySelector('#anit_controls_pop');
+	if (controlsBtn && controlsPop) {
+		controlsBtn.addEventListener('click', (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			controlsPop.classList.toggle('--show');
+		});
+		controlsPop.addEventListener('click', (e) => e.stopPropagation());
+		document.addEventListener('click', (e) => {
+			if (!controlsPop.classList.contains('--show')) return;
+			if (!controlsPop.contains(e.target) && e.target !== controlsBtn && !controlsBtn.contains(e.target)) {
+				controlsPop.classList.remove('--show');
+			}
 		}, true);
 	}
 
@@ -3382,26 +3406,49 @@ if (_presetChannel) {
 
 	makeDraggable(host, mode);
 
+	// ── Масштаб панели ─────────────────────────────────────────
+	const LS_PANEL_SCALE_KEY = 'pena.panel.scale';
+	const scaleSlider = host.querySelector('#anit_size_slider');
+	const scaleValue = host.querySelector('#anit_size_value');
+	const clampScale = (v) => Math.max(75, Math.min(125, Number.isFinite(v) ? v : 100));
+	const getPanelScale = () => parseFloat(host.dataset.panelScale || '1') || 1;
+	const applyPanelScale = (v) => {
+		const pct = clampScale(v);
+		const scale = pct / 100;
+		host.dataset.panelScale = String(scale);
+		host.style.transform = `scale(${scale})`;
+		if (scaleSlider) scaleSlider.value = String(pct);
+		if (scaleValue) scaleValue.textContent = pct + '%';
+		const r = host.getBoundingClientRect();
+		const left = parseInt(host.style.left || '0', 10) || 0;
+		const top = parseInt(host.style.top || '0', 10) || 0;
+		host.style.left = Math.max(0, Math.min(left, window.innerWidth - r.width)) + 'px';
+		host.style.top = Math.max(0, Math.min(top, window.innerHeight - r.height)) + 'px';
+	};
+	const savedScale = parseInt(localStorage.getItem(LS_PANEL_SCALE_KEY) || '100', 10);
+	applyPanelScale(Number.isFinite(savedScale) ? savedScale : 100);
+	if (scaleSlider) {
+		scaleSlider.addEventListener('input', () => {
+			const v = parseInt(scaleSlider.value, 10);
+			applyPanelScale(v);
+			try { localStorage.setItem(LS_PANEL_SCALE_KEY, String(clampScale(v))); } catch {}
+		});
+	}
+
 	// ── Изменение размера панели ────────────────────────────────
 	const LS_PANEL_SIZE_KEY = 'pena.panelSize';
 	const PANEL_MIN_WIDTH = 224;
 	const PANEL_MAX_WIDTH = 520;
 	const getPanelMinWidth = () => Math.min(PANEL_MIN_WIDTH, Math.max(180, window.innerWidth - 16));
-	const getPanelMaxWidth = () => Math.max(getPanelMinWidth(), Math.min(PANEL_MAX_WIDTH, window.innerWidth - 8));
+	const getPanelMaxWidth = () => Math.max(getPanelMinWidth(), Math.min(PANEL_MAX_WIDTH, (window.innerWidth - 8) / getPanelScale()));
 	const clampPanelWidth = (w) => Math.max(getPanelMinWidth(), Math.min(getPanelMaxWidth(), w));
-	const sizeSlider = host.querySelector('#anit_size_slider');
-	const syncPanelSizeSlider = () => {
-		if (!sizeSlider) return;
-		const min = getPanelMinWidth();
-		const max = getPanelMaxWidth();
-		sizeSlider.min = String(Math.round(min));
-		sizeSlider.max = String(Math.round(max));
-		sizeSlider.value = String(Math.round(clampPanelWidth(host.getBoundingClientRect().width || parseFloat(host.style.width) || 260)));
+	const clampPanelToViewport = () => {
+		host.style.width = clampPanelWidth(host.offsetWidth || parseFloat(host.style.width) || 260) + 'px';
+		applyPanelScale(Math.round(getPanelScale() * 100));
 	};
 	const persistPanelSize = () => {
 		const pane = host.querySelector('.pane');
 		try { localStorage.setItem(LS_PANEL_SIZE_KEY, JSON.stringify({ w: host.style.width, h: pane?.style.maxHeight || '' })); } catch {}
-		syncPanelSizeSlider();
 	};
 	// Восстанавливаем сохранённый размер
 	try {
@@ -3412,19 +3459,8 @@ if (_presetChannel) {
 		}
 		if (saved.h) { const p = host.querySelector('.pane'); if (p) p.style.maxHeight = saved.h; }
 	} catch {}
-	syncPanelSizeSlider();
-	if (sizeSlider) {
-		sizeSlider.addEventListener('input', () => {
-			const w = clampPanelWidth(parseFloat(sizeSlider.value));
-			host.style.width = w + 'px';
-			keepInsideViewport();
-			persistPanelSize();
-		});
-		window.addEventListener('resize', () => {
-			host.style.width = clampPanelWidth(host.getBoundingClientRect().width || parseFloat(host.style.width) || 260) + 'px';
-			syncPanelSizeSlider();
-		});
-	}
+	clampPanelToViewport();
+	window.addEventListener('resize', clampPanelToViewport);
 	// Ресайз за боковые грани (левая, правая, нижняя)
 	const _EDGE = 6; // px — ширина зоны захвата края
 	let _rzActive = false, _rzEdges = {};
@@ -3472,13 +3508,11 @@ if (_presetChannel) {
 			if (_rzEdges.r) {
 				const newW = clampPanelWidth(_rzStartW + dx);
 				host.style.width = newW + 'px';
-				if (sizeSlider) sizeSlider.value = String(Math.round(newW));
 			}
 			if (_rzEdges.l) {
 				const newW = clampPanelWidth(_rzStartW - dx);
 				host.style.width = newW + 'px';
 				host.style.left = Math.max(0, _rzStartLeft + (_rzStartW - newW)) + 'px';
-				if (sizeSlider) sizeSlider.value = String(Math.round(newW));
 			}
 			if (_rzEdges.b && pane) {
 				pane.style.maxHeight = Math.max(220, Math.min(window.innerHeight * 0.95, _rzStartH + dy)) + 'px';
@@ -3498,10 +3532,12 @@ if (_presetChannel) {
 	// ── Прозрачность панели ─────────────────────────────
 	const LS_OPACITY_KEY = 'pena.panel.opacity';
 	const _opSlider = host.querySelector('#anit_opacity_slider');
+	const _opValue = host.querySelector('#anit_opacity_value');
 	if (_opSlider) {
 		let _opTimer = null;
 		const _applyOp = (v) => {
 			host.style.opacity = String(Math.max(0.2, Math.min(1, v / 100)));
+			if (_opValue) _opValue.textContent = Math.max(20, Math.min(100, v)) + '%';
 		};
 		const _savedOp = parseInt(localStorage.getItem(LS_OPACITY_KEY) || '100', 10);
 		_opSlider.value = String(isNaN(_savedOp) ? 100 : _savedOp);
