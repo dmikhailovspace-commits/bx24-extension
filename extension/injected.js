@@ -1775,13 +1775,13 @@ if (_presetChannel) {
 #anit-filters .controls-wrap{position:relative;display:inline-flex;flex:0 0 auto}
 #anit-filters .controls-pop{position:absolute;top:0;left:0;z-index:2147483641;width:min(236px,calc(100vw - 24px));padding:12px;background:linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));border:1px solid rgba(255,255,255,.13);border-radius:var(--pena-radius);box-shadow:0 18px 42px rgba(0,0,0,.46),0 1px 0 rgba(255,255,255,.04) inset;opacity:0;pointer-events:none;transform:translateY(-6px) scale(.96);transform-origin:top right;transition:opacity .18s ease,transform .18s ease;box-sizing:border-box}
 #anit-filters .controls-pop.--show{opacity:1;pointer-events:auto;transform:translateY(0) scale(1)}
-#anit-filters .control-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:14px;row-gap:8px;margin:10px 0}
+#anit-filters .control-row{display:grid;grid-template-columns:minmax(0,1fr) 44px;align-items:center;column-gap:14px;row-gap:8px;margin:10px 0}
 #anit-filters .control-row:first-child{margin-top:0}
 #anit-filters .control-row:last-child{margin-bottom:0}
 #anit-filters .control-label{font-size:var(--pena-font-subheading);font-weight:700;color:var(--pena-muted);text-transform:uppercase;letter-spacing:.08em;min-width:0}
-#anit-filters .control-value{font-size:var(--pena-font-body);color:#c7d3e4;text-align:right;font-variant-numeric:tabular-nums}
-#anit-filters .control-row .pena-range{grid-column:1 / -1}
-#anit-filters .pena-range{-webkit-appearance:none;appearance:none;width:100%;height:3px;border-radius:var(--pena-radius);background:rgba(255,255,255,.2);cursor:pointer;outline:none;border:none;padding:0;margin:0;vertical-align:middle;min-width:0}
+#anit-filters .control-value{font-size:var(--pena-font-body);color:#c7d3e4;text-align:right;font-variant-numeric:tabular-nums;justify-self:end;min-width:44px}
+#anit-filters .control-row .pena-range{grid-column:1 / -1;justify-self:center;width:calc(100% - 18px)}
+#anit-filters .pena-range{-webkit-appearance:none;appearance:none;height:3px;border-radius:var(--pena-radius);background:rgba(255,255,255,.2);cursor:pointer;outline:none;border:none;padding:0;margin:0;vertical-align:middle;min-width:0}
 #anit-filters .pena-range::-webkit-slider-thumb{-webkit-appearance:none;width:11px;height:11px;border-radius:var(--pena-radius);background:#4a90d9;border:2px solid #1d3550;cursor:pointer;transition:background .15s,transform .1s;box-shadow:0 1px 4px rgba(0,0,0,.5)}
 #anit-filters .pena-range::-webkit-slider-thumb:hover{background:#6ab0ff;transform:scale(1.18)}
 #anit-filters .pena-range::-moz-range-thumb{width:11px;height:11px;border-radius:var(--pena-radius);background:#4a90d9;border:2px solid #1d3550;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.5)}
@@ -1836,13 +1836,13 @@ if (_presetChannel) {
         <div id="anit_controls_pop" class="controls-pop">
           <div class="control-row">
             <span class="control-label">Прозрачность</span>
-            <input type="range" id="anit_opacity_slider" class="pena-range" min="20" max="100" step="5">
             <span class="control-value" id="anit_opacity_value">100%</span>
+            <input type="range" id="anit_opacity_slider" class="pena-range" min="20" max="100" step="1">
           </div>
           <div class="control-row">
             <span class="control-label">Масштаб</span>
-            <input type="range" id="anit_size_slider" class="pena-range" min="75" max="125" step="5">
             <span class="control-value" id="anit_size_value">100%</span>
+            <input type="range" id="anit_size_slider" class="pena-range" min="75" max="125" step="1">
           </div>
         </div>
       </div>
@@ -2690,7 +2690,7 @@ if (_presetChannel) {
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v6.4.44';
+	if (_verBadge) _verBadge.textContent = 'v6.4.45';
 
 	// Очистка устаревших ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
@@ -2742,18 +2742,36 @@ if (_presetChannel) {
 
 	const controlsBtn = host.querySelector('#anit_controls_btn');
 	const controlsPop = host.querySelector('#anit_controls_pop');
+	let controlsDismissTimer = null;
 	if (controlsBtn && controlsPop) {
+		const clearControlsDismiss = () => {
+			if (controlsDismissTimer) {
+				clearTimeout(controlsDismissTimer);
+				controlsDismissTimer = null;
+			}
+		};
+		const scheduleControlsDismiss = () => {
+			if (!controlsPop.classList.contains('--show')) return;
+			clearControlsDismiss();
+			controlsDismissTimer = setTimeout(() => controlsPop.classList.remove('--show'), 2000);
+		};
 		controlsBtn.addEventListener('click', (e) => {
 			e.preventDefault();
 			e.stopPropagation();
+			clearControlsDismiss();
 			const isShown = controlsPop.classList.contains('--show');
 			controlsPop.classList.toggle('--show', !isShown);
 			if (!isShown) requestAnimationFrame(() => _positionFpop(controlsPop, controlsBtn));
 		});
+		controlsBtn.addEventListener('mouseenter', clearControlsDismiss);
+		controlsBtn.addEventListener('mouseleave', scheduleControlsDismiss);
+		controlsPop.addEventListener('mouseenter', clearControlsDismiss);
+		controlsPop.addEventListener('mouseleave', scheduleControlsDismiss);
 		controlsPop.addEventListener('click', (e) => e.stopPropagation());
 		document.addEventListener('click', (e) => {
 			if (!controlsPop.classList.contains('--show')) return;
 			if (!controlsPop.contains(e.target) && e.target !== controlsBtn && !controlsBtn.contains(e.target)) {
+				clearControlsDismiss();
 				controlsPop.classList.remove('--show');
 			}
 		}, true);
