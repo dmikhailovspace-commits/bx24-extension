@@ -1631,7 +1631,6 @@ if (_presetChannel) {
 #anit-filters .search-field svg{width:12px;height:12px;fill:var(--pena-muted);flex:0 0 auto}
 #anit-filters .search-field #anit_query{flex:1 1 auto;border:0;background:transparent;box-shadow:none;padding:0;height:32px;line-height:18px}
 #anit-filters .search-field #anit_query:focus{background:transparent;box-shadow:none}
-#anit-filters .field-hint{margin-top:7px;font-size:var(--pena-font-body);line-height:1.4;color:var(--pena-muted)}
 #anit-filters .project-wrap{position:relative;flex:1 1 220px;min-width:0;max-width:100%}
 #anit-filters #anit_projects_row{align-items:center}
 #anit-filters #anit_projects_row .muted{flex:0 0 auto}
@@ -1941,10 +1940,9 @@ if (_presetChannel) {
     <div class="row">
       <div class="search-field">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4a6 6 0 1 0 3.87 10.58l4.27 4.27 1.41-1.41-4.27-4.27A6 6 0 0 0 10 4zm0 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8z"/></svg>
-        <input type="text" id="anit_query" autocomplete="off" autocapitalize="off" spellcheck="false" aria-autocomplete="none" placeholder="${isTasksMode ? 'Поиск по названию задачи и последнему сообщению' : 'Поиск по названию чата и последнему сообщению'}">
+        <input type="text" id="anit_query" autocomplete="off" autocapitalize="off" spellcheck="false" aria-autocomplete="none" placeholder="Поиск по названию">
       </div>
     </div>
-    <div class="field-hint">${isTasksMode ? 'Работает как быстрый текстовый фильтр поверх активного пресета.' : 'Помогает быстро сузить список, не меняя остальные фильтры.'}</div>
   </div>
 
 
@@ -2691,7 +2689,7 @@ if (_presetChannel) {
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v6.4.46';
+	if (_verBadge) _verBadge.textContent = 'v6.4.47';
 
 	// Очистка устаревших ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
