@@ -8,6 +8,8 @@ Thumbs.db
 # Logs / temp
 *.log
 *.tmp
+*Temp*_b64.txt
+CTemp*.txt
 
 # Build output (compiled installers — не коммитим в репо)
 dist/
