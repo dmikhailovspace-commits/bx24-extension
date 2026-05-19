@@ -8,69 +8,76 @@
     *, *::before, *::after { box-sizing: border-box; }
 
     :root {
-      --bg:     #0b0d10;
-      --bg2:    #13161d;
-      --card:   rgba(255,255,255,.04);
-      --border: rgba(255,255,255,.09);
-      --blue:   #2b7fff;
-      --blue-d: rgba(43,127,255,.18);
-      --green:  #22c55e;
-      --yellow: rgba(230,180,0,.85);
-      --text:   #dce4ef;
-      --muted:  rgba(255,255,255,.45);
+      --bg: #0b1017;
+      --panel: #121925;
+      --panel-soft: #151e2b;
+      --border: rgba(199,213,229,.16);
+      --border-strong: rgba(199,213,229,.28);
+      --blue: #4f8cff;
+      --blue-d: rgba(79,140,255,.16);
+      --green: #2fbf71;
+      --yellow: #d6a938;
+      --text: #e8eef7;
+      --muted: #b0bdce;
+      --radius: 8px;
     }
 
     html, body { margin: 0; }
     body {
-      font: 15px/1.6 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      background: var(--bg); color: var(--text);
-      display: flex; flex-direction: column; align-items: center;
-      padding: 0 16px 32px; min-height: 100vh;
+      font: 15px/1.55 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background:
+        radial-gradient(circle at 20% 0, rgba(79,140,255,.12), transparent 32rem),
+        linear-gradient(180deg, #0b1017 0%, #0e1420 100%);
+      color: var(--text);
+      padding: 0 20px 32px; min-height: 100vh;
+      overflow-x: hidden;
     }
 
     /* ── Header ──────────────────────────────────────── */
     header {
-      width: 100%; max-width: 640px;
-      padding: 28px 0 24px;
-      display: flex; flex-direction: column; align-items: center; gap: 20px;
+      width: 100%; max-width: 760px;
+      padding: 30px 0 24px;
+      display: flex; flex-direction: column; align-items: flex-start; gap: 22px;
+      min-width: 0;
+      margin: 0 auto;
     }
     .brand {
-      font-size: 13px; font-weight: 700; letter-spacing: .08em;
-      color: var(--muted); text-transform: uppercase;
+      font-size: 12px; font-weight: 800; letter-spacing: .12em;
+      color: #cbd7e6; text-transform: uppercase;
     }
 
     /* ── Stepper ─────────────────────────────────────── */
     .stepper {
       display: flex; align-items: center; gap: 0;
-      width: 100%; justify-content: center;
+      width: 100%;
     }
     .step-item {
       display: flex; flex-direction: column; align-items: center; gap: 5px;
       flex: 1; max-width: 120px;
     }
     .step-circle {
-      width: 28px; height: 28px; border-radius: 50%;
+      width: 30px; height: 30px; border-radius: var(--radius);
       display: flex; align-items: center; justify-content: center;
       font-size: 12px; font-weight: 700;
-      border: 2px solid rgba(255,255,255,.15);
+      border: 1px solid var(--border);
       background: transparent; color: var(--muted);
       transition: all .25s; position: relative; z-index: 1;
     }
-    .step-circle.done   { background: var(--green); border-color: var(--green); color: #fff; }
-    .step-circle.active { background: var(--blue);  border-color: var(--blue);  color: #fff; }
+    .step-circle.done   { background: rgba(47,191,113,.18); border-color: rgba(47,191,113,.55); color: #a8f0c8; }
+    .step-circle.active { background: var(--blue-d); border-color: var(--blue); color: #fff; }
     .step-label {
       font-size: 11px; color: var(--muted); white-space: nowrap;
       transition: color .25s;
     }
     .step-label.active { color: var(--text); }
     .step-line {
-      flex: 1; height: 2px; background: rgba(255,255,255,.1);
+      flex: 1; height: 1px; background: var(--border);
       margin-bottom: 20px; transition: background .25s;
     }
     .step-line.done { background: var(--green); }
 
     /* ── Content ─────────────────────────────────────── */
-    .wizard { width: 100%; max-width: 640px; position: relative; min-height: 300px; }
+    .wizard { width: 100%; max-width: 760px; position: relative; min-height: 300px; min-width: 0; margin: 0 auto; }
 
     .page { display: none; }
     .page.active {
@@ -84,35 +91,36 @@
     @keyframes fadeSlide     { from { opacity:0; transform:translateX(28px)  } to { opacity:1; transform:none } }
     @keyframes fadeSlideBack { from { opacity:0; transform:translateX(-28px) } to { opacity:1; transform:none } }
 
-    h1 { font-size: 22px; font-weight: 700; margin: 0 0 6px; }
-    h2 { font-size: 17px; font-weight: 700; margin: 0 0 18px; }
-    h3 { font-size: 14px; font-weight: 700; margin: 18px 0 8px; color: #fff; }
-    .sub { font-size: 14px; color: var(--muted); margin: 0 0 28px; }
+    h1 { font-size: 26px; line-height: 1.2; font-weight: 760; margin: 0 0 8px; color: #f5f8fc; overflow-wrap: anywhere; }
+    h2 { font-size: 20px; line-height: 1.25; font-weight: 740; margin: 0 0 18px; color: #f5f8fc; }
+    h3 { font-size: 15px; font-weight: 700; margin: 18px 0 8px; color: #fff; }
+    .sub { font-size: 14px; color: #c4cfdd; margin: 0 0 28px; }
 
     /* ── Platform cards ──────────────────────────────── */
     .platform-grid {
-      display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 8px;
+      display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 8px; min-width: 0;
     }
     .plat-card {
-      background: var(--card); border: 2px solid var(--border);
-      border-radius: 14px; padding: 20px 14px;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 18px 16px;
       cursor: pointer; text-align: center;
       transition: border-color .15s, background .15s, transform .12s;
       user-select: none;
+      min-width: 0;
     }
-    .plat-card:hover { border-color: rgba(255,255,255,.28); background: rgba(255,255,255,.06); }
+    .plat-card:hover { border-color: var(--border-strong); background: var(--panel-soft); }
     .plat-card:active { transform: scale(.97); }
     .plat-card.selected { border-color: var(--blue); background: var(--blue-d); }
     .plat-icon { font-size: 32px; margin-bottom: 10px; }
-    .plat-name { font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 3px; }
-    .plat-desc { font-size: 12px; color: var(--muted); line-height: 1.4; }
+    .plat-name { font-size: 14px; font-weight: 700; color: #f8fbff; margin-bottom: 3px; }
+    .plat-desc { font-size: 12px; color: #bdc8d7; line-height: 1.4; }
 
     /* ── Steps list ──────────────────────────────────── */
     .steps { list-style: none; margin: 0; padding: 0; }
     .steps li { display: flex; gap: 14px; margin-bottom: 16px; }
     .steps li:last-child { margin-bottom: 0; }
     .snum {
-      flex: 0 0 26px; height: 26px; border-radius: 50%;
+      flex: 0 0 26px; height: 26px; border-radius: var(--radius);
       background: var(--blue-d); border: 1px solid var(--blue);
       display: flex; align-items: center; justify-content: center;
       font-size: 11px; font-weight: 700; color: #7ab4ff; margin-top: 2px; flex-shrink: 0;
@@ -122,30 +130,31 @@
 
     /* ── Card ────────────────────────────────────────── */
     .card {
-      background: var(--card); border: 1px solid var(--border);
-      border-radius: 12px; padding: 20px 22px; margin-bottom: 14px;
+      background: rgba(18,25,37,.92); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 20px 22px; margin-bottom: 14px;
     }
     .card:last-child { margin-bottom: 0; }
 
     /* ── Alerts ──────────────────────────────────────── */
     .alert {
-      border-radius: 9px; padding: 11px 15px;
+      border-radius: var(--radius); padding: 12px 15px;
       font-size: 13px; margin-bottom: 14px; line-height: 1.5;
       display: flex; gap: 9px;
     }
     .ai { flex-shrink: 0; }
     .a-yellow { background: rgba(230,180,0,.08); border: 1px solid rgba(230,180,0,.25); color: #c8a840; }
     .a-blue   { background: rgba(43,127,255,.08); border: 1px solid rgba(43,127,255,.25); color: #7ab4ff; }
+    .launch-note { margin-top: 14px; }
 
     /* ── Code ────────────────────────────────────────── */
     code {
-      background: rgba(255,255,255,.08); border-radius: 4px;
+      background: rgba(255,255,255,.08); border-radius: 6px;
       padding: 2px 7px; font-family: Consolas,'Courier New',monospace;
       font-size: 13px; color: #a8d4ff;
     }
     pre {
       background: rgba(0,0,0,.4); border: 1px solid var(--border);
-      border-radius: 8px; padding: 13px 15px; overflow-x: hidden;
+      border-radius: var(--radius); padding: 13px 15px; overflow-x: auto;
       margin: 8px 0 0; position: relative;
     }
     pre code { background: none; padding: 0; font-size: 13px; color: #c2e0ff; display: block; white-space: pre-wrap; word-break: break-word; }
@@ -157,8 +166,8 @@
     /* ── Browser tabs ────────────────────────────────── */
     .btabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
     .btab {
-      padding: 6px 13px; border-radius: 7px; cursor: pointer;
-      border: 1px solid var(--border); background: var(--card);
+      padding: 7px 13px; border-radius: var(--radius); cursor: pointer;
+      border: 1px solid var(--border); background: var(--panel);
       color: var(--muted); font-size: 12px; font-weight: 600; transition: all .15s;
     }
     .btab.active { background: var(--blue-d); border-color: var(--blue); color: #fff; }
@@ -168,7 +177,7 @@
 
     /* ── Copy button ─────────────────────────────────── */
     .cbtn {
-      padding: 7px 11px; border-radius: 7px; cursor: pointer; white-space: nowrap;
+      padding: 8px 11px; border-radius: var(--radius); cursor: pointer; white-space: nowrap;
       border: 1px solid rgba(255,255,255,.2); background: rgba(255,255,255,.05);
       color: #99a; font-size: 12px; transition: all .15s;
     }
@@ -184,23 +193,29 @@
     .tips-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
     @media (max-width: 480px) { .tips-grid { grid-template-columns: 1fr; } }
     .tip {
-      background: var(--card); border: 1px solid var(--border);
-      border-radius: 10px; padding: 14px 15px;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 14px 15px;
     }
     .tip-icon  { font-size: 18px; margin-bottom: 5px; }
     .tip-title { font-size: 13px; font-weight: 700; color: #fff; margin-bottom: 3px; }
     .tip-text  { font-size: 12px; color: var(--muted); line-height: 1.4; }
 
     .hotkey {
-      display: inline-block; padding: 2px 8px; border-radius: 5px;
-      border: 1px solid rgba(255,255,255,.3); background: rgba(255,255,255,.06);
-      font-family: monospace; font-size: 13px; color: #c8d4e0;
+      display: inline;
+      padding: 1px 4px;
+      border-radius: 4px;
+      border: 1px solid rgba(255,255,255,.22);
+      background: rgba(255,255,255,.04);
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: .92em;
+      line-height: 1;
+      color: #d2dce9;
     }
 
     details { margin-bottom: 10px; }
     summary {
-      cursor: pointer; padding: 12px 16px; border-radius: 9px;
-      background: var(--card); border: 1px solid var(--border);
+      cursor: pointer; padding: 12px 16px; border-radius: var(--radius);
+      background: var(--panel); border: 1px solid var(--border);
       font-size: 14px; font-weight: 600; list-style: none;
       display: flex; justify-content: space-between; align-items: center;
     }
@@ -217,12 +232,14 @@
 
     /* ── Nav buttons ─────────────────────────────────── */
     .nav-row {
-      width: 100%; max-width: 640px;
+      width: 100%; max-width: 760px;
       display: flex; justify-content: space-between; align-items: center;
       padding-top: 24px; gap: 12px;
+      min-width: 0;
+      margin: 0 auto;
     }
     .btn {
-      padding: 11px 24px; border-radius: 9px; font-size: 14px;
+      padding: 11px 24px; border-radius: var(--radius); font-size: 14px;
       font-weight: 600; cursor: pointer; border: none; transition: all .15s;
     }
     .btn-back {
@@ -237,6 +254,27 @@
     .btn-next:hover { background: #3d8dff; }
     .btn-next:disabled { opacity: .35; cursor: default; box-shadow: none; }
     .spacer { flex: 1; }
+
+    .inline-note { color: var(--muted); display: block; margin-top: 6px; }
+
+    @media (max-width: 620px) {
+      body { padding-inline: 14px; }
+      header, .wizard, .nav-row { max-width: 100%; width: 100%; }
+      header { padding-top: 22px; }
+      .platform-grid { grid-template-columns: 1fr; }
+      .stepper {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .step-line { display: none; }
+      .step-item { max-width: none; min-width: 0; }
+      .step-circle { width: 30px; height: 30px; }
+      .step-label { white-space: normal; text-align: center; }
+      .pre-row { flex-direction: column; }
+      .pre-row pre, .pre-row .cbtn { width: 100%; }
+      .nav-row { position: sticky; bottom: 0; background: linear-gradient(180deg, transparent, var(--bg) 24%); padding-bottom: 10px; }
+    }
   </style>
 </head>
 <body>
@@ -304,7 +342,7 @@
           <li>
             <div class="snum">1</div>
             <div class="sbody">
-              Откройте папку <code>installers\windows\</code> и дважды кликните
+              Откройте папку <code>installers\windows\</code> в проекте и дважды кликните
               <strong>install.bat</strong>.
             </div>
           </li>
@@ -335,7 +373,7 @@
       <details>
         <summary>Ручная установка</summary>
         <div class="details-body">
-          <p><strong>1.</strong> Скопируйте папку расширения в постоянное место, например:</p>
+          <p><strong>1.</strong> Скопируйте содержимое папки <code>extension/</code> в постоянное место, например:</p>
           <div class="pre-row"><pre><code>%LOCALAPPDATA%\PENA Agency\Extension</code></pre><button class="cbtn" onclick="copyPreRow(this)">Копировать</button></div>
           <p><strong>2.</strong> Откройте <strong>свойства ярлыка Bitrix24</strong> → поле «Объект» → добавьте в конец строки:</p>
           <div class="pre-row"><pre><code>--disable-extensions-except="%LOCALAPPDATA%\PENA Agency\Extension" --load-extension="%LOCALAPPDATA%\PENA Agency\Extension"</code></pre><button class="cbtn" onclick="copyPreRow(this)">Копировать</button></div>
@@ -349,24 +387,33 @@
         <ol class="steps">
           <li>
             <div class="snum">1</div>
-            <div class="sbody">Откройте папку <code>installers/macos/</code> внутри папки расширения.</div>
+            <div class="sbody">Откройте <strong>Терминал</strong>: <span class="hotkey">⌘+Пробел</span> → введите <strong>Terminal</strong> → Enter.</div>
           </li>
           <li>
             <div class="snum">2</div>
             <div class="sbody">
-              <strong>Правый клик</strong> на файле <strong>install.command</strong> → <strong>Открыть</strong>.
-              <br><small style="color:var(--muted)">Именно правый клик → Открыть — macOS требует явного подтверждения для скриптов не из App Store. При повторном запуске можно просто двойной клик.</small>
+              В окне Терминала напишите <code>bash </code> с пробелом в конце.
+              <small class="inline-note">Enter пока не нажимайте.</small>
             </div>
           </li>
           <li>
             <div class="snum">3</div>
             <div class="sbody">
-              В диалоге безопасности нажмите <strong>Открыть</strong> — Терминал откроется автоматически и запустит установщик.
-              Следуйте инструкциям. Если Bitrix24 не найден — введите полный путь к файлу <code>Bitrix24</code>.
+              Найдите файл <strong>install.command</strong> в папке <code>installers/macos/</code> и перетащите его прямо в окно Терминала после слова <code>bash </code>.
+              <small class="inline-note">Terminal подставит полный путь к файлу. Если в пути появились кавычки или обратные слэши перед пробелами — не удаляйте их.</small>
             </div>
           </li>
           <li>
             <div class="snum">4</div>
+            <div class="sbody">
+              Проверьте, что строка начинается с <code>bash </code>, а затем идёт путь к <code>install.command</code>. Нажмите <strong>Enter</strong>.
+              <div class="pre-row"><pre><code>bash /полный/путь/к/install.command</code></pre></div>
+              Следуйте инструкциям установщика; если Bitrix24 не найден автоматически, перетащите файл <code>Bitrix24</code> в Терминал так же, как установщик.
+              <small class="inline-note">Обычно это <code>/Applications/Bitrix24.app/Contents/MacOS/Bitrix24</code>.</small>
+            </div>
+          </li>
+          <li>
+            <div class="snum">5</div>
             <div class="sbody">
               По завершении на рабочем столе появится <strong>«Bitrix24 + Фильтр чатов.app»</strong>.
               Всегда запускайте Bitrix24 через него — только оно передаёт расширение.
@@ -374,45 +421,17 @@
           </li>
         </ol>
       </div>
-
-      <div class="alert a-yellow" style="margin-top:12px">
-        <span class="ai">⚠️</span>
-        <div>
-          <strong>Предупреждение Gatekeeper</strong><br>
-          При правом клике → Открыть macOS покажет диалог с кнопкой <strong>«Открыть»</strong> — просто нажмите её.<br>
-          Если вместо этого появилось сообщение <em>«Не удаётся открыть, так как разработчик не верифицирован»</em> (без кнопки «Открыть») —
-          закройте его, затем перейдите в <strong>Системные настройки → Конфиденциальность и безопасность</strong>
-          и нажмите <strong>«Открыть в любом случае»</strong>.
-        </div>
-      </div>
-
-      <details>
-        <summary>Ручная установка</summary>
-        <div class="details-body">
-          <p><strong>1.</strong> Скопируйте папку расширения в постоянное место, например:</p>
-          <div class="pre-row"><pre><code>~/Library/Application Support/PENA Agency/Extension</code></pre><button class="cbtn" onclick="copyPreRow(this)">Копировать</button></div>
-          <p><strong>2.</strong> Откройте Терминал (<span class="hotkey" style="font-size:12px">⌘+Пробел</span> → Terminal → Enter) и запустите Bitrix24 с расширением:</p>
-          <div class="pre-row"><pre><code>"/Applications/Bitrix24.app/Contents/MacOS/Bitrix24" \
-  --disable-extensions-except="$HOME/Library/Application Support/PENA Agency/Extension" \
-  --load-extension="$HOME/Library/Application Support/PENA Agency/Extension"</code></pre><button class="cbtn" onclick="copyPreRow(this)">Копировать</button></div>
-          <p><strong>3.</strong> Чтобы не вводить команду каждый раз — создайте ярлык. Выполните в Терминале:</p>
-          <div class="pre-row"><pre><code>cat > ~/Desktop/Bitrix24-PENA.command << 'EOF'
-#!/bin/bash
-"/Applications/Bitrix24.app/Contents/MacOS/Bitrix24" \
-  --disable-extensions-except="$HOME/Library/Application Support/PENA Agency/Extension" \
-  --load-extension="$HOME/Library/Application Support/PENA Agency/Extension"
-EOF
-chmod +x ~/Desktop/Bitrix24-PENA.command</code></pre><button class="cbtn" onclick="copyPreRow(this)">Копировать</button></div>
-        </div>
-      </details>
     </div>
 
     <!-- Browser -->
     <div id="inst-br" style="display:none">
       <div class="alert a-blue">
         <span class="ai">📁</span>
-        <div><strong>Папка расширения</strong> — та, где находится файл <code>manifest.json</code>
-        (родительская папка для <code>installers/</code>).</div>
+        <div><strong>Выбирайте именно папку <code>extension/</code></strong> — внутри неё должен лежать <code>manifest.json</code>. Не выбирайте весь проект, архив или папку <code>installers/</code>.</div>
+      </div>
+      <div class="alert a-yellow">
+        <span class="ai">⚠️</span>
+        <div>Браузерная установка — ручная. После обновления файлов расширения на компьютере откройте страницу расширений и нажмите <strong>Обновить</strong> или <strong>Reload</strong> у расширения.</div>
       </div>
 
       <div class="btabs">
@@ -429,9 +448,10 @@ chmod +x ~/Desktop/Bitrix24-PENA.command</code></pre><button class="cbtn" onclic
             <li><div class="snum">1</div><div class="sbody">Откройте страницу расширений:
               <div class="pre-row"><pre><code>chrome://extensions/</code></pre><button class="cbtn" onclick="copyPreRow(this)">Копировать</button></div>
             </div></li>
-            <li><div class="snum">2</div><div class="sbody">Включите <strong>«Режим разработчика»</strong> — переключатель в правом верхнем углу.</div></li>
-            <li><div class="snum">3</div><div class="sbody">Нажмите <strong>«Загрузить распакованное расширение»</strong>.</div></li>
-            <li><div class="snum">4</div><div class="sbody">Выберите папку расширения (где <code>manifest.json</code>).</div></li>
+            <li><div class="snum">2</div><div class="sbody">Включите <strong>«Режим разработчика»</strong>: на странице <code>chrome://extensions/</code> найдите переключатель <strong>Developer mode / Режим разработчика</strong> в правом верхнем углу и переведите его во включённое положение. После этого сверху появятся кнопки для загрузки расширений.</div></li>
+            <li><div class="snum">3</div><div class="sbody">Нажмите <strong>«Загрузить распакованное»</strong> / <strong>Load unpacked</strong>.</div></li>
+            <li><div class="snum">4</div><div class="sbody">В открывшемся окне выберите папку <code>extension/</code> с файлом <code>manifest.json</code> и подтвердите выбор.</div></li>
+            <li><div class="snum">5</div><div class="sbody">Откройте Bitrix24 в этом же браузере и перейдите в <strong>Чаты</strong>. Если панель не появилась, обновите вкладку Bitrix24.</div></li>
           </ol>
         </div>
       </div>
@@ -441,10 +461,12 @@ chmod +x ~/Desktop/Bitrix24-PENA.command</code></pre><button class="cbtn" onclic
           <ol class="steps">
             <li><div class="snum">1</div><div class="sbody">Откройте:
               <div class="pre-row"><pre><code>browser://extensions/</code></pre><button class="cbtn" onclick="copyPreRow(this)">Копировать</button></div>
+              <small class="inline-note">Если адрес не открылся, используйте меню браузера → Дополнения / Расширения.</small>
             </div></li>
-            <li><div class="snum">2</div><div class="sbody">Включите <strong>«Режим разработчика»</strong>.</div></li>
+            <li><div class="snum">2</div><div class="sbody">Включите <strong>«Режим разработчика»</strong>: на странице <code>browser://extensions/</code> найдите переключатель в правом верхнем углу. Если кнопка загрузки не появилась, прокрутите страницу к началу и проверьте, что тумблер действительно включён.</div></li>
             <li><div class="snum">3</div><div class="sbody">Нажмите <strong>«Загрузить распакованное расширение»</strong>.</div></li>
-            <li><div class="snum">4</div><div class="sbody">Выберите папку расширения. При запросе нажмите <strong>«Добавить»</strong>.</div></li>
+            <li><div class="snum">4</div><div class="sbody">Выберите папку <code>extension/</code> с файлом <code>manifest.json</code>. При запросе подтвердите добавление.</div></li>
+            <li><div class="snum">5</div><div class="sbody">Если Яндекс.Браузер отключил расширение как непроверенное, снова откройте страницу расширений и включите его вручную.</div></li>
           </ol>
         </div>
       </div>
@@ -455,9 +477,10 @@ chmod +x ~/Desktop/Bitrix24-PENA.command</code></pre><button class="cbtn" onclic
             <li><div class="snum">1</div><div class="sbody">Откройте:
               <div class="pre-row"><pre><code>edge://extensions/</code></pre><button class="cbtn" onclick="copyPreRow(this)">Копировать</button></div>
             </div></li>
-            <li><div class="snum">2</div><div class="sbody">Включите <strong>«Режим разработчика»</strong> (слева внизу).</div></li>
-            <li><div class="snum">3</div><div class="sbody">Нажмите <strong>«Загрузить распакованное»</strong>.</div></li>
-            <li><div class="snum">4</div><div class="sbody">Выберите папку расширения.</div></li>
+            <li><div class="snum">2</div><div class="sbody">Включите <strong>«Режим разработчика»</strong>: если открылась всплывающая панель расширений, сначала нажмите <strong>«Управление расширениями»</strong>. На странице <code>edge://extensions/</code> найдите переключатель <strong>Developer mode / Режим разработчика</strong> в левой области страницы и включите его.</div></li>
+            <li><div class="snum">3</div><div class="sbody">Нажмите <strong>«Загрузить распакованное»</strong> / <strong>Load unpacked</strong>.</div></li>
+            <li><div class="snum">4</div><div class="sbody">Выберите папку <code>extension/</code> с файлом <code>manifest.json</code>.</div></li>
+            <li><div class="snum">5</div><div class="sbody">При запуске Edge может показывать уведомление о расширениях в режиме разработчика. Это нормально для распакованной установки.</div></li>
           </ol>
         </div>
       </div>
@@ -467,11 +490,12 @@ chmod +x ~/Desktop/Bitrix24-PENA.command</code></pre><button class="cbtn" onclic
           <ol class="steps">
             <li><div class="snum">1</div><div class="sbody">Откройте:
               <div class="pre-row"><pre><code>brave://extensions/</code></pre><button class="cbtn" onclick="copyPreRow(this)">Копировать</button></div>
-              <small style="color:var(--muted)">Или используйте <code>chrome://extensions/</code></small>
+              <small class="inline-note">Или используйте <code>chrome://extensions/</code></small>
             </div></li>
-            <li><div class="snum">2</div><div class="sbody">Включите <strong>«Developer mode»</strong>.</div></li>
+            <li><div class="snum">2</div><div class="sbody">Включите <strong>«Developer mode»</strong> / <strong>«Режим разработчика»</strong>: на странице <code>brave://extensions/</code> переключатель находится в правом верхнем углу. После включения появится кнопка <strong>Load unpacked</strong>.</div></li>
             <li><div class="snum">3</div><div class="sbody">Нажмите <strong>«Load unpacked»</strong>.</div></li>
-            <li><div class="snum">4</div><div class="sbody">Выберите папку расширения. При предупреждении — <strong>«Keep it anyway»</strong>.</div></li>
+            <li><div class="snum">4</div><div class="sbody">Выберите папку <code>extension/</code> с файлом <code>manifest.json</code>.</div></li>
+            <li><div class="snum">5</div><div class="sbody">Если Brave покажет предупреждение о скачанном/непроверенном файле, подтвердите сохранение или запуск только для файлов из этого проекта.</div></li>
           </ol>
         </div>
       </div>
@@ -482,9 +506,10 @@ chmod +x ~/Desktop/Bitrix24-PENA.command</code></pre><button class="cbtn" onclic
             <li><div class="snum">1</div><div class="sbody">Откройте:
               <div class="pre-row"><pre><code>opera://extensions/</code></pre><button class="cbtn" onclick="copyPreRow(this)">Копировать</button></div>
             </div></li>
-            <li><div class="snum">2</div><div class="sbody">Включите <strong>«Режим разработчика»</strong>.</div></li>
-            <li><div class="snum">3</div><div class="sbody">Нажмите <strong>«Загрузить распакованное расширение»</strong>.</div></li>
-            <li><div class="snum">4</div><div class="sbody">Выберите папку расширения.</div></li>
+            <li><div class="snum">2</div><div class="sbody">Включите <strong>«Режим разработчика»</strong>: на странице <code>opera://extensions/</code> нажмите или включите <strong>Developer Mode / Режим разработчика</strong> в верхней части страницы. После включения появятся кнопки загрузки распакованного расширения.</div></li>
+            <li><div class="snum">3</div><div class="sbody">Нажмите <strong>«Загрузить распакованное»</strong> / <strong>Load unpacked</strong>.</div></li>
+            <li><div class="snum">4</div><div class="sbody">Выберите папку <code>extension/</code> с файлом <code>manifest.json</code>.</div></li>
+            <li><div class="snum">5</div><div class="sbody">Если Opera показывает предупреждение о расширении из режима разработчика, оставьте расширение включённым на странице расширений.</div></li>
           </ol>
         </div>
       </div>
@@ -529,20 +554,23 @@ chmod +x ~/Desktop/Bitrix24-PENA.command</code></pre><button class="cbtn" onclic
         <ol class="steps">
           <li>
             <div class="snum">1</div>
-            <div class="sbody">Перейдите в раздел <strong>Чаты</strong> в Bitrix24.</div>
+            <div class="sbody">Откройте Bitrix24 в том же браузере, куда было загружено расширение.</div>
           </li>
           <li>
             <div class="snum">2</div>
+            <div class="sbody">Перейдите в раздел <strong>Чаты</strong> или <strong>Чаты задач</strong>.</div>
+          </li>
+          <li>
+            <div class="snum">3</div>
             <div class="sbody">
-              Панель фильтра чатов появится автоматически в верхнем левом углу
-              списка чатов.
+              Панель фильтра появится автоматически в верхнем левом углу списка. Если страница была открыта до установки расширения, обновите вкладку Bitrix24.
             </div>
           </li>
         </ol>
       </div>
     </div>
 
-    <div class="alert a-blue" style="margin-top:14px">
+    <div class="alert a-blue launch-note">
       <span class="ai">💡</span>
       <div>Если панель не появилась — нажмите <span class="hotkey">Ctrl+Alt+F</span> (или <span class="hotkey">⌘+⌥+F</span> на Mac).</div>
     </div>
@@ -561,7 +589,7 @@ chmod +x ~/Desktop/Bitrix24-PENA.command</code></pre><button class="cbtn" onclic
       <div class="tip">
         <div class="tip-icon">⌨️</div>
         <div class="tip-title">Горячая клавиша</div>
-        <div class="tip-text"><span class="hotkey" style="font-size:12px">Ctrl+Alt+F</span> — скрыть / показать панель</div>
+        <div class="tip-text"><span class="hotkey">Ctrl+Alt+F</span> — скрыть / показать панель</div>
       </div>
       <div class="tip">
         <div class="tip-icon">🖱️</div>
@@ -721,12 +749,12 @@ function setupDonePage() {
       <li>При необходимости удалите задачу <strong>PENAAgencyUpdater</strong> через «Планировщик заданий».</li>
     </ul>`,
     mac: `<ul>
-      <li>Откройте Терминал (<span class="hotkey" style="font-size:12px">⌘+Пробел</span> → Terminal → Enter).</li>
+      <li>Откройте Терминал (<span class="hotkey">⌘+Пробел</span> → Terminal → Enter).</li>
       <li>Введите команду и нажмите Enter:<br>
           <code>bash "$HOME/Library/Application Support/PENA Agency/Extension/uninstall.sh"</code></li>
     </ul>`,
     br: `<ul>
-      <li>Откройте страницу расширений (<code>chrome://extensions/</code> или аналог).</li>
+      <li>Откройте страницу расширений своего браузера: Chrome — <code>chrome://extensions/</code>, Edge — <code>edge://extensions/</code>, Brave — <code>brave://extensions/</code>, Opera — <code>opera://extensions/</code>, Яндекс — <code>browser://extensions/</code>.</li>
       <li>Найдите расширение фильтра чатов и нажмите <strong>«Удалить»</strong>.</li>
     </ul>`,
   };
@@ -741,24 +769,24 @@ function setupDonePage() {
       <li><strong>SmartScreen заблокировал установщик:</strong> нажмите «Подробнее» → «Выполнить в любом случае».</li>
       <li><strong>Расширение перестало работать после обновления Bitrix24:</strong>
           запустите <code>installers\windows\install.bat</code> повторно — установщик обновит ярлыки с актуальными параметрами.</li>
-      <li><strong>Панель исчезла:</strong> нажмите <span class="hotkey" style="font-size:12px">Ctrl+Alt+F</span> — горячая клавиша показывает/скрывает панель.</li>
+      <li><strong>Панель исчезла:</strong> нажмите <span class="hotkey">Ctrl+Alt+F</span> — горячая клавиша показывает/скрывает панель.</li>
     </ul>`,
     mac: `<ul>
       <li><strong>Панель не появляется:</strong> убедитесь, что Bitrix24 запущен через приложение
           <strong>«Bitrix24 + Фильтр чатов»</strong> с рабочего стола или из «Программ», а не стандартный.</li>
-      <li><strong>«Неизвестный разработчик» при запуске:</strong> откройте
-          <strong>Системные настройки → Конфиденциальность и безопасность</strong>
-          и нажмите <strong>«Открыть в любом случае»</strong>.</li>
+      <li><strong>Установщик не запускается:</strong> используйте только Терминал: введите <code>bash </code>, перетащите
+          <code>installers/macos/install.command</code> в окно Терминала и нажмите Enter. Кавычки и обратные слэши в подставленном пути оставьте как есть.</li>
       <li><strong>Расширение перестало работать после обновления Bitrix24:</strong>
-          повторно откройте <code>installers/macos/install.command</code> (правый клик → Открыть) — пересоздаст приложение.</li>
-      <li><strong>Панель исчезла:</strong> нажмите <span class="hotkey" style="font-size:12px">⌘+⌥+F</span>.</li>
+          повторите установку через Терминал тем же способом: <code>bash </code> + перетащить <code>install.command</code> + Enter.</li>
+      <li><strong>Панель исчезла:</strong> нажмите <span class="hotkey">⌘+⌥+F</span>.</li>
     </ul>`,
     br: `<ul>
-      <li><strong>Панель не появляется:</strong> проверьте, что расширение <strong>включено</strong>
-          на странице расширений браузера (<code>chrome://extensions/</code> или аналог).</li>
-      <li><strong>Brave — предупреждение при установке:</strong> нажмите «Keep it anyway».</li>
-      <li><strong>Панель исчезла:</strong> нажмите <span class="hotkey" style="font-size:12px">Ctrl+Alt+F</span>
-          (или <span class="hotkey" style="font-size:12px">⌘+⌥+F</span> на Mac).</li>
+      <li><strong>Панель не появляется:</strong> проверьте, что расширение <strong>включено</strong> на странице расширений, затем обновите вкладку Bitrix24.</li>
+      <li><strong>Ошибка при загрузке:</strong> убедитесь, что выбрана именно папка <code>extension/</code>, а внутри неё есть <code>manifest.json</code>.</li>
+      <li><strong>После обновления файлов ничего не изменилось:</strong> на странице расширений нажмите <strong>Обновить</strong> / <strong>Reload</strong> у расширения и перезагрузите Bitrix24.</li>
+      <li><strong>Edge показывает предупреждение о режиме разработчика:</strong> это нормально для распакованной установки.</li>
+      <li><strong>Яндекс.Браузер отключил расширение:</strong> снова включите его на странице расширений.</li>
+      <li><strong>Панель исчезла:</strong> нажмите <span class="hotkey">Ctrl+Alt+F</span> (или <span class="hotkey">⌘+⌥+F</span> на Mac).</li>
     </ul>`,
   };
   elF.innerHTML = faq[plat] || '';

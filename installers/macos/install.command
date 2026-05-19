@@ -4,8 +4,8 @@
 # Платформа: macOS
 # ==============================================================
 # Запуск:
-#   chmod +x installers/install_macos.sh
-#   ./installers/install_macos.sh
+#   Finder → installers/macos → правый клик по install.command → Открыть
+#   запасной вариант: bash installers/macos/install.command
 # ==============================================================
 
 CYAN='\033[0;36m'
@@ -54,7 +54,7 @@ echo -e "  ${GRAY}Папка установки:  $INSTALL_DIR${NC}"
 echo ""
 
 [ -f "$EXT_SOURCE/manifest.json" ] || \
-    error_exit "manifest.json не найден в: $EXT_SOURCE — убедитесь, что папка installers находится внутри папки расширения."
+    error_exit "manifest.json не найден в: $EXT_SOURCE — убедитесь, что installers/macos/install.command лежит внутри проекта рядом с папкой extension."
 
 # ==============================================================
 # 2. Копируем файлы расширения
@@ -173,7 +173,7 @@ LAUNCHER_EOF
     <key>CFBundleName</key>         <string>Bitrix24 + Фильтр чатов</string>
     <key>CFBundleDisplayName</key>  <string>Bitrix24 + Фильтр чатов</string>
     <key>CFBundlePackageType</key>  <string>APPL</string>
-    <key>CFBundleShortVersionString</key> <string>6.4.48</string>
+    <key>CFBundleShortVersionString</key> <string>7.1.0</string>
     <key>LSMinimumSystemVersion</key>    <string>10.13</string>
     ${ICON_KEY}
 </dict>

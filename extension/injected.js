@@ -1,4 +1,4 @@
-
+﻿
 
 	// URL логотипа: через data-атрибут (обычная инъекция) или через глобал (executeScript-инъекция)
 	const _PENA_LOGO_URL = (function() {
@@ -8,14 +8,15 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '1.16.0';
+	window.__ANITREC_RUNNING__ = '7.1.0';
 
-	const VER = '1.16.0';
+	const VER = '7.1.0';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
 	const CSS_WARN = 'background:#8B5E00;color:#fff;padding:1px 4px;border-radius:10px';
 	const CSS_ERR  = 'background:#7F1D1D;color:#fff;padding:1px 4px;border-radius:10px';
+	const _PENA_BASE_DPR = window.devicePixelRatio || 1;
 
 	const log  = (...a) => console.log(LBL, CSS_LOG, ...a);
 	const warn = (...a) => console.log(LBL, CSS_WARN, ...a);
@@ -33,12 +34,26 @@
 	let multiRmbTargetEl = null;
 	let multiPanelHost = null;
 	let multiEnteredViaRmb = false;
+	function isVisibleElement(el) {
+		if (!el) return false;
+		const st = getComputedStyle(el);
+		if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) === 0) return false;
+		const r = el.getBoundingClientRect();
+		return r.width > 0 && r.height > 0;
+	}
+
+	function findVisibleInternalContainer(selector) {
+		return Array.from(document.querySelectorAll(selector)).find(isVisibleElement) || null;
+	}
+
 	function isInternalRecentDOM() {
-		return !!document.querySelector('.bx-im-list-container-recent__elements .bx-im-list-recent-item__wrap');
+		const c = findVisibleInternalContainer('.bx-im-list-container-recent__elements');
+		return !!c?.querySelector('.bx-im-list-recent-item__wrap');
 	}
 
 	function isInternalTaskDOM() {
-		return !!document.querySelector('.bx-im-list-container-task__elements .bx-im-list-recent-item__wrap');
+		const c = findVisibleInternalContainer('.bx-im-list-container-task__elements');
+		return !!c?.querySelector('.bx-im-list-recent-item__wrap');
 	}
 
 	function isInternalChatsDOM() {
@@ -47,9 +62,9 @@
 
 	function findContainerInternal() {
 
-		const taskList = document.querySelector('.bx-im-list-container-task__elements');
+		const taskList = findVisibleInternalContainer('.bx-im-list-container-task__elements');
 		if (taskList) return taskList;
-		return document.querySelector('.bx-im-list-container-recent__elements');
+		return findVisibleInternalContainer('.bx-im-list-container-recent__elements');
 	}
 
 
@@ -256,7 +271,7 @@
 	const map = new Map();
 	const BXNS = window.BX;
 	if (!BXNS?.rest?.callMethod) {
-	warn('BX.rest недоступен — работаю без tsMap');
+	warn('BX.rest недоступен ? работаю без tsMap');
 	return map;
 }
 	try {
@@ -292,17 +307,56 @@
 	return s;
 };
 
+	const isDialogControlId = (raw) => /^chat\d+$/i.test(normId(raw));
+	const _CHAT_LIST_ITEM_SELECTOR = '.bx-messenger-cl-item,.bx-im-list-recent-item__wrap';
+	const _CHAT_SEARCH_ITEM_SELECTOR = '.bx-im-search-result-item,.bx-im-search-item,.bx-im-dialog-search-result-item,.bx-im-list-search-item,[data-dialog-id],[data-dialog-id-value],[data-dialogid]';
+
+	function _getOwnChatIdFromElement(el) {
+		if (!el) return '';
+		return normId(
+			el.getAttribute?.('data-userid') ||
+			el.getAttribute?.('data-id') ||
+			el.getAttribute?.('data-dialog-id') ||
+			el.getAttribute?.('data-dialog-id-value') ||
+			el.getAttribute?.('data-dialogid') ||
+			el.dataset?.userid ||
+			el.dataset?.dialogId ||
+			el.dataset?.dialogid ||
+			el.dataset?.id
+		);
+	}
+
+	function _isUsableDialogCandidate(el, { allowNestedId = false } = {}) {
+		if (!el || el.nodeType !== 1) return false;
+		const id = allowNestedId ? getChatIdFromElement(el) : _getOwnChatIdFromElement(el);
+		if (!isDialogControlId(id)) return false;
+		if (el.matches?.(`${_CHAT_LIST_ITEM_SELECTOR},${_CHAT_SEARCH_ITEM_SELECTOR}`)) return true;
+		const cls = String(el.className || '');
+		if (!/bx-im|messenger|search|recent|task|dialog|chat/i.test(cls)) return false;
+		const rect = el.getBoundingClientRect?.();
+		return !rect || (rect.width >= 120 && rect.height >= 28);
+	}
+
 		function getChatItemElement(target) {
 			if (!target) return null;
 
 			if (IS_OL_FRAME) {
 				const el = target.closest?.('.bx-messenger-cl-item');
-				if (el) return el;
+				if (_isUsableDialogCandidate(el, { allowNestedId: true })) return el;
 			}
 
 			// Внутренние чаты / чаты задач
 			const el2 = target.closest?.('.bx-im-list-recent-item__wrap');
-			if (el2) return el2;
+			if (_isUsableDialogCandidate(el2, { allowNestedId: true })) return el2;
+
+			const searchCandidate = target.closest?.(_CHAT_SEARCH_ITEM_SELECTOR);
+			if (_isUsableDialogCandidate(searchCandidate, { allowNestedId: true })) return searchCandidate;
+
+			let n = target.nodeType === 1 ? target : target.parentElement;
+			for (let i = 0; i < 8 && n; i++, n = n.parentElement) {
+				if (n === document.body || n === document.documentElement) break;
+				if (_isUsableDialogCandidate(n)) return n;
+			}
 
 			return null;
 		}
@@ -318,10 +372,94 @@
 
 			return normId(
 				el.getAttribute('data-id') ||
+				el.getAttribute('data-dialog-id') ||
+				el.getAttribute('data-dialog-id-value') ||
+				el.getAttribute('data-dialogid') ||
+				el.dataset.dialogId ||
+				el.dataset.dialogid ||
 				el.dataset.id ||
-				el.querySelector('[data-id]')?.getAttribute('data-id')
+				el.querySelector('[data-id]')?.getAttribute('data-id') ||
+				el.querySelector('[data-dialog-id]')?.getAttribute('data-dialog-id') ||
+				el.querySelector('[data-dialogid]')?.getAttribute('data-dialogid')
 			);
 		}
+
+		function getVisibleChatElements() {
+			const container = findContainer();
+			const root = container || document;
+			return IS_OL_FRAME
+				? Array.from(root.querySelectorAll('.bx-messenger-cl-item'))
+				: Array.from(new Set([
+					...root.querySelectorAll('.bx-im-list-recent-item__wrap'),
+					...document.querySelectorAll(_CHAT_SEARCH_ITEM_SELECTOR)
+				])).filter(el => _isUsableDialogCandidate(el, { allowNestedId: true }));
+		}
+
+		function buildChatElementIndex() {
+			const map = new Map();
+			for (const el of getVisibleChatElements()) {
+				const id = getChatIdFromElement(el);
+				if (id && !map.has(id)) map.set(id, el);
+			}
+			return map;
+		}
+
+		function getChatTitleFromElement(el) {
+			if (!el) return 'Диалог';
+			const title = IS_OL_FRAME
+				? (el.querySelector('.bx-messenger-cl-user-title')?.textContent || '')
+				: (
+					el.querySelector('.bx-im-chat-title__text')?.getAttribute('title') ||
+					el.querySelector('.bx-im-chat-title__text')?.textContent ||
+					el.querySelector('.bx-im-list-recent-item__title')?.textContent ||
+					el.querySelector('[class*="title" i]')?.getAttribute('title') ||
+					el.querySelector('[class*="title" i]')?.textContent ||
+					el.getAttribute('title') ||
+					''
+				);
+			return (title || '').replace(/\s+/g, ' ').trim() || 'Диалог';
+		}
+
+		function findChatElementById(id) {
+			const wanted = normId(id);
+			if (!wanted) return null;
+			return buildChatElementIndex().get(wanted) || null;
+		}
+
+		function openChatElement(el) {
+			if (!el) return false;
+			const target =
+				el.querySelector?.('a,button,[role="button"],.bx-im-list-recent-item__content,.bx-messenger-cl-user') ||
+				el;
+			target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+			target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+		target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+		return true;
+	}
+
+	function hasMentionMarker(el) {
+		if (!el) return false;
+		const selector = [
+			'[class*="mention" i]',
+			'[title*="упом" i]',
+			'[title*="mention" i]',
+			'[aria-label*="упом" i]',
+			'[aria-label*="mention" i]',
+			'[data-id*="mention" i]',
+			'[data-testid*="mention" i]',
+			'[data-test-id*="mention" i]'
+		].join(',');
+		try {
+			if (el.matches?.(selector) || el.querySelector?.(selector)) return true;
+		} catch {}
+		const own = [
+			el.className,
+			el.getAttribute?.('title'),
+			el.getAttribute?.('aria-label'),
+			el.dataset ? Object.values(el.dataset).join(' ') : ''
+		].join(' ').toLowerCase();
+		return /mention|упом/.test(own);
+	}
 
 	let rankMap = new Map();
 	let frozenSetSig = '';
@@ -359,7 +497,7 @@
 	let lastKey = null;
 	for (const el of items) {
 	const id = (el.getAttribute('data-userid') || el.dataset.userid || '').toLowerCase();
-	const ts = tsMap?.get?.(id) ?? -1;
+	const ts = tsMap?.get?.(id)   -1;
 	const key = dateKey(ts);
 	if (key !== lastKey) {
 	const div = document.createElement('div');
@@ -376,27 +514,62 @@
 
 
 	const LS_KEY_BASE = 'anit.filters.v2';
-	// Кэш текущего режима панели — устанавливается явно при переключении,
+	// Кэш текущего режима панели ? устанавливается явно при переключении,
 	// чтобы getLSKey/saveFilters не зависели от живого DOM во время переходов.
 	// Инициализируется до первого loadFilters().
 	let _currentPanelMode = getPanelModeKey();
-// Кэш фильтров по режиму — изолирует вкладки браузера друг от друга:
+// Кэш фильтров по режиму ? изолирует вкладки браузера друг от друга:
 // при переключении режима берём данные из памяти, а не перечитываем localStorage.
 const _modeFiltersCache = {};
 // Режимы, в которых авто-загрузка чатов уже выполнялась в текущей вкладке
 const _prefetchedModes = new Set(JSON.parse((() => { try { return sessionStorage.getItem('pena.prefetchedModes'); } catch { return null; } })() || '[]'));
-// Флаг активной предзагрузки — на время прокрутки отключает фильтрацию
+// Флаг активной предзагрузки ? на время прокрутки отключает фильтрацию
 let _prefetchActive = false;
-// ── Пресеты фильтров (раздельные для "чатов" и "чатов задач") ───────────
+// в?Ђв?Р‚ Пресеты фильтров (раздельные для "чатов" и "чатов задач") в?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Р‚
 const _LS_PRESETS_CHATS = 'pena.presets.chats';
 const _LS_PRESETS_TASKS = 'pena.presets.tasks';
 // Сбрасываем устаревший ключ (до v2.6)
 try { localStorage.removeItem('pena.presets'); } catch {}
-// Кеш массивов пресетов — загружаются лениво при первом обращении к режиму
+// Кеш массивов пресетов ? загружаются лениво при первом обращении к режиму
 const _presetsData = { chats: null, tasks: null };
 // Активный пресет для каждого режима (null = общий режим)
 const _activePresetIds = { chats: null, tasks: null };
 let _debugModeActive = false;
+const _LS_DIALOG_CONTROL = 'pena.dialogControl.v1';
+let _dialogControlActive = false;
+let _dialogControlTimer = null;
+let _dialogControlItems = {};
+let _dialogControlMissTimer = null;
+	let _dialogControlRefreshTimer = null;
+	let _dialogControlLastSig = '';
+	let _dialogControlDock = null;
+	const _DIALOG_CONTROL_IDLE_MS = 10000;
+	let _dialogControlPointerTracking = false;
+	let _dialogControlLastPointerX = null;
+	let _dialogControlLastPointerY = null;
+	let _dialogControlLastPointerTs = 0;
+	let _dialogControlSelectionSyncTimer = null;
+	let _lastExpandedFiltersPaneHeight = 0;
+	let _lastExpandedFiltersPaneBottom = 0;
+	let _dialogDockHideFinalizeTimer = null;
+	let _dialogDockAutoCloseTimer = null;
+	let _panelModeSwitching = false;
+	let _panelModeSwitchingVisualTimer = null;
+	function _setPanelModeSwitching(active) {
+		_panelModeSwitching = !!active;
+		if (_panelModeSwitchingVisualTimer) {
+			clearTimeout(_panelModeSwitchingVisualTimer);
+			_panelModeSwitchingVisualTimer = null;
+		}
+		if (active) {
+			document.documentElement.classList.add('anit-panel-mode-switching');
+			return;
+		}
+		_panelModeSwitchingVisualTimer = setTimeout(() => {
+			_panelModeSwitchingVisualTimer = null;
+			document.documentElement.classList.remove('anit-panel-mode-switching');
+		}, 280);
+	}
 // Режим текущей вкладки: 'chats' | 'tasks'
 const _pMode = () => isTasksChatsModeNow() ? 'tasks' : 'chats';
 const _pLSKey = (m) => m === 'tasks' ? _LS_PRESETS_TASKS : _LS_PRESETS_CHATS;
@@ -430,7 +603,7 @@ if (_presetChannel) {
 		if (e.data?.t === 'sync' && Array.isArray(e.data.d) && e.data.mode) {
 			const m = e.data.mode;
 			_presetsData[m] = e.data.d;
-			// Активный пресет мог быть удалён в другой вкладке
+			// Активный пресет мог быть удалён в РТ‘ругой вкладке
 			if (_activePresetIds[m] && !_presetsData[m].find(p => p.id === _activePresetIds[m])) {
 				_activePresetIds[m] = null;
 			}
@@ -687,17 +860,20 @@ if (_presetChannel) {
 			});
 		}
 
-		function getItemMetaOL(el) {
+	function getItemMetaOL(el) {
 	const id = normId(el.getAttribute('data-userid') || el.dataset.userid);
 	const status = parseInt(el.getAttribute('data-status') || el.dataset.status || '0', 10) || 0;
-	const hasUnread = !!el.querySelector('.bx-messenger-cl-count-digit');
+	const countText = (el.querySelector('.bx-messenger-cl-count-digit')?.textContent || '').replace(/\D+/g, '');
+	const unreadCount = parseInt(countText || '0', 10) || 0;
+	const hasMention = hasMentionMarker(el);
+	const hasUnread = unreadCount > 0 || !!el.querySelector('.bx-messenger-cl-count-digit') || hasMention;
 	const lastText = (el.querySelector('.bx-messenger-cl-user-desc')?.textContent || '').trim().toLowerCase();
 	const title = (el.querySelector('.bx-messenger-cl-user-title')?.textContent || '').trim().toLowerCase();
 	const cls = el.className || '';
 	const isWhatsApp = /-wz_whatsapp_/i.test(cls);
 	const isTelegram = /-wz_telegram_/i.test(cls);
 	const hasAttach = /\[(вложение|файл)\]/i.test(lastText);
-	return { id, status, hasUnread, lastText, title, isWhatsApp, isTelegram, hasAttach, type: 'ol' };
+	return { id, status, hasUnread, hasLater: false, hasMention, unreadCount, lastText, title, isWhatsApp, isTelegram, hasAttach, type: 'ol' };
 }
 
 	function getItemMetaInternal(el) {
@@ -730,8 +906,9 @@ if (_presetChannel) {
 			counterValue = 0;
 			return false;
 		};
-		const hasUnread = getUnread();
-		// «Посмотреть позже» (IM_LIB_MENU_UNREAD) — Битрикс вызывает im.v2.Chat.unread.json,
+		const hasMention = hasMentionMarker(el);
+		const hasUnread = getUnread() || hasMention;
+		// «Посмотреть позже» (IM_LIB_MENU_UNREAD) ? Битрикс вызывает im.v2.Chat.unread.json,
 		// после чего в DOM появляется counter_number с классом --no-counter (пустой элемент,
 		// число отсутствует). У обычных прочитанных чатов counter_number не рендерится вовсе.
 		const _noCounterEl = el.querySelector('.bx-im-list-recent-item__counter_number');
@@ -739,9 +916,9 @@ if (_presetChannel) {
 		const hasSelfAuthor = !!el.querySelector('.bx-im-list-recent-item__self_author-icon');
 		const msgText = el.querySelector('.bx-im-list-recent-item__message_text');
 		const hasAuthorAvatar = !!(msgText && msgText.querySelector('.bx-im-list-recent-item__author-avatar'));
-		// Системное = нет ни стрелочки, ни аватарки (для фильтра «Скрыть системные» — скрывать все такие)
+		// Системное = нет ни стрелочки, ни аватарки (для фильтра «Скрыть системные» ? скрывать все такие)
 		const isSystemMessage = !hasSelfAuthor && !hasAuthorAvatar;
-		// Только если 1 непрочитанное и оно системное — не показывать в «Непрочитанные»; если >1 — показываем
+		// Только если 1 непрочитанное и оно системное ? не показывать в «Непрочитанные»; если >1 ? показываем
 		const isSystemUnreadOnly = hasUnread && counterValue === 1 && isSystemMessage;
 	const avatar = el.querySelector('.bx-im-avatar__container') || el;
 	const cl = (avatar?.className || '') + ' ' + (el.querySelector('.bx-im-chat-title__icon')?.className || '');
@@ -775,7 +952,7 @@ if (_presetChannel) {
 
 	const hasAttach = /\[(вложение|файл)\]/i.test(lastText);
 
-	const meta = { id, hasUnread, hasLater, lastText, title, hasAttach, type: itemType, status: 0, isWhatsApp: false, isTelegram: false, isSystemMessage, isSystemUnreadOnly };
+	const meta = { id, hasUnread, hasLater, hasMention, unreadCount: counterValue, lastText, title, hasAttach, type: itemType, status: 0, isWhatsApp: false, isTelegram: false, isSystemMessage, isSystemUnreadOnly };
 
 	// project mapping only in "task chats" mode
 	if (isTasksChatsModeNow() && window.__anitProjectLookup?.chatToProject) {
@@ -843,10 +1020,8 @@ if (_presetChannel) {
 		// В разных версиях интерфейса Bitrix24 селекторы отличаются.
 		// Нам важно лишь понять, что открыт список "чаты задач".
 		return !!(
-			document.querySelector('.bx-im-list-container-task__elements .bx-im-list-recent-item__wrap') ||
-			document.querySelector('.bx-im-list-container-task__elements') ||
-			document.querySelector('.bx-im-list-task__scroll-container .bx-im-list-recent-item__wrap') ||
-			document.querySelector('.bx-im-list-task__scroll-container')
+			findVisibleInternalContainer('.bx-im-list-container-task__elements') ||
+			findVisibleInternalContainer('.bx-im-list-task__scroll-container')
 		);
 	}
 
@@ -922,7 +1097,7 @@ if (_presetChannel) {
 	const container = findContainer();
 	if (!container) return;
 
-	// Во время предзагрузки — показываем все чаты без фильтрации
+	// Во время предзагрузки ? показываем все чаты без фильтрации
 	if (_prefetchActive) {
 		const items = IS_OL_FRAME
 			? Array.from(container.querySelectorAll('.bx-messenger-cl-item'))
@@ -947,8 +1122,8 @@ if (_presetChannel) {
 		const hidden = items.filter(el => el.style.display === 'none');
 		const withMeta = visible.map(el => ({ el, meta: getItemMeta(el) }));
 		withMeta.sort((a, b) => {
-			const pa = a.meta.projectIndex ?? -2;
-			const pb = b.meta.projectIndex ?? -2;
+			const pa = a.meta.projectIndex   -2;
+			const pb = b.meta.projectIndex   -2;
 			if (pa !== pb) return pa - pb;
 			if (filters.sortMode === 'projectName') {
 				const ta = (a.meta.title || '').toLowerCase();
@@ -963,15 +1138,16 @@ if (_presetChannel) {
 		container.appendChild(frag);
 	}
 	if (IS_OL_FRAME) rebuildDateGroups(tsMapOnce || new Map());
+	if (filtersHost) _refreshDialogControlPanel(filtersHost);
 }
 
 
-	// ── Функции пресетов ─────────────────────────────────────────
+	// в?Ђв?Р‚ Функции пресетов в?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Р‚
 
-	// Снимок фильтров для сохранения (без определений тегов — они глобальны)
+	// Снимок фильтров для сохранения (без опреРТ‘елений тегов ? они глобальны)
 	function _snapFilters(options = {}) {
 		const { excludeQuery = false } = options;
-		// JSON deep copy — гарантирует независимость пресетов друг от друга
+		// JSON deep copy ? гарантирует независимость пресетов друг от друга
 		const snap = JSON.parse(JSON.stringify(filters));
 		delete snap.keywordTags;      // определения тегов глобальны
 		delete snap.intersectionTags;
@@ -987,15 +1163,15 @@ if (_presetChannel) {
 		// Всегда сохраняем текущий активный пресет перед переключением
 		saveFiltersToActivePreset({ excludeQuery: !!_getActiveId() && !_debugModeActive });
 		if (_getActiveId() === presetId) {
-			// Повторный клик — деактивируем, возвращаемся в общий режим
+			// Повторный клик ? деактивируем, возвращаемся в общий режим
 			_setActiveId(null);
 			filters = loadFilters();
 		} else {
 			_setActiveId(presetId);
-			// Определения тегов глобальны — не перезаписываем из пресета
+			// Определения тегов глобальны ? не перезаписываем из пресета
 			const kwTags = filters.keywordTags ? [...filters.keywordTags] : [];
 			const ixTags = filters.intersectionTags ? [...filters.intersectionTags] : [];
-			// Deep copy — чтобы мутации filters не влияли на сохранённый снимок пресета
+			// Deep copy ? чтобы мутации filters не влияли на сохранённый снимок пресета
 			const pf = JSON.parse(JSON.stringify(preset.filters));
 			filters = { ...defaultFilters(), ...pf, keywordTags: kwTags, intersectionTags: ixTags };
 		}
@@ -1012,7 +1188,7 @@ if (_presetChannel) {
 		if (preset) { preset.filters = _snapFilters(options); _saveCustomPresets(); }
 	}
 
-	// ─── Режим отладки: вспомогательные функции ───────────────────────────────
+	// в?Ђв?Ђв?Р‚ Режим отладки: вспомогательные функции в?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Р‚
 	function _updateDebugUI(h) {
 		const hasPreset  = !!_getActiveId();
 		const debugActive = _debugModeActive && hasPreset;
@@ -1035,19 +1211,1573 @@ if (_presetChannel) {
 	}
 
 	let _toastTimer = null;
-	function _showPresetToast(msg) {
+	function _showPresetToast(msg, tone = '') {
 		const toast = filtersHost?.querySelector('#anit_preset_toast');
 		if (!toast) return;
 		toast.textContent = msg;
+		toast.classList.toggle('--danger', tone === 'danger');
+		toast.classList.toggle('--ok', tone === 'ok');
 		toast.classList.add('--show');
 		if (_toastTimer) clearTimeout(_toastTimer);
-		_toastTimer = setTimeout(() => toast.classList.remove('--show'), 2400);
+		_toastTimer = setTimeout(() => {
+			toast.classList.remove('--show', '--danger', '--ok');
+		}, 2400);
 	}
 
-	function _showPresetConfirm(msg, okLabel, cancelLabel, onOk) {
+	function _showDialogControlMiss() {
+		if (_dialogControlMissTimer) clearTimeout(_dialogControlMissTimer);
+		_showDialogDockToast('Необходимо выбрать диалог', 'danger');
+		_dialogControlMissTimer = setTimeout(() => { _dialogControlMissTimer = null; }, 900);
+	}
+
+	function _getDialogControlItems() {
+		const mode = _pMode();
+		if (!_dialogControlItems || Array.isArray(_dialogControlItems)) _dialogControlItems = {};
+		if (Array.isArray(_dialogControlItems[mode])) return _dialogControlItems[mode];
+		try {
+			const modeKey = `${_LS_DIALOG_CONTROL}.${mode}`;
+			const raw = localStorage.getItem(modeKey);
+			const parsed = JSON.parse(raw || '[]');
+			_dialogControlItems[mode] = Array.isArray(parsed) ? parsed : [];
+		} catch { _dialogControlItems[mode] = []; }
+		return _dialogControlItems[mode];
+	}
+
+	function _saveDialogControlItems() {
+		try { localStorage.setItem(`${_LS_DIALOG_CONTROL}.${_pMode()}`, JSON.stringify(_getDialogControlItems())); } catch {}
+	}
+
+	const _LS_DIALOG_CONTROL_COLORS = 'pena.dialogControlColors.v1';
+	const _DIALOG_CONTROL_DEFAULT_COLORS = [
+		'#4d9dff', '#5dc87e', '#f59e0b', '#ef4444',
+		'#a855f7', '#14b8a6', '#f97316', '#94a3b8'
+	];
+
+	function _isHexColor(value) {
+		return /^#[0-9a-f]{6}$/i.test(String(value || '').trim());
+	}
+
+	function _getCustomDialogControlColors() {
+		try {
+			const parsed = JSON.parse(localStorage.getItem(_LS_DIALOG_CONTROL_COLORS) || '[]');
+			return Array.isArray(parsed) ? parsed.map(c => String(c || '').toLowerCase()).filter(_isHexColor) : [];
+		} catch { return []; }
+	}
+
+	function _saveCustomDialogControlColors(colors) {
+		const arr = Array.from(new Set((Array.isArray(colors) ? colors : []).map(c => String(c || '').toLowerCase()).filter(_isHexColor))).slice(0, 24);
+		try { localStorage.setItem(_LS_DIALOG_CONTROL_COLORS, JSON.stringify(arr)); } catch {}
+	}
+
+	function _getDialogControlColors() {
+		return Array.from(new Set([..._DIALOG_CONTROL_DEFAULT_COLORS, ..._getCustomDialogControlColors()]));
+	}
+
+	function _getRemovedDefaultDialogControlColors() {
+		try {
+			const parsed = JSON.parse(localStorage.getItem(`${_LS_DIALOG_CONTROL_COLORS}.removedDefaults`) || '[]');
+			return Array.isArray(parsed) ? parsed.map(c => String(c || '').toLowerCase()).filter(c => _DIALOG_CONTROL_DEFAULT_COLORS.includes(c)) : [];
+		} catch { return []; }
+	}
+
+	function _saveRemovedDefaultDialogControlColors(colors) {
+		const arr = Array.from(new Set((Array.isArray(colors) ? colors : []).map(c => String(c || '').toLowerCase()).filter(c => _DIALOG_CONTROL_DEFAULT_COLORS.includes(c))));
+		try { localStorage.setItem(`${_LS_DIALOG_CONTROL_COLORS}.removedDefaults`, JSON.stringify(arr)); } catch {}
+	}
+
+	function _getVisibleDialogControlColors() {
+		const removed = new Set(_getRemovedDefaultDialogControlColors());
+		return _getDialogControlColors().filter(color => !removed.has(color));
+	}
+
+	function _normalizeDialogControlColor(value) {
+		const color = String(value || '').trim().toLowerCase();
+		return _isHexColor(color) ? color : '';
+	}
+
+	function _hexToRgb(hex) {
+		const m = /^#([0-9a-f]{6})$/i.exec(String(hex || ''));
+		if (!m) return null;
+		const n = parseInt(m[1], 16);
+		return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+	}
+
+	function _rgbToHex(r, g, b) {
+		const clamp = (v) => Math.max(0, Math.min(255, parseInt(v, 10) || 0));
+		return '#' + [clamp(r), clamp(g), clamp(b)].map(v => v.toString(16).padStart(2, '0')).join('');
+	}
+
+	function _hsvToHex(h, s, v) {
+		const hue = (((Number(h) || 0) % 360) + 360) % 360;
+		const sat = Math.max(0, Math.min(1, Number(s) || 0));
+		const val = Math.max(0, Math.min(1, Number(v) || 0));
+		const c = val * sat;
+		const x = c * (1 - Math.abs((hue / 60) % 2 - 1));
+		const m = val - c;
+		let r = 0, g = 0, b = 0;
+		if (hue < 60) [r, g, b] = [c, x, 0];
+		else if (hue < 120) [r, g, b] = [x, c, 0];
+		else if (hue < 180) [r, g, b] = [0, c, x];
+		else if (hue < 240) [r, g, b] = [0, x, c];
+		else if (hue < 300) [r, g, b] = [x, 0, c];
+		else [r, g, b] = [c, 0, x];
+		return _rgbToHex((r + m) * 255, (g + m) * 255, (b + m) * 255);
+	}
+
+	function _applyDialogControlColorVars(el, color) {
+		const rgb = _hexToRgb(color);
+		if (!el || !rgb) return;
+		el.style.setProperty('--dialog-chip-color', color);
+		el.style.setProperty('--dialog-chip-bg', `rgba(${rgb.r},${rgb.g},${rgb.b},.24)`);
+		el.style.setProperty('--dialog-chip-bg-hover', `rgba(${rgb.r},${rgb.g},${rgb.b},.32)`);
+		el.style.setProperty('--dialog-chip-border', `rgba(${rgb.r},${rgb.g},${rgb.b},.58)`);
+		el.style.setProperty('--dialog-chip-border-hover', `rgba(${rgb.r},${rgb.g},${rgb.b},.78)`);
+		el.style.setProperty('--dialog-chip-shadow', `rgba(${rgb.r},${rgb.g},${rgb.b},.55)`);
+	}
+
+	function _clearDialogControlColorVars(el) {
+		if (!el) return;
+		[
+			'--dialog-chip-color',
+			'--dialog-chip-bg',
+			'--dialog-chip-bg-hover',
+			'--dialog-chip-border',
+			'--dialog-chip-border-hover',
+			'--dialog-chip-shadow'
+		].forEach(name => el.style.removeProperty(name));
+	}
+
+	function _setDialogControlItemColor(dialogId, color) {
+		const id = normId(dialogId);
+		if (!id) return false;
+		const arr = _getDialogControlItems();
+		const item = arr.find(x => normId(x.id) === id);
+		if (!item) return false;
+		const next = _normalizeDialogControlColor(color);
+		if (next) item.color = next;
+		else delete item.color;
+		_saveDialogControlItems();
+		_dialogControlLastSig = '';
+		return true;
+	}
+
+	function _getDialogControlItemsForMode(mode) {
+		const m = mode === 'tasks' ? 'tasks' : 'chats';
+		if (_dialogControlItems && Array.isArray(_dialogControlItems[m])) return _dialogControlItems[m];
+		try {
+			const parsed = JSON.parse(localStorage.getItem(`${_LS_DIALOG_CONTROL}.${m}`) || '[]');
+			return Array.isArray(parsed) ? parsed : [];
+		} catch { return []; }
+	}
+
+	function _saveDialogControlItemsForMode(mode, items) {
+		const m = mode === 'tasks' ? 'tasks' : 'chats';
+		if (!_dialogControlItems || Array.isArray(_dialogControlItems)) _dialogControlItems = {};
+		_dialogControlItems[m] = Array.isArray(items) ? items : [];
+		try { localStorage.setItem(`${_LS_DIALOG_CONTROL}.${m}`, JSON.stringify(_dialogControlItems[m])); } catch {}
+	}
+
+	function _getDialogControlColorUsage(color) {
+		const target = _normalizeDialogControlColor(color);
+		const result = { total: 0, modes: [] };
+		if (!target) return result;
+		[
+			{ key: 'chats', label: 'Чаты' },
+			{ key: 'tasks', label: 'Чаты задач' }
+		].forEach(mode => {
+			const items = _getDialogControlItemsForMode(mode.key);
+			const count = items.filter(item => _normalizeDialogControlColor(item.color) === target).length;
+			if (count) {
+				result.total += count;
+				result.modes.push({ ...mode, count });
+			}
+		});
+		return result;
+	}
+
+	function _deleteCustomDialogControlColor(color) {
+		const target = _normalizeDialogControlColor(color);
+		if (!target) return;
+		if (_DIALOG_CONTROL_DEFAULT_COLORS.includes(target)) {
+			_saveRemovedDefaultDialogControlColors([target, ..._getRemovedDefaultDialogControlColors()]);
+		} else {
+			_saveCustomDialogControlColors(_getCustomDialogControlColors().filter(c => c !== target));
+		}
+		['chats', 'tasks'].forEach(mode => {
+			const items = _getDialogControlItemsForMode(mode);
+			let changed = false;
+			items.forEach(item => {
+				if (_normalizeDialogControlColor(item.color) === target) {
+					delete item.color;
+					changed = true;
+				}
+			});
+			if (changed) _saveDialogControlItemsForMode(mode, items);
+		});
+		_dialogControlLastSig = '';
+	}
+
+	let _dialogControlPaletteCloseTimer = null;
+	function _clearDialogControlPaletteClose() {
+		if (_dialogControlPaletteCloseTimer) {
+			clearTimeout(_dialogControlPaletteCloseTimer);
+			_dialogControlPaletteCloseTimer = null;
+		}
+	}
+
+	function _scheduleDialogControlPaletteClose(delay = 5000) {
+		_clearDialogControlPaletteClose();
+		_dialogControlPaletteCloseTimer = setTimeout(() => {
+			_dialogControlPaletteCloseTimer = null;
+			_closeDialogControlPalettes(true);
+		}, delay);
+	}
+
+	function _closeDialogControlPalettes(animated = true) {
+		_clearDialogControlPaletteClose();
+		document.querySelectorAll('.dialog-control-palette').forEach(el => {
+			if (el._penaOutsideHandler) {
+				document.removeEventListener('pointerdown', el._penaOutsideHandler, true);
+				el._penaOutsideHandler = null;
+			}
+			if (el.classList.contains('--closing')) return;
+			el.classList.remove('--open');
+			el.classList.add('--closing');
+			if (animated) setTimeout(() => el.remove(), 190);
+			else el.remove();
+		});
+		document.querySelectorAll('.dialog-control-color-wrap.--open').forEach(el => el.classList.remove('--open'));
+	}
+
+	function _forceCloseDialogControlPalettes() {
+		_clearDialogControlPaletteClose();
+		document.querySelectorAll('.dialog-control-palette').forEach(el => {
+			if (el._penaOutsideHandler) {
+				document.removeEventListener('pointerdown', el._penaOutsideHandler, true);
+				el._penaOutsideHandler = null;
+			}
+			el.remove();
+		});
+		document.querySelectorAll('.dialog-control-color-wrap.--open').forEach(el => el.classList.remove('--open'));
+	}
+
+	function _syncDialogControlSelectionOutlines() {
+		if (_panelModeSwitching) return;
+		const index = buildChatElementIndex();
+		index.forEach(el => el.classList.remove('anit-dialog-control-selected'));
+		if (!_dialogControlActive) return;
+		const ids = new Set(_getDialogControlItems().map(item => normId(item.id)).filter(Boolean));
+		ids.forEach(id => {
+			const el = index.get(id);
+			if (el) el.classList.add('anit-dialog-control-selected');
+		});
+	}
+
+	function _scheduleDialogControlSelectionOutlines() {
+		if (_dialogControlSelectionSyncTimer) return;
+		_dialogControlSelectionSyncTimer = setTimeout(() => {
+			_dialogControlSelectionSyncTimer = null;
+			_syncDialogControlSelectionOutlines();
+		}, 0);
+	}
+
+	function _getDialogControlStatusSig() {
+		const index = buildChatElementIndex();
+		return _getDialogControlItems().map(item => {
+			const el = index.get(normId(item.id));
+			const meta = el ? getItemMeta(el) : null;
+			return [
+				item.id,
+				item.title || '',
+				_normalizeDialogControlColor(item.color),
+				meta?.hasUnread ? 1 : 0,
+				meta?.hasLater ? 1 : 0,
+				meta?.hasMention ? 1 : 0,
+				meta?.unreadCount || 0
+			].join(':');
+		}).join('|');
+	}
+
+	function _refreshDialogControlPanel(h = filtersHost, force = false) {
+		if (_panelModeSwitching) return;
+		if (!h || !document.body.contains(h)) return;
+		if (!_getDialogControlItems().length) {
+			if (_dialogControlLastSig !== '') {
+				_dialogControlLastSig = '';
+				_renderDialogControlPanel(h);
+			}
+			if (_dialogControlActive) _scheduleDialogControlSelectionOutlines();
+			return;
+		}
+		const sig = _getDialogControlStatusSig();
+		if (force || sig !== _dialogControlLastSig) {
+			_dialogControlLastSig = sig;
+			_renderDialogControlPanel(h);
+		} else if (_dialogControlActive) {
+			_scheduleDialogControlSelectionOutlines();
+		}
+	}
+
+	function _startDialogControlLiveRefresh(h = filtersHost) {
+		if (_dialogControlRefreshTimer) clearInterval(_dialogControlRefreshTimer);
+		_dialogControlLastSig = '';
+		_dialogControlRefreshTimer = setInterval(() => {
+			if (!h || !document.body.contains(h)) {
+				clearInterval(_dialogControlRefreshTimer);
+				_dialogControlRefreshTimer = null;
+				return;
+			}
+			_refreshDialogControlPanel(h);
+		}, 700);
+	}
+
+	function _dialogDockKey() { return `pena.dialogControlDock.${_pMode()}`; }
+
+	function _saveDialogDockState() {
+		const dock = _dialogControlDock;
+		if (!dock) return;
+		const win = dock.querySelector('.dialog-control-window');
+		try {
+			localStorage.setItem(_dialogDockKey(), JSON.stringify({
+				w: win ? win.offsetWidth : 260,
+				h: null,
+				scale: parseFloat(dock.dataset.dockScale || dock.style.getPropertyValue('--dock-scale') || '1') || 1,
+				cols: dock.classList.contains('--cols-2') ? 2 : 1,
+				pinned: dock.classList.contains('--pinned')
+			}));
+		} catch {}
+	}
+
+	let _linkedPanelOpacityLifted = false;
+	let _linkedPanelOpacityTimer = null;
+	function _readLinkedPanelOpacity() {
+		const saved = parseInt(localStorage.getItem('pena.panel.opacity') || '100', 10);
+		return Math.max(20, Math.min(100, isNaN(saved) ? 100 : saved));
+	}
+
+	function _applyLinkedPanelOpacity(value = _readLinkedPanelOpacity(), forceFull = _linkedPanelOpacityLifted) {
+		const pct = Math.max(20, Math.min(100, parseInt(value, 10) || 100));
+		const opacity = forceFull ? 1 : Math.max(0.2, Math.min(1, pct / 100));
+		if (filtersHost) filtersHost.style.opacity = String(opacity);
+		if (_dialogControlDock) {
+			_dialogControlDock.style.setProperty('--dock-opacity', String(opacity));
+			_dialogControlDock.dataset.dockOpacity = String(Math.round(opacity * 100));
+			const win = _dialogControlDock.querySelector('.dialog-control-window');
+			if (win) win.style.opacity = '';
+		}
+		return pct;
+	}
+
+	function _setLinkedPanelOpacityLift(active) {
+		if (_linkedPanelOpacityTimer) {
+			clearTimeout(_linkedPanelOpacityTimer);
+			_linkedPanelOpacityTimer = null;
+		}
+		_linkedPanelOpacityLifted = !!active;
+		if (_linkedPanelOpacityLifted) {
+			_applyLinkedPanelOpacity(_readLinkedPanelOpacity(), true);
+			return;
+		}
+		_linkedPanelOpacityTimer = setTimeout(() => {
+			_applyLinkedPanelOpacity(_readLinkedPanelOpacity(), false);
+		}, 2000);
+	}
+
+	function _syncDialogDockAppearance(panelHost = filtersHost) {
+		const dock = _dialogControlDock;
+		if (!dock) return;
+		const scale = parseFloat(dock.dataset.dockScale || panelHost?.dataset?.panelScale || '1') || 1;
+		dock.style.setProperty('--dock-scale', String(scale));
+		dock.style.setProperty('--dock-icon-counter-scale', String(1 / Math.max(0.1, scale)));
+		_applyLinkedPanelOpacity(_readLinkedPanelOpacity(), _linkedPanelOpacityLifted);
+	}
+
+	function _applyDialogDockScale(dock = _dialogControlDock, value = 1) {
+		if (!dock) return 1;
+		const scale = Math.max(0.65, Math.min(1.5, Number.isFinite(value) ? value : 1));
+		dock.dataset.dockScale = String(scale);
+		dock.style.setProperty('--dock-scale', String(scale));
+		dock.style.setProperty('--dock-icon-counter-scale', String(1 / Math.max(0.1, scale)));
+		_fitDialogDockHeight(false);
+		return scale;
+	}
+
+	function _showDialogDockToast(msg, tone = '') {
+		const panel = _ensureDialogControlDock(filtersHost);
+		const toast = panel?.querySelector('#anit_dialog_control_toast');
+		if (!toast) {
+			_showPresetToast(msg, tone);
+			return;
+		}
+		if (_toastTimer) clearTimeout(_toastTimer);
+		panel.querySelector('#anit_dialog_control_confirm')?.classList.remove('--show');
+		toast.classList.remove('--show');
+		toast.textContent = msg;
+		toast.classList.remove('--danger', '--ok');
+		toast.classList.toggle('--danger', tone === 'danger');
+		toast.classList.toggle('--ok', tone === 'ok');
+		toast.classList.add('--show');
+		_toastTimer = setTimeout(() => {
+			toast.classList.remove('--show', '--danger', '--ok');
+		}, 2400);
+	}
+
+	function _showDialogControlConfirm(msg, okLabel, cancelLabel, onOk) {
+		const panel = _ensureDialogControlDock(filtersHost);
+		const overlay = panel?.querySelector('#anit_dialog_control_confirm');
+		if (!overlay) { onOk(); return; }
+		if (_toastTimer) clearTimeout(_toastTimer);
+		if (!panel.classList.contains('--host-hidden')) panel.classList.add('--expanded');
+		panel.querySelector('#anit_dialog_control_toast')?.classList.remove('--show', '--danger', '--ok');
+		overlay.innerHTML = '';
+		const p = document.createElement('p');
+		p.textContent = msg;
+		const btns = document.createElement('div');
+		btns.className = 'confirm-btns';
+		const ok = document.createElement('button');
+		ok.type = 'button';
+		ok.className = '--ok';
+		ok.textContent = okLabel;
+		const cancel = document.createElement('button');
+		cancel.type = 'button';
+		cancel.textContent = cancelLabel;
+		const hide = () => overlay.classList.remove('--show');
+		ok.addEventListener('click', () => { hide(); onOk(); });
+		cancel.addEventListener('click', hide);
+		btns.append(ok, cancel);
+		overlay.append(p, btns);
+		overlay.classList.add('--show');
+	}
+
+	function _placeDialogDockNearPanel(dock, panelHost = filtersHost) {
+		if (!dock || !panelHost) return;
+		const iconW = parseFloat(getComputedStyle(panelHost).getPropertyValue('--pena-icon-size')) || 24;
+		const gap = 12;
+		const panelLeft = parseFloat(panelHost.style.left || '8') || 8;
+		const panelTop = parseFloat(panelHost.style.top || '8') || 8;
+		let left = panelLeft - iconW - gap;
+		if (left < 6) {
+			const visualW = panelHost.getBoundingClientRect().width || panelHost.offsetWidth || 260;
+			left = Math.min(window.innerWidth - iconW - 6, panelLeft + visualW + gap);
+		}
+		dock.style.left = left + 'px';
+		dock.style.top = Math.max(6, Math.min(panelTop, window.innerHeight - 46)) + 'px';
+	}
+
+	function _safePositiveNumber(value, fallback = 1) {
+		const n = parseFloat(value);
+		return Number.isFinite(n) && n > 0 ? n : fallback;
+	}
+
+	function _getPanelVisualScale(panelHost = filtersHost) {
+		const scale = _safePositiveNumber(panelHost?.dataset?.panelScale, 1);
+		const zoom = _safePositiveNumber(panelHost?.style?.zoom, 1);
+		return Math.max(0.1, scale * zoom);
+	}
+
+	function _getDockVisualScale(dock = _dialogControlDock, panelHost = filtersHost) {
+		const scale = _safePositiveNumber(dock?.style?.getPropertyValue('--dock-scale') || panelHost?.dataset?.panelScale, 1);
+		const zoom = _safePositiveNumber(dock?.style?.zoom || panelHost?.style?.zoom, 1);
+		return Math.max(0.1, scale * zoom);
+	}
+
+	function _isFiltersPanelHidden(panelHost = filtersHost) {
+		return !!panelHost?.classList?.contains('anit-hidden');
+	}
+
+	function _rememberExpandedFiltersPaneMetrics(panelHost = filtersHost) {
+		const pane = panelHost?.querySelector?.('.pane');
+		if (!pane || _isFiltersPanelHidden(panelHost)) return;
+		const rect = pane.getBoundingClientRect?.();
+		if (!Number.isFinite(rect?.height) || rect.height <= 0) return;
+		const scale = _getPanelVisualScale(panelHost);
+		_lastExpandedFiltersPaneHeight = rect.height / Math.max(0.1, scale);
+		_lastExpandedFiltersPaneBottom = rect.bottom;
+	}
+
+	function _getViewportCssHeightLimit(el, scale, minHeight = 160) {
+		const rect = el?.getBoundingClientRect?.();
+		const top = Number.isFinite(rect?.top) ? Math.max(0, rect.top) : 0;
+		const available = Math.max(96, window.innerHeight - top - 8);
+		return Math.max(minHeight, available / Math.max(0.1, scale || 1));
+	}
+
+	function _getLinkedPanelMaxHeight(panelHost = filtersHost) {
+		const max = panelHost ? _getViewportCssHeightLimit(panelHost, _getPanelVisualScale(panelHost), 220) : window.innerHeight - 16;
+		return Math.max(220, max);
+	}
+
+	function _getLinkedPanelMinHeight(maxHeight) {
+		return Math.min(220, Math.max(120, maxHeight));
+	}
+
+	function _clampLinkedPanelHeight(height, panelHost = filtersHost) {
+		const max = _getLinkedPanelMaxHeight(panelHost);
+		const min = _getLinkedPanelMinHeight(max);
+		const value = Number.isFinite(height) ? height : min;
+		return Math.max(min, Math.min(max, value));
+	}
+
+	function _getMainPaneHeight(panelHost = filtersHost) {
+		if (_isFiltersPanelHidden(panelHost) && _lastExpandedFiltersPaneHeight > 0) {
+			return _clampLinkedPanelHeight(_lastExpandedFiltersPaneHeight, panelHost);
+		}
+		const pane = panelHost?.querySelector?.('.pane');
+		const visual = pane?.getBoundingClientRect?.().height;
+		const scale = _getPanelVisualScale(panelHost);
+		const raw = (Number.isFinite(visual) && visual > 0 ? visual / scale : 0) || parseFloat(pane?.style?.maxHeight || '') || pane?.offsetHeight || 0;
+		return _clampLinkedPanelHeight(raw || _getLinkedPanelMaxHeight(panelHost), panelHost);
+	}
+
+	function _getDialogDockMaxHeight(panelHost = filtersHost, dock = _dialogControlDock, win = null) {
+		if (_isFiltersPanelHidden(panelHost)) {
+			const winRect = win?.getBoundingClientRect?.() || dock?.querySelector?.('.dialog-control-window')?.getBoundingClientRect?.();
+			const scale = _getDockVisualScale(dock, null);
+			if (Number.isFinite(_lastExpandedFiltersPaneBottom) && _lastExpandedFiltersPaneBottom > 0 && Number.isFinite(winRect?.top)) {
+				return Math.max(132, (_lastExpandedFiltersPaneBottom - winRect.top) / Math.max(0.1, scale));
+			}
+			return _getMainPaneHeight(panelHost);
+		}
+		_rememberExpandedFiltersPaneMetrics(panelHost);
+		const pane = panelHost?.querySelector?.('.pane');
+		const paneRect = pane?.getBoundingClientRect?.();
+		const winRect = win?.getBoundingClientRect?.() || dock?.querySelector?.('.dialog-control-window')?.getBoundingClientRect?.();
+		const scale = _getDockVisualScale(dock, panelHost);
+		if (Number.isFinite(paneRect?.bottom) && Number.isFinite(winRect?.top)) {
+			const available = (paneRect.bottom - winRect.top) / scale;
+			return Math.max(132, available);
+		}
+		return _getMainPaneHeight(panelHost);
+	}
+
+	function _clampDialogDockHeightToMain(height, panelHost = filtersHost, dock = _dialogControlDock, win = null) {
+		const max = _getDialogDockMaxHeight(panelHost, dock, win);
+		const min = Math.min(132, max);
+		const value = Number.isFinite(height) ? height : min;
+		return Math.max(min, Math.min(max, value));
+	}
+
+	function _clampDialogDockResizeWidth(width, panelHost = filtersHost) {
+		const dock = _dialogControlDock;
+		const scale = _getDockVisualScale(dock, panelHost);
+		const dockRect = dock?.getBoundingClientRect?.();
+		const hasDockPosition = !!dock?.style?.left;
+		const availableVisual = hasDockPosition && Number.isFinite(dockRect?.right) ? Math.max(220, dockRect.right - 8) : window.innerWidth - 8;
+		const max = Math.max(220, Math.min(520, availableVisual / scale));
+		return Math.max(220, Math.min(max, Number.isFinite(width) ? width : 260));
+	}
+
+	function _syncDialogDockWidthToPanel(panelHost = filtersHost) {
+		const dock = _dialogControlDock;
+		const win = dock?.querySelector('.dialog-control-window');
+		if (!dock || !win || !panelHost) return;
+		if (_isFiltersPanelHidden(panelHost)) return;
+		const max = _clampDialogDockResizeWidth(520, panelHost);
+		dock.style.setProperty('--dock-max-width', max + 'px');
+		win.style.maxWidth = max + 'px';
+		const current = win.offsetWidth || parseFloat(win.style.width || '') || 260;
+		const next = _clampDialogDockResizeWidth(current, panelHost);
+		if (Math.abs(current - next) > 0.5) win.style.width = next + 'px';
+		_fitDialogDockHeight(false);
+	}
+
+	function _getDialogDockContentHeight(win, list) {
+		if (!win || !list) return 160;
+		const prevWinHeight = win.style.height;
+		const prevWinMinHeight = win.style.minHeight;
+		const prevWinMaxHeight = win.style.maxHeight;
+		const prevListFlex = list.style.flex;
+		const prevListHeight = list.style.height;
+		const prevListMaxHeight = list.style.maxHeight;
+		const prevListOverflow = list.style.overflow;
+		try {
+			win.style.height = 'auto';
+			win.style.minHeight = '0px';
+			win.style.maxHeight = 'none';
+			list.style.flex = '0 0 auto';
+			list.style.height = 'auto';
+			list.style.maxHeight = 'none';
+			list.style.overflow = 'visible';
+			const st = getComputedStyle(win);
+			const pad = (parseFloat(st.paddingTop) || 0) + (parseFloat(st.paddingBottom) || 0);
+			const border = (parseFloat(st.borderTopWidth) || 0) + (parseFloat(st.borderBottomWidth) || 0);
+			const header = win.querySelector('.dialog-control-header');
+			const headerH = header ? header.offsetHeight + (parseFloat(getComputedStyle(header).marginBottom) || 0) : 0;
+			return Math.ceil(pad + border + headerH + list.scrollHeight + 8);
+		} finally {
+			win.style.height = prevWinHeight;
+			win.style.minHeight = prevWinMinHeight;
+			win.style.maxHeight = prevWinMaxHeight;
+			list.style.flex = prevListFlex;
+			list.style.height = prevListHeight;
+			list.style.maxHeight = prevListMaxHeight;
+			list.style.overflow = prevListOverflow;
+		}
+	}
+
+	function _setDialogDockListOverflow(list, canScroll) {
+		if (!list) return;
+		list.style.overflow = canScroll ? 'auto' : 'hidden';
+	}
+
+	function _syncLinkedPanelHeights() {
+		const dock = _dialogControlDock;
+		const win = dock?.querySelector('.dialog-control-window');
+		const list = dock?.querySelector('#anit_dialog_control_list');
+		const pane = filtersHost?.querySelector('.pane');
+		if (!dock || !win || !list || !pane || !_getDialogControlItems().length) return;
+		const contentH = _getDialogDockContentHeight(win, list);
+		const mainH = _getDialogDockMaxHeight(filtersHost, dock, win);
+		dock.classList.remove('--manual-height');
+		const desired = _clampDialogDockHeightToMain(contentH, filtersHost, dock, win);
+		const minHeight = Math.min(132, mainH);
+		const fits = contentH <= desired + 1;
+		win.style.minHeight = minHeight + 'px';
+		win.style.maxHeight = mainH + 'px';
+		win.style.height = desired + 'px';
+		_setDialogDockListOverflow(list, !fits);
+	}
+
+	function _fitDialogDockHeight(autoGrow = false) {
+		const dock = _dialogControlDock;
+		const win = dock?.querySelector('.dialog-control-window');
+		const list = dock?.querySelector('#anit_dialog_control_list');
+		if (!dock || !win || !list) return;
+		if (!_getDialogControlItems().length) {
+			dock.classList.remove('--manual-height');
+			win.style.height = 'auto';
+			win.style.minHeight = '0px';
+			win.style.maxHeight = 'none';
+			_setDialogDockListOverflow(list, false);
+			return;
+		}
+		_syncLinkedPanelHeights();
+	}
+
+	function _clearDialogDockHostHiddenState() {
+		const dock = _dialogControlDock || document.getElementById('anit-dialog-control-dock');
+		if (!dock) return;
+		if (_dialogDockHideFinalizeTimer) {
+			clearTimeout(_dialogDockHideFinalizeTimer);
+			_dialogDockHideFinalizeTimer = null;
+		}
+		document.documentElement.classList.remove('pena-linked-panels-hidden');
+		dock.style.pointerEvents = '';
+		dock.style.removeProperty('width');
+		dock.style.removeProperty('height');
+		dock.classList.remove('--host-hidden', '--host-hidden-final');
+		const toggle = dock.querySelector('.dialog-control-toggle');
+		if (toggle) toggle.style.removeProperty('display');
+		const win = dock.querySelector('.dialog-control-window');
+		if (win) {
+			win.style.removeProperty('display');
+			win.style.removeProperty('opacity');
+			win.style.removeProperty('pointer-events');
+			win.style.removeProperty('visibility');
+		}
+	}
+
+	function _setDialogDockOpenByUi(open, panelHost = filtersHost) {
+		const dock = _dialogControlDock || document.getElementById('anit-dialog-control-dock');
+		if (!dock) return;
+		if (_dialogDockAutoCloseTimer) {
+			clearTimeout(_dialogDockAutoCloseTimer);
+			_dialogDockAutoCloseTimer = null;
+		}
+		dock.style.removeProperty('width');
+		dock.style.removeProperty('height');
+		dock.style.pointerEvents = '';
+		dock.classList.remove('--host-hidden', '--host-hidden-final');
+		const toggle = dock.querySelector('.dialog-control-toggle');
+		if (toggle) toggle.style.removeProperty('display');
+		const win = dock.querySelector('.dialog-control-window');
+		if (win) {
+			win.style.removeProperty('display');
+			win.style.removeProperty('opacity');
+			win.style.removeProperty('pointer-events');
+			win.style.removeProperty('visibility');
+		}
+		dock.querySelector('.dialog-control-settings-pop')?.classList.remove('--show');
+		dock.querySelector('#anit_dialog_control_confirm')?.classList.remove('--show');
+		dock.querySelector('#anit_dialog_control_toast')?.classList.remove('--show', '--danger', '--ok');
+		if (open) {
+			dock.dataset.openedByClick = '1';
+			dock.classList.add('--expanded');
+			_syncDialogDockAppearance(panelHost);
+			_refreshDialogControlPanel(panelHost, true);
+			_fitDialogDockHeight(false);
+		} else {
+			dock.dataset.openedByClick = '';
+			dock.classList.remove('--expanded');
+			_saveDialogDockState();
+		}
+	}
+
+	function _clearDialogDockAutoClose() {
+		if (_dialogDockAutoCloseTimer) {
+			clearTimeout(_dialogDockAutoCloseTimer);
+			_dialogDockAutoCloseTimer = null;
+		}
+	}
+
+	function _setDialogDockPinned(pinned, panelHost = filtersHost) {
+		const dock = _dialogControlDock || document.getElementById('anit-dialog-control-dock');
+		if (!dock) return;
+		const shouldPin = !!pinned;
+		dock.classList.toggle('--pinned', shouldPin);
+		if (shouldPin) {
+			dock.classList.add('--expanded');
+			_clearDialogDockAutoClose();
+		}
+		_syncDialogDockPinButton(dock);
+		_syncDialogDockAppearance(panelHost);
+		_refreshDialogControlPanel(panelHost, true);
+		_fitDialogDockHeight(false);
+		_saveDialogDockState();
+	}
+
+	function _scheduleDialogDockAutoClose() {
+		const dock = _dialogControlDock || document.getElementById('anit-dialog-control-dock');
+		if (!dock || dock.classList.contains('--pinned') || !dock.classList.contains('--expanded')) return;
+		_clearDialogDockAutoClose();
+		_dialogDockAutoCloseTimer = setTimeout(() => {
+			_dialogDockAutoCloseTimer = null;
+			const current = _dialogControlDock || document.getElementById('anit-dialog-control-dock');
+			if (!current || current.classList.contains('--pinned')) return;
+			_setDialogDockOpenByUi(false, filtersHost);
+		}, 7000);
+	}
+
+	function _syncDialogDockPinButton(dock = _dialogControlDock) {
+		const btn = dock?.querySelector('.dialog-control-close');
+		if (!btn) return;
+		const pinned = !!dock?.classList.contains('--pinned');
+		btn.classList.toggle('--active', pinned);
+		btn.setAttribute('aria-pressed', pinned ? 'true' : 'false');
+		btn.title = pinned ? 'Открепить док контроля' : 'Закрепить док контроля';
+		btn.innerHTML = pinned
+			? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 17v5"/><path d="M8 22h8"/><path d="m15 4 5 5"/><path d="m14 5-7 7v4h4l7-7"/><path d="M5 3 21 19"/></svg>'
+			: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 17v5"/><path d="M8 22h8"/><path d="m15 4 5 5"/><path d="m14 5-7 7v4h4l7-7"/></svg>';
+	}
+
+	function _applyDialogDockColumns(dock = _dialogControlDock, cols = 1) {
+		if (!dock) return;
+		const two = Number(cols) === 2;
+		dock.classList.toggle('--cols-2', two);
+		const btn = dock.querySelector('.dialog-control-columns-btn');
+		if (btn) {
+			btn.classList.toggle('--active', two);
+			btn.setAttribute('aria-pressed', two ? 'true' : 'false');
+			btn.title = two ? 'Показать в одну колонку' : 'Показать в две колонки';
+		}
+	}
+
+	function _syncDialogDockToPanel(panelHost = filtersHost, grow = false) {
+		if (_panelModeSwitching) return;
+		if (!_dialogControlDock || !panelHost || !document.body.contains(_dialogControlDock)) return;
+		if (_isFiltersPanelHidden(panelHost)) return;
+		_placeDialogDockNearPanel(_dialogControlDock, panelHost);
+		_syncDialogDockWidthToPanel(panelHost);
+		if (grow) _syncLinkedPanelHeights();
+	}
+
+	function _ensureDialogControlDock(panelHost = filtersHost) {
+		let dock = document.getElementById('anit-dialog-control-dock');
+		if (dock) {
+			_dialogControlDock = dock;
+			if (dock.dataset.mode !== _pMode()) {
+				_forceCloseDialogControlPalettes();
+				dock.dataset.mode = _pMode();
+				const saved = (() => { try { return JSON.parse(localStorage.getItem(_dialogDockKey()) || '{}'); } catch { return {}; } })();
+				const win = dock.querySelector('.dialog-control-window');
+				if (win) {
+					if (Number.isFinite(saved.w)) win.style.width = Math.max(220, Math.min(520, saved.w)) + 'px';
+					win.style.removeProperty('height');
+					dock.classList.remove('--manual-height');
+				}
+				_applyDialogDockScale(dock, Number.isFinite(saved.scale) ? saved.scale : (parseFloat(panelHost?.dataset?.panelScale || '1') || 1));
+				dock.classList.toggle('--pinned', !!saved.pinned);
+				_applyDialogDockColumns(dock, saved.cols);
+			}
+			_syncDialogDockAppearance(panelHost);
+			_placeDialogDockNearPanel(dock, panelHost);
+			_syncDialogDockWidthToPanel(panelHost, false);
+			_syncDialogDockPinButton(dock);
+			return dock;
+		}
+		dock = document.createElement('div');
+		dock.id = 'anit-dialog-control-dock';
+		dock.dataset.mode = _pMode();
+		dock.innerHTML = `
+			<button type="button" class="dialog-control-toggle" title="Диалоги под контролем">
+				<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="M2 12h3"/><path d="M19 12h3"/></svg>
+			</button>
+			<div class="dialog-control-window">
+				<div class="dialog-control-header">
+					<div class="dialog-control-brand">
+						${_PENA_LOGO_URL
+							? `<img src="${_PENA_LOGO_URL}" class="dialog-control-logo" alt="PENA Agency">`
+							: `<span class="dialog-control-logo-fallback" aria-hidden="true">PA</span>`}
+						<div class="dialog-control-section">Контроль</div>
+					</div>
+					<div class="dialog-control-actions">
+						<button type="button" class="dialog-control-mode-btn" title="Выбрать диалог для контроля" aria-pressed="false">
+							<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="M2 12h3"/><path d="M19 12h3"/></svg>
+						</button>
+						<button type="button" class="dialog-control-clear-btn" title="Очистить список">
+							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M7 7l1 13h8l1-13"/><path d="M9 7V4h6v3"/></svg>
+						</button>
+						<button type="button" class="dialog-control-columns-btn" title="Показать в две колонки" aria-pressed="false">
+							<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="6" height="14" rx="1.5"/><rect x="14" y="5" width="6" height="14" rx="1.5"/></svg>
+						</button>
+						<button type="button" class="dialog-control-close" title="Свернуть">
+							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 17v5"/><path d="M8 22h8"/><path d="m15 4 5 5"/><path d="m14 5-7 7v4h4l7-7"/></svg>
+						</button>
+					</div>
+				</div>
+				<div class="dialog-control-confirm" id="anit_dialog_control_confirm"></div>
+				<div class="dialog-control-toast" id="anit_dialog_control_toast"></div>
+				<div id="anit_dialog_control_overlay"><span class="anit-control-flag"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="M2 12h3"/><path d="M19 12h3"/></svg><span>Режим контроля диалога</span></span></div>
+				<div class="dialog-control-list" id="anit_dialog_control_list"></div>
+			</div>`;
+		document.body.appendChild(dock);
+		_dialogControlDock = dock;
+		const externalScale = parseFloat(panelHost?.dataset?.externalScale || '1') || 1;
+		dock.style.zoom = String(1 / externalScale);
+
+		const saved = (() => { try { return JSON.parse(localStorage.getItem(_dialogDockKey()) || '{}'); } catch { return {}; } })();
+		const win = dock.querySelector('.dialog-control-window');
+		if (win) {
+			if (Number.isFinite(saved.w)) win.style.width = Math.max(220, Math.min(520, saved.w)) + 'px';
+			win.style.removeProperty('height');
+			dock.classList.remove('--manual-height');
+		}
+		_applyDialogDockScale(dock, Number.isFinite(saved.scale) ? saved.scale : (parseFloat(panelHost?.dataset?.panelScale || '1') || 1));
+		_applyDialogDockColumns(dock, saved.cols);
+		_placeDialogDockNearPanel(dock, panelHost);
+		_syncDialogDockWidthToPanel(panelHost, false);
+		dock.classList.toggle('--pinned', !!saved.pinned);
+		_syncDialogDockAppearance(panelHost);
+		_syncDialogDockPinButton(dock);
+		dock.addEventListener('mouseenter', () => {
+			_setLinkedPanelOpacityLift(true);
+			_clearDialogDockAutoClose();
+			_setDialogDockOpenByUi(true, panelHost);
+		});
+		dock.addEventListener('mouseleave', () => {
+			_setLinkedPanelOpacityLift(false);
+			_scheduleDialogDockAutoClose();
+		});
+		dock.querySelector('.dialog-control-close')?.addEventListener('click', (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			_closeDialogControlPalettes(false);
+			_setDialogDockPinned(!dock.classList.contains('--pinned'), panelHost);
+			if (!dock.classList.contains('--pinned')) _scheduleDialogDockAutoClose();
+		});
+		dock.querySelector('.dialog-control-clear-btn')?.addEventListener('click', (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			if (!_getDialogControlItems().length) {
+				_showDialogDockToast('Список уже пуст', 'danger');
+				return;
+			}
+			_showDialogControlConfirm(
+				'Очистить все диалоги под контролем?',
+				'Очистить', 'Отмена',
+				() => {
+					_dialogControlItems[_pMode()] = [];
+					_saveDialogControlItems();
+					_renderDialogControlPanel(panelHost);
+					_showDialogDockToast('Список контроля очищен', 'ok');
+				}
+			);
+		});
+		dock.querySelector('.dialog-control-columns-btn')?.addEventListener('click', (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			const next = dock.classList.contains('--cols-2') ? 1 : 2;
+			_applyDialogDockColumns(dock, next);
+			_syncDialogDockWidthToPanel(panelHost, !!_getDialogControlItems().length);
+			_saveDialogDockState();
+		});
+		dock.querySelector('.dialog-control-mode-btn')?.addEventListener('click', (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			if (_dialogControlActive) {
+				_exitDialogControlMode();
+				/*
+					'Выключить режим контроля диалога?',
+					'Выключить', 'Отмена',
+				*/
+			} else {
+				_enterDialogControlMode();
+				/*
+					'Войти в режим контроля? Следующим кликом выберите диалог в ленте.',
+					'Войти', 'Отмена',
+				*/
+			}
+		});
+		const dockResizeClasses = ['dock-rz-w', 'dock-rz-s', 'dock-rz-sw'];
+		const dockResizeEdge = 12;
+		let rz = null;
+		const getDockWin = () => dock.querySelector('.dialog-control-window');
+		const isDockOpen = () => dock.classList.contains('--expanded') || dock.classList.contains('--pinned');
+		const getDockEdges = (e) => {
+			const w = getDockWin();
+			if (!w || !isDockOpen()) return { l: false, r: false, b: false };
+			const r = w.getBoundingClientRect();
+			const leftEdge = e.clientX <= r.left + dockResizeEdge;
+			const bottomEdge = e.clientY >= r.bottom - dockResizeEdge;
+			return {
+				l: leftEdge,
+				r: false,
+				b: leftEdge && bottomEdge
+			};
+		};
+		const dockEdgeClass = (g) => {
+			if (g.l && g.b) return 'dock-rz-sw';
+			if (g.l) return 'dock-rz-w';
+			if (g.b) return 'dock-rz-s';
+			return '';
+		};
+		const setDockResizeCursor = (cls) => {
+			dock.classList.remove(...dockResizeClasses);
+			if (cls) dock.classList.add(cls);
+		};
+		dock.addEventListener('mousemove', (e) => {
+			if (rz) return;
+			if (!isDockOpen()) {
+				setDockResizeCursor('');
+				return;
+			}
+			const edges = getDockEdges(e);
+			const overUI = !!e.target.closest('button,input,select,textarea,a,[contenteditable],.dialog-control-chip,label');
+			setDockResizeCursor(overUI && !edges.l && !edges.r && !edges.b ? '' : dockEdgeClass(edges));
+		});
+		dock.addEventListener('mouseleave', () => {
+			if (!rz) setDockResizeCursor('');
+		});
+		dock.addEventListener('mousedown', (e) => {
+			if (e.button !== 0 || !isDockOpen()) return;
+			const edges = getDockEdges(e);
+			if (!edges.l && !edges.r && !edges.b) return;
+			const w = getDockWin();
+			if (!w) return;
+			rz = { x: e.clientX, y: e.clientY, w: w.offsetWidth, h: w.offsetHeight, edges, scale: _getDockVisualScale(dock, filtersHost), dockScale: _safePositiveNumber(dock.dataset.dockScale || dock.style.getPropertyValue('--dock-scale'), 1) };
+			e.preventDefault();
+			e.stopPropagation();
+			setDockResizeCursor(dockEdgeClass(edges));
+		});
+		document.addEventListener('mousemove', (e) => {
+			if (!rz) return;
+			const w = getDockWin();
+			if (!w) return;
+			const dx = (e.clientX - rz.x) / (rz.scale || 1);
+			const dy = (e.clientY - rz.y) / (rz.scale || 1);
+			if (rz.edges.l && rz.edges.b) {
+				const rawDx = rz.x - e.clientX;
+				const rawDy = e.clientY - rz.y;
+				const delta = Math.abs(rawDx) >= Math.abs(rawDy) ? rawDx : rawDy;
+				_applyDialogDockScale(dock, rz.dockScale + (delta / 360));
+				_fitDialogDockHeight(true);
+				e.preventDefault();
+				return;
+			}
+			let nextW = null;
+			if (rz.edges.l) nextW = _clampDialogDockResizeWidth(rz.w - dx, filtersHost);
+			if (rz.edges.r) nextW = _clampDialogDockResizeWidth(rz.w + dx, filtersHost);
+			if (nextW !== null) {
+				w.style.width = nextW + 'px';
+				_fitDialogDockHeight(true);
+			}
+			_fitDialogDockHeight(true);
+			e.preventDefault();
+		});
+		document.addEventListener('mouseup', () => {
+			if (!rz) return;
+			rz = null;
+			setDockResizeCursor('');
+			_saveDialogDockState();
+		});
+
+		let dockDrag = null;
+		dock.addEventListener('mousedown', (e) => {
+			if (e.button !== 0) return;
+			const t = e.target;
+			const fromToggle = !!t.closest('.dialog-control-toggle');
+			if (!fromToggle && !t.closest('.dialog-control-window')) return;
+			if (!fromToggle && t.closest('button,input,select,textarea,a,[contenteditable],.dialog-control-chip,.dialog-control-confirm,.dialog-control-toast')) return;
+			const edges = getDockEdges(e);
+			if (edges.l || edges.r || edges.b) return;
+			const main = filtersHost;
+			dockDrag = {
+				x: e.clientX,
+				y: e.clientY,
+				left: parseFloat(dock.style.left || '0') || 0,
+				top: parseFloat(dock.style.top || '0') || 0,
+				main,
+				mainLeft: main ? (parseFloat(main.style.left || '0') || 0) : 0,
+				mainTop: main ? (parseFloat(main.style.top || '0') || 0) : 0
+			};
+			dock.classList.add('dock-dragging');
+			main?.classList.add('anit-dragging');
+			e.preventDefault();
+			e.stopPropagation();
+		});
+		document.addEventListener('mousemove', (e) => {
+			if (!dockDrag) return;
+			const dx = e.clientX - dockDrag.x;
+			const dy = e.clientY - dockDrag.y;
+			if (dockDrag.main && document.body.contains(dockDrag.main)) {
+				const r = dockDrag.main.getBoundingClientRect();
+				const maxLeft = Math.max(0, window.innerWidth - r.width);
+				const maxTop = Math.max(0, window.innerHeight - r.height);
+				dockDrag.main.style.left = Math.max(0, Math.min(dockDrag.mainLeft + dx, maxLeft)) + 'px';
+				dockDrag.main.style.top = Math.max(0, Math.min(dockDrag.mainTop + dy, maxTop)) + 'px';
+				_placeDialogDockNearPanel(dock, dockDrag.main);
+			} else {
+				dock.style.left = Math.max(6, Math.min(dockDrag.left + dx, window.innerWidth - 30)) + 'px';
+				dock.style.top = Math.max(6, Math.min(dockDrag.top + dy, window.innerHeight - 30)) + 'px';
+			}
+			if (Math.abs(e.clientX - dockDrag.x) > 3 || Math.abs(e.clientY - dockDrag.y) > 3) dockDrag.moved = true;
+		});
+		document.addEventListener('mouseup', () => {
+			if (!dockDrag) return;
+			const main = dockDrag.main;
+			const moved = dockDrag.moved;
+			dockDrag = null;
+			dock.classList.remove('dock-dragging');
+			main?.classList.remove('anit-dragging');
+			if (main && document.body.contains(main)) {
+				try {
+					localStorage.setItem(POS_LS_KEY(IS_OL_FRAME ? 'ol' : 'internal'), JSON.stringify({
+						left: parseInt(main.style.left || '0', 10) || 0,
+						top: parseInt(main.style.top || '0', 10) || 0
+					}));
+				} catch {}
+			}
+			if (moved) dock.dataset.lastDragTs = String(Date.now());
+			if (main && document.body.contains(main)) {
+				const pane = main.querySelector('.pane');
+				try { localStorage.setItem(`pena.panelSize.${_pMode()}`, JSON.stringify({ w: main.style.width, h: pane?.style.maxHeight || '' })); } catch {}
+			}
+			_saveDialogDockState();
+		});
+
+		return dock;
+	}
+
+	function _renderDialogControlPanel(h = filtersHost) {
+		if (_panelModeSwitching) return;
+		const panel = _ensureDialogControlDock(h);
+		const list = panel?.querySelector('#anit_dialog_control_list');
+		if (!panel || !list) return;
+		const items = _getDialogControlItems();
+		panel.classList.toggle('--empty', !items.length);
+		panel.classList.toggle('--has-items', !!items.length);
+		list.innerHTML = '';
+		if (!items.length) {
+			const empty = document.createElement('div');
+			empty.className = 'dialog-control-empty';
+			empty.textContent = 'Диалогов под контролем нет';
+			list.appendChild(empty);
+			_fitDialogDockHeight(false);
+			return;
+		}
+		let draggingId = null;
+		let overRow = null;
+		let dropSide = 'before';
+		const visibleChatIndex = buildChatElementIndex();
+		const clearDragOver = () => {
+			if (overRow) overRow.classList.remove('--drop-before', '--drop-after');
+			overRow = null;
+		};
+		items.forEach(item => {
+			const el = visibleChatIndex.get(normId(item.id)) || null;
+			const meta = el ? getItemMeta(el) : null;
+			const unreadCount = meta?.unreadCount || 0;
+			const isUnread = !!(meta?.hasUnread || meta?.hasLater || meta?.hasMention);
+			const row = document.createElement('button');
+			row.type = 'button';
+			row.className = 'dialog-control-chip';
+			row.draggable = true;
+			row.classList.toggle('--unread', isUnread);
+			row.classList.toggle('--later', !!meta?.hasLater && !meta?.hasUnread);
+			row.classList.toggle('--mention', !!meta?.hasMention);
+			const chipColor = _normalizeDialogControlColor(item.color);
+			row.classList.toggle('--colored', !!chipColor);
+			if (chipColor) _applyDialogControlColorVars(row, chipColor);
+			row.dataset.dialogId = item.id;
+			row.title = 'Открыть диалог; перетащите, чтобы изменить порядок';
+			row.addEventListener('click', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				_closeDialogControlPalettes(true);
+				list.querySelectorAll('.dialog-control-color-wrap.--open').forEach(el => el.classList.remove('--open'));
+				const ts = Number(list.dataset.lastDragTs || 0);
+				if (ts && (Date.now() - ts) < 250) return;
+				const targetEl = findChatElementById(item.id);
+				if (!targetEl || !openChatElement(targetEl)) {
+					_showDialogDockToast('Диалог не найден в текущей ленте', 'danger');
+				}
+			});
+			row.addEventListener('dragstart', (e) => {
+				draggingId = item.id;
+				row.classList.add('--dragging');
+				if (e.dataTransfer) {
+					e.dataTransfer.effectAllowed = 'move';
+					try { e.dataTransfer.setData('text/plain', item.id); } catch {}
+				}
+			});
+			row.addEventListener('dragend', () => {
+				row.classList.remove('--dragging');
+				clearDragOver();
+				draggingId = null;
+				list.dataset.lastDragTs = String(Date.now());
+			});
+			row.addEventListener('dragover', (e) => {
+				if (!draggingId || draggingId === item.id) return;
+				e.preventDefault();
+				if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+				if (overRow && overRow !== row) overRow.classList.remove('--drop-before', '--drop-after');
+				overRow = row;
+				const rect = row.getBoundingClientRect();
+				dropSide = e.clientY > rect.top + rect.height / 2 ? 'after' : 'before';
+				row.classList.toggle('--drop-before', dropSide === 'before');
+				row.classList.toggle('--drop-after', dropSide === 'after');
+			});
+			row.addEventListener('dragleave', (e) => {
+				if (!row.contains(e.relatedTarget)) {
+					row.classList.remove('--drop-before', '--drop-after');
+					if (overRow === row) overRow = null;
+				}
+			});
+			row.addEventListener('drop', (e) => {
+				if (!draggingId || draggingId === item.id) return;
+				e.preventDefault();
+				e.stopPropagation();
+				row.classList.remove('--drop-before', '--drop-after');
+				const arr = [..._getDialogControlItems()];
+				const fromIdx = arr.findIndex(x => x.id === draggingId);
+				const toIdx = arr.findIndex(x => x.id === item.id);
+				if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return;
+				const [moved] = arr.splice(fromIdx, 1);
+				let insertIdx = toIdx + (dropSide === 'after' ? 1 : 0);
+				if (fromIdx < insertIdx) insertIdx -= 1;
+				arr.splice(insertIdx, 0, moved);
+				_dialogControlItems[_pMode()] = arr;
+				_saveDialogControlItems();
+				_dialogControlLastSig = '';
+				list.dataset.lastDragTs = String(Date.now());
+				_renderDialogControlPanel(h);
+			});
+			const state = document.createElement('span');
+			state.className = 'dialog-control-state';
+			if (isUnread) {
+				state.title = meta?.hasMention ? 'Вас упомянули' : (meta?.hasLater && !meta?.hasUnread ? 'Прочитаю позже' : 'Непрочитанные');
+				const countLabel = meta?.hasMention ? '@' : (unreadCount > 0 ? String(unreadCount) : (meta?.hasLater ? '!' : ''));
+				state.innerHTML = `<span class="dialog-control-dot"><span class="dialog-control-count">${countLabel}</span></span>`;
+			} else {
+				state.innerHTML = '<span class="dialog-control-dot --empty"></span>';
+			}
+			const title = document.createElement('span');
+			title.className = 'dialog-control-title';
+			title.textContent = item.title || 'Диалог';
+			const colorWrap = document.createElement('span');
+			colorWrap.className = 'dialog-control-color-wrap';
+			colorWrap.addEventListener('mousedown', (e) => {
+				e.stopPropagation();
+			});
+			colorWrap.addEventListener('dragstart', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+			});
+			const colorBtn = document.createElement('button');
+			colorBtn.type = 'button';
+			colorBtn.className = 'dialog-control-color';
+			colorBtn.draggable = false;
+			colorBtn.title = chipColor ? 'Изменить цвет диалога' : 'Выбрать цвет диалога';
+			colorBtn.setAttribute('aria-label', colorBtn.title);
+			if (chipColor) _applyDialogControlColorVars(colorBtn, chipColor);
+			const palette = document.createElement('div');
+			palette.className = 'dialog-control-palette';
+			palette.tabIndex = -1;
+			palette.addEventListener('mousedown', (e) => {
+				e.stopPropagation();
+			});
+			palette.addEventListener('click', (e) => {
+				e.stopPropagation();
+			});
+			palette.addEventListener('mouseenter', () => {
+				_clearDialogControlPaletteClose();
+				_setLinkedPanelOpacityLift(true);
+				_clearDialogDockAutoClose();
+			});
+			palette.addEventListener('mouseleave', () => {
+				_setLinkedPanelOpacityLift(false);
+				_scheduleDialogDockAutoClose();
+				_scheduleDialogControlPaletteClose(5000);
+			});
+			let draftColor = chipColor || '#4d9dff';
+			const preview = document.createElement('span');
+			preview.className = 'dialog-control-preview';
+			const miniPicker = document.createElement('div');
+			miniPicker.className = 'dialog-control-mini-picker';
+			const pickerKnob = document.createElement('span');
+			pickerKnob.className = 'dialog-control-picker-knob';
+			miniPicker.appendChild(pickerKnob);
+			const swatches = document.createElement('div');
+			swatches.className = 'dialog-control-swatches';
+			const closePalette = document.createElement('button');
+			closePalette.type = 'button';
+			closePalette.className = 'dialog-control-palette-close';
+			closePalette.title = 'Закрыть';
+			closePalette.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M10.4 2.4 9.6 1.6 6 5.2 2.4 1.6 1.6 2.4 5.2 6 1.6 9.6 2.4 10.4 6 6.8 9.6 10.4 10.4 9.6 6.8 6z"/></svg>';
+			closePalette.addEventListener('click', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				_closeDialogControlPalettes(true);
+			});
+			const notice = document.createElement('div');
+			notice.className = 'dialog-control-delete-notice';
+			const closeOnOutside = (e) => {
+				if (palette.contains(e.target) || colorBtn.contains(e.target)) return;
+				document.removeEventListener('pointerdown', closeOnOutside, true);
+				_closeDialogControlPalettes(true);
+			};
+			const showDeleteConfirm = (color) => {
+				const usage = _getDialogControlColorUsage(color);
+				notice.innerHTML = '';
+				_applyDialogControlColorVars(notice, color);
+				const textEl = document.createElement('span');
+				textEl.className = 'dialog-control-delete-text';
+				const usageText = usage.total === 0
+					? 'Не используется'
+					: usage.total === 1
+						? 'Используется 1 раз'
+						: `Используется ${usage.total} раза`;
+				textEl.textContent = `${usageText}. Удалить?`;
+				const actions = document.createElement('div');
+				actions.className = 'dialog-control-delete-actions';
+				const cancel = document.createElement('button');
+				cancel.type = 'button';
+				cancel.textContent = 'Нет';
+				const ok = document.createElement('button');
+				ok.type = 'button';
+				ok.className = '--danger';
+				ok.textContent = 'Да';
+				cancel.addEventListener('click', (e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					notice.classList.remove('--show');
+				});
+				ok.addEventListener('click', (e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					_deleteCustomDialogControlColor(color);
+					if (_normalizeDialogControlColor(item.color) === _normalizeDialogControlColor(color)) commitColor('');
+					notice.classList.remove('--show');
+					palette.querySelector(`.dialog-control-swatch[data-color="${color}"]`)?.closest('.dialog-control-swatch-wrap')?.remove();
+					_showDialogDockToast(`Цвет удалён. Сброшено: ${usage.total}`, 'ok');
+				});
+				actions.append(cancel, ok);
+				notice.append(textEl, actions);
+				notice.classList.add('--show');
+			};
+			const applyDraft = (color) => {
+				const next = _normalizeDialogControlColor(color) || '#4d9dff';
+				draftColor = next;
+				_applyDialogControlColorVars(preview, next);
+				_applyDialogControlColorVars(pickerKnob, next);
+				palette.querySelectorAll('.dialog-control-swatch').forEach(btn => {
+					btn.classList.toggle('--active', btn.dataset.color === next);
+				});
+			};
+			const commitColor = (color) => {
+				const next = _normalizeDialogControlColor(color);
+				_setDialogControlItemColor(item.id, next);
+				row.classList.toggle('--colored', !!next);
+				if (next) {
+					_applyDialogControlColorVars(row, next);
+					_applyDialogControlColorVars(colorBtn, next);
+				} else {
+					_clearDialogControlColorVars(row);
+					_clearDialogControlColorVars(colorBtn);
+				}
+				palette.querySelectorAll('.dialog-control-swatch').forEach(btn => {
+					btn.classList.toggle('--active', !!next && btn.dataset.color === next);
+				});
+			};
+			const makeColorSwatch = (color) => {
+				const swatchWrap = document.createElement('span');
+				swatchWrap.className = 'dialog-control-swatch-wrap';
+				const swatch = document.createElement('button');
+				swatch.type = 'button';
+				swatch.className = 'dialog-control-swatch';
+				swatch.draggable = false;
+				swatch.dataset.color = color;
+				_applyDialogControlColorVars(swatch, color);
+				swatch.classList.toggle('--active', chipColor === color);
+				swatch.title = 'Применить цвет';
+				swatch.addEventListener('click', (e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					commitColor(color);
+				});
+				swatchWrap.appendChild(swatch);
+				if (true) {
+					const del = document.createElement('button');
+					del.type = 'button';
+					del.className = 'dialog-control-swatch-delete';
+					del.title = 'Удалить цвет';
+					del.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M10.4 2.4 9.6 1.6 6 5.2 2.4 1.6 1.6 2.4 5.2 6 1.6 9.6 2.4 10.4 6 6.8 9.6 10.4 10.4 9.6 6.8 6z"/></svg>';
+					del.addEventListener('click', (e) => {
+						e.preventDefault();
+						e.stopPropagation();
+						showDeleteConfirm(color);
+					});
+					swatchWrap.appendChild(del);
+				}
+				return swatchWrap;
+			};
+			_getVisibleDialogControlColors().forEach(color => {
+				swatches.appendChild(makeColorSwatch(color));
+			});
+			const clearColor = document.createElement('button');
+			clearColor.type = 'button';
+			clearColor.className = 'dialog-control-swatch --clear';
+			clearColor.draggable = false;
+			clearColor.title = 'Без цвета';
+			clearColor.innerHTML = '<span class="dialog-control-transparent-icon" aria-hidden="true"></span>';
+			clearColor.addEventListener('click', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				_setDialogControlItemColor(item.id, '');
+				commitColor('');
+			});
+			const clearWrap = document.createElement('span');
+			clearWrap.className = 'dialog-control-swatch-wrap';
+			clearWrap.appendChild(clearColor);
+			swatches.appendChild(clearWrap);
+			const addColor = document.createElement('button');
+			addColor.type = 'button';
+			addColor.className = 'dialog-control-swatch --add';
+			addColor.textContent = '+';
+			addColor.title = 'Добавить цвет';
+			const addWrap = document.createElement('span');
+			addWrap.className = 'dialog-control-swatch-wrap';
+			addWrap.appendChild(addColor);
+			swatches.appendChild(addWrap);
+			const pickFromPointer = (e, commit = false) => {
+				const rect = miniPicker.getBoundingClientRect();
+				const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+				const y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+				const hue = (x / Math.max(1, rect.width)) * 360;
+				const value = 1 - (y / Math.max(1, rect.height)) * 0.72;
+				pickerKnob.style.left = x + 'px';
+				pickerKnob.style.top = y + 'px';
+				applyDraft(_hsvToHex(hue, 0.92, value));
+				if (commit) commitColor(draftColor);
+			};
+			let pickingColor = false;
+			miniPicker.addEventListener('pointerdown', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				pickingColor = true;
+				miniPicker.setPointerCapture?.(e.pointerId);
+				pickFromPointer(e, false);
+			});
+			miniPicker.addEventListener('pointermove', (e) => {
+				if (!pickingColor) return;
+				e.preventDefault();
+				pickFromPointer(e, false);
+			});
+			miniPicker.addEventListener('pointerup', (e) => {
+				if (!pickingColor) return;
+				pickingColor = false;
+				e.preventDefault();
+				pickFromPointer(e, false);
+			});
+			addColor.addEventListener('click', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				_saveRemovedDefaultDialogControlColors(_getRemovedDefaultDialogControlColors().filter(c => c !== draftColor));
+				_saveCustomDialogControlColors([draftColor, ..._getCustomDialogControlColors()]);
+				if (!palette.querySelector(`.dialog-control-swatch[data-color="${draftColor}"]`)) {
+					swatches.insertBefore(makeColorSwatch(draftColor), addWrap);
+				}
+				commitColor(draftColor);
+			});
+			palette.append(preview, miniPicker, closePalette, swatches, notice);
+			applyDraft(draftColor);
+			colorBtn.addEventListener('click', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				const wasOpen = Array.from(document.querySelectorAll('.dialog-control-palette')).some(el => el.dataset.dialogId === String(item.id));
+				_clearDialogControlPaletteClose();
+				_forceCloseDialogControlPalettes();
+				if (wasOpen) return;
+				colorWrap.classList.add('--open');
+				const paletteW = 226;
+				const gap = 8;
+				const margin = 12;
+				const paletteH = Math.min(170, window.innerHeight - margin * 2);
+				const btnRect = colorBtn.getBoundingClientRect();
+				const left = Math.max(margin, Math.min(btnRect.right - paletteW, window.innerWidth - paletteW - margin));
+				const placeBelow = btnRect.bottom + gap + paletteH <= window.innerHeight - margin;
+				const top = placeBelow
+					? btnRect.bottom + gap
+					: Math.max(margin, btnRect.top - gap - paletteH);
+				palette.style.left = left + 'px';
+				palette.style.top = top + 'px';
+				palette.dataset.dialogId = String(item.id);
+				document.body.appendChild(palette);
+				requestAnimationFrame(() => {
+					palette.classList.add('--open');
+					palette._penaOutsideHandler = closeOnOutside;
+					setTimeout(() => document.addEventListener('pointerdown', closeOnOutside, true), 0);
+				});
+			});
+			colorWrap.append(colorBtn);
+			const rm = document.createElement('button');
+			rm.type = 'button';
+			rm.className = 'dialog-control-remove';
+			rm.draggable = false;
+			rm.title = 'Убрать из контроля';
+			rm.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M10.4 2.4 9.6 1.6 6 5.2 2.4 1.6 1.6 2.4 5.2 6 1.6 9.6 2.4 10.4 6 6.8 9.6 10.4 10.4 9.6 6.8 6z"/></svg>';
+			rm.addEventListener('click', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				_dialogControlItems[_pMode()] = _getDialogControlItems().filter(x => normId(x.id) !== normId(item.id));
+				_saveDialogControlItems();
+				_renderDialogControlPanel(h);
+			});
+			row.append(state, title, colorWrap, rm);
+			list.appendChild(row);
+		});
+		_fitDialogDockHeight(true);
+	}
+
+	function _updateDialogControlUI(h = filtersHost) {
+		if (_panelModeSwitching) return;
+		if (h) h.classList.remove('anit-dialog-control-mode');
+		const dock = _ensureDialogControlDock(h);
+		dock?.classList.toggle('anit-dialog-control-mode', _dialogControlActive);
+		document.documentElement.classList.toggle('anit-dialog-control-cursor', _dialogControlActive);
+		_scheduleDialogControlSelectionOutlines();
+		const btn = dock?.querySelector('.dialog-control-mode-btn');
+		if (btn) {
+			btn.classList.toggle('--active', _dialogControlActive);
+			btn.setAttribute('aria-pressed', _dialogControlActive ? 'true' : 'false');
+			btn.title = _dialogControlActive ? 'Выйти из режима контроля диалога' : 'Контроль диалога';
+		}
+	}
+
+	function _scheduleDialogControlIdleExit() {
+		if (_dialogControlTimer) clearTimeout(_dialogControlTimer);
+		_dialogControlTimer = setTimeout(() => {
+			_dialogControlTimer = null;
+			if (_dialogControlActive) _exitDialogControlMode();
+		}, _DIALOG_CONTROL_IDLE_MS);
+	}
+
+	function _onDialogControlPointerActivity(e) {
+		if (!_dialogControlActive) return;
+		_scheduleDialogControlIdleExit();
+	}
+
+	function _armDialogControlIdleTracking() {
+		_dialogControlLastPointerX = null;
+		_dialogControlLastPointerY = null;
+		_dialogControlLastPointerTs = 0;
+		if (!_dialogControlPointerTracking) {
+			document.addEventListener('click', _onDialogControlPointerActivity, true);
+			document.addEventListener('keydown', _onDialogControlPointerActivity, true);
+			_dialogControlPointerTracking = true;
+		}
+		_scheduleDialogControlIdleExit();
+	}
+
+	function _disarmDialogControlIdleTracking() {
+		if (_dialogControlTimer) {
+			clearTimeout(_dialogControlTimer);
+			_dialogControlTimer = null;
+		}
+		if (_dialogControlPointerTracking) {
+			document.removeEventListener('click', _onDialogControlPointerActivity, true);
+			document.removeEventListener('keydown', _onDialogControlPointerActivity, true);
+			_dialogControlPointerTracking = false;
+		}
+		_dialogControlLastPointerX = null;
+		_dialogControlLastPointerY = null;
+		_dialogControlLastPointerTs = 0;
+	}
+
+	function _exitDialogControlMode() {
+		_dialogControlActive = false;
+		_disarmDialogControlIdleTracking();
+		_updateDialogControlUI();
+	}
+
+	function _enterDialogControlMode() {
+		_dialogControlActive = true;
+		if (_toastTimer) {
+			clearTimeout(_toastTimer);
+			_toastTimer = null;
+			filtersHost?.querySelector('#anit_preset_toast')?.classList.remove('--show', '--danger', '--ok');
+			_dialogControlDock?.querySelector('#anit_dialog_control_toast')?.classList.remove('--show', '--danger', '--ok');
+		}
+		_armDialogControlIdleTracking();
+		_updateDialogControlUI();
+	}
+
+	function _addDialogToControl(el, keepActive = false) {
+		const id = getChatIdFromElement(el);
+		if (!id) {
+			_showDialogDockToast('Не удалось определить диалог', 'danger');
+			return;
+		}
+		const title = getChatTitleFromElement(el);
+		const items = _getDialogControlItems();
+		const existingIdx = items.findIndex(x => normId(x.id) === normId(id));
+		if (existingIdx >= 0) {
+			const removed = items.splice(existingIdx, 1)[0];
+			_dialogControlItems[_pMode()] = items;
+			_saveDialogControlItems();
+			_renderDialogControlPanel();
+			_fitDialogDockHeight(true);
+			_dialogControlDock?.classList.add('--expanded');
+			el.classList.remove('anit-dialog-control-selected');
+			el.classList.add('anit-dialog-controlled-pulse');
+			setTimeout(() => el.classList.remove('anit-dialog-controlled-pulse'), 850);
+			_showDialogDockToast(`Диалог В«${removed?.title || title}В» убран из контроля`, 'ok');
+			if (keepActive) _scheduleDialogControlIdleExit();
+			else _exitDialogControlMode();
+			return;
+		}
+		items.unshift({ id, title, addedAt: Date.now() });
+		_dialogControlItems[_pMode()] = items;
+		_saveDialogControlItems();
+		_renderDialogControlPanel();
+		_fitDialogDockHeight(true);
+		_dialogControlDock?.classList.add('--expanded');
+		el.classList.add('anit-dialog-controlled-pulse');
+		el.classList.add('anit-dialog-control-selected');
+		setTimeout(() => el.classList.remove('anit-dialog-controlled-pulse'), 850);
+		_showDialogDockToast(`Диалог В«${title}В» выбран`, 'ok');
+		if (keepActive) {
+			_scheduleDialogControlIdleExit();
+		} else {
+			_exitDialogControlMode();
+		}
+	}
+
+	function _showPresetConfirm(msg, okLabel, cancelLabel, onOk, tone = '') {
 		const overlay = filtersHost?.querySelector('#anit_preset_confirm');
 		if (!overlay) { onOk(); return; }
 		overlay.innerHTML = '';
+		overlay.classList.toggle('--danger', tone === 'danger');
 		const p = document.createElement('p');
 		p.textContent = msg;
 		const btns = document.createElement('div');
@@ -1056,7 +2786,7 @@ if (_presetChannel) {
 		ok.type = 'button'; ok.className = '--ok'; ok.textContent = okLabel;
 		const cancel = document.createElement('button');
 		cancel.type = 'button'; cancel.textContent = cancelLabel;
-		const hide = () => overlay.classList.remove('--show');
+		const hide = () => overlay.classList.remove('--show', '--danger');
 		ok.addEventListener('click', () => { hide(); onOk(); });
 		cancel.addEventListener('click', hide);
 		btns.append(ok, cancel);
@@ -1093,7 +2823,7 @@ if (_presetChannel) {
 		if (!presets.length) {
 			const empty = document.createElement('div');
 			empty.className = 'pm-empty';
-			empty.textContent = 'Пресетов нет — добавьте первый ниже';
+			empty.textContent = 'Пресетов нет ? добавьте первый ниже';
 			listEl.appendChild(empty);
 			return;
 		}
@@ -1141,15 +2871,18 @@ if (_presetChannel) {
 			delBtn.innerHTML = DEL_SVG;
 			delBtn.addEventListener('mousedown', (e) => {
 				e.preventDefault();
-				_presetsData[_pMode()] = _getPresetsArr().filter(x => x.id !== p.id);
-				if (_getActiveId() === p.id) {
-					_setActiveId(null);
-					_debugModeActive = false;
-					_updateDebugUI(host);
-				}
-				_saveCustomPresets();
-				renderPresetManagePanel(host);
-				renderPresetsUI(host);
+				e.stopPropagation();
+				_showPresetConfirm(`Удалить пресет В«${p.label}В»?`, 'Удалить', 'Отмена', () => {
+					_presetsData[_pMode()] = _getPresetsArr().filter(x => x.id !== p.id);
+					if (_getActiveId() === p.id) {
+						_setActiveId(null);
+						_debugModeActive = false;
+						_updateDebugUI(host);
+					}
+					_saveCustomPresets();
+					renderPresetManagePanel(host);
+					renderPresetsUI(host);
+				});
 			});
 
 			row.addEventListener('dragstart', (e) => {
@@ -1277,7 +3010,7 @@ if (_presetChannel) {
 	const pos = JSON.parse(raw);
 	if (!pos) return false;
 	host.style.left  = (pos.left ?? 0) + 'px';
-	host.style.top   = (pos.top  ?? 0) + 'px';
+	host.style.top   = (pos.top ?? 0) + 'px';
 	return true;
 } catch { return false; }
 }
@@ -1302,7 +3035,7 @@ if (_presetChannel) {
 				try { refreshHiddenChips(host); updateHiddenCounts(host); } catch {}
 			}
 			// Обновляем визуальное состояние тегов (renderTagChips/renderIntersectionTagChips
-			// определены внутри buildFiltersPanel и недоступны из этой области видимости — обновляем напрямую)
+			// определены внутри buildFiltersPanel и недоступны из этой области видимости ? обновляем напрямую)
 			const _kwChips = host.querySelector('#anit_kwtags_chips');
 			if (_kwChips) {
 				const _kwSel = new Set(Array.isArray(filters.selectedTags) ? filters.selectedTags : []);
@@ -1349,10 +3082,10 @@ if (_presetChannel) {
 
 	function makeDraggable(host, mode) {
 	const handles = [host.querySelector('.header'), host.querySelector('#anit_mini_toggle'), host].filter(Boolean);
-	let dragging = false, moved = false, startX=0, startY=0, startLeft=0, startTop=0;
+	let dragging = false, moved = false, startX=0, startY=0, startLeft=0, startTop=0, dragMiniWithDock=false, dockStartLeft=0, dockStartTop=0;
 
 	const keepInsideViewport = () => {
-	// При сужении окна браузера — тоже сужаем панель, если она шире
+	// При сужении окна браузера ? тоже сужаем панель, если она шире
 	const maxW = window.innerWidth - 8;
 	if (host.offsetWidth > maxW) host.style.width = maxW + 'px';
 	const r = host.getBoundingClientRect();
@@ -1362,6 +3095,7 @@ if (_presetChannel) {
 	const maxTop  = Math.max(0, window.innerHeight - r.height);
 	host.style.left = clamp(left, 0, maxLeft) + 'px';
 	host.style.top  = clamp(top,  0, maxTop)  + 'px';
+	_syncDialogDockToPanel(host);
 };
 
 	const onMove = (clientX, clientY) => {
@@ -1375,25 +3109,35 @@ if (_presetChannel) {
 	const top  = clamp(startTop  + dy, 0, maxTop);
 	host.style.left  = left + 'px';
 	host.style.top   = top  + 'px';
+	if (dragMiniWithDock && _dialogControlDock) {
+		_dialogControlDock.style.left = clamp(dockStartLeft + dx, 0, Math.max(0, window.innerWidth - (_dialogControlDock.getBoundingClientRect().width || 24))) + 'px';
+		_dialogControlDock.style.top = clamp(dockStartTop + dy, 0, Math.max(0, window.innerHeight - (_dialogControlDock.getBoundingClientRect().height || 24))) + 'px';
+	} else {
+		_syncDialogDockToPanel(host);
+	}
 };
 
 	const onPointerDown = (e) => {
 	if (e.type === 'mousedown' && e.button !== 0) return;
 	const t = e.target;
+	const fromMiniToggle = !!t?.closest?.('#anit_mini_toggle');
 	// Запрещаем перетаскивание при клике на интерактивные/скролл элементы
-	if (t && (t.closest?.('button, input, select, textarea, a, [contenteditable], #anit_scr_thumb, #anit_scr_track, .pena-resize-handle, .pm-drag') || t.isContentEditable)) return;
-	// Запрещаем drag в зонах ресайза (края окна) — там должен работать resize
-	{
-		const _r = host.getBoundingClientRect(), _E = 6;
+	if (!fromMiniToggle && t && (t.closest?.('button, input, select, textarea, a, [contenteditable], #anit_scr_thumb, #anit_scr_track, .controls-pop, .pm-drag') || t.isContentEditable)) return;
+	// Запрещаем drag в зонах ресайза (края окна) ? там должен работать resize
+	if (!fromMiniToggle && !host.classList.contains('anit-hidden')) {
+		const _r = host.getBoundingClientRect(), _E = 12;
 		const cx = e.touches?.[0]?.clientX ?? e.clientX ?? 0;
 		const cy = e.touches?.[0]?.clientY ?? e.clientY ?? 0;
 		if (cx <= _r.left + _E || cx >= _r.right - _E || cy >= _r.bottom - _E) return;
 	}
 	dragging = true;
 	moved = false;
+	dragMiniWithDock = fromMiniToggle && host.classList.contains('anit-hidden') && !!_dialogControlDock;
 	host.classList.add('anit-dragging');
 	startLeft = parseInt(host.style.left || (window.innerWidth - host.offsetWidth - 10) + '', 10) || 0;
 	startTop  = parseInt(host.style.top  || '8', 10) || 0;
+	dockStartLeft = parseInt(_dialogControlDock?.style.left || '0', 10) || 0;
+	dockStartTop = parseInt(_dialogControlDock?.style.top || '8', 10) || 0;
 	startX = (e.touches?.[0]?.clientX ?? e.clientX ?? 0);
 	startY = (e.touches?.[0]?.clientY ?? e.clientY ?? 0);
 
@@ -1408,6 +3152,7 @@ if (_presetChannel) {
 	const onPointerUp  = () => {
 	if (!dragging) return;
 	dragging = false;
+	dragMiniWithDock = false;
 	host.classList.remove('anit-dragging');
 	document.removeEventListener('mousemove', onMouseMove);
 	document.removeEventListener('mouseup', onPointerUp);
@@ -1426,16 +3171,63 @@ if (_presetChannel) {
 		h.addEventListener('mousedown', onPointerDown);
 		h.addEventListener('touchstart', onPointerDown, {passive:false});
 	});
+	keepInsideViewport();
+	window.addEventListener('resize', keepInsideViewport);
+}
 
 
+	let filtersHost = null;
+	let _setFiltersPanelHidden = null;
+	let _globalHotkeysInstalled = false;
 
+	function _getFiltersPanelHost() {
+		return filtersHost || document.getElementById('anit-filters');
+	}
 
-		function hotkeyHandler(e){
-			// Ctrl+1..9 — быстрый выбор пресета по слоту
+	function _setFiltersPanelHiddenState(hidden, pane = _getFiltersPanelHost()) {
+		const shouldHide = !!hidden;
+		_clearDialogDockHostHiddenState();
+		if (typeof _setFiltersPanelHidden === 'function') {
+			_setFiltersPanelHidden(shouldHide);
+		} else if (pane) {
+			pane.classList.toggle('anit-hidden', shouldHide);
+			pane.classList.toggle('anit-hidden-final', shouldHide);
+			try { localStorage.setItem('anit.filters.hidden', shouldHide ? '1' : '0'); } catch {}
+		}
+		if (shouldHide) {
+			document.querySelectorAll('#anit_controls_pop,#anit_help_popup,#anit_preset_manage_panel,#anit_cat_manage_panel').forEach(el => el.classList.remove('--show'));
+		}
+		return pane;
+	}
+
+	function _setLinkedPanelsHidden(hidden) {
+		_setFiltersPanelHiddenState(!!hidden, _getFiltersPanelHost());
+	}
+
+	function _toggleLinkedPanelsHidden() {
+		const pane = _getFiltersPanelHost();
+		_setLinkedPanelsHidden(!pane?.classList.contains('anit-hidden'));
+	}
+
+	function _isFindKey(e) {
+		const code = String(e.code || '');
+		const key = String(e.key || '').toLowerCase();
+		return code === 'KeyF' || key === 'f' || key === 'а';
+	}
+
+	function _isCtrlAltFindHotkey(e) {
+		return !!e && e.altKey && !e.shiftKey && (e.ctrlKey || e.metaKey) && _isFindKey(e);
+	}
+
+	function _installGlobalHotkeys() {
+		if (_globalHotkeysInstalled) return;
+		_globalHotkeysInstalled = true;
+		const hotkeyHandler = (e) => {
+			// Ctrl+1..9 ? быстрый выбор пресета по слоту
 			if (e.ctrlKey && !e.altKey && !e.shiftKey) {
 				const _d = e.code;
 				if (_d >= 'Digit1' && _d <= 'Digit9') {
-					// Перехватываем везде — кроме полей ввода внутри самой панели расширения
+					// Перехватываем везде ? кроме полей ввода внутри самой панели расширения
 					const _ae = document.activeElement;
 					const _inPanel = _ae && document.getElementById('anit-filters')?.contains(_ae);
 					if (!_inPanel) {
@@ -1451,20 +3243,16 @@ if (_presetChannel) {
 				}
 			}
 
-			// Ctrl+Alt+F — показать/скрыть панель
-			if (e.ctrlKey && e.altKey && e.code === 'KeyF') {
-				const pane = document.getElementById('anit-filters');
-				if (!pane) return;
-				const mini = pane.querySelector('#anit_mini_toggle');
-				const full = pane.querySelector('#anit_toggle_btn');
-				(mini || full)?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+			// Ctrl+Alt+F ? показать/скрыть панель
+			if (_isCtrlAltFindHotkey(e)) {
+				_toggleLinkedPanelsHidden();
 
 				e.stopImmediatePropagation();
 				e.preventDefault();
 				return;
 			}
 
-			// Ctrl+Shift+A — сброс всех фильтров
+			// Ctrl+Shift+A ? сброс всех фильтров
 			if (e.ctrlKey && !e.altKey && e.shiftKey && e.code === 'KeyA') {
 				const _ae = document.activeElement;
 				const _tag = _ae?.tagName?.toLowerCase();
@@ -1477,29 +3265,20 @@ if (_presetChannel) {
 				return;
 			}
 
-			// Ctrl+Q — подавляем нежелательное действие Bitrix24 вне полей ввода
+			// Ctrl+Q ? подавляем нежелательное РТ‘ействие Bitrix24 вне полей ввода
 			if (e.ctrlKey && !e.altKey && !e.shiftKey && e.code === 'KeyQ') {
 				const _ae = document.activeElement;
 				const _tag = _ae?.tagName?.toLowerCase();
 				if (_tag === 'input' || _tag === 'textarea' || _tag === 'select') return;
 				e.stopImmediatePropagation();
 				e.preventDefault();
-				return;
 			}
-
-		}
-
-
+		};
 		document.addEventListener('keydown', hotkeyHandler, true);
 		window.addEventListener('keydown', hotkeyHandler, true);
+	}
 
-
-	keepInsideViewport();
-	window.addEventListener('resize', keepInsideViewport);
-}
-
-
-	let filtersHost = null;
+	_installGlobalHotkeys();
 
 	function nukeDuplicatePanels() {
 	document.querySelectorAll('#anit-filters').forEach((n, i) => { if (i === 0) return; n.remove(); });
@@ -1536,39 +3315,44 @@ if (_presetChannel) {
   --pena-muted:#9dadc3;
   --pena-accent:#4d9dff;
   --pena-accent-soft:rgba(77,157,255,.18);
-  position:fixed;top:8px;left:8px;z-index:9999;width:clamp(260px,32vw,448px);min-width:min(var(--pena-min-width),calc(100vw - 16px));max-width:94vw;transition:opacity .4s ease,transform .15s ease;box-sizing:border-box;container-type:inline-size;transform-origin:top left
+  position:fixed;top:8px;left:8px;z-index:10004;width:clamp(260px,32vw,448px);min-width:min(var(--pena-min-width),calc(100vw - 16px));max-width:94vw;transition:opacity .4s ease;box-sizing:border-box;container-type:inline-size;transform-origin:top left
 }
-#anit-filters.anit-hidden{min-width:0 !important;max-width:none !important;width:var(--pena-icon-size) !important;height:var(--pena-icon-size) !important}
-#anit-filters.anit-hidden .pane{display:none !important}
-#anit-filters .mini-toggle{display:none;width:var(--pena-icon-size);height:var(--pena-icon-size);border:1px solid var(--pena-border-strong);border-radius:var(--pena-radius);background:linear-gradient(180deg,rgba(20,26,36,.98),rgba(11,15,22,.98));color:#fff;align-items:center;justify-content:center;cursor:move;box-shadow:0 10px 24px rgba(0,0,0,.45);transition:border-color .15s,box-shadow .15s,transform .15s}
-#anit-filters.anit-hidden .mini-toggle{display:inline-flex}
-#anit-filters .mini-toggle:hover{border-color:rgba(255,255,255,.4);box-shadow:0 14px 28px rgba(0,0,0,.52);transform:translateY(-1px)}
-#anit-filters .mini-toggle svg{width:12px;height:12px;display:block;fill:#ffffff;opacity:.9}
+#anit-filters.anit-hidden-final{min-width:0 !important;max-width:none !important;width:var(--pena-icon-size) !important;height:var(--pena-icon-size) !important}
+#anit-filters.anit-hidden .pane{opacity:0;pointer-events:none;visibility:hidden;transition:opacity .16s ease,visibility 0s linear .16s}
+#anit-filters.anit-hidden-final .pane{display:none !important}
+#anit-filters .mini-toggle{display:none;width:var(--pena-icon-size);height:var(--pena-icon-size);min-width:var(--pena-icon-size);min-height:var(--pena-icon-size);box-sizing:border-box;padding:0;border:1px solid var(--pena-border-strong);border-radius:var(--pena-radius);background:linear-gradient(180deg,rgba(20,26,36,.98),rgba(11,15,22,.98));color:#fff;align-items:center;justify-content:center;cursor:grab;box-shadow:0 10px 24px rgba(0,0,0,.45);transition:border-color .15s,box-shadow .15s,transform .15s}
+#anit-filters.anit-hidden .mini-toggle{display:inline-flex;position:absolute;top:0;left:0;z-index:2;transform:scale(var(--panel-icon-counter-scale,1));transform-origin:top left}
+#anit-filters .mini-toggle:hover{border-color:rgba(255,255,255,.4);box-shadow:0 14px 28px rgba(0,0,0,.52)}
+#anit-filters.anit-hidden .mini-toggle:hover{transform:scale(var(--panel-icon-counter-scale,1)) translateY(-1px)}
+#anit-filters .mini-toggle svg{width:11px;height:11px;display:block;fill:#ffffff;opacity:.9}
 #anit-filters .pane{background:linear-gradient(180deg,rgba(20,26,36,.98),rgba(11,15,22,.98));color:var(--pena-text);border:1px solid var(--pena-border);
   border-radius:var(--pena-radius);padding:12px;font:var(--pena-font-body)/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial;
   box-shadow:0 18px 40px rgba(0,0,0,.34),0 2px 0 rgba(255,255,255,.03) inset;cursor:grab;
-  position:relative;width:100%;box-sizing:border-box;overflow-y:scroll;overflow-x:clip;scrollbar-width:none;max-height:90vh;}
+  position:relative;width:100%;box-sizing:border-box;overflow-y:scroll;overflow-x:clip;scrollbar-width:none;max-height:90vh;opacity:1;visibility:visible;transition:opacity .16s ease;}
+#anit-filters .pane::after{content:none!important;display:none!important}
 #anit-filters .pane::-webkit-scrollbar{display:none}
-/* Кастомный скроллбар — позиционируется снаружи .pane, справа от панели */
+/* Кастомный скроллбар ? позиционируется снаружи .pane, справа от панели */
 #anit-filters #anit_scr_track{position:absolute;right:-10px;top:0;bottom:0;width:5px;background:rgba(255,255,255,.06);border-radius:var(--pena-radius);display:none;z-index:10001;cursor:pointer}
 #anit-filters #anit_scr_thumb{position:absolute;left:0;right:0;background:rgba(255,255,255,.25);border-radius:var(--pena-radius);min-height:20px;cursor:grab;transition:background .15s}
 #anit-filters #anit_scr_thumb:hover,#anit-filters #anit_scr_track:hover #anit_scr_thumb{background:rgba(255,255,255,.42)}
 #anit-filters #anit_scr_thumb:active{cursor:grabbing}
-#anit-filters .pena-resize-handle{position:absolute;bottom:3px;right:3px;width:18px;height:18px;
-  cursor:se-resize;border-right:2px solid rgba(255,255,255,.22);border-bottom:2px solid rgba(255,255,255,.22);
-  border-radius:0;transition:border-color .15s;z-index:5}
-#anit-filters .pena-resize-handle:hover{border-color:rgba(255,255,255,.5)}
-/* Курсор при ресайзе за края — перекрывает cursor:grab на .pane и других дочерних элементах */
+/* Курсор при ресайзе за края ? перекрывает cursor:grab на .pane и других дочерних элементах */
 #anit-filters.rz-e,#anit-filters.rz-e *{cursor:e-resize!important}
 #anit-filters.rz-w,#anit-filters.rz-w *{cursor:w-resize!important}
 #anit-filters.rz-s,#anit-filters.rz-s *{cursor:s-resize!important}
 #anit-filters.rz-se,#anit-filters.rz-se *{cursor:se-resize!important}
 #anit-filters.rz-sw,#anit-filters.rz-sw *{cursor:sw-resize!important}
-#anit-filters .header{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;column-gap:14px;row-gap:8px;margin:0 0 10px 0;cursor:move;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,.08)}
-#anit-filters .header-actions{display:flex;align-items:center;justify-content:flex-start;gap:8px;flex:0 0 auto;position:relative;flex-wrap:nowrap;max-width:100%;justify-self:end;margin-left:4px}
+#anit-filters.rz-e,#anit-filters.rz-w,#anit-filters.rz-s,#anit-filters.rz-se,#anit-filters.rz-sw{user-select:none;touch-action:none}
+#anit-filters .header{display:grid;grid-template-columns:minmax(0,1fr);align-items:start;column-gap:14px;row-gap:8px;margin:0 0 10px 0;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,.08)}
+#anit-filters .header-actions{display:flex;align-items:center;justify-content:flex-start;gap:8px;flex:0 0 auto;position:relative;flex-wrap:nowrap;max-width:100%;justify-self:start;margin-left:0;grid-row:2;grid-column:1}
 #anit-filters .icon-btn{width:var(--pena-icon-size);height:var(--pena-icon-size);border:1px solid rgba(255,255,255,.18);border-radius:var(--pena-radius);background:rgba(255,255,255,.04);color:#fff;cursor:pointer;line-height:1;display:inline-flex;align-items:center;justify-content:center;padding:0;transition:border-color .15s,background .15s,transform .15s;box-sizing:border-box;flex:0 0 var(--pena-icon-size)}
 #anit-filters .icon-btn svg{width:12px;height:12px;display:block;fill:#ffffff;opacity:.88}
 #anit-filters .icon-btn:hover{border-color:rgba(255,255,255,.34);background:rgba(255,255,255,.08);transform:translateY(-1px)}
+html.anit-panel-mode-switching #anit-filters .header-actions .icon-btn,
+html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions button{transition:none!important}
+html.anit-panel-mode-switching #anit-filters .header-actions .icon-btn:hover,
+html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions button:hover{border-color:rgba(255,255,255,.18)!important;background:rgba(255,255,255,.04)!important;transform:none!important}
+#anit-filters .icon-btn.--active{border-color:rgba(255,73,73,.58);background:rgba(255,73,73,.16);color:#ffd6d6}
 #anit-filters .icon-btn:focus-visible,
 #anit-filters button:focus-visible,
 #anit-filters input:focus-visible,
@@ -1585,6 +3369,7 @@ if (_presetChannel) {
 #anit-filters .brand{display:flex;align-items:center;gap:10px;min-width:0;flex:1 1 auto;overflow:hidden}
 #anit-filters .brand-icon{width:20px;height:20px;display:inline-flex;flex:0 0 20px}
 #anit-filters .brand-logo{height:22px;width:auto;max-width:120px;filter:invert(1);mix-blend-mode:screen;flex-shrink:0;display:block}
+#anit-filters .brand > div{min-width:0;max-width:100%;overflow:hidden}
 #anit-filters .brand-title{font-size:var(--pena-font-subheading);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--pena-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #anit-filters .brand-sub{font-size:var(--pena-font-heading);font-weight:700;opacity:.97;letter-spacing:.1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2}
 #anit-filters .group{margin-top:10px;padding:10px;border:1px solid rgba(255,255,255,.08);border-radius:var(--pena-radius);background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.02))}
@@ -1599,21 +3384,22 @@ if (_presetChannel) {
   width:14px;height:14px;min-width:14px;
   margin:0;
   border:1px solid rgba(255,255,255,.95);
-  border-radius:var(--pena-radius);
+  border-radius:50%;
   background:#070809;
-  display:inline-grid;place-content:center;
+  display:inline-flex;align-items:center;justify-content:center;
   cursor:pointer;
+  box-sizing:border-box;
 }
 #anit-filters input[type="checkbox"]::before{
   content:"";
-  width:4px;height:8px;
-  border:solid #ffffff;
-  border-width:0 2px 2px 0;
-  transform:rotate(45deg) scale(0);
+  width:6px;height:6px;
+  border-radius:50%;
+  background:#ffffff;
+  transform:scale(0);
   transform-origin:center;
   transition:transform .12s ease;
 }
-#anit-filters input[type="checkbox"]:checked::before{transform:rotate(45deg) scale(1)}
+#anit-filters input[type="checkbox"]:checked::before{transform:scale(1)}
 #anit-filters input[type="text"]{height:32px;min-width:0;box-sizing:border-box;padding:0 10px;border-radius:var(--pena-radius);border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:#fff;outline:none;line-height:18px;font-size:var(--pena-font-body);-webkit-appearance:none;appearance:none;transition:border-color .15s,background .15s,box-shadow .15s}
 #anit-filters input[type="text"]::placeholder{color:rgba(180,194,214,.62)}
 #anit-filters input[type="text"]:hover,
@@ -1667,14 +3453,17 @@ if (_presetChannel) {
 #anit-filters .btn-primary{background:linear-gradient(180deg,#4d9dff,#2f7ee6);border-color:#4d9dff;color:#fff}
 #anit-filters .btn-secondary{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.18);color:#fff}
 #anit-filters .btn-tertiary{background:transparent;border-color:rgba(255,255,255,.18);color:#d6dce5}
-#anit-filters .kbd{padding:1px 4px;border:1px solid rgba(255,255,255,.3);border-radius:var(--pena-radius);font-family:monospace;font-size:11px}
+#anit-filters .kbd-seq{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+#anit-filters .kbd{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border:1px solid rgba(255,255,255,.3);border-radius:var(--pena-radius);font-family:monospace;font-size:11px;line-height:1;background:rgba(255,255,255,.045)}
+#anit-filters .kbd-plus{display:inline-flex;align-items:center;justify-content:center;min-width:7px;color:rgba(255,255,255,.72);font-size:12px;font-weight:700;line-height:1}
 #anit-filters .chips{display:flex;flex-wrap:wrap;gap:6px}
 #anit-filters .chip{display:inline-flex;gap:6px;align-items:center;border:1px solid rgba(255,255,255,.25);border-radius:var(--pena-radius);padding:3px 8px;background:#070809}
 #anit-filters .chip input{accent-color:#5dc}
-#anit-filters .kw-tag-chip{display:inline-flex;align-items:center;gap:4px;border:1px solid rgba(255,255,255,.18);border-radius:var(--pena-radius);padding:5px 10px;background:rgba(255,255,255,.04);cursor:pointer;font-size:var(--pena-font-body);color:#c5d3e7;transition:all .12s ease;white-space:nowrap}
+#anit-filters .kw-tag-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid rgba(255,255,255,.18);border-radius:var(--pena-radius);padding:5px 8px 5px 10px;background:rgba(255,255,255,.04);cursor:pointer;font-size:var(--pena-font-body);color:#c5d3e7;transition:all .12s ease;white-space:nowrap}
 #anit-filters .kw-tag-chip.is-active{background:rgba(77,157,255,.22);border-color:#4d9dff;color:#fff}
-#anit-filters .kw-tag-chip .tag-rm{margin-left:2px;opacity:.55;cursor:pointer;font-size:10px;line-height:1}
-#anit-filters .kw-tag-chip .tag-rm:hover{opacity:1;color:#f66}
+#anit-filters .kw-tag-chip .tag-rm{width:16px;height:16px;margin-left:0;opacity:.68;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;text-align:center;color:#aeb9c8;flex:0 0 16px;border-radius:var(--pena-radius)}
+#anit-filters .kw-tag-chip .tag-rm svg{width:11px;height:11px;display:block;fill:currentColor;pointer-events:none}
+#anit-filters .kw-tag-chip .tag-rm:hover{opacity:1;color:#ff8f8f}
 #anit-filters .tag-confirm-pop{position:absolute;inset:0;background:rgba(7,10,15,.8);backdrop-filter:blur(5px);display:flex;align-items:center;justify-content:center;z-index:999;border-radius:inherit;padding:12px}
 #anit-filters .tag-confirm-box{background:linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));border:1px solid rgba(255,255,255,.14);border-radius:var(--pena-radius);padding:16px 18px;text-align:center;width:min(230px,100%);box-shadow:0 18px 42px rgba(0,0,0,.46)}
 #anit-filters .tag-confirm-text{font-size:13px;color:#dce4ef;margin-bottom:12px;line-height:1.45}
@@ -1695,14 +3484,15 @@ if (_presetChannel) {
 #anit-filters .pena-fpop-header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,.08)}
 #anit-filters .pena-fpop-title{font-size:10px;font-weight:700;color:var(--pena-muted);text-transform:uppercase;letter-spacing:.08em}
 #anit-filters .pena-fpop-close{width:var(--pena-icon-size);height:var(--pena-icon-size);background:rgba(255,80,80,.08);border:1px solid rgba(255,80,80,.2);outline:0;-webkit-appearance:none;appearance:none;color:rgba(255,120,120,.9);cursor:pointer;font-size:14px;line-height:1;padding:0;margin:0;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;border-radius:var(--pena-radius);box-sizing:border-box}
+#anit-filters .pena-fpop-close svg,#anit-filters .controls-pop-close svg{width:10px;height:10px;display:block;fill:currentColor;stroke:none;opacity:1;pointer-events:none}
 #anit-filters .pena-fpop-close:hover{color:#ffd0d0;border-color:rgba(255,100,100,.42);background:rgba(255,80,80,.16)}
 #anit-filters .pena-fpop table{border-collapse:separate;border-spacing:0 6px;font-size:11px;width:100%}
 #anit-filters .pena-fpop td{padding:0;color:#c7d3e4;vertical-align:middle}
 #anit-filters .pena-fpop td:first-child{padding-right:12px;white-space:nowrap}
-#anit-filters .pena-prefetch-popup{position:absolute;inset:0;z-index:1000;background:rgba(7,10,15,.76);backdrop-filter:blur(5px);display:flex;align-items:center;justify-content:center;border-radius:var(--pena-radius);padding:12px}
-#anit-filters .pena-prefetch-box{background:linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));border:1px solid rgba(255,255,255,.14);border-radius:var(--pena-radius);padding:14px 16px;width:min(230px,100%);box-shadow:0 18px 42px rgba(0,0,0,.46)}
-#anit-filters .pena-prefetch-handle{font-size:13px;font-weight:700;color:#fff;margin-bottom:12px;cursor:move;user-select:none}
-#anit-filters .pena-prefetch-sub{font-size:11px;color:var(--pena-muted);margin-top:7px;line-height:1.35}
+#anit-filters .pena-prefetch-popup{position:absolute;inset:0;z-index:1000;background:rgba(7,10,15,.68);backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px);display:flex;align-items:center;justify-content:center;border-radius:var(--pena-radius);padding:22px}
+#anit-filters .pena-prefetch-box{background:transparent;border:0;border-radius:0;padding:0;width:min(230px,100%);box-shadow:none;text-align:center}
+#anit-filters .pena-prefetch-handle{font-size:13px;font-weight:700;color:#fff;margin-bottom:12px;cursor:default;user-select:none}
+#anit-filters .pena-prefetch-sub{font-size:12px;color:#dce4ef;margin-top:9px;line-height:1.45}
 #anit-filters .pena-prefetch-bar-wrap{height:6px;background:rgba(255,255,255,.08);border-radius:var(--pena-radius);overflow:hidden;margin-bottom:2px}
 #anit-filters .pena-prefetch-bar{height:100%;width:0%;background:linear-gradient(90deg,#4d9dff,#7fc4ff);border-radius:var(--pena-radius);transition:width .15s ease}
 #anit-filters .pena-prefetch-cancel{margin-top:10px;width:100%;padding:8px;border-radius:var(--pena-radius);border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.04);color:#c7d3e4;cursor:pointer;font-size:11px;box-sizing:border-box}
@@ -1720,14 +3510,15 @@ if (_presetChannel) {
 #anit-filters .category-toggle svg{display:block;width:11px;height:11px;fill:none;stroke:#b8c4d4;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;transition:transform .18s ease}
 #anit-filters .group.is-collapsed .category-toggle svg{transform:rotate(-90deg)}
 #anit-filters .group.is-collapsed .group-body{display:none}
-#anit-filters .chip-remove:hover{color:#fff}
+#anit-filters .chip-remove{width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:14px;line-height:1;color:#aeb9c8;opacity:.7;flex:0 0 16px;border-radius:var(--pena-radius)}
+#anit-filters .chip-remove:hover{color:#ff8f8f;opacity:1}
 #anit-filters .anit-hidden-row .project-wrap{position:relative}
 #anit-filters #anit_hidden_project_input,#anit-filters #anit_hidden_responsible_input{width:100%;box-sizing:border-box}
 .anit-multi-selected {background: rgba(93, 220, 200, 0.15) !important;}
-.anit-multi-selected::before {content: '✓';position: absolute;left: 6px;top: 50%;transform: translateY(-50%);font-size: 12px;color: #5dc;z-index: 2;}
+.anit-multi-selected::before {content: '?';position: absolute;left: 6px;top: 50%;transform: translateY(-50%);font-size: 12px;color: #5dc;z-index: 2;}
 .bx-im-list-recent-item__wrap.anit-multi-selected, .bx-messenger-cl-item.anit-multi-selected {position: relative;}
 #anit-filters .presets-row{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 0;justify-content:flex-start;align-items:flex-start}
-#anit-filters .preset-btn{flex:0 1 auto;min-width:0;max-width:100%;padding:6px 10px;border-radius:var(--pena-radius);border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.04);color:#c6d2e2;font-size:var(--pena-font-body);cursor:pointer;transition:background .15s,border-color .15s,color .15s,transform .15s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3}
+#anit-filters .preset-btn{flex:0 1 auto;min-width:0;max-width:100%;min-height:26px;padding:0 10px;border-radius:var(--pena-radius);border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.04);color:#c6d2e2;font-size:var(--pena-font-body);cursor:pointer;transition:background .15s,border-color .15s,color .15s,transform .15s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1;display:inline-flex;align-items:center;justify-content:center;text-align:center;box-sizing:border-box}
 #anit-filters .preset-btn:hover{background:rgba(255,255,255,.11);color:#fff;transform:translateY(-1px)}
 #anit-filters .preset-btn.--active{background:linear-gradient(180deg,rgba(77,157,255,.35),rgba(54,116,196,.35));border-color:#4d9dff;color:#fff;box-shadow:0 0 0 1px rgba(77,157,255,.15) inset}
 #anit-filters .pm-header{font-size:10px;font-weight:600;color:rgba(255,255,255,.32);text-transform:uppercase;letter-spacing:.07em;margin-bottom:7px}
@@ -1738,8 +3529,9 @@ if (_presetChannel) {
 #anit-filters .pm-drag:active{cursor:grabbing}
 #anit-filters .pm-inp{flex:1;padding:4px 8px;border-radius:var(--pena-radius);border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.04);color:#e9edf1;font-size:11px;min-width:0;outline:none;transition:border-color .15s,background .15s}
 #anit-filters .pm-inp:focus{border-color:rgba(21,135,250,.55);background:rgba(21,135,250,.07)}
-#anit-filters .pm-del{flex-shrink:0;width:var(--pena-icon-size);min-height:var(--pena-icon-size);align-self:stretch;padding:0;box-sizing:border-box;border-radius:var(--pena-radius);border:1px solid rgba(255,80,80,.22);background:rgba(255,80,80,.07);color:rgba(255,110,110,.65);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s}
-#anit-filters .pm-del:hover{border-color:rgba(255,80,80,.55);background:rgba(255,80,80,.22);color:#f99}
+#anit-filters .pm-del{flex-shrink:0;width:22px;height:22px;min-height:22px;align-self:center;padding:0;box-sizing:border-box;border-radius:var(--pena-radius);border:0!important;background:transparent;color:rgba(255,120,120,.72);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:color .15s,opacity .15s;opacity:.78}
+#anit-filters .pm-del:hover{border:0!important;background:transparent;color:#ff9a9a;opacity:1;transform:none}
+#anit-filters .pm-del svg{width:14px;height:14px;display:block}
 #anit-filters .pm-add-section{border-top:1px solid rgba(255,255,255,.08);padding-top:8px;margin-top:6px}
 #anit-filters .pm-add-label{font-size:10px;color:rgba(255,255,255,.32);text-transform:uppercase;letter-spacing:.07em;margin-bottom:5px}
 #anit-filters .pm-add-row{display:flex;gap:4px}
@@ -1751,31 +3543,184 @@ if (_presetChannel) {
 #anit-filters #anit_preset_manage_panel,#anit-filters #anit_cat_manage_panel{position:absolute;z-index:2147483640;background:linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));border:1px solid rgba(255,255,255,.13);border-radius:var(--pena-radius);padding:12px;box-shadow:0 18px 42px rgba(0,0,0,.46),0 1px 0 rgba(255,255,255,.04) inset;min-width:min(280px,calc(100vw - 24px));max-width:min(360px,calc(100vw - 24px));opacity:0;pointer-events:none;transform:translateY(-6px) scale(0.96);transform-origin:top left;transition:opacity .18s ease,transform .18s ease;color:var(--pena-text);box-sizing:border-box}
 #anit-filters #anit_preset_manage_panel.--show,#anit-filters #anit_cat_manage_panel.--show{opacity:1;pointer-events:auto;transform:translateY(0) scale(1)}
 #anit-filters.anit-debug-mode .pane{outline:4px solid #f59e0b;outline-offset:-2px;border-radius:var(--pena-radius)}
+#anit-filters.anit-dialog-control-mode .pane{outline:4px solid #ef4444;outline-offset:-2px;border-radius:var(--pena-radius)}
 #anit-filters.anit-dragging,#anit-filters.anit-dragging .pane{cursor:grabbing !important;user-select:none}
-/* debug-badge внутри панели скрыт — индикатор вынесен над окном (#anit_debug_overlay) */
+/* debug-badge внутри панели скрыт ? индикатор вынесен над окном (#anit_debug_overlay) */
 #anit-filters .debug-badge{display:none !important}
-/* Overlay «Режим отладки» — над окном расширения */
+/* Overlay «Режим отладки» ? над окном расширения */
 #anit-filters #anit_debug_overlay{position:absolute;bottom:calc(100% + 5px);left:0;right:0;display:none;align-items:center;justify-content:center;pointer-events:none;z-index:2147483647;gap:8px}
 #anit-filters.anit-debug-mode #anit_debug_overlay{display:flex;pointer-events:auto}
 #anit-filters .anit-debug-flag{width:100%;font-size:13px;font-weight:700;color:#f8c86c;background:linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));border:1px solid rgba(245,158,11,.42);border-radius:var(--pena-radius);padding:8px 14px;letter-spacing:.2px;box-shadow:0 12px 30px rgba(0,0,0,.38),0 1px 0 rgba(255,255,255,.04) inset;display:inline-flex;align-items:center;justify-content:center;gap:7px;text-align:center;line-height:1.25;box-sizing:border-box}
 #anit-filters .anit-debug-flag svg{width:13px;height:13px;display:block;flex:0 0 13px;stroke:#f8c86c}
-/* Тост (уведомления) — над окном расширения, не внутри */
+#anit-filters #anit_dialog_control_overlay{position:absolute;bottom:calc(100% + 5px);left:0;right:0;display:none;align-items:center;justify-content:center;pointer-events:none;z-index:2147483647}
+#anit-filters.anit-dialog-control-mode #anit_dialog_control_overlay{display:flex}
+#anit-filters .anit-control-flag{width:100%;font-size:13px;font-weight:700;color:#ffb3b3;background:linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));border:1px solid rgba(239,68,68,.48);border-radius:var(--pena-radius);padding:8px 14px;letter-spacing:.2px;box-shadow:0 12px 30px rgba(0,0,0,.38),0 1px 0 rgba(255,255,255,.04) inset;display:inline-flex;align-items:center;justify-content:center;gap:7px;text-align:center;line-height:1.25;box-sizing:border-box}
+#anit-filters .anit-control-flag svg{width:13px;height:13px;display:block;flex:0 0 13px;stroke:#ffb3b3}
+#anit-dialog-control-dock{--pena-radius:10px;--pena-icon-size:24px;--pena-font-heading:13px;--pena-font-subheading:11px;--pena-font-body:12px;--pena-bg:#10151d;--pena-bg-soft:rgba(255,255,255,.04);--pena-bg-strong:rgba(255,255,255,.08);--pena-border:rgba(255,255,255,.12);--pena-border-strong:rgba(255,255,255,.2);--pena-text:#f3f7fb;--pena-muted:#9dadc3;--pena-accent:#4d9dff;--pena-accent-soft:rgba(77,157,255,.18);--dock-scale:1;--dock-opacity:1;position:fixed;z-index:10003;width:var(--pena-icon-size);height:var(--pena-icon-size);box-sizing:border-box;font:var(--pena-font-body)/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial;color:var(--pena-text);opacity:var(--dock-opacity);transform:scale(var(--dock-scale));transform-origin:top right;pointer-events:auto;transition:opacity .4s ease}
+#anit-dialog-control-dock.--expanded,#anit-dialog-control-dock.--pinned{width:var(--pena-icon-size);height:var(--pena-icon-size)}
+#anit-dialog-control-dock.--expanded .dialog-control-toggle,#anit-dialog-control-dock.--pinned .dialog-control-toggle{display:none}
+#anit-dialog-control-dock.--empty .dialog-control-toggle{opacity:.9}
+#anit-dialog-control-dock .dialog-control-toggle{width:var(--pena-icon-size);height:var(--pena-icon-size);min-width:var(--pena-icon-size);min-height:var(--pena-icon-size);border:1px solid rgba(255,255,255,.2);border-radius:var(--pena-radius);background:linear-gradient(180deg,rgba(20,26,36,.98),rgba(11,15,22,.98));box-shadow:0 10px 24px rgba(0,0,0,.45);color:#fff;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:grab;box-sizing:border-box}
+#anit-dialog-control-dock:not(.--expanded):not(.--pinned) .dialog-control-toggle{transform:scale(var(--dock-icon-counter-scale,1));transform-origin:top right}
+#anit-dialog-control-dock .dialog-control-toggle svg{width:14px;height:14px;display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;opacity:.9}
+#anit-dialog-control-dock .dialog-control-window{container-type:inline-size;position:absolute;right:0;top:0;width:260px;height:260px;min-width:220px;min-height:160px;max-width:min(var(--dock-max-width,520px),calc(100vw - 60px));max-height:calc(100vh - 16px);opacity:0;pointer-events:none;overflow:hidden;border:1px solid rgba(255,255,255,.12);border-radius:var(--pena-radius);padding:12px;background:linear-gradient(180deg,rgba(20,26,36,.98),rgba(11,15,22,.98));box-shadow:0 18px 40px rgba(0,0,0,.34),0 2px 0 rgba(255,255,255,.03) inset;transform:none;transform-origin:right top;transition:opacity .16s ease;box-sizing:border-box;cursor:grab;display:flex;flex-direction:column}
+#anit-dialog-control-dock .dialog-control-window::after{content:none!important;display:none!important}
+#anit-dialog-control-dock.--expanded .dialog-control-window,#anit-dialog-control-dock.--pinned .dialog-control-window{opacity:1;pointer-events:auto;transform:none}
+#anit-dialog-control-dock.--empty:not(.--manual-height) .dialog-control-window{height:auto!important;min-height:132px;max-height:none!important;overflow:visible}
+#anit-dialog-control-dock.anit-dialog-control-mode .dialog-control-window{outline:4px solid #ef4444;outline-offset:-2px}
+#anit-dialog-control-dock .dialog-control-header{display:grid;grid-template-columns:minmax(0,1fr);align-items:start;column-gap:14px;row-gap:8px;margin:0 0 10px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,.08)}
+#anit-dialog-control-dock .dialog-control-brand{display:flex;align-items:center;gap:10px;min-width:0;overflow:hidden}
+#anit-dialog-control-dock .dialog-control-logo{height:22px;width:auto;max-width:120px;filter:invert(1);mix-blend-mode:screen;flex:0 0 auto;display:block}
+#anit-dialog-control-dock .dialog-control-logo-fallback{width:20px;height:20px;border-radius:var(--pena-radius);display:inline-flex;align-items:center;justify-content:center;background:#1e2024;color:#fff;font-size:10px;font-weight:800;flex:0 0 20px}
+#anit-dialog-control-dock .dialog-control-section{font-size:var(--pena-font-heading);font-weight:700;color:#fff;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#anit-dialog-control-dock .dialog-control-close{width:var(--pena-icon-size);height:var(--pena-icon-size);border:1px solid rgba(255,255,255,.18);border-radius:var(--pena-radius);background:rgba(255,255,255,.04);color:#fff;padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;line-height:1;box-sizing:border-box;flex:0 0 var(--pena-icon-size)}
+#anit-dialog-control-dock .dialog-control-close svg{width:12px;height:12px;display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;opacity:.88}
+#anit-dialog-control-dock .dialog-control-close:hover{border-color:rgba(255,255,255,.34);background:rgba(255,255,255,.08);transform:translateY(-1px)}
+#anit-dialog-control-dock .dialog-control-close.--active{border-color:rgba(77,157,255,.58);background:rgba(77,157,255,.16);color:#d7eaff}
+#anit-dialog-control-dock .dialog-control-actions{display:flex;align-items:center;justify-content:flex-start;gap:8px;flex:0 0 auto;position:relative;flex-wrap:nowrap;max-width:100%;justify-self:start;margin-left:0;grid-row:2;grid-column:1}
+#anit-dialog-control-dock .dialog-control-mode-btn,#anit-dialog-control-dock .dialog-control-clear-btn,#anit-dialog-control-dock .dialog-control-columns-btn{width:var(--pena-icon-size);height:var(--pena-icon-size);border:1px solid rgba(255,255,255,.18);border-radius:var(--pena-radius);background:rgba(255,255,255,.04);color:#fff;padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;box-sizing:border-box;flex:0 0 var(--pena-icon-size);transition:border-color .15s,background .15s,transform .15s}
+#anit-dialog-control-dock .dialog-control-mode-btn svg,#anit-dialog-control-dock .dialog-control-clear-btn svg,#anit-dialog-control-dock .dialog-control-columns-btn svg{width:12px;height:12px;display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;opacity:.88;flex:0 0 12px;margin:auto}
+#anit-dialog-control-dock .dialog-control-mode-btn:hover,#anit-dialog-control-dock .dialog-control-clear-btn:hover,#anit-dialog-control-dock .dialog-control-columns-btn:hover{border-color:rgba(255,255,255,.34);background:rgba(255,255,255,.08);transform:translateY(-1px)}
+#anit-dialog-control-dock .dialog-control-mode-btn.--active{border-color:rgba(255,73,73,.58);background:rgba(255,73,73,.16);color:#ffd6d6}
+#anit-dialog-control-dock .dialog-control-columns-btn.--active{border-color:rgba(77,157,255,.5);background:rgba(77,157,255,.12);color:#d6e9ff}
+#anit-dialog-control-dock .dialog-control-settings-pop{position:absolute;top:86px;right:10px;z-index:6;width:210px;padding:42px 12px 12px;border:1px solid rgba(255,255,255,.13);border-radius:var(--pena-radius);background:linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));box-shadow:0 18px 42px rgba(0,0,0,.46),0 1px 0 rgba(255,255,255,.04) inset;opacity:0;pointer-events:none;transform:translateY(-6px) scale(.96);transition:opacity .18s ease,transform .18s ease;box-sizing:border-box}
+#anit-dialog-control-dock .dialog-control-settings-pop.--show{opacity:1;pointer-events:auto;transform:translateY(0) scale(1)}
+#anit-dialog-control-dock .dialog-control-settings-title{position:absolute;top:8px;left:12px;right:42px;height:22px;display:flex;align-items:center;font-size:10px;font-weight:700;color:var(--pena-muted);text-transform:uppercase;letter-spacing:.08em;margin:0;line-height:1.2}
+#anit-dialog-control-dock .dialog-control-settings-note{color:#d8e0eb;font-size:var(--pena-font-body);line-height:1.35}
+#anit-dialog-control-dock .dialog-control-radio{display:flex;align-items:center;gap:8px;color:#d8e0eb;font-size:var(--pena-font-body);text-transform:none;letter-spacing:0;font-weight:600;white-space:nowrap}
+#anit-dialog-control-dock .dialog-control-radio input{-webkit-appearance:none;appearance:none;width:14px;height:14px;margin:0;border:1px solid rgba(255,255,255,.8);border-radius:50%;background:#070809;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box}
+#anit-dialog-control-dock .dialog-control-radio input::before{content:"";width:6px;height:6px;border-radius:50%;background:#fff;transform:scale(0);transition:transform .12s ease}
+#anit-dialog-control-dock .dialog-control-radio input:checked::before{transform:scale(1)}
+#anit-dialog-control-dock .dialog-control-setting-row{display:grid;grid-template-columns:minmax(0,1fr) 42px;align-items:center;gap:8px;margin:0 0 10px;font-size:10px;color:#c7d3e4;text-transform:uppercase;letter-spacing:.06em;font-weight:700}
+#anit-dialog-control-dock .dialog-control-setting-row:last-child{margin-bottom:0}
+#anit-dialog-control-dock .dialog-control-setting-row input{grid-column:1 / -1;width:100%;height:3px;margin:0;accent-color:#4d9dff}
+#anit-dialog-control-dock .dialog-control-settings-close,#anit-filters .controls-pop-close{position:absolute;top:8px;right:8px;width:22px;height:22px;border:0;background:transparent;color:rgba(255,255,255,.72);padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;line-height:1;border-radius:var(--pena-radius)}
+#anit-dialog-control-dock .dialog-control-settings-close:hover,#anit-filters .controls-pop-close:hover{color:#fff;background:rgba(255,255,255,.08);transform:none}
+#anit-dialog-control-dock .dialog-control-opacity-value{text-align:right;font-variant-numeric:tabular-nums}
+#anit-dialog-control-dock #anit_dialog_control_overlay{position:absolute;left:0;right:0;bottom:calc(100% + 8px);display:none;z-index:4;pointer-events:none}
+#anit-dialog-control-dock.anit-dialog-control-mode #anit_dialog_control_overlay{display:flex}
+#anit-dialog-control-dock .anit-control-flag{width:100%;font-size:12px;font-weight:700;color:#ffb3b3;background:linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));border:1px solid rgba(239,68,68,.48);border-radius:var(--pena-radius);padding:8px 12px;box-shadow:0 12px 30px rgba(0,0,0,.38),0 1px 0 rgba(255,255,255,.04) inset;display:inline-flex;align-items:center;justify-content:center;gap:7px;text-align:center;line-height:1.25;box-sizing:border-box}
+#anit-dialog-control-dock .anit-control-flag svg{width:13px;height:13px;display:block;flex:0 0 13px;stroke:#ffb3b3}
+#anit-dialog-control-dock .dialog-control-confirm{position:absolute;inset:0;z-index:6;display:none;align-items:center;justify-content:center;gap:12px;padding:20px;background:rgba(7,10,15,.82);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);border:0;box-shadow:none;border-radius:var(--pena-radius);box-sizing:border-box;text-align:center}
+#anit-dialog-control-dock .dialog-control-confirm.--show{display:flex;flex-direction:column}
+#anit-dialog-control-dock .dialog-control-confirm p{margin:0;color:#c8d0dc;font-size:12px;line-height:1.5;max-width:230px;text-align:center}
+#anit-dialog-control-dock .dialog-control-confirm .confirm-btns{display:flex;gap:8px;align-items:center;justify-content:center;width:100%}
+#anit-dialog-control-dock .dialog-control-confirm button{min-height:28px;padding:5px 14px;border-radius:var(--pena-radius);border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.07);color:#fff;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;text-align:center;line-height:1.2}
+#anit-dialog-control-dock .dialog-control-confirm button.--ok{background:rgba(255,255,255,.07);border-color:rgba(255,255,255,.2);color:#fff}
+#anit-dialog-control-dock .dialog-control-confirm button.--ok:hover{background:rgba(255,255,255,.12)}
+#anit-dialog-control-dock .dialog-control-toast{position:absolute;left:0;right:0;bottom:calc(100% + 8px);z-index:7;opacity:0;pointer-events:none;transform:translateY(6px);transition:opacity .12s ease,transform .12s ease;text-align:center;background:rgba(12,16,24,.98);border:1px solid rgba(255,255,255,.13);color:#d8e0eb;padding:8px 12px;border-radius:var(--pena-radius);font-size:12px;line-height:1.25;box-shadow:0 12px 30px rgba(0,0,0,.38),0 1px 0 rgba(255,255,255,.04) inset;box-sizing:border-box}
+#anit-dialog-control-dock .dialog-control-toast.--show{opacity:1;transform:translateY(0)}
+#anit-dialog-control-dock .dialog-control-toast.--ok{border-color:rgba(93,200,126,.5);color:#5dc87e}
+#anit-dialog-control-dock .dialog-control-toast.--danger{border-color:rgba(239,68,68,.5);color:#ffb3b3}
+#anit-dialog-control-dock .dialog-control-list{display:grid;grid-template-columns:1fr;align-content:start;gap:6px;min-height:0;flex:1 1 auto;overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.28) rgba(255,255,255,.06);padding-right:6px;padding-bottom:12px}
+#anit-dialog-control-dock .dialog-control-list::-webkit-scrollbar{width:5px;height:5px}
+#anit-dialog-control-dock .dialog-control-list::-webkit-scrollbar-track{background:rgba(255,255,255,.06);border-radius:var(--pena-radius)}
+#anit-dialog-control-dock .dialog-control-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.28);border-radius:var(--pena-radius)}
+#anit-dialog-control-dock .dialog-control-list::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.42)}
+#anit-dialog-control-dock.--empty .dialog-control-list{display:flex;align-items:flex-start;overflow:hidden;min-height:38px;flex:0 0 auto}
+#anit-dialog-control-dock .dialog-control-empty{display:flex;align-items:center;min-height:38px;color:var(--pena-muted);font-size:var(--pena-font-body);line-height:1.35;padding:0 2px;box-sizing:border-box}
+#anit-dialog-control-dock .dialog-control-chip{position:relative;width:100%;min-width:0;min-height:32px;display:grid;grid-template-columns:34px minmax(0,1fr) 22px 22px;align-items:center;column-gap:7px;border:1px solid rgba(255,255,255,.14);border-radius:var(--pena-radius);background:rgba(255,255,255,.04);padding:4px 6px 4px 8px;box-sizing:border-box;text-align:left;color:#e7edf6;cursor:pointer;font-size:var(--pena-font-body);overflow:visible}
+#anit-dialog-control-dock .dialog-control-chip.--colored{border-color:var(--dialog-chip-border);background:linear-gradient(90deg,var(--dialog-chip-bg),rgba(255,255,255,.04) 58%)}
+#anit-dialog-control-dock .dialog-control-chip.--colored::before{content:"";position:absolute;left:0;top:6px;bottom:6px;width:3px;border-radius:0 999px 999px 0;background:var(--dialog-chip-color);box-shadow:0 0 12px var(--dialog-chip-shadow);pointer-events:none}
+#anit-dialog-control-dock .dialog-control-chip:hover{border-color:rgba(77,157,255,.5);background:rgba(77,157,255,.1);transform:none}
+#anit-dialog-control-dock .dialog-control-chip.--colored:hover{border-color:var(--dialog-chip-border-hover);background:linear-gradient(90deg,var(--dialog-chip-bg-hover),rgba(77,157,255,.1) 62%)}
+#anit-dialog-control-dock .dialog-control-chip[draggable="true"]{cursor:pointer}
+#anit-dialog-control-dock .dialog-control-chip.--dragging{opacity:.45;cursor:pointer}
+#anit-dialog-control-dock .dialog-control-chip.--drop-before::before,#anit-dialog-control-dock .dialog-control-chip.--drop-after::after{content:"";position:absolute;left:8px;right:8px;height:2px;border-radius:999px;background:#4d9dff;box-shadow:0 0 0 1px rgba(77,157,255,.2),0 0 12px rgba(77,157,255,.36);z-index:2;pointer-events:none}
+#anit-dialog-control-dock .dialog-control-chip.--drop-before::before{top:-4px}
+#anit-dialog-control-dock .dialog-control-chip.--drop-after::after{bottom:-4px}
+#anit-dialog-control-dock .dialog-control-state{width:34px;min-width:34px;height:22px;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:700;font-variant-numeric:tabular-nums;justify-self:center}
+#anit-dialog-control-dock .dialog-control-dot{min-width:18px;height:16px;border-radius:999px;background:rgba(77,157,255,.95);box-shadow:0 0 0 2px rgba(77,157,255,.16);display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;padding:0 5px}
+#anit-dialog-control-dock .dialog-control-chip.--mention .dialog-control-dot{background:rgba(239,68,68,.95);box-shadow:0 0 0 2px rgba(239,68,68,.2)}
+#anit-dialog-control-dock .dialog-control-dot.--empty{background:transparent;box-shadow:none;border:1px solid rgba(255,255,255,.22);box-sizing:border-box}
+#anit-dialog-control-dock .dialog-control-count{min-width:0;line-height:16px;text-align:center;transform:translateY(-.2px)}
+#anit-dialog-control-dock .dialog-control-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e7edf6;font-size:var(--pena-font-body)}
+#anit-dialog-control-dock .dialog-control-color-wrap{position:relative;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;justify-self:end}
+#anit-dialog-control-dock .dialog-control-color{width:20px;height:20px;min-height:20px;border:1px solid rgba(255,255,255,.22);border-radius:var(--pena-radius);background:var(--dialog-chip-color,rgba(255,255,255,.08));padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 0 0 1px rgba(0,0,0,.18) inset}
+#anit-dialog-control-dock .dialog-control-color:not([style*="--dialog-chip-color"])::before{content:"";width:8px;height:8px;border-radius:50%;border:1px solid rgba(255,255,255,.42);box-sizing:border-box}
+#anit-dialog-control-dock .dialog-control-color:hover{border-color:rgba(255,255,255,.55);transform:none}
+.dialog-control-palette{position:fixed;z-index:2147483647;width:min(226px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.28) rgba(255,255,255,.06);display:grid;grid-template-columns:28px minmax(0,1fr);grid-auto-rows:min-content;gap:7px;padding:10px 28px 10px 10px;border:1px solid rgba(255,255,255,.16);border-radius:10px;background:radial-gradient(circle at 20% 0%,rgba(77,157,255,.12),transparent 42%),linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));box-shadow:0 18px 42px rgba(0,0,0,.46),0 1px 0 rgba(255,255,255,.04) inset;box-sizing:border-box;opacity:0;visibility:hidden;pointer-events:none;transform:translateY(-8px) scale(.94);transform-origin:top right;transition:opacity .18s ease,transform .18s ease,visibility 0s linear .18s}
+.dialog-control-palette::-webkit-scrollbar{width:5px}
+.dialog-control-palette::-webkit-scrollbar-track{background:rgba(255,255,255,.06);border-radius:10px}
+.dialog-control-palette::-webkit-scrollbar-thumb{background:rgba(255,255,255,.28);border-radius:10px}
+.dialog-control-palette.--open{opacity:1;visibility:visible;pointer-events:auto;transform:translateY(0) scale(1);transition:opacity .18s ease,transform .18s ease,visibility 0s}
+.dialog-control-palette.--closing{opacity:0;visibility:visible;pointer-events:none;transform:translateY(-8px) scale(.94)}
+.dialog-control-preview{grid-column:1;grid-row:1;width:28px;height:28px;min-width:28px;min-height:28px;align-self:start;border:1px solid rgba(255,255,255,.14);border-radius:8px;background:var(--dialog-chip-color,#4d9dff);box-shadow:0 0 0 1px rgba(0,0,0,.22) inset,0 10px 22px var(--dialog-chip-shadow,rgba(77,157,255,.35));box-sizing:border-box}
+.dialog-control-mini-picker{grid-column:2;grid-row:1;position:relative;width:100%;height:28px;min-height:28px;align-self:start;min-width:0;border:1px solid rgba(255,255,255,.14);border-radius:8px;background:linear-gradient(90deg,#f04444,#f59e0b 18%,#f5e642 32%,#3bd671 48%,#20c5c7 63%,#4d9dff 78%,#a855f7 90%,#f04444);box-shadow:0 0 0 1px rgba(0,0,0,.22) inset;overflow:hidden;cursor:crosshair;touch-action:none;box-sizing:border-box}
+.dialog-control-mini-picker::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.22),rgba(0,0,0,.42));pointer-events:none}
+.dialog-control-picker-knob{position:absolute;left:50%;top:50%;z-index:1;width:12px;height:12px;border:2px solid #fff;border-radius:50%;background:var(--dialog-chip-color,#4d9dff);box-shadow:0 2px 8px rgba(0,0,0,.55);transform:translate(-50%,-50%);pointer-events:none}
+.dialog-control-palette-close{position:absolute;right:8px;top:8px;width:16px;height:16px;min-height:16px;border:0;border-radius:0;background:transparent;color:#ff8f8f;padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+.dialog-control-palette-close:hover{background:transparent;color:#ffd0d0;transform:none}
+.dialog-control-palette-close svg{width:10px;height:10px;fill:currentColor}
+.dialog-control-swatch.--add{border-color:rgba(77,157,255,.34);background:rgba(77,157,255,.12);color:#d7eaff;font-size:16px;font-weight:700}
+.dialog-control-swatch.--add:hover{border-color:rgba(77,157,255,.62);background:rgba(77,157,255,.2);transform:none}
+.dialog-control-swatches{grid-column:1 / -1;display:grid;grid-template-columns:repeat(7,20px);grid-auto-rows:20px;gap:6px;align-items:center;justify-content:space-between}
+.dialog-control-swatch-wrap{position:relative;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center}
+.dialog-control-swatch{width:20px;height:20px;min-width:20px;min-height:20px;border:1px solid rgba(255,255,255,.2);border-radius:7px;background:var(--dialog-chip-color);padding:0;margin:0;cursor:pointer;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;line-height:1}
+.dialog-control-swatch:hover,.dialog-control-swatch.--active{border-color:#fff;box-shadow:0 0 0 2px rgba(255,255,255,.2)}
+.dialog-control-swatch.--clear{background:linear-gradient(135deg,rgba(255,255,255,.12) 0 24%,rgba(255,255,255,.03) 24% 50%,rgba(255,255,255,.12) 50% 74%,rgba(255,255,255,.03) 74%);color:rgba(255,255,255,.74)}
+.dialog-control-transparent-icon{position:relative;width:12px;height:12px;border:1px solid rgba(255,255,255,.6);border-radius:4px;display:block;box-sizing:border-box;background:repeating-conic-gradient(rgba(255,255,255,.38) 0 25%,transparent 0 50%) 50%/6px 6px}
+.dialog-control-transparent-icon::after{content:"";position:absolute;left:-2px;right:-2px;top:50%;height:1px;background:#ff9a9a;transform:rotate(-45deg)}
+.dialog-control-swatch-delete{position:absolute;right:-5px;top:-5px;width:14px;height:14px;min-height:14px;border:1px solid rgba(255,255,255,.34);border-radius:50%;background:rgba(10,14,20,.96);color:#ffd0d0;padding:0;display:flex;align-items:center;justify-content:center;cursor:pointer;opacity:0;transform:scale(.82);transition:opacity .12s ease,transform .12s ease;box-shadow:0 4px 10px rgba(0,0,0,.34)}
+.dialog-control-swatch-wrap:hover .dialog-control-swatch-delete{opacity:1;transform:scale(1)}
+.dialog-control-swatch-delete svg{width:8px;height:8px;fill:currentColor}
+.dialog-control-delete-notice{grid-column:1 / -1;display:none;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;padding:8px 9px;border:1px solid var(--dialog-chip-border,rgba(255,255,255,.16));border-radius:10px;background:linear-gradient(90deg,var(--dialog-chip-bg,rgba(255,255,255,.06)),rgba(255,255,255,.04));box-shadow:0 10px 24px rgba(0,0,0,.28);box-sizing:border-box}
+.dialog-control-delete-notice.--show{display:grid}
+.dialog-control-delete-text{min-width:0;color:#eef3fb;font-size:clamp(10px,calc(10px * var(--dock-scale,1)),12px);line-height:1.32}
+.dialog-control-delete-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.dialog-control-delete-actions button{height:26px;border:1px solid rgba(255,255,255,.18);border-radius:8px;background:rgba(255,255,255,.07);color:#eef3fb;font-size:clamp(10px,calc(10px * var(--dock-scale,1)),12px);font-weight:700;padding:0 9px;cursor:pointer}
+.dialog-control-delete-actions button:hover{background:rgba(255,255,255,.12)}
+.dialog-control-delete-actions button.--danger{border-color:rgba(239,68,68,.48);background:rgba(239,68,68,.16);color:#ffd0d0}
+.dialog-control-delete-actions button.--danger:hover{background:rgba(239,68,68,.26)}
+#anit-dialog-control-dock .dialog-control-remove{width:22px;height:22px;min-height:22px;justify-self:end;border:0!important;background:transparent!important;color:rgba(255,150,150,.76);padding:0;display:inline-flex;align-items:center;justify-content:center;box-shadow:none;border-radius:var(--pena-radius);cursor:pointer}
+#anit-dialog-control-dock .dialog-control-remove:hover{color:#ffd0d0;transform:none;border:0!important;background:transparent!important}
+#anit-dialog-control-dock .dialog-control-remove svg{width:12px;height:12px;display:block;fill:currentColor}
+#anit-dialog-control-dock.dock-dragging,#anit-dialog-control-dock.dock-dragging .dialog-control-window{cursor:grabbing!important;user-select:none}
+#anit-dialog-control-dock.--cols-2 .dialog-control-list{grid-template-columns:repeat(2,minmax(0,1fr))}
+#anit-dialog-control-dock.--cols-2 .dialog-control-chip{grid-template-columns:22px minmax(0,1fr) 18px 18px;column-gap:5px;padding:4px 5px}
+#anit-dialog-control-dock.--cols-2 .dialog-control-state{width:22px;min-width:22px;font-size:9px}
+#anit-dialog-control-dock.--cols-2 .dialog-control-dot{min-width:16px;max-width:22px;height:16px;padding:0 3px}
+#anit-dialog-control-dock.--cols-2 .dialog-control-color-wrap{width:18px;height:22px}
+#anit-dialog-control-dock.--cols-2 .dialog-control-color{width:16px;height:16px;min-height:16px}
+#anit-dialog-control-dock.--cols-2 .dialog-control-remove{width:18px;height:22px;min-height:22px}
+@container (max-width:278px){
+  #anit-dialog-control-dock .dialog-control-header{grid-template-columns:minmax(0,1fr);row-gap:8px}
+  #anit-dialog-control-dock .dialog-control-brand{grid-row:1;grid-column:1}
+  #anit-dialog-control-dock .dialog-control-actions{width:auto;justify-self:start;grid-row:2;grid-column:1;margin-left:0}
+}
+#anit-dialog-control-dock.dock-rz-w,#anit-dialog-control-dock.dock-rz-w *{cursor:w-resize!important}
+#anit-dialog-control-dock.dock-rz-s,#anit-dialog-control-dock.dock-rz-s *{cursor:s-resize!important}
+#anit-dialog-control-dock.dock-rz-sw,#anit-dialog-control-dock.dock-rz-sw *{cursor:sw-resize!important}
+#anit-dialog-control-dock.dock-rz-w,#anit-dialog-control-dock.dock-rz-s,#anit-dialog-control-dock.dock-rz-sw{user-select:none;touch-action:none}
+.bx-im-list-recent-item__wrap.anit-dialog-controlled-pulse,.bx-messenger-cl-item.anit-dialog-controlled-pulse{outline:2px solid rgba(239,68,68,.86)!important;outline-offset:-2px}
+.bx-im-list-recent-item__wrap.anit-dialog-control-selected,.bx-messenger-cl-item.anit-dialog-control-selected{outline:2px solid rgba(239,68,68,.72)!important;outline-offset:-2px;background:rgba(239,68,68,.1)!important}
+html.anit-dialog-control-cursor,html.anit-dialog-control-cursor body,html.anit-dialog-control-cursor body *{cursor:crosshair!important}
+html.anit-dialog-control-cursor #anit-filters,html.anit-dialog-control-cursor #anit-filters *{cursor:auto!important}
+html.anit-dialog-control-cursor #anit-filters button{cursor:pointer!important}
+html.anit-dialog-control-cursor #anit-dialog-control-dock,html.anit-dialog-control-cursor #anit-dialog-control-dock *{cursor:auto!important}
+html.anit-dialog-control-cursor #anit-dialog-control-dock button{cursor:pointer!important}
+html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-dialog-control-cursor .bx-messenger-cl-item:hover,html.anit-dialog-control-cursor .bx-im-search-result-item:hover,html.anit-dialog-control-cursor .bx-im-search-item:hover,html.anit-dialog-control-cursor .bx-im-dialog-search-result-item:hover,html.anit-dialog-control-cursor .bx-im-list-search-item:hover{cursor:crosshair!important;outline:2px solid rgba(239,68,68,.9)!important;outline-offset:-2px}
+/* Тост (уведомления) ? над окном расширения, не внутри */
 .anit-preset-toast{position:absolute;bottom:calc(100% + 6px);left:0;right:0;text-align:center;background:linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));border:1px solid rgba(245,158,11,.42);color:#f8c86c;padding:8px 16px;border-radius:var(--pena-radius);font-size:12px;z-index:2147483647;pointer-events:none;opacity:0;transition:opacity .25s;white-space:normal;box-shadow:0 12px 30px rgba(0,0,0,.38),0 1px 0 rgba(255,255,255,.04) inset;box-sizing:border-box;display:flex;align-items:center;justify-content:center;line-height:1.35}
 .anit-preset-toast.--show{opacity:1}
 .anit-preset-toast.--ok{border-color:rgba(93,200,126,.5);color:#5dc87e}
-/* Версия — нижний правый угол панели */
+.anit-preset-toast.--danger{border-color:rgba(239,68,68,.5);color:#ffb3b3}
+/* Версия ? нижний правый угол панели */
 #anit-filters .pena-ver-badge{position:sticky;bottom:4px;text-align:right;font-size:9px;color:rgba(255,255,255,.22);pointer-events:none;user-select:none;padding:6px 2px 0;line-height:1;letter-spacing:.2px}
-.anit-preset-confirm{position:absolute;inset:0;background:rgba(7,10,15,.82);backdrop-filter:blur(5px);border-radius:var(--pena-radius);display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:10;padding:20px;text-align:center}
+.anit-preset-confirm{position:absolute;inset:0;background:rgba(7,10,15,.82);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);border-radius:var(--pena-radius);display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:2147483646;padding:20px;text-align:center}
 .anit-preset-confirm.--show{display:flex}
 .anit-preset-confirm p{color:#c8d0dc;font-size:12px;line-height:1.5;margin:0;max-width:230px;text-align:center}
 .anit-preset-confirm .confirm-btns{display:flex;gap:8px;align-items:center;justify-content:center;width:100%}
 .anit-preset-confirm .confirm-btns button{min-height:28px;padding:5px 14px;border-radius:var(--pena-radius);border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.07);color:#fff;font-size:11px;cursor:pointer;transition:background .15s;display:inline-flex;align-items:center;justify-content:center;text-align:center;line-height:1.2}
 .anit-preset-confirm .confirm-btns button.--ok{background:rgba(245,158,11,.18);border-color:rgba(245,158,11,.5);color:#f59e0b}
 .anit-preset-confirm .confirm-btns button.--ok:hover{background:rgba(245,158,11,.32)}
+.anit-preset-confirm.--danger .confirm-btns button.--ok{background:rgba(239,68,68,.18);border-color:rgba(239,68,68,.5);color:#ffb3b3}
+.anit-preset-confirm.--danger .confirm-btns button.--ok:hover{background:rgba(239,68,68,.3)}
 #anit-filters .controls-wrap{position:relative;display:inline-flex;flex:0 0 auto}
-#anit-filters .controls-pop{position:absolute;top:0;left:0;z-index:2147483641;width:min(220px,calc(100vw - 24px));padding:14px;background:linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));border:1px solid rgba(255,255,255,.13);border-radius:var(--pena-radius);box-shadow:0 18px 42px rgba(0,0,0,.46),0 1px 0 rgba(255,255,255,.04) inset;opacity:0;pointer-events:none;transform:translateY(-6px) scale(.96);transform-origin:top right;transition:opacity .18s ease,transform .18s ease;box-sizing:border-box}
+#anit-filters .controls-pop{position:absolute;top:0;left:0;z-index:2147483641;width:min(220px,calc(100vw - 24px));padding:42px 14px 14px;background:linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));border:1px solid rgba(255,255,255,.13);border-radius:var(--pena-radius);box-shadow:0 18px 42px rgba(0,0,0,.46),0 1px 0 rgba(255,255,255,.04) inset;opacity:0;pointer-events:none;transform:translateY(-6px) scale(.96);transform-origin:top right;transition:opacity .18s ease,transform .18s ease;box-sizing:border-box}
 #anit-filters .controls-pop.--show{opacity:1;pointer-events:auto;transform:translateY(0) scale(1)}
-#anit-filters .control-row{display:grid;grid-template-columns:minmax(0,1fr) 44px;align-items:center;column-gap:12px;row-gap:9px;margin:12px 0}
+#anit-filters .controls-pop-title{position:absolute;top:8px;left:14px;right:42px;height:22px;display:flex;align-items:center;font-size:10px;font-weight:700;color:var(--pena-muted);text-transform:uppercase;letter-spacing:.08em;margin:0;line-height:1.2}
+#anit-filters .control-row{display:grid;grid-template-columns:minmax(0,1fr) 44px;align-items:center;column-gap:12px;row-gap:8px;margin:0 0 14px}
 #anit-filters .control-row:first-child{margin-top:0}
 #anit-filters .control-row:last-child{margin-bottom:0}
 #anit-filters .control-label{font-size:var(--pena-font-subheading);font-weight:700;color:var(--pena-muted);text-transform:uppercase;letter-spacing:.08em;min-width:0}
@@ -1786,20 +3731,17 @@ if (_presetChannel) {
 #anit-filters .pena-range::-webkit-slider-thumb:hover{background:#6ab0ff;transform:scale(1.18)}
 #anit-filters .pena-range::-moz-range-thumb{width:11px;height:11px;border-radius:var(--pena-radius);background:#4a90d9;border:2px solid #1d3550;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.5)}
 #anit-filters .pena-range::-moz-range-track{height:3px;border-radius:var(--pena-radius);background:rgba(255,255,255,.2);border:none}
-@container (max-width:260px){
-  #anit-filters .pane{padding:10px}
-  #anit-filters .header{grid-template-columns:1fr;row-gap:6px}
-  #anit-filters .brand{flex:1 1 100%;justify-content:flex-start;text-align:left}
-  #anit-filters .brand-logo{max-width:92px}
-  #anit-filters .brand-sub{font-size:12px}
-  #anit-filters .header-actions{width:100%;justify-content:flex-start;justify-self:start;gap:8px;margin-left:0}
+@container (max-width:278px){
+  #anit-filters .header{grid-template-columns:minmax(0,1fr);row-gap:8px}
+  #anit-filters .brand{justify-content:flex-start;text-align:left;width:100%;max-width:100%;grid-row:1;grid-column:1}
+  #anit-filters .header-actions{width:auto;max-width:100%;justify-content:flex-start;justify-self:start;grid-row:2;grid-column:1;gap:8px;margin-left:0;padding-top:0}
   #anit-filters .controls-pop{transform-origin:top left}
   #anit-filters .row{gap:8px}
   #anit-filters label{white-space:normal;line-height:1.3}
   #anit-filters .project-wrap{flex-basis:100%}
   #anit-filters .type-grid{gap:6px}
   #anit-filters .anit-type-chip{flex:0 1 auto}
-  #anit-filters .preset-btn{flex:0 1 auto;text-align:left;max-width:100%}
+  #anit-filters .preset-btn{flex:0 1 auto;text-align:center;max-width:100%}
 }
 
 /* Locked state: пресет активен, режим отладки не включён */
@@ -1830,19 +3772,16 @@ if (_presetChannel) {
     </div>
     <div class="header-actions">
       <div class="controls-wrap">
-        <button id="anit_controls_btn" class="icon-btn" type="button" title="Прозрачность и масштаб">
+        <button id="anit_controls_btn" class="icon-btn" type="button" title="Прозрачность">
           <svg viewBox="0 0 24 24" aria-hidden="true" style="fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><path d="M4 7h10"/><path d="M18 7h2"/><circle cx="16" cy="7" r="2"/><path d="M4 17h2"/><path d="M10 17h10"/><circle cx="8" cy="17" r="2"/></svg>
         </button>
         <div id="anit_controls_pop" class="controls-pop">
+          <div class="controls-pop-title">Настройки панели</div>
+          <button type="button" class="controls-pop-close" id="anit_controls_pop_close" title="Закрыть"><svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M10.4 2.4 9.6 1.6 6 5.2 2.4 1.6 1.6 2.4 5.2 6 1.6 9.6 2.4 10.4 6 6.8 9.6 10.4 10.4 9.6 6.8 6z"/></svg></button>
           <div class="control-row">
             <span class="control-label">Прозрачность</span>
             <span class="control-value" id="anit_opacity_value">100%</span>
             <input type="range" id="anit_opacity_slider" class="pena-range" min="20" max="100" step="1">
-          </div>
-          <div class="control-row">
-            <span class="control-label">Масштаб</span>
-            <span class="control-value" id="anit_size_value">100%</span>
-            <input type="range" id="anit_size_slider" class="pena-range" min="75" max="125" step="1">
           </div>
         </div>
       </div>
@@ -1872,7 +3811,7 @@ if (_presetChannel) {
     <div id="anit_preset_manage_panel">
       <div class="pm-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
         <span>Управление пресетами</span>
-        <button type="button" id="anit_preset_manage_close" class="pena-fpop-close" title="Закрыть">×</button>
+        <button type="button" id="anit_preset_manage_close" class="pena-fpop-close" title="Закрыть"><svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M10.4 2.4 9.6 1.6 6 5.2 2.4 1.6 1.6 2.4 5.2 6 1.6 9.6 2.4 10.4 6 6.8 9.6 10.4 10.4 9.6 6.8 6z"/></svg></button>
       </div>
       <div id="anit_preset_list_edit"></div>
       <div class="pm-add-section">
@@ -1928,7 +3867,7 @@ if (_presetChannel) {
     <div id="anit_cat_manage_panel">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
         <span style="font-size:11px;font-weight:700;opacity:.9">Показывать категории</span>
-        <button type="button" id="anit_cat_manage_close" class="pena-fpop-close" title="Закрыть">×</button>
+        <button type="button" id="anit_cat_manage_close" class="pena-fpop-close" title="Закрыть"><svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M10.4 2.4 9.6 1.6 6 5.2 2.4 1.6 1.6 2.4 5.2 6 1.6 9.6 2.4 10.4 6 6.8 9.6 10.4 10.4 9.6 6.8 6z"/></svg></button>
       </div>
       <div id="anit_cat_vis_list" style="display:flex;flex-wrap:wrap;gap:4px"></div>
       <div id="anit_cat_custom_list" style="margin-top:4px"></div>
@@ -1978,12 +3917,12 @@ if (_presetChannel) {
 <div id="anit_help_popup" class="pena-fpop">
   <div class="pena-fpop-header">
     <span class="pena-fpop-title">Горячие клавиши</span>
-    <button type="button" class="pena-fpop-close" id="anit_help_popup_close" title="Закрыть">×</button>
+    <button type="button" class="pena-fpop-close" id="anit_help_popup_close" title="Закрыть"><svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M10.4 2.4 9.6 1.6 6 5.2 2.4 1.6 1.6 2.4 5.2 6 1.6 9.6 2.4 10.4 6 6.8 9.6 10.4 10.4 9.6 6.8 6z"/></svg></button>
   </div>
   <table>
-    <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">Alt</span>+<span class="kbd">F</span></td><td>Показать / скрыть панель</td></tr>
-    <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">Shift</span>+<span class="kbd">A</span></td><td>Сброс всех фильтров</td></tr>
-    <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">1</span>…<span class="kbd">9</span></td><td>Быстрый выбор пресета</td></tr>
+    <tr><td><span class="kbd-seq"><span class="kbd">Ctrl</span><span class="kbd-plus">+</span><span class="kbd">Alt</span><span class="kbd-plus">+</span><span class="kbd">F</span></span><br><span class="kbd-seq"><span class="kbd">⌘</span><span class="kbd-plus">+</span><span class="kbd">⌥</span><span class="kbd-plus">+</span><span class="kbd">F</span></span></td><td>Показать / скрыть панель</td></tr>
+    <tr><td><span class="kbd-seq"><span class="kbd">Ctrl</span><span class="kbd-plus">+</span><span class="kbd">Shift</span><span class="kbd-plus">+</span><span class="kbd">A</span></span><br><span class="kbd-seq"><span class="kbd">⌘</span><span class="kbd-plus">+</span><span class="kbd">Shift</span><span class="kbd-plus">+</span><span class="kbd">A</span></span></td><td>Сброс всех фильтров</td></tr>
+    <tr><td><span class="kbd-seq"><span class="kbd">Ctrl</span><span class="kbd-plus">+</span><span class="kbd">1</span><span class="kbd-plus">…</span><span class="kbd">9</span></span><br><span class="kbd-seq"><span class="kbd">⌘</span><span class="kbd-plus">+</span><span class="kbd">1</span><span class="kbd-plus">…</span><span class="kbd">9</span></span></td><td>Быстрый выбор пресета</td></tr>
   </table>
 </div>
 <div class="anit-preset-toast" id="anit_preset_toast"></div>
@@ -2006,14 +3945,15 @@ if (_presetChannel) {
 		const el = host.querySelector(sel);
 		if (el) host.appendChild(el);
 	});
-	// Apply saved opacity immediately — prevents flicker on tab switch
+	// Apply saved opacity immediately ? prevents flicker on tab switch
 	try {
 		const _initOp = parseInt(localStorage.getItem('pena.panel.opacity') || '100', 10);
-		if (!isNaN(_initOp) && _initOp < 100) {
-			host.style.opacity = String(Math.max(0.2, Math.min(1, _initOp / 100)));
-		}
+		_applyLinkedPanelOpacity(isNaN(_initOp) ? 100 : _initOp, false);
 	} catch {}
 	renderPresetsUI(host);
+	_renderDialogControlPanel(host);
+	_startDialogControlLiveRefresh(host);
+	_updateDialogControlUI(host);
 
 
 		function getProjectsSafe() {
@@ -2213,7 +4153,7 @@ if (_presetChannel) {
 					const uid = (u && u[0]) ? Number(u[0]) : 0;
 					const label = (u && u[1]) ? String(u[1]) : '';
 					if (!label) continue;
-					if (uid === 0) continue; // "Без исполнителя" выводим отдельной системной строкой
+					if (uid === 0) continue; // "Без исполнителя" выводим отРТ‘ельной системной строкой
 					if (q && !label.toLowerCase().includes(q)) continue;
 					items.push({ idx: i, label });
 				}
@@ -2652,9 +4592,26 @@ if (_presetChannel) {
 		})();
 
 		const HIDE_LS_KEY = 'anit.filters.hidden';
+		let hideFinalizeTimer = null;
 		function setHidden(hidden) {
-			if (hidden) host.classList.add('anit-hidden');
-			else host.classList.remove('anit-hidden');
+			if (hidden) _rememberExpandedFiltersPaneMetrics(host);
+			_clearDialogDockHostHiddenState();
+			const dockSnapshot = _dialogControlDock ? {
+				left: _dialogControlDock.style.left,
+				top: _dialogControlDock.style.top,
+				width: _dialogControlDock.style.width,
+				height: _dialogControlDock.style.height
+			} : null;
+			if (hideFinalizeTimer) {
+				clearTimeout(hideFinalizeTimer);
+				hideFinalizeTimer = null;
+			}
+			if (hidden) {
+				host.classList.add('anit-hidden', 'anit-hidden-final');
+			} else {
+				host.classList.remove('anit-hidden-final');
+				requestAnimationFrame(() => host.classList.remove('anit-hidden'));
+			}
 			const mini = host.querySelector('#anit_mini_toggle');
 			const full = host.querySelector('#anit_toggle_btn');
 			if (mini) mini.title = hidden ? 'Показать панель (Ctrl+Alt+F)' : 'Скрыть панель (Ctrl+Alt+F)';
@@ -2662,10 +4619,18 @@ if (_presetChannel) {
 			? '<svg viewBox="0 0 24 24" style="width:14px;height:14px;display:block;fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M9 5v14"/><path d="m13 9 3 3-3 3"/></svg>'
 			: '<svg viewBox="0 0 24 24" style="width:14px;height:14px;display:block;fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M9 5v14"/><path d="m15 9-3 3 3 3"/></svg>';
 			try { localStorage.setItem(HIDE_LS_KEY, hidden ? '1' : '0'); } catch {}
+			if (hidden && dockSnapshot && _dialogControlDock) {
+				_dialogControlDock.style.left = dockSnapshot.left;
+				_dialogControlDock.style.top = dockSnapshot.top;
+				_dialogControlDock.style.width = dockSnapshot.width;
+				_dialogControlDock.style.height = dockSnapshot.height;
+				_fitDialogDockHeight(false);
+			}
 		}
+		_setFiltersPanelHidden = setHidden;
 		function togglePanel() {
 			const nowHidden = host.classList.contains('anit-hidden');
-			setHidden(!nowHidden);
+			_setLinkedPanelsHidden(!nowHidden);
 		}
 
 
@@ -2689,9 +4654,9 @@ if (_presetChannel) {
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v6.4.48';
+	if (_verBadge) _verBadge.textContent = 'v7.1.0';
 
-	// Очистка устаревших ключей localStorage
+	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
 	 'pena.injected_cache','pena.injected_ver','anit_update_info',
 	 'pena.update_pending','anit.opt.collapseHidden','anit.opt.collapseCategories'
@@ -2764,8 +4729,16 @@ if (_presetChannel) {
 		});
 		controlsBtn.addEventListener('mouseenter', clearControlsDismiss);
 		controlsBtn.addEventListener('mouseleave', scheduleControlsDismiss);
+		controlsPop.querySelector('#anit_controls_pop_close')?.addEventListener('click', (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			clearControlsDismiss();
+			controlsPop.classList.remove('--show');
+		});
 		controlsPop.addEventListener('mouseenter', clearControlsDismiss);
 		controlsPop.addEventListener('mouseleave', scheduleControlsDismiss);
+		controlsPop.addEventListener('mousedown', (e) => e.stopPropagation());
+		controlsPop.addEventListener('touchstart', (e) => e.stopPropagation(), {passive:true});
 		controlsPop.addEventListener('click', (e) => e.stopPropagation());
 		document.addEventListener('click', (e) => {
 			if (!controlsPop.classList.contains('--show')) return;
@@ -2846,7 +4819,7 @@ if (_presetChannel) {
 		if (v === '') {
 			filters.projectIndexes = [];
 		} else {
-			// если вручную введено значение, но не выбрано из списка — не меняем текущее состояние
+			// если вручную введено значение, но не выбрано из списка ? не меняем текущее состояние
 			const chosen = Array.isArray(filters.projectIndexes) ? filters.projectIndexes : [];
 			filters.projectIndexes = chosen.filter(n => Number.isFinite(n)).slice(0, 1);
 		}
@@ -2857,7 +4830,7 @@ if (_presetChannel) {
 				if (v === '') {
 					filters.responsibleIndexes = [];
 				} else {
-					// если вручную введено значение, но не выбрано из списка — не меняем текущее состояние
+					// если вручную введено значение, но не выбрано из списка ? не меняем текущее состояние
 					const chosen = Array.isArray(filters.responsibleIndexes) ? filters.responsibleIndexes : [];
 					filters.responsibleIndexes = chosen.filter(n => Number.isFinite(n)).slice(0, 1);
 				}
@@ -2883,7 +4856,7 @@ if (_presetChannel) {
 	_debugModeActive = false;
 	_isResetting = true;
 	try {
-	// Сохраняем теги — сброс только снимает выбор, не удаляет теги
+	// Сохраняем теги ? сброс только снимает выбор, не удаляет теги
 	const savedTags = Array.isArray(filters.keywordTags) ? [...filters.keywordTags] : [];
 	const savedIntersectionTags = Array.isArray(filters.intersectionTags) ? [...filters.intersectionTags] : [];
 	filters = defaultFilters();
@@ -2893,7 +4866,7 @@ if (_presetChannel) {
 	filters.selectedIntersectionTags = [];
 	persistFilters();
 	// Визуально снимаем все активные теги (renderTagChips/renderIntersectionTagChips
-	// определены внутри buildFiltersPanel и недоступны здесь — обновляем напрямую)
+	// определены внутри buildFiltersPanel и недоступны здесь ? обновляем напрямую)
 	const _kwChipsR = host.querySelector('#anit_kwtags_chips');
 	if (_kwChipsR) _kwChipsR.querySelectorAll('.kw-tag-chip').forEach(c => c.classList.remove('is-active'));
 	const _ixChipsR = host.querySelector('#anit_itags_chips');
@@ -2933,7 +4906,7 @@ if (_presetChannel) {
 		const thumb = document.createElement('div');
 		thumb.id = 'anit_scr_thumb';
 		track.appendChild(thumb);
-		host.appendChild(track); // в #anit-filters, не в .pane — выходит за правый край
+		host.appendChild(track); // в #anit-filters, не в .pane ? выходит за правый край
 
 		function _syncThumb() {
 			const sh = pane.scrollHeight, ch = pane.clientHeight;
@@ -2965,7 +4938,7 @@ if (_presetChannel) {
 		}, { passive: true });
 		document.addEventListener('mouseup', () => { _drag = false; });
 
-		// Клик по треку — прыжок к позиции
+		// Клик по треку ? прыжок к позиции
 		track.addEventListener('click', e => {
 			if (e.target === thumb) return;
 			const rect = track.getBoundingClientRect();
@@ -3065,7 +5038,7 @@ if (_presetChannel) {
 				info.innerHTML = `<b>${c.label}</b> <span style="opacity:.5">${c.rxPattern ? '('+c.rxPattern+')' : ''}</span>`;
 				const rmBtn = document.createElement('button');
 				rmBtn.type = 'button';
-				rmBtn.textContent = '×';
+				rmBtn.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true" focusable="false" style="width:9px;height:9px;display:block;fill:currentColor"><path d="M10.4 2.4 9.6 1.6 6 5.2 2.4 1.6 1.6 2.4 5.2 6 1.6 9.6 2.4 10.4 6 6.8 9.6 10.4 10.4 9.6 6.8 6z"/></svg>';
 				rmBtn.style.cssText = 'padding:2px 5px;border-radius:10px;border:1px solid rgba(255,0,0,.3);background:rgba(255,0,0,.12);color:#f66;cursor:pointer;font-size:12px';
 				rmBtn.addEventListener('click', () => {
 					const cats = loadCustomCats().filter(cc => cc.type !== c.type);
@@ -3248,7 +5221,7 @@ if (_presetChannel) {
 		tags.forEach(tag => {
 			const chip = document.createElement('span');
 			chip.className = 'kw-tag-chip' + (selected.has(tag) ? ' is-active' : '');
-			chip.innerHTML = tag + ' <span class="tag-rm" title="Удалить">×</span>';
+			chip.innerHTML = tag + ' <span class="tag-rm" title="Удалить"><svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M10.4 2.4 9.6 1.6 6 5.2 2.4 1.6 1.6 2.4 5.2 6 1.6 9.6 2.4 10.4 6 6.8 9.6 10.4 10.4 9.6 6.8 6z"/></svg></span>';
 			chip.querySelector('.tag-rm').addEventListener('click', (e) => {
 				e.stopPropagation();
 				showTagDeleteConfirm(tag, () => {
@@ -3302,7 +5275,7 @@ if (_presetChannel) {
 		tags.forEach(tag => {
 			const chip = document.createElement('span');
 			chip.className = 'kw-tag-chip' + (selected.has(tag) ? ' is-active' : '');
-			chip.innerHTML = tag + ' <span class="tag-rm" title="Удалить">×</span>';
+			chip.innerHTML = tag + ' <span class="tag-rm" title="Удалить"><svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M10.4 2.4 9.6 1.6 6 5.2 2.4 1.6 1.6 2.4 5.2 6 1.6 9.6 2.4 10.4 6 6.8 9.6 10.4 10.4 9.6 6.8 6z"/></svg></span>';
 			chip.querySelector('.tag-rm').addEventListener('click', (e) => {
 				e.stopPropagation();
 				showTagDeleteConfirm(tag, () => {
@@ -3346,7 +5319,7 @@ if (_presetChannel) {
 	itagAddInput && itagAddInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); doAddIntersectionTag(); } });
 	// ---- END INTERSECTION TAGS ----
 
-	// Загрузка чатов: используется автоматически и по кнопке ──────────────
+	// Загрузка чатов: используется автоматически и по кнопке в?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Р‚
 	let _prefetchRunning = false;
 	async function runPrefetch() {
 		if (IS_OL_FRAME || _prefetchRunning) return;
@@ -3357,7 +5330,7 @@ if (_presetChannel) {
 		popup.className = 'pena-prefetch-popup';
 		popup.innerHTML = `
 			<div class="pena-prefetch-box">
-			<div class="pena-prefetch-handle">⠇ Загрузка чатов…</div>
+			<div class="pena-prefetch-handle">Загрузка чатов...</div>
 			<div class="pena-prefetch-bar-wrap"><div class="pena-prefetch-bar" id="pena_prefetch_bar"></div></div>
 			<div class="pena-prefetch-sub">Прокрутка списка для предзагрузки</div>
 			<button class="pena-prefetch-cancel" id="pena_prefetch_cancel">Отмена</button>
@@ -3372,25 +5345,8 @@ if (_presetChannel) {
 			if (_scrollPromise) _scrollPromise.cancel();
 		});
 
-		// Перетаскивание всего окна за хэндл попапа
-		let _drag = false, _startX = 0, _startY = 0, _startLeft = 0, _startTop = 0;
-		const onMove = (e) => {
-			if (!_drag) return;
-			const dx = e.clientX - _startX, dy = e.clientY - _startY;
-			const r = host.getBoundingClientRect();
-			host.style.left = Math.max(0, Math.min(window.innerWidth  - r.width,  _startLeft + dx)) + 'px';
-			host.style.top  = Math.max(0, Math.min(window.innerHeight - r.height, _startTop  + dy)) + 'px';
-		};
-		const onUp = () => { _drag = false; };
-		popup.querySelector('.pena-prefetch-handle').addEventListener('mousedown', (e) => {
-			_drag = true;
-			_startX = e.clientX; _startY = e.clientY;
-			_startLeft = parseInt(host.style.left || '0', 10) || 0;
-			_startTop  = parseInt(host.style.top  || '0', 10) || 0;
-			e.preventDefault();
-		});
-		document.addEventListener('mousemove', onMove);
-		document.addEventListener('mouseup',   onUp);
+		const onMove = () => {};
+		const onUp = () => {};
 
 		try {
 			_prefetchActive = true;
@@ -3436,73 +5392,113 @@ if (_presetChannel) {
 
 	makeDraggable(host, mode);
 
-	// ── Масштаб панели ─────────────────────────────────────────
-	const LS_PANEL_SCALE_KEY = 'pena.panel.scale';
-	const scaleSlider = host.querySelector('#anit_size_slider');
-	const scaleValue = host.querySelector('#anit_size_value');
-	const clampScale = (v) => Math.max(75, Math.min(125, Number.isFinite(v) ? v : 100));
+	// в?Ђв?Р‚ Масштаб панели: отдельная настройка удалена, визуальный размер меняется ресайзом окна.
 	const getPanelScale = () => parseFloat(host.dataset.panelScale || '1') || 1;
-	const applyPanelScale = (v) => {
-		const pct = clampScale(v);
-		const scale = pct / 100;
+	const clampPanelScale = (v) => Math.max(0.65, Math.min(1.5, Number.isFinite(v) ? v : 1));
+	const applyPanelScale = (value = getPanelScale()) => {
+		const scale = clampPanelScale(value);
 		host.dataset.panelScale = String(scale);
-		host.style.transform = `scale(${scale})`;
-		if (scaleSlider) scaleSlider.value = String(pct);
-		if (scaleValue) scaleValue.textContent = pct + '%';
+		host.dataset.externalScale = '1';
+		host.dataset.effectivePanelScale = String(scale);
+		host.style.setProperty('--panel-icon-counter-scale', String(1 / Math.max(0.1, scale)));
+		host.style.zoom = '';
+		host.style.transform = scale === 1 ? '' : `scale(${scale})`;
+		if (_dialogControlDock) _dialogControlDock.style.zoom = '';
+		if (_dialogControlDock) _syncDialogDockAppearance(host);
 		const r = host.getBoundingClientRect();
 		const left = parseInt(host.style.left || '0', 10) || 0;
 		const top = parseInt(host.style.top || '0', 10) || 0;
 		host.style.left = Math.max(0, Math.min(left, window.innerWidth - r.width)) + 'px';
 		host.style.top = Math.max(0, Math.min(top, window.innerHeight - r.height)) + 'px';
+		_syncDialogDockToPanel(host);
+		return scale;
 	};
-	const savedScale = parseInt(localStorage.getItem(LS_PANEL_SCALE_KEY) || '100', 10);
-	applyPanelScale(Number.isFinite(savedScale) ? savedScale : 100);
-	if (scaleSlider) {
-		scaleSlider.addEventListener('input', () => {
-			const v = parseInt(scaleSlider.value, 10);
-			applyPanelScale(v);
-			try { localStorage.setItem(LS_PANEL_SCALE_KEY, String(clampScale(v))); } catch {}
-		});
-	}
+	try { localStorage.removeItem('pena.panel.scale'); } catch {}
 
-	// ── Изменение размера панели ────────────────────────────────
-	const LS_PANEL_SIZE_KEY = 'pena.panelSize';
+	// в?Ђв?Р‚ Изменение размера панели в?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Р‚
+	const LS_PANEL_SIZE_KEY = `pena.panelSize.${_currentPanelMode}`;
 	const PANEL_MIN_WIDTH = 224;
 	const PANEL_MAX_WIDTH = 520;
+	const PANEL_MIN_HEIGHT = 220;
+	let panelHeightAuto = true;
 	const getPanelMinWidth = () => Math.min(PANEL_MIN_WIDTH, Math.max(180, window.innerWidth - 16));
-	const getPanelMaxWidth = () => Math.max(getPanelMinWidth(), Math.min(PANEL_MAX_WIDTH, (window.innerWidth - 8) / getPanelScale()));
-	const clampPanelWidth = (w) => Math.max(getPanelMinWidth(), Math.min(getPanelMaxWidth(), w));
+	const getPanelResizeScale = () => _getPanelVisualScale(host);
+	const getPanelLeft = () => parseFloat(host.style.left || '0') || 0;
+	const getPanelMaxWidth = (left = getPanelLeft()) => {
+		const availableVisual = Math.max(180, window.innerWidth - Math.max(0, left) - 8);
+		return Math.max(getPanelMinWidth(), Math.min(PANEL_MAX_WIDTH, availableVisual / getPanelResizeScale()));
+	};
+	const clampPanelWidth = (w, left = getPanelLeft()) => {
+		const value = Number.isFinite(w) ? w : 260;
+		return Math.max(getPanelMinWidth(), Math.min(getPanelMaxWidth(left), value));
+	};
+	const clampPanelHeight = (h) => _clampLinkedPanelHeight(Math.max(PANEL_MIN_HEIGHT, h), host);
+	const autoFitPanelHeight = () => {
+		if (!panelHeightAuto || host.classList.contains('anit-hidden')) return;
+		const pane = host.querySelector('.pane');
+		if (!pane) return;
+		const desired = clampPanelHeight((pane.scrollHeight || pane.offsetHeight || PANEL_MIN_HEIGHT) + 2);
+		if (Math.abs((parseFloat(pane.style.maxHeight || '') || 0) - desired) > 1) {
+			pane.style.maxHeight = desired + 'px';
+			_syncLinkedPanelHeights();
+		}
+	};
 	const clampPanelToViewport = () => {
 		host.style.width = clampPanelWidth(host.offsetWidth || parseFloat(host.style.width) || 260) + 'px';
-		applyPanelScale(Math.round(getPanelScale() * 100));
+		const pane = host.querySelector('.pane');
+		if (pane) {
+			if (panelHeightAuto) autoFitPanelHeight();
+			else pane.style.maxHeight = clampPanelHeight(parseFloat(pane.style.maxHeight || '') || pane.offsetHeight || PANEL_MIN_HEIGHT) + 'px';
+		}
+		applyPanelScale(getPanelScale());
+	};
+	const refreshScaleCompensation = () => {
+		if (!document.body.contains(host)) {
+			if (scaleCompensationTimer) clearInterval(scaleCompensationTimer);
+			try { panelAutoHeightObserver.disconnect(); } catch {}
+			return;
+		}
+		applyPanelScale(getPanelScale());
 	};
 	const persistPanelSize = () => {
 		const pane = host.querySelector('.pane');
-		try { localStorage.setItem(LS_PANEL_SIZE_KEY, JSON.stringify({ w: host.style.width, h: pane?.style.maxHeight || '' })); } catch {}
+		try { localStorage.setItem(LS_PANEL_SIZE_KEY, JSON.stringify({ w: host.style.width, h: panelHeightAuto ? null : (pane?.style.maxHeight || ''), scale: getPanelScale() })); } catch {}
 	};
 	// Восстанавливаем сохранённый размер
+	let savedPanelScale = 1;
 	try {
 		const saved = JSON.parse(localStorage.getItem(LS_PANEL_SIZE_KEY) || '{}');
 		if (saved.w) {
 			const savedW = parseFloat(String(saved.w));
 			host.style.width = Number.isFinite(savedW) ? clampPanelWidth(savedW) + 'px' : saved.w;
 		}
-		if (saved.h) { const p = host.querySelector('.pane'); if (p) p.style.maxHeight = saved.h; }
+		if (saved.h) { const p = host.querySelector('.pane'); if (p) { p.style.maxHeight = saved.h; panelHeightAuto = false; } }
+		if (Number.isFinite(saved.scale)) savedPanelScale = saved.scale;
 	} catch {}
+	applyPanelScale(savedPanelScale);
 	clampPanelToViewport();
 	window.addEventListener('resize', clampPanelToViewport);
-	// Ресайз за боковые грани (левая, правая, нижняя)
-	const _EDGE = 6; // px — ширина зоны захвата края
+	window.visualViewport?.addEventListener('resize', refreshScaleCompensation);
+	window.visualViewport?.addEventListener('scroll', refreshScaleCompensation);
+	let scaleCompensationTimer = setInterval(refreshScaleCompensation, 1200);
+	const panelAutoHeightObserver = new MutationObserver(() => requestAnimationFrame(autoFitPanelHeight));
+	try { panelAutoHeightObserver.observe(host, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] }); } catch {}
+	requestAnimationFrame(autoFitPanelHeight);
+	// Ресайз за боковые грани и диагональные нижние углы
+	const _EDGE = 12; // px resize hit area
 	let _rzActive = false, _rzEdges = {};
-	let _rzStartX = 0, _rzStartY = 0, _rzStartW = 0, _rzStartH = 0, _rzStartLeft = 0;
+	let _rzStartX = 0, _rzStartY = 0, _rzStartW = 0, _rzStartH = 0, _rzStartLeft = 0, _rzStartScale = 1, _rzStartRight = 0;
 	const _getEdges = (ev) => {
 		const r = host.getBoundingClientRect();
-		return { l: ev.clientX <= r.left + _EDGE, r: ev.clientX >= r.right - _EDGE, b: ev.clientY >= r.bottom - _EDGE };
+		const l = ev.clientX <= r.left + _EDGE;
+		const rEdge = ev.clientX >= r.right - _EDGE;
+		const b = ev.clientY >= r.bottom - _EDGE;
+		return { l, r: rEdge, b };
 	};
 	const _RZ_CLASSES = ['rz-e','rz-w','rz-s','rz-se','rz-sw'];
 	const _edgeCursorClass = (g) => {
-		if (g.b && g.l) return 'rz-sw';
-		if (g.b && g.r) return 'rz-se';
+		if (g.r && g.b) return 'rz-se';
+		if (g.l && g.b) return 'rz-sw';
 		if (g.l) return 'rz-w';
 		if (g.r) return 'rz-e';
 		if (g.b) return 'rz-s';
@@ -3514,39 +5510,69 @@ if (_presetChannel) {
 	};
 	host.addEventListener('mousemove', (ev) => {
 		if (_rzActive) return;
-		const overUI = !!ev.target.closest('button,input,select,textarea,a,[contenteditable]');
-		_setRzCursor(overUI ? '' : _edgeCursorClass(_getEdges(ev)));
+		if (host.classList.contains('anit-hidden')) {
+			_setRzCursor('');
+			return;
+		}
+		const edges = _getEdges(ev);
+		const overUI = !!ev.target.closest('button,input,select,textarea,a,[contenteditable],.controls-pop');
+		_setRzCursor(overUI && !edges.l && !edges.r && !edges.b ? '' : _edgeCursorClass(edges));
 	});
 	host.addEventListener('mouseleave', () => { if (!_rzActive) _setRzCursor(''); });
 	host.addEventListener('mousedown', (ev) => {
 		if (ev.button !== 0) return;
-		if (ev.target.closest('button,input,select,textarea,a,[contenteditable]')) return;
+		if (host.classList.contains('anit-hidden')) {
+			_setRzCursor('');
+			return;
+		}
 		const edges = _getEdges(ev);
 		if (!edges.l && !edges.r && !edges.b) return;
 		_rzActive = true;
 		_rzEdges = edges;
 		_rzStartX = ev.clientX; _rzStartY = ev.clientY;
 		_rzStartW = host.offsetWidth;
-		_rzStartH = host.querySelector('.pane')?.offsetHeight || host.offsetHeight;
+		_rzStartH = parseFloat(host.querySelector('.pane')?.style.maxHeight || '') || host.querySelector('.pane')?.offsetHeight || host.offsetHeight;
 		_rzStartLeft = parseInt(host.style.left || '0', 10) || 0;
+		_rzStartScale = getPanelResizeScale();
+		_rzStartRight = _rzStartLeft + (_rzStartW * _rzStartScale);
 		ev.preventDefault();
 		ev.stopPropagation();
 		const onRzMove = (e) => {
 			if (!_rzActive) return;
-			const dx = e.clientX - _rzStartX, dy = e.clientY - _rzStartY;
+			const dx = (e.clientX - _rzStartX) / (_rzStartScale || 1);
+			const dy = (e.clientY - _rzStartY) / (_rzStartScale || 1);
 			const pane = host.querySelector('.pane');
+			if ((_rzEdges.r || _rzEdges.l) && _rzEdges.b) {
+				const rawDx = _rzEdges.l ? (_rzStartX - e.clientX) : (e.clientX - _rzStartX);
+				const rawDy = e.clientY - _rzStartY;
+				const delta = Math.abs(rawDx) >= Math.abs(rawDy) ? rawDx : rawDy;
+				const nextScale = applyPanelScale(_rzStartScale + (delta / 360));
+				if (_rzEdges.l) {
+					host.style.left = Math.max(0, Math.min(_rzStartRight - (_rzStartW * nextScale), window.innerWidth - (_rzStartW * nextScale))) + 'px';
+				}
+				_syncDialogDockToPanel(host, true);
+				e.preventDefault();
+				return;
+			}
 			if (_rzEdges.r) {
-				const newW = clampPanelWidth(_rzStartW + dx);
+				const newW = clampPanelWidth(_rzStartW + dx, _rzStartLeft);
 				host.style.width = newW + 'px';
+				_syncDialogDockToPanel(host, true);
 			}
 			if (_rzEdges.l) {
-				const newW = clampPanelWidth(_rzStartW - dx);
+				const maxByRightEdge = Math.max(getPanelMinWidth(), Math.min(PANEL_MAX_WIDTH, _rzStartRight / (_rzStartScale || 1)));
+				const newW = Math.max(getPanelMinWidth(), Math.min(maxByRightEdge, _rzStartW - dx));
 				host.style.width = newW + 'px';
-				host.style.left = Math.max(0, _rzStartLeft + (_rzStartW - newW)) + 'px';
+				host.style.left = Math.max(0, Math.min(_rzStartRight - (newW * _rzStartScale), window.innerWidth - (newW * _rzStartScale))) + 'px';
+				_syncDialogDockToPanel(host, true);
 			}
 			if (_rzEdges.b && pane) {
-				pane.style.maxHeight = Math.max(220, Math.min(window.innerHeight * 0.95, _rzStartH + dy)) + 'px';
+				panelHeightAuto = false;
+				const nextH = clampPanelHeight(_rzStartH + dy);
+				pane.style.maxHeight = nextH + 'px';
+				_syncLinkedPanelHeights();
 			}
+			e.preventDefault();
 		};
 		const onRzUp = () => {
 			_rzActive = false;
@@ -3559,15 +5585,14 @@ if (_presetChannel) {
 		document.addEventListener('mouseup', onRzUp);
 	})
 
-	// ── Прозрачность панели ─────────────────────────────
+	// в?Ђв?Р‚ Прозрачность панели в?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Ђв?Р‚
 	const LS_OPACITY_KEY = 'pena.panel.opacity';
 	const _opSlider = host.querySelector('#anit_opacity_slider');
 	const _opValue = host.querySelector('#anit_opacity_value');
 	if (_opSlider) {
-		let _opTimer = null;
 		const _applyOp = (v) => {
-			host.style.opacity = String(Math.max(0.2, Math.min(1, v / 100)));
-			if (_opValue) _opValue.textContent = Math.max(20, Math.min(100, v)) + '%';
+			const pct = _applyLinkedPanelOpacity(v, false);
+			if (_opValue) _opValue.textContent = pct + '%';
 		};
 		const _savedOp = parseInt(localStorage.getItem(LS_OPACITY_KEY) || '100', 10);
 		_opSlider.value = String(isNaN(_savedOp) ? 100 : _savedOp);
@@ -3578,16 +5603,8 @@ if (_presetChannel) {
 			try { localStorage.setItem(LS_OPACITY_KEY, String(_v)); } catch {}
 		});
 		// Наведение: плавно до 1; уход: 2с задержка, затем плавный возврат (CSS transition)
-		host.addEventListener('mouseenter', () => {
-			clearTimeout(_opTimer);
-			if (parseInt(_opSlider.value, 10) < 100) host.style.opacity = '1';
-		});
-		host.addEventListener('mouseleave', () => {
-			clearTimeout(_opTimer);
-			if (parseInt(_opSlider.value, 10) < 100) {
-				_opTimer = setTimeout(() => { _applyOp(parseInt(_opSlider.value, 10)); }, 2000);
-			}
-		});
+		host.addEventListener('mouseenter', () => _setLinkedPanelOpacityLift(true));
+		host.addEventListener('mouseleave', () => _setLinkedPanelOpacityLift(false));
 	}
 
 }
@@ -3604,12 +5621,20 @@ if (_presetChannel) {
 		const pane = document.getElementById('anit-filters');
 		const needMode = getPanelModeKey();
 		if (pane && pane.dataset.mode !== needMode) {
+			_setPanelModeSwitching(true);
+			_forceCloseDialogControlPalettes();
 			_modeFiltersCache[_currentPanelMode] = JSON.parse(JSON.stringify(filters));
 			pane.remove();
 			filtersHost = null;
 			_currentPanelMode = needMode; // фиксируем режим ДО loadFilters/saveFilters
 			filters = _modeFiltersCache[needMode] ? JSON.parse(JSON.stringify(_modeFiltersCache[needMode])) : loadFilters();
 			await buildFiltersPanel().catch(() => {});
+			_setPanelModeSwitching(false);
+			if (filtersHost) {
+				_renderDialogControlPanel(filtersHost);
+				_updateDialogControlUI(filtersHost);
+				_syncDialogDockToPanel(filtersHost, true);
+			}
 		}
 		applyFilters();
 		return;
@@ -3648,8 +5673,8 @@ if (_presetChannel) {
 		const ra = rankMap.has(aId) ? rankMap.get(aId) : 1e9;
 		const rb = rankMap.has(bId) ? rankMap.get(bId) : 1e9;
 		if (ra !== rb) return ra - rb;
-		const ta = tsMapLocal.get(aId) ?? -1;
-		const tb = tsMapLocal.get(bId) ?? -1;
+		const ta = tsMapLocal.get(aId)   -1;
+		const tb = tsMapLocal.get(bId)   -1;
 		if (ta !== tb) return tb - ta;
 		return (currentIndex.get(a) ?? 0) - (currentIndex.get(b) ?? 0);
 	});
@@ -3668,6 +5693,7 @@ if (_presetChannel) {
 
 	log('rebuild ok.', { total: items.length, source: tsMapLocal.size ? 'rest' : 'dom', reason });
 	applyFilters();
+	if (_dialogControlActive) _scheduleDialogControlSelectionOutlines();
 	rebuildDateGroups(tsMapLocal);
 	}
 
@@ -3682,13 +5708,28 @@ if (_presetChannel) {
 
 		const stillInternal = isInternalChatsDOM();
 		if (!IS_OL_FRAME && !stillInternal) {
+		_forceCloseDialogControlPalettes();
 		document.getElementById('anit-filters')?.remove();
 		filtersHost = null;
 		return;
 	}
 
+	const controlStatusSel = '.bx-im-list-recent-item__counter_number,.bx-messenger-cl-count-digit,[class*="mention" i],[title*="упом" i],[title*="mention" i],[aria-label*="упом" i],[aria-label*="mention" i],[data-id*="mention" i],[data-testid*="mention" i],[data-test-id*="mention" i]';
 	let need = false;
 	for (const m of mutations) {
+		if (
+			m.type === 'characterData' ||
+			m.type === 'attributes' ||
+			(m.type === 'childList' && [...m.addedNodes, ...m.removedNodes].some(n =>
+				n.nodeType === 3 ||
+				(n.nodeType === 1 && (
+					n.matches?.(controlStatusSel) ||
+					n.querySelector?.(controlStatusSel)
+				))
+			))
+		) {
+			_refreshDialogControlPanel(filtersHost);
+		}
 		if (m.type === 'childList') {
 		if ([...m.addedNodes, ...m.removedNodes].some(n =>
 			n.nodeType === 1 &&
@@ -3705,7 +5746,7 @@ if (_presetChannel) {
 }, 80);
 });
 
-	obs.observe(container, { childList: true, subtree: true });
+	obs.observe(container, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class', 'title', 'aria-label', 'data-id', 'data-testid', 'data-test-id'] });
 	log('observeContainer: подписан на DOM изменения');
 }
 
@@ -3718,19 +5759,39 @@ if (_presetChannel) {
 	const onChats = isInternalChatsDOM();
 	const havePanel = !!document.getElementById('anit-filters');
 	if (onChats && !havePanel) {
-	buildFiltersPanel().then(applyFilters);
+	_setPanelModeSwitching(true);
+	buildFiltersPanel().then(() => {
+		_setPanelModeSwitching(false);
+		applyFilters();
+		if (filtersHost) {
+			_renderDialogControlPanel(filtersHost);
+			_updateDialogControlUI(filtersHost);
+			_syncDialogDockToPanel(filtersHost, true);
+		}
+	}).catch(() => { _setPanelModeSwitching(false); });
 } else if (onChats && havePanel) {
 	const pane = document.getElementById('anit-filters');
 	const needMode = getPanelModeKey();
 	if (pane && pane.dataset.mode !== needMode) {
+		_setPanelModeSwitching(true);
+		_forceCloseDialogControlPalettes();
 		_modeFiltersCache[_currentPanelMode] = JSON.parse(JSON.stringify(filters));
 		pane.remove();
 		filtersHost = null;
 		_currentPanelMode = needMode; // фиксируем режим ДО loadFilters/saveFilters
 		filters = _modeFiltersCache[needMode] ? JSON.parse(JSON.stringify(_modeFiltersCache[needMode])) : loadFilters();
-		buildFiltersPanel().then(applyFilters);
+		buildFiltersPanel().then(() => {
+			_setPanelModeSwitching(false);
+			applyFilters();
+			if (filtersHost) {
+				_renderDialogControlPanel(filtersHost);
+				_updateDialogControlUI(filtersHost);
+				_syncDialogDockToPanel(filtersHost, true);
+			}
+		}).catch(() => { _setPanelModeSwitching(false); });
 	}
 } else if (!onChats && havePanel) {
+	_forceCloseDialogControlPalettes();
 	document.getElementById('anit-filters')?.remove();
 	filtersHost = null;
 }
@@ -3769,6 +5830,35 @@ if (_presetChannel) {
 
 
 	}*/
+
+		function armDialogControlHandlers() {
+			document.addEventListener('click', (e) => {
+				if (!_dialogControlActive) return;
+				const panel = document.getElementById('anit-filters');
+				const dock = document.getElementById('anit-dialog-control-dock');
+				if (panel?.contains(e.target) || dock?.contains(e.target) || e.target?.closest?.('.dialog-control-palette')) return;
+				const el = getChatItemElement(e.target);
+				if (!el) {
+					e.preventDefault();
+					e.stopPropagation();
+					e.stopImmediatePropagation?.();
+					_showDialogControlMiss();
+					return;
+				}
+				e.preventDefault();
+				e.stopPropagation();
+				e.stopImmediatePropagation?.();
+				_addDialogToControl(el, !!(e.ctrlKey || e.metaKey));
+			}, true);
+
+			document.addEventListener('keydown', (e) => {
+				if (!_dialogControlActive) return;
+				if (e.key === 'Escape') {
+					e.preventDefault();
+					_exitDialogControlMode();
+				}
+			}, true);
+		}
 
 		function armMultiSelectHandlers() {
 
@@ -3871,6 +5961,7 @@ if (_presetChannel) {
 		});
 
 		armObserver();
+		armDialogControlHandlers();
 		armMultiSelectHandlers();
 	log('boot завершён');
 }
