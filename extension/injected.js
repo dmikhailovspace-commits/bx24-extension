@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.1';
+	window.__ANITREC_RUNNING__ = '7.1.2';
 
-	const VER = '7.1.1';
+	const VER = '7.1.2';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -28,12 +28,6 @@
 	IS_FRAME &&
 	/\/desktop_app\/\?/i.test(location.href) &&
 	(qs.get('IM_LINES') === 'Y' || /IM_LINES=Y/i.test(location.href));
-	let multiSelectMode = false;
-	let multiSelectedIds = new Set();
-	let multiRmbTimer = null;
-	let multiRmbTargetEl = null;
-	let multiPanelHost = null;
-	let multiEnteredViaRmb = false;
 	function isVisibleElement(el) {
 		if (!el) return false;
 		const st = getComputedStyle(el);
@@ -271,7 +265,7 @@
 	const map = new Map();
 	const BXNS = window.BX;
 	if (!BXNS?.rest?.callMethod) {
-	warn('BX.rest недоступен ? работаю без tsMap');
+	warn('BX.rest недоступен — работаю без tsMap');
 	return map;
 }
 	try {
@@ -651,216 +645,6 @@ if (_presetChannel) {
 		saveFilters();
 		saveFiltersToActivePreset(options);
 	}
-		function ensureMultiPanel() {
-			if (multiPanelHost) return multiPanelHost;
-
-			const host = document.createElement('div');
-			host.id = 'anit-multi-panel';
-			host.style.cssText = [
-				'position:fixed',
-				'top:8px',
-				'left:50%',
-				'transform:translateX(-50%)',
-				'z-index:9999',
-				'background:linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98))',
-				'color:#eef3fb',
-				'border:1px solid rgba(255,255,255,.13)',
-				'border-radius:10px',
-				'padding:8px 10px',
-				'font:12px system-ui,-apple-system,Segoe UI,Roboto,Arial',
-				'display:none',
-				'box-shadow:0 18px 42px rgba(0,0,0,.46),0 1px 0 rgba(255,255,255,.04) inset'
-			].join(';');
-
-			host.innerHTML = `
-	  <span id="anit-multi-count">0</span> выбрано
-	  <span style="margin:0 8px;color:rgba(255,255,255,.4)">|</span>
-	  <button data-act="later">Посмотреть позже</button>
-	  <button data-act="pin">Закрепить</button>
-	  <button data-act="unpin">Открепить</button>
-	  <button data-act="mute">Выключить звук</button>
-	  <button data-act="unmute">Включить звук</button>
-	  <button data-act="hide">Скрыть</button>
-	  <button data-act="leave">Выйти</button>
-	  <span style="margin:0 8px;color:rgba(255,255,255,.4)">|</span>
-	  <button data-act="cancel">Отмена</button>
-	`;
-			host.querySelectorAll('button').forEach(btn => {
-				btn.style.cssText = [
-					'background:rgba(255,255,255,.06)',
-					'border:1px solid rgba(255,255,255,.16)',
-					'border-radius:10px',
-					'padding:3px 8px',
-					'color:#dce4ef',
-					'cursor:pointer',
-					'font-size:11px',
-					'margin-right:4px'
-				].join(';');
-				btn.addEventListener('click', () => {
-					const act = btn.getAttribute('data-act');
-					if (act === 'cancel') { exitMultiSelectMode(); }
-					else { applyMultiAction(act); }
-				});
-			});
-
-			document.body.appendChild(host);
-			multiPanelHost = host;
-			return host;
-		}
-
-		function updateMultiPanel() {
-			const host = ensureMultiPanel();
-			const cnt = multiSelectedIds.size;
-			const cntSpan = host.querySelector('#anit-multi-count');
-			if (cntSpan) cntSpan.textContent = String(cnt);
-			host.style.display = cnt > 0 ? 'block' : 'none';
-			if (!cnt) exitMultiSelectMode();
-		}
-
-		function enterMultiSelectMode(firstEl) {
-			if (multiSelectMode) return;
-			multiSelectMode = true;
-			multiSelectedIds.clear();
-
-			const id = getChatIdFromElement(firstEl);
-			if (id) {
-				multiSelectedIds.add(id);
-				firstEl.classList.add('anit-multi-selected');
-			}
-			updateMultiPanel();
-			log('multi-select: ON', { first: id });
-		}
-
-		function exitMultiSelectMode() {
-			if (!multiSelectMode) return;
-			multiSelectMode = false;
-			multiSelectedIds.clear();
-			document.querySelectorAll('.anit-multi-selected').forEach(el => el.classList.remove('anit-multi-selected'));
-			if (multiPanelHost) multiPanelHost.style.display = 'none';
-			multiEnteredViaRmb = false;
-			log('multi-select: OFF');
-		}
-
-		function toggleChatSelectionFromElement(el) {
-			if (!el) return;
-			const id = getChatIdFromElement(el);
-			if (!id) return;
-			if (multiSelectedIds.has(id)) {
-				multiSelectedIds.delete(id);
-				el.classList.remove('anit-multi-selected');
-			} else {
-				multiSelectedIds.add(id);
-				el.classList.add('anit-multi-selected');
-			}
-			updateMultiPanel();
-		}
-		function applyMultiAction(kind) {
-			const ids = Array.from(multiSelectedIds);
-			if (!ids.length) return;
-
-			const BXNS = window.BX || {};
-
-			log('multiAction', { kind, ids, count: ids.length });
-
-			const tasks = [];
-
-			ids.forEach((dialogId) => {
-
-				if (kind === 'pin') {
-					// /bitrix/services/main/ajax.php?action=im.v2.Chat.pin
-					if (!BXNS.ajax?.runAction) return;
-					tasks.push(
-						BXNS.ajax.runAction('im.v2.Chat.pin', {
-							data: { dialogId }
-						})
-					);
-				}
-				else if (kind === 'unpin') {
-					// /bitrix/services/main/ajax.php?action=im.v2.Chat.unpin
-					if (!BXNS.ajax?.runAction) return;
-					tasks.push(
-						BXNS.ajax.runAction('im.v2.Chat.unpin', {
-							data: { dialogId }
-						}).catch(() => {})
-					);
-				}
-				else if (kind === 'later') {
-
-					// /rest/im.v2.Chat.unread.json
-					if (!BXNS.rest?.callMethod) return;
-					tasks.push(
-						new Promise((resolve) => {
-							BXNS.rest.callMethod(
-								'im.v2.Chat.unread',
-								{ dialogId },
-								() => resolve()
-							);
-						})
-					);
-				}
-				else if (kind === 'mute') {
-					// /rest/im.chat.mute.json  action=Y
-					if (!BXNS.rest?.callMethod) return;
-					tasks.push(
-						new Promise((resolve) => {
-							BXNS.rest.callMethod(
-								'im.chat.mute',
-								{ dialog_id: dialogId, action: 'Y' },
-								() => resolve()
-							);
-						})
-					);
-				}
-				else if (kind === 'unmute') {
-					// /rest/im.chat.mute.json  action=N
-					if (!BXNS.rest?.callMethod) return;
-					tasks.push(
-						new Promise((resolve) => {
-							BXNS.rest.callMethod(
-								'im.chat.mute',
-								{ dialog_id: dialogId, action: 'N' },
-								() => resolve()
-							);
-						})
-					);
-				}
-				else if (kind === 'hide') {
-					// /rest/im.recent.hide.json
-					if (!BXNS.rest?.callMethod) return;
-					tasks.push(
-						new Promise((resolve) => {
-							BXNS.rest.callMethod(
-								'im.recent.hide',
-								{ DIALOG_ID: dialogId },
-								() => resolve()
-							);
-						})
-					);
-				}
-				else if (kind === 'leave') {
-
-					if (!BXNS.rest?.callMethod) return;
-					tasks.push(
-						new Promise((resolve) => {
-							BXNS.rest.callMethod(
-								'im.chat.leave',
-								{ DIALOG_ID: dialogId },
-								() => resolve()
-							);
-						})
-					);
-				}
-			});
-
-
-			Promise.allSettled(tasks).finally(() => {
-				exitMultiSelectMode();
-				setTimeout(() => {
-					try { applyFilters(); } catch (e) {}
-				}, 300);
-			});
-		}
-
 	function getItemMetaOL(el) {
 	const id = normId(el.getAttribute('data-userid') || el.dataset.userid);
 	const status = parseInt(el.getAttribute('data-status') || el.dataset.status || '0', 10) || 0;
@@ -1304,21 +1088,13 @@ if (_presetChannel) {
 		return '#' + [clamp(r), clamp(g), clamp(b)].map(v => v.toString(16).padStart(2, '0')).join('');
 	}
 
-	function _hsvToHex(h, s, v) {
-		const hue = (((Number(h) || 0) % 360) + 360) % 360;
-		const sat = Math.max(0, Math.min(1, Number(s) || 0));
-		const val = Math.max(0, Math.min(1, Number(v) || 0));
-		const c = val * sat;
-		const x = c * (1 - Math.abs((hue / 60) % 2 - 1));
-		const m = val - c;
-		let r = 0, g = 0, b = 0;
-		if (hue < 60) [r, g, b] = [c, x, 0];
-		else if (hue < 120) [r, g, b] = [x, c, 0];
-		else if (hue < 180) [r, g, b] = [0, c, x];
-		else if (hue < 240) [r, g, b] = [0, x, c];
-		else if (hue < 300) [r, g, b] = [x, 0, c];
-		else [r, g, b] = [c, 0, x];
-		return _rgbToHex((r + m) * 255, (g + m) * 255, (b + m) * 255);
+	function _ruPlural(n, one, few, many) {
+		const value = Math.abs(Number(n) || 0);
+		const mod10 = value % 10;
+		const mod100 = value % 100;
+		if (mod10 === 1 && mod100 !== 11) return one;
+		if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+		return many;
 	}
 
 	function _applyDialogControlColorVars(el, color) {
@@ -1894,7 +1670,6 @@ if (_presetChannel) {
 			win.style.removeProperty('pointer-events');
 			win.style.removeProperty('visibility');
 		}
-		dock.querySelector('.dialog-control-settings-pop')?.classList.remove('--show');
 		dock.querySelector('#anit_dialog_control_confirm')?.classList.remove('--show');
 		dock.querySelector('#anit_dialog_control_toast')?.classList.remove('--show', '--danger', '--ok');
 		if (open) {
@@ -2453,7 +2228,7 @@ if (_presetChannel) {
 					? 'Не используется'
 					: usage.total === 1
 						? 'Используется 1 раз'
-						: `Используется ${usage.total} раза`;
+						: `Используется ${usage.total} ${_ruPlural(usage.total, 'раз', 'раза', 'раз')}`;
 				textEl.textContent = `${usageText}. Удалить?`;
 				const actions = document.createElement('div');
 				actions.className = 'dialog-control-delete-actions';
@@ -2476,7 +2251,10 @@ if (_presetChannel) {
 					if (_normalizeDialogControlColor(item.color) === _normalizeDialogControlColor(color)) commitColor('');
 					notice.classList.remove('--show');
 					palette.querySelector(`.dialog-control-swatch[data-color="${color}"]`)?.closest('.dialog-control-swatch-wrap')?.remove();
-					_showDialogDockToast(`Цвет удалён. Сброшено: ${usage.total}`, 'ok');
+					const resetText = usage.total > 0
+						? `Цвет удалён. Сброшено в ${usage.total} ${_ruPlural(usage.total, 'диалоге', 'диалогах', 'диалогах')}`
+						: 'Цвет удалён';
+					_showDialogDockToast(resetText, 'ok');
 				});
 				actions.append(cancel, ok);
 				notice.append(textEl, actions);
@@ -2566,15 +2344,53 @@ if (_presetChannel) {
 			addWrap.className = 'dialog-control-swatch-wrap';
 			addWrap.appendChild(addColor);
 			swatches.appendChild(addWrap);
+			const pickerStops = [
+				{ p: 0, color: '#f04444' },
+				{ p: .18, color: '#f59e0b' },
+				{ p: .32, color: '#f5e642' },
+				{ p: .48, color: '#3bd671' },
+				{ p: .63, color: '#20c5c7' },
+				{ p: .78, color: '#4d9dff' },
+				{ p: .90, color: '#a855f7' },
+				{ p: 1, color: '#f04444' },
+			].map(stop => ({ ...stop, rgb: _hexToRgb(stop.color) }));
+			const mix = (a, b, t) => Math.round(a + (b - a) * t);
+			const colorFromPickerPoint = (xRatio, yRatio) => {
+				const x = Math.max(0, Math.min(1, xRatio));
+				const y = Math.max(0, Math.min(1, yRatio));
+				let leftStop = pickerStops[0];
+				let rightStop = pickerStops[pickerStops.length - 1];
+				for (let i = 1; i < pickerStops.length; i++) {
+					if (x <= pickerStops[i].p) {
+						leftStop = pickerStops[i - 1];
+						rightStop = pickerStops[i];
+						break;
+					}
+				}
+				const span = Math.max(.0001, rightStop.p - leftStop.p);
+				const t = Math.max(0, Math.min(1, (x - leftStop.p) / span));
+				const base = {
+					r: mix(leftStop.rgb.r, rightStop.rgb.r, t),
+					g: mix(leftStop.rgb.g, rightStop.rgb.g, t),
+					b: mix(leftStop.rgb.b, rightStop.rgb.b, t),
+				};
+				const overlayAlpha = .42 * y;
+				const overlay = 0;
+				return _rgbToHex(
+					base.r * (1 - overlayAlpha) + overlay * overlayAlpha,
+					base.g * (1 - overlayAlpha) + overlay * overlayAlpha,
+					base.b * (1 - overlayAlpha) + overlay * overlayAlpha
+				);
+			};
 			const pickFromPointer = (e, commit = false) => {
 				const rect = miniPicker.getBoundingClientRect();
 				const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
 				const y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
-				const hue = (x / Math.max(1, rect.width)) * 360;
-				const value = 1 - (y / Math.max(1, rect.height)) * 0.72;
+				const xRatio = x / Math.max(1, rect.width);
+				const yRatio = y / Math.max(1, rect.height);
 				pickerKnob.style.left = x + 'px';
 				pickerKnob.style.top = y + 'px';
-				applyDraft(_hsvToHex(hue, 0.92, value));
+				applyDraft(colorFromPickerPoint(xRatio, yRatio));
 				if (commit) commitColor(draftColor);
 			};
 			let pickingColor = false;
@@ -2748,7 +2564,7 @@ if (_presetChannel) {
 			el.classList.remove('anit-dialog-control-selected');
 			el.classList.add('anit-dialog-controlled-pulse');
 			setTimeout(() => el.classList.remove('anit-dialog-controlled-pulse'), 850);
-			_showDialogDockToast(`Диалог В«${removed?.title || title}В» убран из контроля`, 'ok');
+			_showDialogDockToast(`Диалог «${removed?.title || title}» убран из контроля`, 'ok');
 			if (keepActive) _scheduleDialogControlIdleExit();
 			else _exitDialogControlMode();
 			return;
@@ -2762,7 +2578,7 @@ if (_presetChannel) {
 		el.classList.add('anit-dialog-controlled-pulse');
 		el.classList.add('anit-dialog-control-selected');
 		setTimeout(() => el.classList.remove('anit-dialog-controlled-pulse'), 850);
-		_showDialogDockToast(`Диалог В«${title}В» выбран`, 'ok');
+		_showDialogDockToast(`Диалог «${title}» выбран`, 'ok');
 		if (keepActive) {
 			_scheduleDialogControlIdleExit();
 		} else {
@@ -2820,7 +2636,7 @@ if (_presetChannel) {
 		if (!presets.length) {
 			const empty = document.createElement('div');
 			empty.className = 'pm-empty';
-			empty.textContent = 'Пресетов нет ? добавьте первый ниже';
+			empty.textContent = 'Пресетов нет — добавьте первый ниже';
 			listEl.appendChild(empty);
 			return;
 		}
@@ -2869,7 +2685,7 @@ if (_presetChannel) {
 			delBtn.addEventListener('mousedown', (e) => {
 				e.preventDefault();
 				e.stopPropagation();
-				_showPresetConfirm(`Удалить пресет В«${p.label}В»?`, 'Удалить', 'Отмена', () => {
+				_showPresetConfirm(`Удалить пресет «${p.label}»?`, 'Удалить', 'Отмена', () => {
 					_presetsData[_pMode()] = _getPresetsArr().filter(x => x.id !== p.id);
 					if (_getActiveId() === p.id) {
 						_setActiveId(null);
@@ -2879,7 +2695,7 @@ if (_presetChannel) {
 					_saveCustomPresets();
 					renderPresetManagePanel(host);
 					renderPresetsUI(host);
-				});
+				}, 'danger');
 			});
 
 			row.addEventListener('dragstart', (e) => {
@@ -3351,15 +3167,6 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-filters button:focus-visible,
 #anit-filters input:focus-visible,
 #anit-filters select:focus-visible{outline:2px solid rgba(77,157,255,.6);outline-offset:2px}
-#anit-filters .opts-pop{display:none;position:absolute;top:32px;right:0;width:min(292px,calc(100vw - 24px));max-width:calc(100vw - 24px);background:linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));color:var(--pena-text);border:1px solid rgba(255,255,255,.13);border-radius:var(--pena-radius);padding:12px;box-shadow:0 18px 42px rgba(0,0,0,.46),0 1px 0 rgba(255,255,255,.04) inset;z-index:10001;box-sizing:border-box}
-#anit-filters .opts-pop.show{display:block}
-#anit-filters .opts-title{font-size:10px;font-weight:700;margin:0 0 8px 0;color:var(--pena-muted);text-transform:uppercase;letter-spacing:.08em}
-#anit-filters .opts-host{font-size:11px;color:#c7d3e4;margin:0 0 10px 0;word-break:break-word;line-height:1.35}
-#anit-filters .opts-line{display:flex;align-items:center;gap:8px;margin:8px 0;color:#dce4ef}
-#anit-filters .opts-field{margin:10px 0}
-#anit-filters .opts-field input{width:90%}
-#anit-filters .opts-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
-#anit-filters .opts-status{margin-top:6px;min-height:14px}
 #anit-filters .brand{display:flex;align-items:center;gap:10px;min-width:0;flex:1 1 auto;overflow:hidden}
 #anit-filters .brand-icon{width:20px;height:20px;display:inline-flex;flex:0 0 20px}
 #anit-filters .brand-logo{height:22px;width:auto;max-width:120px;filter:invert(1);mix-blend-mode:screen;flex-shrink:0;display:block}
@@ -3508,9 +3315,6 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-filters .chip-remove:hover{color:#ff8f8f;opacity:1}
 #anit-filters .anit-hidden-row .project-wrap{position:relative}
 #anit-filters #anit_hidden_project_input,#anit-filters #anit_hidden_responsible_input{width:100%;box-sizing:border-box}
-.anit-multi-selected {background: rgba(93, 220, 200, 0.15) !important;}
-.anit-multi-selected::before {content: '?';position: absolute;left: 6px;top: 50%;transform: translateY(-50%);font-size: 12px;color: #5dc;z-index: 2;}
-.bx-im-list-recent-item__wrap.anit-multi-selected, .bx-messenger-cl-item.anit-multi-selected {position: relative;}
 #anit-filters .presets-row{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 0;justify-content:flex-start;align-items:flex-start}
 #anit-filters .preset-btn{flex:0 1 auto;min-width:0;max-width:100%;min-height:26px;padding:0 10px;border-radius:var(--pena-radius);border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.04);color:#c6d2e2;font-size:var(--pena-font-body);cursor:pointer;transition:background .15s,border-color .15s,color .15s,transform .15s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1;display:inline-flex;align-items:center;justify-content:center;text-align:center;box-sizing:border-box}
 #anit-filters .preset-btn:hover{background:rgba(255,255,255,.11);color:#fff;transform:translateY(-1px)}
@@ -3577,20 +3381,8 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-mode-btn:hover,#anit-dialog-control-dock .dialog-control-clear-btn:hover,#anit-dialog-control-dock .dialog-control-columns-btn:hover{border-color:rgba(255,255,255,.34);background:rgba(255,255,255,.08);transform:translateY(-1px)}
 #anit-dialog-control-dock .dialog-control-mode-btn.--active{border-color:rgba(255,73,73,.58);background:rgba(255,73,73,.16);color:#ffd6d6}
 #anit-dialog-control-dock .dialog-control-columns-btn.--active{border-color:rgba(77,157,255,.5);background:rgba(77,157,255,.12);color:#d6e9ff}
-#anit-dialog-control-dock .dialog-control-settings-pop{position:absolute;top:86px;right:10px;z-index:6;width:210px;padding:42px 12px 12px;border:1px solid rgba(255,255,255,.13);border-radius:var(--pena-radius);background:linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));box-shadow:0 18px 42px rgba(0,0,0,.46),0 1px 0 rgba(255,255,255,.04) inset;opacity:0;pointer-events:none;transform:translateY(-6px) scale(.96);transition:opacity .18s ease,transform .18s ease;box-sizing:border-box}
-#anit-dialog-control-dock .dialog-control-settings-pop.--show{opacity:1;pointer-events:auto;transform:translateY(0) scale(1)}
-#anit-dialog-control-dock .dialog-control-settings-title{position:absolute;top:8px;left:12px;right:42px;height:22px;display:flex;align-items:center;font-size:10px;font-weight:700;color:var(--pena-muted);text-transform:uppercase;letter-spacing:.08em;margin:0;line-height:1.2}
-#anit-dialog-control-dock .dialog-control-settings-note{color:#d8e0eb;font-size:var(--pena-font-body);line-height:1.35}
-#anit-dialog-control-dock .dialog-control-radio{display:flex;align-items:center;gap:8px;color:#d8e0eb;font-size:var(--pena-font-body);text-transform:none;letter-spacing:0;font-weight:600;white-space:nowrap}
-#anit-dialog-control-dock .dialog-control-radio input{-webkit-appearance:none;appearance:none;width:14px;height:14px;margin:0;border:1px solid rgba(255,255,255,.8);border-radius:50%;background:#070809;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box}
-#anit-dialog-control-dock .dialog-control-radio input::before{content:"";width:6px;height:6px;border-radius:50%;background:#fff;transform:scale(0);transition:transform .12s ease}
-#anit-dialog-control-dock .dialog-control-radio input:checked::before{transform:scale(1)}
-#anit-dialog-control-dock .dialog-control-setting-row{display:grid;grid-template-columns:minmax(0,1fr) 42px;align-items:center;gap:8px;margin:0 0 10px;font-size:10px;color:#c7d3e4;text-transform:uppercase;letter-spacing:.06em;font-weight:700}
-#anit-dialog-control-dock .dialog-control-setting-row:last-child{margin-bottom:0}
-#anit-dialog-control-dock .dialog-control-setting-row input{grid-column:1 / -1;width:100%;height:3px;margin:0;accent-color:#4d9dff}
-#anit-dialog-control-dock .dialog-control-settings-close,#anit-filters .controls-pop-close{position:absolute;top:8px;right:8px;width:22px;height:22px;border:0;background:transparent;color:rgba(255,255,255,.72);padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;line-height:1;border-radius:var(--pena-radius)}
-#anit-dialog-control-dock .dialog-control-settings-close:hover,#anit-filters .controls-pop-close:hover{color:#fff;background:rgba(255,255,255,.08);transform:none}
-#anit-dialog-control-dock .dialog-control-opacity-value{text-align:right;font-variant-numeric:tabular-nums}
+#anit-filters .controls-pop-close{position:absolute;top:8px;right:8px;width:22px;height:22px;border:0;background:transparent;color:rgba(255,255,255,.72);padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;line-height:1;border-radius:var(--pena-radius)}
+#anit-filters .controls-pop-close:hover{color:#fff;background:rgba(255,255,255,.08);transform:none}
 #anit-dialog-control-dock #anit_dialog_control_overlay{position:absolute;left:0;right:0;bottom:calc(100% + 8px);display:none;z-index:4;pointer-events:none}
 #anit-dialog-control-dock.anit-dialog-control-mode #anit_dialog_control_overlay{display:flex}
 #anit-dialog-control-dock .anit-control-flag{width:100%;font-size:12px;font-weight:700;color:#ffb3b3;background:linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));border:1px solid rgba(239,68,68,.48);border-radius:var(--pena-radius);padding:8px 12px;box-shadow:0 12px 30px rgba(0,0,0,.38),0 1px 0 rgba(255,255,255,.04) inset;display:inline-flex;align-items:center;justify-content:center;gap:7px;text-align:center;line-height:1.25;box-sizing:border-box}
@@ -3641,7 +3433,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .dialog-control-palette.--closing{opacity:0;visibility:visible;pointer-events:none;transform:translateY(-8px) scale(.94)}
 .dialog-control-preview{grid-column:1;grid-row:1;width:28px;height:28px;min-width:28px;min-height:28px;align-self:start;border:1px solid rgba(255,255,255,.14);border-radius:8px;background:var(--dialog-chip-color,#4d9dff);box-shadow:0 0 0 1px rgba(0,0,0,.22) inset,0 10px 22px var(--dialog-chip-shadow,rgba(77,157,255,.35));box-sizing:border-box}
 .dialog-control-mini-picker{grid-column:2;grid-row:1;position:relative;width:100%;height:28px;min-height:28px;align-self:start;min-width:0;border:1px solid rgba(255,255,255,.14);border-radius:8px;background:linear-gradient(90deg,#f04444,#f59e0b 18%,#f5e642 32%,#3bd671 48%,#20c5c7 63%,#4d9dff 78%,#a855f7 90%,#f04444);box-shadow:0 0 0 1px rgba(0,0,0,.22) inset;overflow:hidden;cursor:crosshair;touch-action:none;box-sizing:border-box}
-.dialog-control-mini-picker::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.22),rgba(0,0,0,.42));pointer-events:none}
+.dialog-control-mini-picker::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,.42));pointer-events:none}
 .dialog-control-picker-knob{position:absolute;left:50%;top:50%;z-index:1;width:12px;height:12px;border:2px solid #fff;border-radius:50%;background:var(--dialog-chip-color,#4d9dff);box-shadow:0 2px 8px rgba(0,0,0,.55);transform:translate(-50%,-50%);pointer-events:none}
 .dialog-control-palette-close{position:absolute;right:8px;top:8px;width:16px;height:16px;min-height:16px;border:0;border-radius:0;background:transparent;color:#ff8f8f;padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
 .dialog-control-palette-close:hover{background:transparent;color:#ffd0d0;transform:none}
@@ -4647,7 +4439,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.1';
+	if (_verBadge) _verBadge.textContent = 'v7.1.2';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
@@ -5850,85 +5642,6 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 			}, true);
 		}
 
-		function armMultiSelectHandlers() {
-
-			document.addEventListener('mousedown', (e) => {
-				if (e.button !== 2) return;
-				const el = getChatItemElement(e.target);
-				if (!el) return;
-
-
-				if (multiSelectMode) return;
-
-				multiRmbTargetEl = el;
-				if (multiRmbTimer) clearTimeout(multiRmbTimer);
-				multiRmbTimer = setTimeout(() => {
-					multiRmbTimer = null;
-
-					enterMultiSelectMode(multiRmbTargetEl);
-					multiEnteredViaRmb = true;
-				}, 600); // длительность клика ПКМ
-			}, true);
-
-
-			document.addEventListener('mouseup', (e) => {
-				if (e.button === 2 && multiRmbTimer) {
-					clearTimeout(multiRmbTimer);
-					multiRmbTimer = null;
-				}
-
-			}, true);
-
-			document.addEventListener('mouseleave', () => {
-				if (multiRmbTimer) {
-					clearTimeout(multiRmbTimer);
-					multiRmbTimer = null;
-				}
-			}, true);
-
-
-			document.addEventListener('contextmenu', (e) => {
-				if (!multiSelectMode) return;
-				const el = getChatItemElement(e.target);
-				if (!el) return;
-
-				e.preventDefault();
-				e.stopPropagation();
-				const id = getChatIdFromElement(el);
-				if (
-					multiEnteredViaRmb &&
-					id &&
-					multiSelectedIds.size === 1 &&
-					multiSelectedIds.has(id)
-				) {
-					multiEnteredViaRmb = false;
-					return;
-				}
-
-				multiEnteredViaRmb = false;
-				toggleChatSelectionFromElement(el);
-			}, true);
-
-
-			document.addEventListener('click', (e) => {
-				if (!multiSelectMode) return;
-				const el = getChatItemElement(e.target);
-				if (!el) return;
-
-				e.preventDefault();
-				e.stopPropagation();
-				toggleChatSelectionFromElement(el);
-			}, true);
-
-
-			document.addEventListener('keydown', (e) => {
-				if (!multiSelectMode) return;
-				if (e.key === 'Escape') {
-					exitMultiSelectMode();
-				}
-			}, true);
-		}
-
 		window.addEventListener('message', (e) => {
 			if (!e.data || e.data.type !== 'anit-mapping-updated') return;
 			if (!e.data.projects && !e.data.users) return;
@@ -5952,7 +5665,6 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 		armObserver();
 		armDialogControlHandlers();
-		armMultiSelectHandlers();
 	log('boot завершён');
 }
 

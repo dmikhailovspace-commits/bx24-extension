@@ -1,7 +1,7 @@
 {
-  "version": "7.1.1",
+  "version": "7.1.2",
   "release_date": "2026-05-19",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.1.1",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.1.2",
   "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension/injected.js",
-  "changelog": "v7.1.1: удалён фильтр «С вложениями» из панелей и логики фильтрации"
+  "changelog": "v7.1.2: очищены неиспользуемые всплывающие окна и мёртвая логика текущей конфигурации"
 }
