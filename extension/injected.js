@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.0';
+	window.__ANITREC_RUNNING__ = '7.1.1';
 
-	const VER = '7.1.0';
+	const VER = '7.1.1';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -618,7 +618,6 @@ if (_presetChannel) {
 	function getLSKey() { return LS_KEY_BASE + '.' + _currentPanelMode; }
 	const defaultFilters = () => ({
 	unreadOnly: false,
-	withAttach: false,
 	query: '',
 	typesSelected: [],
 	hideCompletedTasks: false,
@@ -638,7 +637,9 @@ if (_presetChannel) {
 	try {
 		const key = getLSKey();
 		const raw = localStorage.getItem(key);
-		return { ...defaultFilters(), ...(JSON.parse(raw || '{}')) };
+		const loaded = JSON.parse(raw || '{}');
+		delete loaded.withAttach;
+		return { ...defaultFilters(), ...loaded };
 	} catch { return defaultFilters(); }
 }
 	function saveFilters() {
@@ -872,8 +873,7 @@ if (_presetChannel) {
 	const cls = el.className || '';
 	const isWhatsApp = /-wz_whatsapp_/i.test(cls);
 	const isTelegram = /-wz_telegram_/i.test(cls);
-	const hasAttach = /\[(вложение|файл)\]/i.test(lastText);
-	return { id, status, hasUnread, hasLater: false, hasMention, unreadCount, lastText, title, isWhatsApp, isTelegram, hasAttach, type: 'ol' };
+	return { id, status, hasUnread, hasLater: false, hasMention, unreadCount, lastText, title, isWhatsApp, isTelegram, type: 'ol' };
 }
 
 	function getItemMetaInternal(el) {
@@ -950,9 +950,7 @@ if (_presetChannel) {
 		}
 	}
 
-	const hasAttach = /\[(вложение|файл)\]/i.test(lastText);
-
-	const meta = { id, hasUnread, hasLater, hasMention, unreadCount: counterValue, lastText, title, hasAttach, type: itemType, status: 0, isWhatsApp: false, isTelegram: false, isSystemMessage, isSystemUnreadOnly };
+	const meta = { id, hasUnread, hasLater, hasMention, unreadCount: counterValue, lastText, title, type: itemType, status: 0, isWhatsApp: false, isTelegram: false, isSystemMessage, isSystemUnreadOnly };
 
 	// project mapping only in "task chats" mode
 	if (isTasksChatsModeNow() && window.__anitProjectLookup?.chatToProject) {
@@ -1034,7 +1032,6 @@ if (_presetChannel) {
 	function matchByFilters(meta) {
 	if (filters.unreadOnly && !meta.hasUnread && !meta.hasLater) return false;
 
-	if (filters.withAttach && !meta.hasAttach) return false;
 	if (filters.hideCompletedTasks && isTasksChatsModeNow()) {
 		if (isTaskCompletedByLastMessage(meta)) return false;
 	}
@@ -3016,8 +3013,6 @@ if (_presetChannel) {
 }
 		function uiFromFilters(host){
 			host.querySelector('#anit_unread').checked = !!filters.unreadOnly;
-			const _attachEl = host.querySelector('#anit_attach');
-			if (_attachEl) _attachEl.checked = !!filters.withAttach;
 			host.querySelector('#anit_query').value = String(filters.query || '');
 			const hc = host.querySelector('#anit_hide_completed');
 			if (hc) hc.checked = !!filters.hideCompletedTasks;
@@ -3056,7 +3051,6 @@ if (_presetChannel) {
 
 		function filtersFromUI(host){
 			filters.unreadOnly = host.querySelector('#anit_unread').checked;
-			filters.withAttach = host.querySelector('#anit_attach')?.checked || false;
 			filters.query      = host.querySelector('#anit_query').value;
 			filters.hideCompletedTasks = host.querySelector('#anit_hide_completed')?.checked || false;
 				filters.typesSelected = readTypesFromUI(host);
@@ -3828,7 +3822,6 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
     <div class="group-title">Быстрые фильтры</div>
     <div class="row">
     <label><input type="checkbox" id="anit_unread"> Непрочитанные</label>
-    ${!isTasksMode ? `<label><input type="checkbox" id="anit_attach"> С вложениями</label>` : ``}
 	${isTasksMode ? `
 	  <label><input type="checkbox" id="anit_hide_completed"> Скрыть завершённые</label>
 	` : ``}
@@ -4654,7 +4647,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.0';
+	if (_verBadge) _verBadge.textContent = 'v7.1.1';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
@@ -4774,7 +4767,6 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 
 	host.querySelector('#anit_unread').checked = !!filters.unreadOnly;
-	const _atEl = host.querySelector('#anit_attach'); if(_atEl) _atEl.checked = !!filters.withAttach;
 	host.querySelector('#anit_query').value = String(filters.query || '');
 	const hc = host.querySelector('#anit_hide_completed');
 	if (hc) hc.checked = !!filters.hideCompletedTasks;
@@ -4804,7 +4796,6 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 		return;
 	}
 	filters.unreadOnly = host.querySelector('#anit_unread').checked;
-	filters.withAttach = host.querySelector('#anit_attach')?.checked || false;
 	filters.query      = host.querySelector('#anit_query').value;
 	filters.hideCompletedTasks = host.querySelector('#anit_hide_completed')?.checked || false;
 
@@ -4873,7 +4864,6 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 	if (_ixChipsR) _ixChipsR.querySelectorAll('.kw-tag-chip').forEach(c => c.classList.remove('is-active'));
 	try { renderTypeChips(); } catch(e){}
 	host.querySelector('#anit_unread').checked = false;
-	const _atReset = host.querySelector('#anit_attach'); if(_atReset) _atReset.checked = false;
 	const hc = host.querySelector('#anit_hide_completed');
 	if (hc) hc.checked = false;
 	host.querySelector('#anit_query').value = '';

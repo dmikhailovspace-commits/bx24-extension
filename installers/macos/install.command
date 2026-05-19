@@ -173,7 +173,7 @@ LAUNCHER_EOF
     <key>CFBundleName</key>         <string>Bitrix24 + Фильтр чатов</string>
     <key>CFBundleDisplayName</key>  <string>Bitrix24 + Фильтр чатов</string>
     <key>CFBundlePackageType</key>  <string>APPL</string>
-    <key>CFBundleShortVersionString</key> <string>7.1.0</string>
+    <key>CFBundleShortVersionString</key> <string>7.1.1</string>
     <key>LSMinimumSystemVersion</key>    <string>10.13</string>
     ${ICON_KEY}
 </dict>
