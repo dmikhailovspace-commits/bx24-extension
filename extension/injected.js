@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.2';
+	window.__ANITREC_RUNNING__ = '7.1.3';
 
-	const VER = '7.1.2';
+	const VER = '7.1.3';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -420,15 +420,207 @@
 			return buildChatElementIndex().get(wanted) || null;
 		}
 
-		function openChatElement(el) {
-			if (!el) return false;
-			const target =
-				el.querySelector?.('a,button,[role="button"],.bx-im-list-recent-item__content,.bx-messenger-cl-user') ||
-				el;
-			target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
-			target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+	function openChatElement(el) {
+		if (!el) return false;
+		const target =
+			el.querySelector?.('a,button,[role="button"],.bx-im-list-recent-item__content,.bx-messenger-cl-user') ||
+			el;
+		target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+		target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
 		target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
 		return true;
+	}
+
+	function _getSafeTopWindow() {
+		try {
+			return window.top && window.top.location?.origin === window.location.origin ? window.top : null;
+		} catch { return null; }
+	}
+
+	function _callBxRestMethod(method, params = {}) {
+		return new Promise((resolve, reject) => {
+			const topWin = _getSafeTopWindow();
+			const BXNS = [window.BX, topWin?.BX].filter(Boolean).find(ns => typeof ns?.rest?.callMethod === 'function');
+			const caller = BXNS?.rest?.callMethod;
+			if (!caller) return reject(new Error('BX.rest недоступен'));
+			try {
+				caller.call(BXNS.rest, method, params, (res) => {
+					try {
+						if (typeof res?.error === 'function' && res.error()) {
+							const details = typeof res.error_description === 'function' ? res.error_description() : res.error_description;
+							reject(new Error(details || res.error()));
+							return;
+						}
+						resolve(typeof res?.data === 'function' ? res.data() : res);
+					} catch (e) {
+						reject(e);
+					}
+				});
+			} catch (e) {
+				reject(e);
+			}
+		});
+	}
+
+	function _normalizeBitrixPath(rawUrl) {
+		const raw = String(rawUrl || '').trim();
+		if (!raw) return '';
+		try {
+			const url = new URL(raw, window.location.origin);
+			if (url.origin !== window.location.origin) return '';
+			return `${url.pathname}${url.search}${url.hash}`;
+		} catch { return ''; }
+	}
+
+	function _extractTaskIdFromTaskUrl(rawUrl) {
+		const path = _normalizeBitrixPath(rawUrl) || String(rawUrl || '');
+		const m = /\/tasks\/task\/view\/(\d+)(?:\/|[?#]|$)/i.exec(path);
+		return m ? m[1] : '';
+	}
+
+	function _getCurrentBitrixUserId() {
+		const pathMatch = /\/company\/personal\/user\/(\d+)\//i.exec(window.location.pathname || '');
+		if (pathMatch) return pathMatch[1];
+		const topWin = _getSafeTopWindow();
+		for (const BXNS of [window.BX, topWin?.BX].filter(Boolean)) {
+			try {
+				const id = typeof BXNS?.message === 'function' ? BXNS.message('USER_ID') : '';
+				if (/^\d+$/.test(String(id || ''))) return String(id);
+			} catch {}
+			try {
+				const id = BXNS?.Messenger?.Common?.getUserId?.() || BXNS?.user?.id;
+				if (/^\d+$/.test(String(id || ''))) return String(id);
+			} catch {}
+		}
+		return '';
+	}
+
+	function _buildTaskUrl(taskId) {
+		const id = String(taskId || '').trim();
+		if (!/^\d+$/.test(id)) return '';
+		const userId = _getCurrentBitrixUserId();
+		return userId ? `/company/personal/user/${userId}/tasks/task/view/${id}/?ta_sec=chat_tasks&ta_el=view_button` : '';
+	}
+
+	function _extractTaskMetaFromElement(el, fallbackTitle = '') {
+		if (!el) return null;
+		let taskUrl = '';
+		try {
+			taskUrl = Array.from(el.querySelectorAll?.('a[href]') || [])
+				.map(a => a.getAttribute('href') || '')
+				.map(_normalizeBitrixPath)
+				.find(url => /\/tasks\/task\/view\/\d+/i.test(url)) || '';
+		} catch {}
+
+		const attrNames = ['taskId', 'taskid', 'task-id', 'data-task-id', 'entityId', 'entityid'];
+		let taskId = _extractTaskIdFromTaskUrl(taskUrl);
+		if (!taskId) {
+			for (const name of attrNames) {
+				const v = el.dataset?.[name] || el.getAttribute?.(name);
+				if (/^\d+$/.test(String(v || ''))) {
+					taskId = String(v);
+					break;
+				}
+			}
+		}
+		if (!taskId) {
+			const text = `${fallbackTitle || ''} ${el.textContent || ''}`;
+			const m = /(?:задач[аиуы]?\s*|task\s*)?[#№]\s*(\d{2,})/i.exec(text);
+			if (m) taskId = m[1];
+		}
+		if (!taskUrl && taskId) taskUrl = _buildTaskUrl(taskId);
+		return taskUrl || taskId ? { taskId, taskUrl } : null;
+	}
+
+	function _extractTaskMetaFromDialogData(data) {
+		if (!data || typeof data !== 'object') return null;
+		const chat = data.chat && typeof data.chat === 'object' ? data.chat : data;
+		const entityLink = chat.entity_link || chat.entityLink || data.entity_link || data.entityLink || null;
+		const entityType = String(chat.entity_type || chat.entityType || data.entity_type || data.entityType || '').toUpperCase();
+		const linkType = String(entityLink?.type || '').toUpperCase();
+		let taskUrl = _normalizeBitrixPath(entityLink?.url || '');
+		let taskId = _extractTaskIdFromTaskUrl(taskUrl);
+
+		const entityId = String(chat.entity_id || chat.entityId || data.entity_id || data.entityId || '').trim();
+		const linkedId = String(entityLink?.id || '').trim();
+		if (!taskId && /^(TASKS|TASKS_TASK)$/.test(entityType) && /^\d+$/.test(entityId)) taskId = entityId;
+		if (!taskId && linkType === 'TASKS' && /^\d+$/.test(linkedId)) taskId = linkedId;
+		if (!taskUrl && taskId) taskUrl = _buildTaskUrl(taskId);
+
+		return taskUrl || taskId ? { taskId, taskUrl } : null;
+	}
+
+	const _dialogTaskMetaCache = new Map();
+	async function _resolveTaskMetaForDialog(dialogId) {
+		const id = normId(dialogId);
+		if (!id) return null;
+		if (_dialogTaskMetaCache.has(id)) return _dialogTaskMetaCache.get(id);
+		const promise = _callBxRestMethod('im.dialog.get', { DIALOG_ID: id })
+			.then(_extractTaskMetaFromDialogData)
+			.catch((e) => {
+				warn('Не удалось получить связанную задачу для диалога', id, e?.message || e);
+				return null;
+			});
+		_dialogTaskMetaCache.set(id, promise);
+		const meta = await promise;
+		if (meta) _dialogTaskMetaCache.set(id, meta);
+		else _dialogTaskMetaCache.delete(id);
+		return meta;
+	}
+
+	function _rememberTaskMetaForDialogControlItem(item, meta) {
+		if (!item || !meta) return false;
+		let changed = false;
+		if (meta.taskId && item.taskId !== String(meta.taskId)) {
+			item.taskId = String(meta.taskId);
+			changed = true;
+		}
+		if (meta.taskUrl && item.taskUrl !== meta.taskUrl) {
+			item.taskUrl = meta.taskUrl;
+			changed = true;
+		}
+		if (changed) _saveDialogControlItems();
+		return changed;
+	}
+
+	function _openBitrixUrl(rawUrl) {
+		const path = _normalizeBitrixPath(rawUrl);
+		if (!path) return false;
+		const topWin = _getSafeTopWindow();
+		const candidates = [topWin, window].filter(Boolean);
+		for (const win of candidates) {
+			try {
+				const sidePanel = win.BX?.SidePanel?.Instance;
+				if (typeof sidePanel?.open === 'function') {
+					sidePanel.open(path, { cacheable: false });
+					return true;
+				}
+			} catch {}
+		}
+		try {
+			(topWin || window).location.assign(new URL(path, window.location.origin).href);
+			return true;
+		} catch {}
+		return false;
+	}
+
+	function _isTaskViewRouteNow() {
+		if (/\/tasks\/task\/view\/\d+/i.test(`${window.location.pathname || ''}${window.location.search || ''}`)) return true;
+		try {
+			return !!document.querySelector('iframe[src*="/tasks/task/view/"],iframe[data-src*="/tasks/task/view/"]');
+		} catch { return false; }
+	}
+
+	async function _openTaskForDialogControlItem(item) {
+		if (!item) return false;
+		let meta = item.taskUrl
+			? { taskId: item.taskId || _extractTaskIdFromTaskUrl(item.taskUrl), taskUrl: _normalizeBitrixPath(item.taskUrl) }
+			: _extractTaskMetaFromDialogData(item);
+		if (!meta?.taskUrl && item.taskId) meta = { taskId: String(item.taskId), taskUrl: _buildTaskUrl(item.taskId) };
+		if (!meta?.taskUrl) meta = await _resolveTaskMetaForDialog(item.id);
+		if (!meta?.taskUrl) return false;
+		_rememberTaskMetaForDialogControlItem(item, meta);
+		return _openBitrixUrl(meta.taskUrl);
 	}
 
 	function hasMentionMarker(el) {
@@ -2081,17 +2273,21 @@ if (_presetChannel) {
 			row.classList.toggle('--colored', !!chipColor);
 			if (chipColor) _applyDialogControlColorVars(row, chipColor);
 			row.dataset.dialogId = item.id;
-			row.title = 'Открыть диалог; перетащите, чтобы изменить порядок';
-			row.addEventListener('click', (e) => {
+			row.title = _pMode() === 'tasks'
+				? 'Открыть задачу; перетащите, чтобы изменить порядок'
+				: 'Открыть диалог; перетащите, чтобы изменить порядок';
+			row.addEventListener('click', async (e) => {
 				e.preventDefault();
 				e.stopPropagation();
 				_closeDialogControlPalettes(true);
 				list.querySelectorAll('.dialog-control-color-wrap.--open').forEach(el => el.classList.remove('--open'));
 				const ts = Number(list.dataset.lastDragTs || 0);
 				if (ts && (Date.now() - ts) < 250) return;
+				if (_pMode() === 'tasks' && _isTaskViewRouteNow() && await _openTaskForDialogControlItem(item)) return;
 				const targetEl = findChatElementById(item.id);
 				if (!targetEl || !openChatElement(targetEl)) {
-					_showDialogDockToast('Диалог не найден в текущей ленте', 'danger');
+					if (_pMode() === 'tasks' && await _openTaskForDialogControlItem(item)) return;
+					_showDialogDockToast(_pMode() === 'tasks' ? 'Задача не найдена в текущей ленте' : 'Диалог не найден в текущей ленте', 'danger');
 				}
 			});
 			row.addEventListener('dragstart', (e) => {
@@ -2552,6 +2748,7 @@ if (_presetChannel) {
 			return;
 		}
 		const title = getChatTitleFromElement(el);
+		const taskMeta = isTasksChatsModeNow() ? _extractTaskMetaFromElement(el, title) : null;
 		const items = _getDialogControlItems();
 		const existingIdx = items.findIndex(x => normId(x.id) === normId(id));
 		if (existingIdx >= 0) {
@@ -2569,7 +2766,10 @@ if (_presetChannel) {
 			else _exitDialogControlMode();
 			return;
 		}
-		items.unshift({ id, title, addedAt: Date.now() });
+		const nextItem = { id, title, addedAt: Date.now() };
+		if (taskMeta?.taskId) nextItem.taskId = String(taskMeta.taskId);
+		if (taskMeta?.taskUrl) nextItem.taskUrl = taskMeta.taskUrl;
+		items.unshift(nextItem);
 		_dialogControlItems[_pMode()] = items;
 		_saveDialogControlItems();
 		_renderDialogControlPanel();
@@ -4439,7 +4639,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.2';
+	if (_verBadge) _verBadge.textContent = 'v7.1.3';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
