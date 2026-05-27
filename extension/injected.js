@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.3';
+	window.__ANITREC_RUNNING__ = '7.1.5';
 
-	const VER = '7.1.3';
+	const VER = '7.1.5';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -398,21 +398,30 @@
 			return map;
 		}
 
-		function getChatTitleFromElement(el) {
-			if (!el) return 'Диалог';
-			const title = IS_OL_FRAME
-				? (el.querySelector('.bx-messenger-cl-user-title')?.textContent || '')
-				: (
-					el.querySelector('.bx-im-chat-title__text')?.getAttribute('title') ||
-					el.querySelector('.bx-im-chat-title__text')?.textContent ||
-					el.querySelector('.bx-im-list-recent-item__title')?.textContent ||
-					el.querySelector('[class*="title" i]')?.getAttribute('title') ||
-					el.querySelector('[class*="title" i]')?.textContent ||
-					el.getAttribute('title') ||
-					''
-				);
-			return (title || '').replace(/\s+/g, ' ').trim() || 'Диалог';
+	function getChatTitleFromElement(el) {
+		if (!el) return 'Диалог';
+		const clean = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+		if (IS_OL_FRAME) {
+			return clean(el.querySelector('.bx-messenger-cl-user-title')?.textContent || el.getAttribute('title')) || 'Диалог';
 		}
+		const selectors = [
+			'.bx-im-chat-title__text',
+			'.bx-im-list-recent-item__title_text',
+			'.bx-im-list-recent-item__title-text',
+			'.bx-im-list-recent-item__title',
+			'.bx-im-list-recent-item__name',
+			'.bx-im-list-item__title',
+			'.bx-im-list-item__name',
+			'[data-title]',
+			'[class*="title" i]'
+		];
+		for (const sel of selectors) {
+			const node = el.matches?.(sel) ? el : el.querySelector?.(sel);
+			const title = clean(node?.getAttribute?.('title') || node?.dataset?.title || node?.textContent);
+			if (title) return title;
+		}
+		return clean(el.getAttribute('title') || el.dataset?.title || el.getAttribute('aria-label')) || 'Диалог';
+	}
 
 		function findChatElementById(id) {
 			const wanted = normId(id);
@@ -568,7 +577,7 @@
 		return meta;
 	}
 
-	function _rememberTaskMetaForDialogControlItem(item, meta) {
+function _rememberTaskMetaForDialogControlItem(item, meta) {
 		if (!item || !meta) return false;
 		let changed = false;
 		if (meta.taskId && item.taskId !== String(meta.taskId)) {
@@ -581,6 +590,58 @@
 		}
 		if (changed) _saveDialogControlItems();
 		return changed;
+	}
+
+	function _extractDialogTitleFromDialogData(data) {
+		const clean = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+		const seen = new Set();
+		const read = (obj, depth = 0) => {
+			if (!obj || typeof obj !== 'object' || depth > 3 || seen.has(obj)) return '';
+			seen.add(obj);
+			const keys = ['title', 'TITLE', 'name', 'NAME', 'dialogTitle', 'dialog_title', 'chatTitle', 'chat_title'];
+			for (const key of keys) {
+				const value = clean(obj[key]);
+				if (value && !/^chat\d+$/i.test(value) && !/^\d+$/.test(value)) return value;
+			}
+			const nestedKeys = ['dialog', 'DIALOG', 'chat', 'CHAT', 'item', 'ITEM', 'result', 'RESULT', 'user', 'USER'];
+			for (const key of nestedKeys) {
+				const value = read(obj[key], depth + 1);
+				if (value) return value;
+			}
+			return '';
+		};
+		return read(data);
+	}
+
+	function _extractTaskTitleFromData(data) {
+		const clean = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+		const task = data?.task || data?.TASK || data?.result?.task || data?.RESULT?.TASK || data?.result?.TASK || data?.RESULT?.task || data;
+		return clean(task?.title || task?.TITLE || task?.name || task?.NAME);
+	}
+
+	async function _resolveTaskTitleForDialogControlItem(item) {
+		if (!item) return '';
+		let taskId = item.taskId ? String(item.taskId) : '';
+		if (!taskId) {
+			const meta = await _resolveTaskMetaForDialog(item.id);
+			if (meta) {
+				_rememberTaskMetaForDialogControlItem(item, meta);
+				taskId = meta.taskId ? String(meta.taskId) : '';
+			}
+		}
+		if (!taskId) return '';
+		try {
+			const data = await _callBxRestMethod('tasks.task.get', { taskId });
+			return _extractTaskTitleFromData(data);
+		} catch (e) {
+			try {
+				const data = await _callBxRestMethod('tasks.task.get', { id: taskId });
+				return _extractTaskTitleFromData(data);
+			} catch (e2) {
+				warn('Не удалось получить название задачи', taskId, e2?.message || e2 || e);
+				return '';
+			}
+		}
 	}
 
 	function _openBitrixUrl(rawUrl) {
@@ -735,6 +796,9 @@ let _dialogControlMissTimer = null;
 	let _dialogControlLastPointerY = null;
 	let _dialogControlLastPointerTs = 0;
 	let _dialogControlSelectionSyncTimer = null;
+	let _dialogControlTitleSyncTimer = null;
+	let _dialogControlTitleSyncInFlight = false;
+	let _dialogControlTitleLastSyncAt = 0;
 	let _lastExpandedFiltersPaneHeight = 0;
 	let _lastExpandedFiltersPaneBottom = 0;
 	let _dialogDockHideFinalizeTimer = null;
@@ -1220,6 +1284,271 @@ if (_presetChannel) {
 		try { localStorage.setItem(`${_LS_DIALOG_CONTROL}.${_pMode()}`, JSON.stringify(_getDialogControlItems())); } catch {}
 	}
 
+	function _isDialogControlFolder(item) {
+		return item?.type === 'folder';
+	}
+
+	const _DIALOG_CONTROL_EMPTY_FOLDER_GRACE_MS = 45000;
+
+	function _makeDialogControlFolderId() {
+		return `folder:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
+	}
+
+	function _getDialogControlFolderMap(items = _getDialogControlItems()) {
+		const map = new Map();
+		(Array.isArray(items) ? items : []).forEach(item => {
+			if (_isDialogControlFolder(item) && item.id) map.set(String(item.id), item);
+		});
+		return map;
+	}
+
+	function _getDialogControlFolderChildCount(folderId, items = _getDialogControlItems()) {
+		const id = String(folderId || '');
+		return (Array.isArray(items) ? items : []).filter(item => !_isDialogControlFolder(item) && String(item.folderId || '') === id).length;
+	}
+
+	function _shouldKeepEmptyDialogControlFolder(folder, now = Date.now()) {
+		return Number(folder?.emptyVisibleUntil || 0) > now;
+	}
+
+	function _pruneEmptyDialogControlFolders(items = _getDialogControlItems()) {
+		if (!Array.isArray(items)) return false;
+		let changed = false;
+		const now = Date.now();
+		for (let i = items.length - 1; i >= 0; i--) {
+			const item = items[i];
+			if (!_isDialogControlFolder(item)) continue;
+			const childCount = _getDialogControlFolderChildCount(item.id, items);
+			if (childCount > 0) {
+				if (item.emptyVisibleUntil) {
+					delete item.emptyVisibleUntil;
+					changed = true;
+				}
+				continue;
+			}
+			if (_shouldKeepEmptyDialogControlFolder(item, now)) continue;
+			items.splice(i, 1);
+			changed = true;
+		}
+		if (changed) {
+			_dialogControlItems[_pMode()] = items;
+			_saveDialogControlItems();
+			_dialogControlLastSig = '';
+		}
+		return changed;
+	}
+
+	function _normalizeDialogControlFolderGrouping(items = _getDialogControlItems()) {
+		if (!Array.isArray(items)) return false;
+		const folderIds = new Set(items.filter(_isDialogControlFolder).map(item => String(item.id || '')));
+		if (!folderIds.size) return false;
+		const childrenByFolder = new Map();
+		items.forEach(item => {
+			if (_isDialogControlFolder(item) || !item.folderId || !folderIds.has(String(item.folderId))) return;
+			const id = String(item.folderId);
+			if (!childrenByFolder.has(id)) childrenByFolder.set(id, []);
+			childrenByFolder.get(id).push(item);
+		});
+		const placedChildren = new Set();
+		const next = [];
+		items.forEach(item => {
+			if (_isDialogControlFolder(item)) {
+				next.push(item);
+				(childrenByFolder.get(String(item.id || '')) || []).forEach(child => {
+					if (!placedChildren.has(child)) {
+						next.push(child);
+						placedChildren.add(child);
+					}
+				});
+				return;
+			}
+			if (item.folderId && folderIds.has(String(item.folderId))) return;
+			next.push(item);
+		});
+		if (next.length !== items.length || next.some((item, idx) => item !== items[idx])) {
+			items.splice(0, items.length, ...next);
+			_dialogControlItems[_pMode()] = items;
+			_saveDialogControlItems();
+			_dialogControlLastSig = '';
+			return true;
+		}
+		return false;
+	}
+
+	function _ensureDialogControlFoldersIntegrity(items = _getDialogControlItems()) {
+		if (!Array.isArray(items)) return false;
+		const folderIds = new Set();
+		let changed = false;
+		items.forEach(item => {
+			if (_isDialogControlFolder(item)) {
+				if (!item.id) {
+					item.id = _makeDialogControlFolderId();
+					changed = true;
+				}
+				if (!item.title) {
+					item.title = 'Папка';
+					changed = true;
+				}
+				folderIds.add(String(item.id));
+			}
+		});
+		items.forEach(item => {
+			if (!_isDialogControlFolder(item) && item.folderId && !folderIds.has(String(item.folderId))) {
+				delete item.folderId;
+				changed = true;
+			}
+		});
+		if (changed) _saveDialogControlItems();
+		if (_normalizeDialogControlFolderGrouping(items)) changed = true;
+		if (_pruneEmptyDialogControlFolders(items)) changed = true;
+		return changed;
+	}
+
+	function _createDialogControlFolder() {
+		const items = _getDialogControlItems();
+		const n = items.filter(_isDialogControlFolder).length + 1;
+		items.unshift({
+			type: 'folder',
+			id: _makeDialogControlFolderId(),
+			title: `Папка ${n}`,
+			color: '',
+			addedAt: Date.now(),
+			emptyVisibleUntil: Date.now() + _DIALOG_CONTROL_EMPTY_FOLDER_GRACE_MS
+		});
+		_dialogControlItems[_pMode()] = items;
+		_saveDialogControlItems();
+		_dialogControlLastSig = '';
+		_renderDialogControlPanel(filtersHost);
+		_showDialogDockToast('Папка создана', 'ok');
+	}
+
+	function _setDialogControlFolderTitle(folderId, title) {
+		const id = String(folderId || '');
+		const next = String(title || '').replace(/\s+/g, ' ').trim().slice(0, 40) || 'Папка';
+		const item = _getDialogControlItems().find(x => _isDialogControlFolder(x) && String(x.id) === id);
+		if (!item || item.title === next) return false;
+		item.title = next;
+		_saveDialogControlItems();
+		_dialogControlLastSig = '';
+		return true;
+	}
+
+	function _setDialogControlFolderColor(folderId, color) {
+		const id = String(folderId || '');
+		const item = _getDialogControlItems().find(x => _isDialogControlFolder(x) && String(x.id) === id);
+		if (!item) return false;
+		const next = _normalizeDialogControlColor(color);
+		if (next) item.color = next;
+		else delete item.color;
+		_saveDialogControlItems();
+		_dialogControlLastSig = '';
+		return true;
+	}
+
+	function _setDialogControlFolderCollapsed(folderId, collapsed) {
+		const id = String(folderId || '');
+		const item = _getDialogControlItems().find(x => _isDialogControlFolder(x) && String(x.id) === id);
+		if (!item) return false;
+		item.collapsed = !!collapsed;
+		_saveDialogControlItems();
+		_dialogControlLastSig = '';
+		return true;
+	}
+
+	function _insertDialogControlItemRelative(items, moved, target, side) {
+		const fromIdx = items.indexOf(moved);
+		if (fromIdx >= 0) items.splice(fromIdx, 1);
+		const toIdx = items.indexOf(target);
+		let insertIdx = Math.max(0, toIdx + (side === 'after' ? 1 : 0));
+		if (side === 'after' && _isDialogControlFolder(target)) {
+			const folderId = String(target.id || '');
+			const lastChildIdx = items.reduce((last, x, idx) => String(x.folderId || '') === folderId ? idx : last, toIdx);
+			insertIdx = Math.max(0, lastChildIdx + 1);
+		}
+		items.splice(insertIdx, 0, moved);
+	}
+
+	function _moveDialogControlItemRelative(movedId, targetId, side = 'before') {
+		const items = _getDialogControlItems();
+		const moved = items.find(x => String(x.id) === String(movedId));
+		const target = items.find(x => String(x.id) === String(targetId));
+		if (!moved || !target || moved === target) return false;
+		if (_isDialogControlFolder(moved) && !_isDialogControlFolder(target) && target.folderId) return false;
+		if (!_isDialogControlFolder(moved)) {
+			if (_isDialogControlFolder(target) || !target.folderId) delete moved.folderId;
+			else moved.folderId = target.folderId;
+		}
+		_insertDialogControlItemRelative(items, moved, target, side);
+		_dialogControlItems[_pMode()] = items;
+		_saveDialogControlItems();
+		_dialogControlLastSig = '';
+		return true;
+	}
+
+	function _moveDialogControlItemToFolder(itemId, folderId) {
+		const items = _getDialogControlItems();
+		const item = items.find(x => String(x.id) === String(itemId));
+		const folder = items.find(x => _isDialogControlFolder(x) && String(x.id) === String(folderId));
+		if (!item || !folder || _isDialogControlFolder(item) || item.folderId === folder.id) return false;
+		const fromIdx = items.indexOf(item);
+		if (fromIdx >= 0) items.splice(fromIdx, 1);
+		item.folderId = folder.id;
+		if (folder.emptyVisibleUntil) delete folder.emptyVisibleUntil;
+		const lastChildIdx = items.reduce((last, x, idx) => x.folderId === folder.id ? idx : last, -1);
+		const folderIdx = items.indexOf(folder);
+		items.splice((lastChildIdx >= 0 ? lastChildIdx : folderIdx) + 1, 0, item);
+		_dialogControlItems[_pMode()] = items;
+		_saveDialogControlItems();
+		_dialogControlLastSig = '';
+		return true;
+	}
+
+	function _moveDialogControlItemOutOfFolder(itemId) {
+		const items = _getDialogControlItems();
+		const item = items.find(x => String(x.id) === String(itemId));
+		if (!item || _isDialogControlFolder(item) || !item.folderId) return false;
+		const folderId = String(item.folderId);
+		const folderIdx = items.findIndex(x => _isDialogControlFolder(x) && String(x.id) === folderId);
+		const lastChildIdx = items.reduce((last, x, idx) => String(x.folderId || '') === folderId ? idx : last, folderIdx);
+		const fromIdx = items.indexOf(item);
+		if (fromIdx >= 0) items.splice(fromIdx, 1);
+		delete item.folderId;
+		const adjustedLast = fromIdx >= 0 && fromIdx < lastChildIdx ? lastChildIdx - 1 : lastChildIdx;
+		items.splice(Math.max(0, adjustedLast + 1), 0, item);
+		_dialogControlItems[_pMode()] = items;
+		_saveDialogControlItems();
+		_dialogControlLastSig = '';
+		return true;
+	}
+
+	function _moveDialogControlItemToRootEnd(itemId) {
+		const items = _getDialogControlItems();
+		const item = items.find(x => String(x.id) === String(itemId));
+		if (!item || _isDialogControlFolder(item) || !item.folderId) return false;
+		const fromIdx = items.indexOf(item);
+		if (fromIdx >= 0) items.splice(fromIdx, 1);
+		delete item.folderId;
+		items.push(item);
+		_dialogControlItems[_pMode()] = items;
+		_saveDialogControlItems();
+		_dialogControlLastSig = '';
+		return true;
+	}
+
+	function _removeDialogControlFolder(folderId) {
+		const id = String(folderId || '');
+		const items = _getDialogControlItems();
+		const folder = items.find(x => _isDialogControlFolder(x) && String(x.id) === id);
+		if (!folder) return false;
+		items.forEach(item => {
+			if (!_isDialogControlFolder(item) && String(item.folderId || '') === id) delete item.folderId;
+		});
+		_dialogControlItems[_pMode()] = items.filter(x => String(x.id) !== id);
+		_saveDialogControlItems();
+		_dialogControlLastSig = '';
+		return true;
+	}
+
 	const _LS_DIALOG_CONTROL_COLORS = 'pena.dialogControlColors.v1';
 	const _DIALOG_CONTROL_DEFAULT_COLORS = [
 		'#4d9dff', '#5dc87e', '#f59e0b', '#ef4444',
@@ -1278,6 +1607,54 @@ if (_presetChannel) {
 	function _rgbToHex(r, g, b) {
 		const clamp = (v) => Math.max(0, Math.min(255, parseInt(v, 10) || 0));
 		return '#' + [clamp(r), clamp(g), clamp(b)].map(v => v.toString(16).padStart(2, '0')).join('');
+	}
+
+	function _hsvToRgb(h, s, v) {
+		const hue = (((Number(h) || 0) % 360) + 360) % 360;
+		const sat = Math.max(0, Math.min(1, Number(s) || 0));
+		const val = Math.max(0, Math.min(1, Number(v) || 0));
+		const c = val * sat;
+		const x = c * (1 - Math.abs((hue / 60) % 2 - 1));
+		const m = val - c;
+		let r = 0, g = 0, b = 0;
+		if (hue < 60) [r, g, b] = [c, x, 0];
+		else if (hue < 120) [r, g, b] = [x, c, 0];
+		else if (hue < 180) [r, g, b] = [0, c, x];
+		else if (hue < 240) [r, g, b] = [0, x, c];
+		else if (hue < 300) [r, g, b] = [x, 0, c];
+		else [r, g, b] = [c, 0, x];
+		return {
+			r: Math.round((r + m) * 255),
+			g: Math.round((g + m) * 255),
+			b: Math.round((b + m) * 255)
+		};
+	}
+
+	function _hsvToHex(h, s, v) {
+		const rgb = _hsvToRgb(h, s, v);
+		return _rgbToHex(rgb.r, rgb.g, rgb.b);
+	}
+
+	function _rgbToHsv(r, g, b) {
+		const rr = Math.max(0, Math.min(255, Number(r) || 0)) / 255;
+		const gg = Math.max(0, Math.min(255, Number(g) || 0)) / 255;
+		const bb = Math.max(0, Math.min(255, Number(b) || 0)) / 255;
+		const max = Math.max(rr, gg, bb);
+		const min = Math.min(rr, gg, bb);
+		const d = max - min;
+		let h = 0;
+		if (d) {
+			if (max === rr) h = 60 * (((gg - bb) / d) % 6);
+			else if (max === gg) h = 60 * ((bb - rr) / d + 2);
+			else h = 60 * ((rr - gg) / d + 4);
+		}
+		if (h < 0) h += 360;
+		return { h, s: max === 0 ? 0 : d / max, v: max };
+	}
+
+	function _hexToHsv(hex) {
+		const rgb = _hexToRgb(hex);
+		return rgb ? _rgbToHsv(rgb.r, rgb.g, rgb.b) : null;
 	}
 
 	function _ruPlural(n, one, few, many) {
@@ -1382,6 +1759,64 @@ if (_presetChannel) {
 		_dialogControlLastSig = '';
 	}
 
+	function _showDialogControlColorDeleteConfirm(notice, color, onConfirm) {
+		const target = _normalizeDialogControlColor(color);
+		if (!notice || !target) return;
+		const usage = _getDialogControlColorUsage(target);
+		const palette = notice.closest?.('.dialog-control-palette');
+		if (!notice._penaColorDeleteStopBound) {
+			notice.addEventListener('pointerdown', (e) => e.stopPropagation());
+			notice.addEventListener('mousedown', (e) => e.stopPropagation());
+			notice.addEventListener('click', (e) => e.stopPropagation());
+			notice._penaColorDeleteStopBound = true;
+		}
+		const hide = () => {
+			notice.classList.remove('--show');
+			palette?.classList.remove('--confirming');
+		};
+		const usageText = usage.total === 0
+			? 'Этот цвет не используется.'
+			: `Цвет сбросится у ${usage.total} ${_ruPlural(usage.total, 'диалога', 'диалогов', 'диалогов')}.`;
+		notice.innerHTML = '';
+		_applyDialogControlColorVars(notice, target);
+		const card = document.createElement('div');
+		card.className = 'dialog-control-delete-card';
+		const swatch = document.createElement('span');
+		swatch.className = 'dialog-control-delete-swatch';
+		const title = document.createElement('span');
+		title.className = 'dialog-control-delete-title';
+		title.textContent = 'Удалить цвет?';
+		const textEl = document.createElement('span');
+		textEl.className = 'dialog-control-delete-text';
+		textEl.textContent = usageText;
+		const actions = document.createElement('div');
+		actions.className = 'dialog-control-delete-actions';
+		const cancel = document.createElement('button');
+		cancel.type = 'button';
+		cancel.textContent = 'Отмена';
+		const ok = document.createElement('button');
+		ok.type = 'button';
+		ok.className = '--danger';
+		ok.textContent = 'Удалить';
+		cancel.addEventListener('click', (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			hide();
+		});
+		ok.addEventListener('click', (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			hide();
+			if (typeof onConfirm === 'function') onConfirm(target, usage);
+		});
+		actions.append(cancel, ok);
+		card.append(swatch, title, textEl, actions);
+		notice.append(card);
+		notice.classList.add('--show');
+		palette?.classList.add('--confirming');
+		_clearDialogControlPaletteClose();
+	}
+
 	let _dialogControlPaletteCloseTimer = null;
 	function _clearDialogControlPaletteClose() {
 		if (_dialogControlPaletteCloseTimer) {
@@ -1411,7 +1846,7 @@ if (_presetChannel) {
 			if (animated) setTimeout(() => el.remove(), 190);
 			else el.remove();
 		});
-		document.querySelectorAll('.dialog-control-color-wrap.--open').forEach(el => el.classList.remove('--open'));
+		document.querySelectorAll('.dialog-control-color-wrap.--open,.dialog-control-folder-color-wrap.--open').forEach(el => el.classList.remove('--open'));
 	}
 
 	function _forceCloseDialogControlPalettes() {
@@ -1423,7 +1858,257 @@ if (_presetChannel) {
 			}
 			el.remove();
 		});
-		document.querySelectorAll('.dialog-control-color-wrap.--open').forEach(el => el.classList.remove('--open'));
+		document.querySelectorAll('.dialog-control-color-wrap.--open,.dialog-control-folder-color-wrap.--open').forEach(el => el.classList.remove('--open'));
+	}
+
+	function _wireDialogControlColorPalette(anchorBtn, wrapEl, options = {}) {
+		if (!anchorBtn || !wrapEl || typeof options.onCommit !== 'function') return;
+		anchorBtn.addEventListener('click', (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			const paletteId = String(options.id || '');
+			const wasOpen = Array.from(document.querySelectorAll('.dialog-control-palette')).some(el => el.dataset.dialogId === paletteId);
+			_clearDialogControlPaletteClose();
+			_forceCloseDialogControlPalettes();
+			if (wasOpen) return;
+			wrapEl.classList.add('--open');
+			const optionColor = typeof options.getCurrentColor === 'function' ? options.getCurrentColor() : options.currentColor;
+			const optionFolderColor = typeof options.getFolderColor === 'function' ? options.getFolderColor() : options.folderColor;
+			const folderRefColor = _normalizeDialogControlColor(optionFolderColor);
+			let selectedColor = _normalizeDialogControlColor(optionColor);
+			let draftColor = selectedColor || folderRefColor || '#4d9dff';
+			let draftHsv = _hexToHsv(draftColor) || { h: 210, s: 1, v: 1 };
+			const palette = document.createElement('div');
+			palette.className = 'dialog-control-palette';
+			palette.tabIndex = -1;
+			const preview = document.createElement('span');
+			preview.className = 'dialog-control-preview';
+			const miniPicker = document.createElement('div');
+			miniPicker.className = 'dialog-control-mini-picker';
+			const pickerKnob = document.createElement('span');
+			pickerKnob.className = 'dialog-control-picker-knob';
+			miniPicker.appendChild(pickerKnob);
+			const hueStrip = document.createElement('div');
+			hueStrip.className = 'dialog-control-hue-strip';
+			const hueKnob = document.createElement('span');
+			hueKnob.className = 'dialog-control-hue-knob';
+			hueStrip.appendChild(hueKnob);
+			const closePalette = document.createElement('button');
+			closePalette.type = 'button';
+			closePalette.className = 'dialog-control-palette-close';
+			closePalette.title = 'Закрыть';
+			closePalette.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M10.4 2.4 9.6 1.6 6 5.2 2.4 1.6 1.6 2.4 5.2 6 1.6 9.6 2.4 10.4 6 6.8 9.6 10.4 10.4 9.6 6.8 6z"/></svg>';
+			const swatches = document.createElement('div');
+			swatches.className = 'dialog-control-swatches';
+			const notice = document.createElement('div');
+			notice.className = 'dialog-control-delete-notice';
+			const syncPickerVisual = () => {
+				miniPicker.style.setProperty('--picker-hue-color', _hsvToHex(draftHsv.h, 1, 1));
+				pickerKnob.style.left = (draftHsv.s * 100) + '%';
+				pickerKnob.style.top = ((1 - draftHsv.v) * 100) + '%';
+				hueKnob.style.left = (draftHsv.h / 360 * 100) + '%';
+			};
+			const updateDraftPaint = () => {
+				_applyDialogControlColorVars(preview, draftColor);
+				_applyDialogControlColorVars(pickerKnob, draftColor);
+				palette.querySelectorAll('.dialog-control-swatch').forEach(btn => {
+					btn.classList.toggle('--active', !!selectedColor && btn.dataset.color === selectedColor);
+				});
+				syncPickerVisual();
+			};
+			const setDraftFromColor = (color) => {
+				draftColor = _normalizeDialogControlColor(color) || '#4d9dff';
+				draftHsv = _hexToHsv(draftColor) || draftHsv;
+				updateDraftPaint();
+			};
+			const setDraftFromHsv = (h, s, v) => {
+				draftHsv = {
+					h: (((Number(h) || 0) % 360) + 360) % 360,
+					s: Math.max(0, Math.min(1, Number(s) || 0)),
+					v: Math.max(0, Math.min(1, Number(v) || 0))
+				};
+				draftColor = _hsvToHex(draftHsv.h, draftHsv.s, draftHsv.v);
+				updateDraftPaint();
+			};
+			const commitColor = (color) => {
+				const next = _normalizeDialogControlColor(color);
+				selectedColor = next;
+				options.onCommit(next);
+				palette.querySelectorAll('.dialog-control-swatch').forEach(btn => {
+					btn.classList.toggle('--active', !!next && btn.dataset.color === next);
+				});
+			};
+			const makeColorSwatch = (color) => {
+				const swatchWrap = document.createElement('span');
+				swatchWrap.className = 'dialog-control-swatch-wrap';
+				const swatch = document.createElement('button');
+				swatch.type = 'button';
+				swatch.className = 'dialog-control-swatch';
+				swatch.draggable = false;
+				swatch.dataset.color = color;
+				_applyDialogControlColorVars(swatch, color);
+				swatch.classList.toggle('--active', selectedColor === color);
+				const isFolderRef = !!folderRefColor && color === folderRefColor;
+				swatch.classList.toggle('--folder-ref', isFolderRef);
+				if (isFolderRef) swatch.innerHTML = _getDialogControlFolderRefIconSvg();
+				swatch.title = isFolderRef ? `Применить цвет папки «${options.folderTitle || 'Папка'}»` : 'Применить цвет';
+				swatch.addEventListener('click', (ev) => {
+					ev.preventDefault();
+					ev.stopPropagation();
+					setDraftFromColor(color);
+					commitColor(color);
+				});
+				swatchWrap.appendChild(swatch);
+				const del = document.createElement('button');
+				del.type = 'button';
+				del.className = 'dialog-control-swatch-delete';
+				del.title = 'Удалить цвет';
+				del.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M10.4 2.4 9.6 1.6 6 5.2 2.4 1.6 1.6 2.4 5.2 6 1.6 9.6 2.4 10.4 6 6.8 9.6 10.4 10.4 9.6 6.8 6z"/></svg>';
+				del.addEventListener('click', (ev) => {
+					ev.preventDefault();
+					ev.stopPropagation();
+					_showDialogControlColorDeleteConfirm(notice, color, (deletedColor, usage) => {
+						_deleteCustomDialogControlColor(deletedColor);
+						if (selectedColor === deletedColor) commitColor('');
+						swatchWrap.remove();
+						_showDialogDockToast(usage.total > 0 ? `Цвет удалён. Сброшено в ${usage.total} ${_ruPlural(usage.total, 'диалоге', 'диалогах', 'диалогах')}` : 'Цвет удалён', 'ok');
+					});
+				});
+				swatchWrap.appendChild(del);
+				return swatchWrap;
+			};
+			const visibleColors = _getVisibleDialogControlColors();
+			const paletteColors = folderRefColor && !visibleColors.includes(folderRefColor)
+				? [folderRefColor, ...visibleColors]
+				: visibleColors;
+			paletteColors.forEach(color => swatches.appendChild(makeColorSwatch(color)));
+			const clearColor = document.createElement('button');
+			clearColor.type = 'button';
+			clearColor.className = 'dialog-control-swatch --clear';
+			clearColor.draggable = false;
+			clearColor.title = 'Без цвета';
+			clearColor.innerHTML = '<span class="dialog-control-transparent-icon" aria-hidden="true"></span>';
+			clearColor.addEventListener('click', (ev) => {
+				ev.preventDefault();
+				ev.stopPropagation();
+				commitColor('');
+			});
+			const clearWrap = document.createElement('span');
+			clearWrap.className = 'dialog-control-swatch-wrap';
+			clearWrap.appendChild(clearColor);
+			swatches.appendChild(clearWrap);
+			const addColor = document.createElement('button');
+			addColor.type = 'button';
+			addColor.className = 'dialog-control-swatch --add';
+			addColor.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 3v10"/><path d="M3 8h10"/></svg>';
+			addColor.title = 'Добавить цвет';
+			addColor.addEventListener('click', (ev) => {
+				ev.preventDefault();
+				ev.stopPropagation();
+				_saveRemovedDefaultDialogControlColors(_getRemovedDefaultDialogControlColors().filter(c => c !== draftColor));
+				_saveCustomDialogControlColors([draftColor, ..._getCustomDialogControlColors()]);
+				if (!palette.querySelector(`.dialog-control-swatch[data-color="${draftColor}"]`)) {
+					swatches.insertBefore(makeColorSwatch(draftColor), addWrap);
+				}
+				commitColor(draftColor);
+			});
+			const addWrap = document.createElement('span');
+			addWrap.className = 'dialog-control-swatch-wrap';
+			addWrap.appendChild(addColor);
+			swatches.appendChild(addWrap);
+			const pickFromPointer = (ev, commit = false) => {
+				const rect = miniPicker.getBoundingClientRect();
+				const x = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
+				const y = Math.max(0, Math.min(rect.height, ev.clientY - rect.top));
+				setDraftFromHsv(draftHsv.h, x / Math.max(1, rect.width), 1 - y / Math.max(1, rect.height));
+				if (commit) commitColor(draftColor);
+			};
+			const pickHueFromPointer = (ev, commit = false) => {
+				const rect = hueStrip.getBoundingClientRect();
+				const x = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
+				setDraftFromHsv((x / Math.max(1, rect.width)) * 360, draftHsv.s, draftHsv.v);
+				if (commit) commitColor(draftColor);
+			};
+			let pickingColor = false;
+			miniPicker.addEventListener('pointerdown', (ev) => {
+				ev.preventDefault();
+				ev.stopPropagation();
+				pickingColor = true;
+				miniPicker.setPointerCapture?.(ev.pointerId);
+				pickFromPointer(ev, false);
+			});
+			miniPicker.addEventListener('pointermove', (ev) => {
+				if (!pickingColor) return;
+				ev.preventDefault();
+				pickFromPointer(ev, false);
+			});
+			miniPicker.addEventListener('pointerup', (ev) => {
+				if (!pickingColor) return;
+				pickingColor = false;
+				ev.preventDefault();
+				pickFromPointer(ev, true);
+			});
+			let pickingHue = false;
+			hueStrip.addEventListener('pointerdown', (ev) => {
+				ev.preventDefault();
+				ev.stopPropagation();
+				pickingHue = true;
+				hueStrip.setPointerCapture?.(ev.pointerId);
+				pickHueFromPointer(ev, false);
+			});
+			hueStrip.addEventListener('pointermove', (ev) => {
+				if (!pickingHue) return;
+				ev.preventDefault();
+				pickHueFromPointer(ev, false);
+			});
+			hueStrip.addEventListener('pointerup', (ev) => {
+				if (!pickingHue) return;
+				pickingHue = false;
+				ev.preventDefault();
+				pickHueFromPointer(ev, true);
+			});
+			closePalette.addEventListener('click', (ev) => {
+				ev.preventDefault();
+				ev.stopPropagation();
+				_closeDialogControlPalettes(true);
+			});
+			palette.addEventListener('mousedown', (ev) => ev.stopPropagation());
+			palette.addEventListener('click', (ev) => ev.stopPropagation());
+			palette.addEventListener('mouseenter', () => {
+				_clearDialogControlPaletteClose();
+				_setLinkedPanelOpacityLift(true);
+				_clearDialogDockAutoClose();
+			});
+			palette.addEventListener('mouseleave', () => {
+				_setLinkedPanelOpacityLift(false);
+				_scheduleDialogDockAutoClose();
+				_scheduleDialogControlPaletteClose(5000);
+			});
+			const closeOnOutside = (ev) => {
+				if (palette.contains(ev.target) || anchorBtn.contains(ev.target)) return;
+				document.removeEventListener('pointerdown', closeOnOutside, true);
+				_closeDialogControlPalettes(true);
+			};
+			palette.append(preview, miniPicker, hueStrip, closePalette, swatches, notice);
+			setDraftFromColor(draftColor);
+			const paletteW = 246;
+			const gap = 8;
+			const margin = 12;
+			const paletteH = Math.min(250, window.innerHeight - margin * 2);
+			const btnRect = anchorBtn.getBoundingClientRect();
+			const left = Math.max(margin, Math.min(btnRect.right - paletteW, window.innerWidth - paletteW - margin));
+			const placeBelow = btnRect.bottom + gap + paletteH <= window.innerHeight - margin;
+			const top = placeBelow ? btnRect.bottom + gap : Math.max(margin, btnRect.top - gap - paletteH);
+			palette.style.left = left + 'px';
+			palette.style.top = top + 'px';
+			palette.dataset.dialogId = paletteId;
+			document.body.appendChild(palette);
+			requestAnimationFrame(() => {
+				palette.classList.add('--open');
+				palette._penaOutsideHandler = closeOnOutside;
+				setTimeout(() => document.addEventListener('pointerdown', closeOnOutside, true), 0);
+			});
+		});
 	}
 
 	function _syncDialogControlSelectionOutlines() {
@@ -1431,7 +2116,7 @@ if (_presetChannel) {
 		const index = buildChatElementIndex();
 		index.forEach(el => el.classList.remove('anit-dialog-control-selected'));
 		if (!_dialogControlActive) return;
-		const ids = new Set(_getDialogControlItems().map(item => normId(item.id)).filter(Boolean));
+		const ids = new Set(_getDialogControlItems().filter(item => !_isDialogControlFolder(item)).map(item => normId(item.id)).filter(Boolean));
 		ids.forEach(id => {
 			const el = index.get(id);
 			if (el) el.classList.add('anit-dialog-control-selected');
@@ -1448,19 +2133,146 @@ if (_presetChannel) {
 
 	function _getDialogControlStatusSig() {
 		const index = buildChatElementIndex();
-		return _getDialogControlItems().map(item => {
+		const items = _getDialogControlItems();
+		const folderMap = _getDialogControlFolderMap(items);
+		return items.map(item => {
+			if (_isDialogControlFolder(item)) {
+				const childCount = _getDialogControlFolderChildCount(item.id, items);
+				return [
+					'folder',
+					item.id,
+					item.title || '',
+					_normalizeDialogControlColor(item.color),
+					item.collapsed ? 1 : 0,
+					childCount,
+					childCount > 0 || _shouldKeepEmptyDialogControlFolder(item) ? 1 : 0
+				].join(':');
+			}
 			const el = index.get(normId(item.id));
 			const meta = el ? getItemMeta(el) : null;
+			const folder = item.folderId ? folderMap.get(String(item.folderId)) : null;
 			return [
 				item.id,
 				item.title || '',
+				el ? getChatTitleFromElement(el) : '',
+				item.folderId || '',
 				_normalizeDialogControlColor(item.color),
+				_normalizeDialogControlColor(folder?.color),
 				meta?.hasUnread ? 1 : 0,
 				meta?.hasLater ? 1 : 0,
 				meta?.hasMention ? 1 : 0,
 				meta?.unreadCount || 0
 			].join(':');
 		}).join('|');
+	}
+
+	function _syncDialogControlItemTitleFromElement(item, visibleChatIndex) {
+		if (!item || _isDialogControlFolder(item)) return false;
+		const el = visibleChatIndex?.get?.(normId(item.id)) || null;
+		const liveTitle = el ? getChatTitleFromElement(el) : '';
+		if (!liveTitle || liveTitle === item.title) return false;
+		item.title = liveTitle;
+		return true;
+	}
+
+	function _getDialogControlItemLiveMeta(item, visibleChatIndex) {
+		if (!item || _isDialogControlFolder(item)) return null;
+		const el = visibleChatIndex?.get?.(normId(item.id)) || null;
+		return el ? getItemMeta(el) : null;
+	}
+
+	function _getDialogControlFolderStatus(folderId, items, visibleChatIndex) {
+		const id = String(folderId || '');
+		const children = (Array.isArray(items) ? items : []).filter(item => !_isDialogControlFolder(item) && String(item.folderId || '') === id);
+		let unreadCount = 0;
+		let hasUnread = false;
+		let hasMention = false;
+		let hasLater = false;
+		children.forEach(child => {
+			const meta = _getDialogControlItemLiveMeta(child, visibleChatIndex);
+			if (!meta) return;
+			if (meta.hasMention) hasMention = true;
+			if (meta.hasLater && !meta.hasUnread) hasLater = true;
+			if (meta.hasUnread) {
+				hasUnread = true;
+				unreadCount += Math.max(1, Number(meta.unreadCount) || 0);
+			} else if (meta.hasMention || meta.hasLater) {
+				unreadCount += 1;
+			}
+		});
+		return { childCount: children.length, unreadCount, hasUnread, hasMention, hasLater };
+	}
+
+	function _renderDialogControlState(stateEl, meta, emptyTitle = '') {
+		if (!stateEl) return;
+		const unreadCount = Number(meta?.unreadCount) || 0;
+		if (meta?.hasLater && !meta?.hasUnread && !meta?.hasMention) {
+			stateEl.title = 'Посмотреть позже';
+			stateEl.innerHTML = '<span class="dialog-control-dot --later"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg></span>';
+		} else if (meta?.hasUnread || meta?.hasMention || unreadCount > 0) {
+			stateEl.title = meta?.hasMention ? 'Вас упомянули' : 'Непрочитанные';
+			if (meta?.hasMention && unreadCount <= 0) {
+				stateEl.innerHTML = `<span class="dialog-control-dot --mention-dot">${_getDialogControlMentionIconSvg()}</span>`;
+			} else {
+				const countLabel = unreadCount > 0 ? String(unreadCount) : '';
+				const dotClass = meta?.hasMention ? 'dialog-control-dot --mention-dot' : 'dialog-control-dot';
+				stateEl.innerHTML = `<span class="${dotClass}"><span class="dialog-control-count">${countLabel}</span></span>`;
+			}
+		} else {
+			stateEl.title = emptyTitle;
+			stateEl.innerHTML = '<span class="dialog-control-dot --empty"></span>';
+		}
+	}
+
+	function _getDialogControlMentionIconSvg() {
+		return '<svg class="dialog-control-mention-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/></svg>';
+	}
+
+	function _getDialogControlFolderRefIconSvg() {
+		return '<svg class="dialog-control-folder-ref-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 5h4l1.1 1.4h5.9v4.9c0 .8-.6 1.4-1.4 1.4H3.9c-.8 0-1.4-.6-1.4-1.4V5Z"/></svg>';
+	}
+
+	async function _syncDialogControlTitlesFromRest(h = filtersHost) {
+		if (_dialogControlTitleSyncInFlight || IS_OL_FRAME) return;
+		const items = _getDialogControlItems().filter(item => !_isDialogControlFolder(item));
+		if (!items.length) return;
+		_dialogControlTitleSyncInFlight = true;
+		_dialogControlTitleLastSyncAt = Date.now();
+		let changed = false;
+		try {
+			for (const item of items) {
+				let nextTitle = '';
+				if (_pMode() === 'tasks') nextTitle = await _resolveTaskTitleForDialogControlItem(item);
+				if (!nextTitle) {
+					try {
+						nextTitle = _extractDialogTitleFromDialogData(await _callBxRestMethod('im.dialog.get', { DIALOG_ID: normId(item.id) }));
+					} catch (e) {
+						warn('Не удалось получить название диалога', item.id, e?.message || e);
+					}
+				}
+				if (nextTitle && nextTitle !== item.title) {
+					item.title = nextTitle;
+					changed = true;
+				}
+			}
+		} finally {
+			_dialogControlTitleSyncInFlight = false;
+		}
+		if (changed) {
+			_saveDialogControlItems();
+			_dialogControlLastSig = '';
+			_renderDialogControlPanel(h);
+		}
+	}
+
+	function _scheduleDialogControlTitleSync(h = filtersHost) {
+		if (_dialogControlTitleSyncTimer || _dialogControlTitleSyncInFlight || IS_OL_FRAME) return;
+		const elapsed = Date.now() - (_dialogControlTitleLastSyncAt || 0);
+		const delay = elapsed > 7000 ? 600 : 7000 - elapsed;
+		_dialogControlTitleSyncTimer = setTimeout(() => {
+			_dialogControlTitleSyncTimer = null;
+			_syncDialogControlTitlesFromRest(h);
+		}, delay);
 	}
 
 	function _refreshDialogControlPanel(h = filtersHost, force = false) {
@@ -1474,6 +2286,7 @@ if (_presetChannel) {
 			if (_dialogControlActive) _scheduleDialogControlSelectionOutlines();
 			return;
 		}
+		_scheduleDialogControlTitleSync(h);
 		const sig = _getDialogControlStatusSig();
 		if (force || sig !== _dialogControlLastSig) {
 			_dialogControlLastSig = sig;
@@ -1920,8 +2733,8 @@ if (_presetChannel) {
 		btn.setAttribute('aria-pressed', pinned ? 'true' : 'false');
 		btn.title = pinned ? 'Открепить док контроля' : 'Закрепить док контроля';
 		btn.innerHTML = pinned
-			? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 17v5"/><path d="M8 22h8"/><path d="m15 4 5 5"/><path d="m14 5-7 7v4h4l7-7"/><path d="M5 3 21 19"/></svg>'
-			: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 17v5"/><path d="M8 22h8"/><path d="m15 4 5 5"/><path d="m14 5-7 7v4h4l7-7"/></svg>';
+			? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 17v5"/><path d="M5 17h14"/><path d="M7 4h10"/><path d="M9 4v8l-2 5h10l-2-5V4"/></svg>'
+			: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4l16 16"/><path d="M12 17v5"/><path d="M5 17h9"/><path d="M7 4h7"/><path d="M9 4v3"/><path d="M15 11l2 6h-4"/></svg>';
 	}
 
 	function _applyDialogDockColumns(dock = _dialogControlDock, cols = 1) {
@@ -1988,6 +2801,9 @@ if (_presetChannel) {
 						<button type="button" class="dialog-control-mode-btn" title="Выбрать диалог для контроля" aria-pressed="false">
 							<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="M2 12h3"/><path d="M19 12h3"/></svg>
 						</button>
+						<button type="button" class="dialog-control-folder-add-btn" title="Создать папку">
+							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-9Z"/><path d="M12 11v5"/><path d="M9.5 13.5h5"/></svg>
+						</button>
 						<button type="button" class="dialog-control-clear-btn" title="Очистить список">
 							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M7 7l1 13h8l1-13"/><path d="M9 7V4h6v3"/></svg>
 						</button>
@@ -1995,7 +2811,7 @@ if (_presetChannel) {
 							<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="6" height="14" rx="1.5"/><rect x="14" y="5" width="6" height="14" rx="1.5"/></svg>
 						</button>
 						<button type="button" class="dialog-control-close" title="Свернуть">
-							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 17v5"/><path d="M8 22h8"/><path d="m15 4 5 5"/><path d="m14 5-7 7v4h4l7-7"/></svg>
+							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4l16 16"/><path d="M12 17v5"/><path d="M5 17h9"/><path d="M7 4h7"/><path d="M9 4v3"/><path d="M15 11l2 6h-4"/></svg>
 						</button>
 					</div>
 				</div>
@@ -2038,6 +2854,14 @@ if (_presetChannel) {
 			_closeDialogControlPalettes(false);
 			_setDialogDockPinned(!dock.classList.contains('--pinned'), panelHost);
 			if (!dock.classList.contains('--pinned')) _scheduleDialogDockAutoClose();
+		});
+		dock.querySelector('.dialog-control-folder-add-btn')?.addEventListener('click', (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			_closeDialogControlPalettes(false);
+			_createDialogControlFolder();
+			dock.classList.add('--expanded');
+			_fitDialogDockHeight(true);
 		});
 		dock.querySelector('.dialog-control-clear-btn')?.addEventListener('click', (e) => {
 			e.preventDefault();
@@ -2116,7 +2940,7 @@ if (_presetChannel) {
 				return;
 			}
 			const edges = getDockEdges(e);
-			const overUI = !!e.target.closest('button,input,select,textarea,a,[contenteditable],.dialog-control-chip,label');
+			const overUI = !!e.target.closest('button,input,select,textarea,a,[contenteditable],.dialog-control-chip,.dialog-control-folder,label');
 			setDockResizeCursor(overUI && !edges.l && !edges.r && !edges.b ? '' : dockEdgeClass(edges));
 		});
 		dock.addEventListener('mouseleave', () => {
@@ -2171,7 +2995,7 @@ if (_presetChannel) {
 			const t = e.target;
 			const fromToggle = !!t.closest('.dialog-control-toggle');
 			if (!fromToggle && !t.closest('.dialog-control-window')) return;
-			if (!fromToggle && t.closest('button,input,select,textarea,a,[contenteditable],.dialog-control-chip,.dialog-control-confirm,.dialog-control-toast')) return;
+			if (!fromToggle && t.closest('button,input,select,textarea,a,[contenteditable],.dialog-control-chip,.dialog-control-folder,.dialog-control-confirm,.dialog-control-toast')) return;
 			const edges = getDockEdges(e);
 			if (edges.l || edges.r || edges.b) return;
 			const main = filtersHost;
@@ -2238,6 +3062,9 @@ if (_presetChannel) {
 		const list = panel?.querySelector('#anit_dialog_control_list');
 		if (!panel || !list) return;
 		const items = _getDialogControlItems();
+		_ensureDialogControlFoldersIntegrity(items);
+		const folderMap = _getDialogControlFolderMap(items);
+		let titlesChanged = false;
 		panel.classList.toggle('--empty', !items.length);
 		panel.classList.toggle('--has-items', !!items.length);
 		list.innerHTML = '';
@@ -2249,17 +3076,253 @@ if (_presetChannel) {
 			_fitDialogDockHeight(false);
 			return;
 		}
+		const dropLine = document.createElement('div');
+		dropLine.className = 'dialog-control-drop-line';
+		list.appendChild(dropLine);
 		let draggingId = null;
+		let draggingType = '';
 		let overRow = null;
 		let dropSide = 'before';
 		const visibleChatIndex = buildChatElementIndex();
+		items.forEach(item => {
+			if (_syncDialogControlItemTitleFromElement(item, visibleChatIndex)) titlesChanged = true;
+		});
+		const hideDropLine = () => {
+			dropLine.classList.remove('--show');
+			dropLine.removeAttribute('style');
+		};
 		const clearDragOver = () => {
-			if (overRow) overRow.classList.remove('--drop-before', '--drop-after');
+			if (overRow) overRow.classList.remove('--drop-before', '--drop-after', '--drop-into');
 			overRow = null;
+			list.classList.remove('--drop-root');
+			hideDropLine();
+		};
+		const setDropMarker = (row, side) => {
+			list.classList.remove('--drop-root');
+			if (overRow && overRow !== row) overRow.classList.remove('--drop-before', '--drop-after', '--drop-into');
+			overRow = row;
+			row.classList.toggle('--drop-into', side === 'inside');
+			row.classList.remove('--drop-before', '--drop-after');
+			if (side === 'inside') {
+				hideDropLine();
+				return;
+			}
+			const top = side === 'before'
+				? row.offsetTop - 3
+				: row.offsetTop + row.offsetHeight + 3;
+			const left = Math.max(8, row.offsetLeft + 8);
+			const right = Math.max(8, list.clientWidth - (row.offsetLeft + row.offsetWidth) + 8);
+			dropLine.style.top = Math.max(1, top) + 'px';
+			dropLine.style.left = left + 'px';
+			dropLine.style.right = right + 'px';
+			dropLine.classList.add('--show');
+		};
+		const getFolderGroupEndRow = (folderId, fallbackRow) => {
+			const id = String(folderId || '');
+			const children = Array.from(list.children).filter(el => el.dataset?.parentFolderId === id);
+			return children.length ? children[children.length - 1] : fallbackRow;
+		};
+		const confirmFolderOut = (item, onOk) => {
+			if (!item?.folderId) { onOk(); return; }
+			_showDialogControlConfirm(
+				`Вынести «${item.title || 'Диалог'}» из папки?`,
+				'Вынести', 'Отмена',
+				onOk
+			);
+		};
+		list.ondragover = (e) => {
+			if (!draggingId || draggingType !== 'dialog') return;
+			if (e.target.closest?.('.dialog-control-chip,.dialog-control-folder')) return;
+			e.preventDefault();
+			if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+			const moved = _getDialogControlItems().find(x => String(x.id) === String(draggingId));
+			clearDragOver();
+			if (moved?.folderId) list.classList.add('--drop-root');
+		};
+		list.ondragleave = (e) => {
+			if (!list.contains(e.relatedTarget)) clearDragOver();
+		};
+		list.ondrop = (e) => {
+			if (!draggingId || draggingType !== 'dialog') return;
+			if (e.target.closest?.('.dialog-control-chip,.dialog-control-folder')) return;
+			e.preventDefault();
+			const movedId = draggingId;
+			const item = _getDialogControlItems().find(x => String(x.id) === String(movedId));
+			if (!item?.folderId) return;
+			confirmFolderOut(item, () => {
+				if (_moveDialogControlItemToRootEnd(movedId)) {
+					list.dataset.lastDragTs = String(Date.now());
+					_renderDialogControlPanel(h);
+				}
+			});
 		};
 		items.forEach(item => {
+			if (_isDialogControlFolder(item)) {
+				const folderStatus = _getDialogControlFolderStatus(item.id, items, visibleChatIndex);
+				if (!folderStatus.childCount && !_shouldKeepEmptyDialogControlFolder(item)) return;
+				const folderColor = _normalizeDialogControlColor(item.color);
+				const row = document.createElement('div');
+				row.className = 'dialog-control-folder';
+				row.draggable = true;
+				row.dataset.folderId = item.id;
+				row.classList.toggle('--collapsed', !!item.collapsed);
+				row.classList.toggle('--colored', !!folderColor);
+				row.classList.toggle('--empty-folder', !folderStatus.childCount);
+				if (folderColor) _applyDialogControlColorVars(row, folderColor);
+				let toggleFolder = null;
+				if (folderStatus.childCount) {
+					toggleFolder = document.createElement('button');
+					toggleFolder.type = 'button';
+					toggleFolder.className = 'dialog-control-folder-toggle';
+					toggleFolder.title = item.collapsed ? 'Развернуть папку' : 'Свернуть папку';
+					toggleFolder.setAttribute('aria-expanded', item.collapsed ? 'false' : 'true');
+					toggleFolder.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M6 4l4 4-4 4"/></svg>';
+					toggleFolder.addEventListener('click', (e) => {
+						e.preventDefault();
+						e.stopPropagation();
+						_setDialogControlFolderCollapsed(item.id, !item.collapsed);
+						_renderDialogControlPanel(h);
+					});
+				} else {
+					toggleFolder = null;
+				}
+				const folderState = document.createElement('span');
+				folderState.className = 'dialog-control-state dialog-control-folder-state';
+				_renderDialogControlState(folderState, {
+					hasUnread: folderStatus.unreadCount > 0,
+					hasMention: folderStatus.hasMention,
+					hasLater: folderStatus.hasLater,
+					unreadCount: folderStatus.unreadCount
+				}, `${folderStatus.childCount} ${_ruPlural(folderStatus.childCount, 'диалог', 'диалога', 'диалогов')}`);
+				const titleInp = document.createElement('input');
+				titleInp.type = 'text';
+				titleInp.className = 'dialog-control-folder-title';
+				titleInp.value = item.title || 'Папка';
+				titleInp.maxLength = 40;
+				titleInp.title = 'Название папки';
+				const commitFolderTitle = () => {
+					const oldValue = item.title || 'Папка';
+					_setDialogControlFolderTitle(item.id, titleInp.value);
+					titleInp.value = item.title || titleInp.value.trim() || oldValue;
+				};
+				titleInp.addEventListener('blur', commitFolderTitle);
+				titleInp.addEventListener('keydown', (e) => {
+					if (e.key === 'Enter') { e.preventDefault(); titleInp.blur(); }
+					if (e.key === 'Escape') { titleInp.value = item.title || 'Папка'; titleInp.blur(); }
+					e.stopPropagation();
+				});
+				const colorWrap = document.createElement('span');
+				colorWrap.className = 'dialog-control-folder-color-wrap';
+				const colorBtn = document.createElement('button');
+				colorBtn.type = 'button';
+				colorBtn.className = 'dialog-control-folder-color';
+				colorBtn.draggable = false;
+				colorBtn.title = folderColor ? 'Изменить цвет папки' : 'Выбрать цвет папки';
+				colorBtn.setAttribute('aria-label', colorBtn.title);
+				if (folderColor) _applyDialogControlColorVars(colorBtn, folderColor);
+				_wireDialogControlColorPalette(colorBtn, colorWrap, {
+					id: item.id,
+					currentColor: folderColor,
+					getCurrentColor: () => item.color,
+					onCommit: (next) => {
+						_setDialogControlFolderColor(item.id, next);
+						item.color = next || '';
+						row.classList.toggle('--colored', !!next);
+						if (next) {
+							_applyDialogControlColorVars(row, next);
+							_applyDialogControlColorVars(colorBtn, next);
+						} else {
+							_clearDialogControlColorVars(row);
+							_clearDialogControlColorVars(colorBtn);
+						}
+					}
+				});
+				colorWrap.append(colorBtn);
+				const rmFolder = document.createElement('button');
+				rmFolder.type = 'button';
+				rmFolder.className = 'dialog-control-folder-remove';
+				rmFolder.title = 'Удалить папку';
+				rmFolder.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M10.4 2.4 9.6 1.6 6 5.2 2.4 1.6 1.6 2.4 5.2 6 1.6 9.6 2.4 10.4 6 6.8 9.6 10.4 10.4 9.6 6.8 6z"/></svg>';
+				rmFolder.addEventListener('click', (e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					_showDialogControlConfirm(
+						`Удалить папку «${item.title || 'Папка'}»? Диалоги останутся под контролем.`,
+						'Удалить', 'Отмена',
+						() => {
+							_removeDialogControlFolder(item.id);
+							_renderDialogControlPanel(h);
+							_showDialogDockToast('Папка удалена', 'ok');
+						}
+					);
+				});
+				row.addEventListener('dragstart', (e) => {
+					draggingId = item.id;
+					draggingType = 'folder';
+					row.classList.add('--dragging');
+					if (e.dataTransfer) {
+						e.dataTransfer.effectAllowed = 'move';
+						try { e.dataTransfer.setData('text/plain', item.id); } catch {}
+					}
+				});
+				row.addEventListener('dragend', () => {
+					row.classList.remove('--dragging');
+					clearDragOver();
+					draggingId = null;
+					draggingType = '';
+					list.dataset.lastDragTs = String(Date.now());
+				});
+				row.addEventListener('dragover', (e) => {
+					if (!draggingId || draggingId === item.id) return;
+					if (draggingType === 'folder' && String(draggingId) === String(item.id)) return;
+					e.preventDefault();
+					if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+					const rect = row.getBoundingClientRect();
+					const y = (e.clientY - rect.top) / Math.max(1, rect.height);
+					const moved = _getDialogControlItems().find(x => String(x.id) === String(draggingId));
+					const alreadyInThisFolder = draggingType === 'dialog' && String(moved?.folderId || '') === String(item.id);
+					dropSide = draggingType === 'dialog' && !alreadyInThisFolder && y > .24 && y < .76 ? 'inside' : (e.clientY > rect.top + rect.height / 2 ? 'after' : 'before');
+					const markerRow = dropSide === 'after' && folderStatus.childCount && !item.collapsed
+						? getFolderGroupEndRow(item.id, row)
+						: row;
+					setDropMarker(markerRow, dropSide);
+				});
+				row.addEventListener('dragleave', (e) => {
+					if (!row.contains(e.relatedTarget)) clearDragOver();
+				});
+				row.addEventListener('drop', (e) => {
+					if (!draggingId || draggingId === item.id) return;
+					e.preventDefault();
+					e.stopPropagation();
+					clearDragOver();
+					const movedId = draggingId;
+					const moved = _getDialogControlItems().find(x => String(x.id) === String(movedId));
+					const applyMove = () => {
+						const changed = dropSide === 'inside'
+							? _moveDialogControlItemToFolder(movedId, item.id)
+							: _moveDialogControlItemRelative(movedId, item.id, dropSide);
+						if (!changed) return;
+						list.dataset.lastDragTs = String(Date.now());
+						_renderDialogControlPanel(h);
+					};
+					if (dropSide !== 'inside' && moved?.folderId) confirmFolderOut(moved, applyMove);
+					else applyMove();
+				});
+				if (toggleFolder) row.append(toggleFolder, folderState, titleInp, colorWrap, rmFolder);
+				else row.append(folderState, titleInp, colorWrap, rmFolder);
+				list.appendChild(row);
+				return;
+			}
+			if (item.folderId && folderMap.get(String(item.folderId))?.collapsed) return;
 			const el = visibleChatIndex.get(normId(item.id)) || null;
 			const meta = el ? getItemMeta(el) : null;
+			const liveTitle = el ? getChatTitleFromElement(el) : '';
+			if (liveTitle && liveTitle !== item.title) {
+				item.title = liveTitle;
+				titlesChanged = true;
+			}
+			const parentFolder = item.folderId ? folderMap.get(String(item.folderId)) : null;
+			const folderColor = _normalizeDialogControlColor(parentFolder?.color);
 			const unreadCount = meta?.unreadCount || 0;
 			const isUnread = !!(meta?.hasUnread || meta?.hasLater || meta?.hasMention);
 			const row = document.createElement('button');
@@ -2269,10 +3332,14 @@ if (_presetChannel) {
 			row.classList.toggle('--unread', isUnread);
 			row.classList.toggle('--later', !!meta?.hasLater && !meta?.hasUnread);
 			row.classList.toggle('--mention', !!meta?.hasMention);
+			row.classList.toggle('--in-folder', !!parentFolder);
+			row.classList.toggle('--folder-colored', !!folderColor);
 			const chipColor = _normalizeDialogControlColor(item.color);
-			row.classList.toggle('--colored', !!chipColor);
-			if (chipColor) _applyDialogControlColorVars(row, chipColor);
+			const effectiveChipColor = chipColor;
+			row.classList.toggle('--colored', !!effectiveChipColor);
+			if (effectiveChipColor) _applyDialogControlColorVars(row, effectiveChipColor);
 			row.dataset.dialogId = item.id;
+			if (parentFolder) row.dataset.parentFolderId = parentFolder.id;
 			row.title = _pMode() === 'tasks'
 				? 'Открыть задачу; перетащите, чтобы изменить порядок'
 				: 'Открыть диалог; перетащите, чтобы изменить порядок';
@@ -2280,7 +3347,7 @@ if (_presetChannel) {
 				e.preventDefault();
 				e.stopPropagation();
 				_closeDialogControlPalettes(true);
-				list.querySelectorAll('.dialog-control-color-wrap.--open').forEach(el => el.classList.remove('--open'));
+				list.querySelectorAll('.dialog-control-color-wrap.--open,.dialog-control-folder-color-wrap.--open').forEach(el => el.classList.remove('--open'));
 				const ts = Number(list.dataset.lastDragTs || 0);
 				if (ts && (Date.now() - ts) < 250) return;
 				if (_pMode() === 'tasks' && _isTaskViewRouteNow() && await _openTaskForDialogControlItem(item)) return;
@@ -2292,6 +3359,7 @@ if (_presetChannel) {
 			});
 			row.addEventListener('dragstart', (e) => {
 				draggingId = item.id;
+				draggingType = 'dialog';
 				row.classList.add('--dragging');
 				if (e.dataTransfer) {
 					e.dataTransfer.effectAllowed = 'move';
@@ -2302,49 +3370,47 @@ if (_presetChannel) {
 				row.classList.remove('--dragging');
 				clearDragOver();
 				draggingId = null;
+				draggingType = '';
 				list.dataset.lastDragTs = String(Date.now());
 			});
 			row.addEventListener('dragover', (e) => {
 				if (!draggingId || draggingId === item.id) return;
 				e.preventDefault();
 				if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-				if (overRow && overRow !== row) overRow.classList.remove('--drop-before', '--drop-after');
-				overRow = row;
 				const rect = row.getBoundingClientRect();
 				dropSide = e.clientY > rect.top + rect.height / 2 ? 'after' : 'before';
-				row.classList.toggle('--drop-before', dropSide === 'before');
-				row.classList.toggle('--drop-after', dropSide === 'after');
+				setDropMarker(row, dropSide);
 			});
 			row.addEventListener('dragleave', (e) => {
-				if (!row.contains(e.relatedTarget)) {
-					row.classList.remove('--drop-before', '--drop-after');
-					if (overRow === row) overRow = null;
-				}
+				if (!row.contains(e.relatedTarget)) clearDragOver();
 			});
 			row.addEventListener('drop', (e) => {
 				if (!draggingId || draggingId === item.id) return;
 				e.preventDefault();
 				e.stopPropagation();
-				row.classList.remove('--drop-before', '--drop-after');
-				const arr = [..._getDialogControlItems()];
-				const fromIdx = arr.findIndex(x => x.id === draggingId);
-				const toIdx = arr.findIndex(x => x.id === item.id);
-				if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return;
-				const [moved] = arr.splice(fromIdx, 1);
-				let insertIdx = toIdx + (dropSide === 'after' ? 1 : 0);
-				if (fromIdx < insertIdx) insertIdx -= 1;
-				arr.splice(insertIdx, 0, moved);
-				_dialogControlItems[_pMode()] = arr;
-				_saveDialogControlItems();
-				_dialogControlLastSig = '';
-				list.dataset.lastDragTs = String(Date.now());
-				_renderDialogControlPanel(h);
+				clearDragOver();
+				const movedId = draggingId;
+				const moved = _getDialogControlItems().find(x => String(x.id) === String(movedId));
+				const willLeaveFolder = moved?.folderId && !item.folderId;
+				const applyMove = () => {
+					if (!_moveDialogControlItemRelative(movedId, item.id, dropSide)) return;
+					list.dataset.lastDragTs = String(Date.now());
+					_renderDialogControlPanel(h);
+				};
+				if (willLeaveFolder) confirmFolderOut(moved, applyMove);
+				else applyMove();
 			});
 			const state = document.createElement('span');
 			state.className = 'dialog-control-state';
-			if (isUnread) {
-				state.title = meta?.hasMention ? 'Вас упомянули' : (meta?.hasLater && !meta?.hasUnread ? 'Прочитаю позже' : 'Непрочитанные');
-				const countLabel = meta?.hasMention ? '@' : (unreadCount > 0 ? String(unreadCount) : (meta?.hasLater ? '!' : ''));
+			if (meta?.hasLater && !meta?.hasUnread && !meta?.hasMention) {
+				state.title = 'Посмотреть позже';
+				state.innerHTML = '<span class="dialog-control-dot --later"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg></span>';
+			} else if (meta?.hasMention) {
+				state.title = 'Вас упомянули';
+				state.innerHTML = `<span class="dialog-control-dot --mention-dot">${_getDialogControlMentionIconSvg()}</span>`;
+			} else if (isUnread) {
+				state.title = 'Непрочитанные';
+				const countLabel = unreadCount > 0 ? String(unreadCount) : (meta?.hasLater ? '!' : '');
 				state.innerHTML = `<span class="dialog-control-dot"><span class="dialog-control-count">${countLabel}</span></span>`;
 			} else {
 				state.innerHTML = '<span class="dialog-control-dot --empty"></span>';
@@ -2365,9 +3431,11 @@ if (_presetChannel) {
 			colorBtn.type = 'button';
 			colorBtn.className = 'dialog-control-color';
 			colorBtn.draggable = false;
-			colorBtn.title = chipColor ? 'Изменить цвет диалога' : 'Выбрать цвет диалога';
+			colorBtn.title = folderColor
+				? `Цвет папки «${parentFolder?.title || 'Папка'}» отмечен в палитре`
+				: (chipColor ? 'Изменить цвет диалога' : 'Выбрать цвет диалога');
 			colorBtn.setAttribute('aria-label', colorBtn.title);
-			if (chipColor) _applyDialogControlColorVars(colorBtn, chipColor);
+			if (effectiveChipColor) _applyDialogControlColorVars(colorBtn, effectiveChipColor);
 			const palette = document.createElement('div');
 			palette.className = 'dialog-control-palette';
 			palette.tabIndex = -1;
@@ -2395,6 +3463,11 @@ if (_presetChannel) {
 			const pickerKnob = document.createElement('span');
 			pickerKnob.className = 'dialog-control-picker-knob';
 			miniPicker.appendChild(pickerKnob);
+			const hueStrip = document.createElement('div');
+			hueStrip.className = 'dialog-control-hue-strip';
+			const hueKnob = document.createElement('span');
+			hueKnob.className = 'dialog-control-hue-knob';
+			hueStrip.appendChild(hueKnob);
 			const swatches = document.createElement('div');
 			swatches.className = 'dialog-control-swatches';
 			const closePalette = document.createElement('button');
@@ -2415,63 +3488,58 @@ if (_presetChannel) {
 				_closeDialogControlPalettes(true);
 			};
 			const showDeleteConfirm = (color) => {
-				const usage = _getDialogControlColorUsage(color);
-				notice.innerHTML = '';
-				_applyDialogControlColorVars(notice, color);
-				const textEl = document.createElement('span');
-				textEl.className = 'dialog-control-delete-text';
-				const usageText = usage.total === 0
-					? 'Не используется'
-					: usage.total === 1
-						? 'Используется 1 раз'
-						: `Используется ${usage.total} ${_ruPlural(usage.total, 'раз', 'раза', 'раз')}`;
-				textEl.textContent = `${usageText}. Удалить?`;
-				const actions = document.createElement('div');
-				actions.className = 'dialog-control-delete-actions';
-				const cancel = document.createElement('button');
-				cancel.type = 'button';
-				cancel.textContent = 'Нет';
-				const ok = document.createElement('button');
-				ok.type = 'button';
-				ok.className = '--danger';
-				ok.textContent = 'Да';
-				cancel.addEventListener('click', (e) => {
-					e.preventDefault();
-					e.stopPropagation();
-					notice.classList.remove('--show');
-				});
-				ok.addEventListener('click', (e) => {
-					e.preventDefault();
-					e.stopPropagation();
-					_deleteCustomDialogControlColor(color);
-					if (_normalizeDialogControlColor(item.color) === _normalizeDialogControlColor(color)) commitColor('');
-					notice.classList.remove('--show');
-					palette.querySelector(`.dialog-control-swatch[data-color="${color}"]`)?.closest('.dialog-control-swatch-wrap')?.remove();
+				_showDialogControlColorDeleteConfirm(notice, color, (deletedColor, usage) => {
+					_deleteCustomDialogControlColor(deletedColor);
+					if (_normalizeDialogControlColor(item.color) === deletedColor) commitColor('');
+					palette.querySelector(`.dialog-control-swatch[data-color="${deletedColor}"]`)?.closest('.dialog-control-swatch-wrap')?.remove();
 					const resetText = usage.total > 0
 						? `Цвет удалён. Сброшено в ${usage.total} ${_ruPlural(usage.total, 'диалоге', 'диалогах', 'диалогах')}`
 						: 'Цвет удалён';
 					_showDialogDockToast(resetText, 'ok');
 				});
-				actions.append(cancel, ok);
-				notice.append(textEl, actions);
-				notice.classList.add('--show');
+			};
+			let draftHsv = _hexToHsv(draftColor) || { h: 210, s: 1, v: 1 };
+			const syncPickerVisual = () => {
+				miniPicker.style.setProperty('--picker-hue-color', _hsvToHex(draftHsv.h, 1, 1));
+				pickerKnob.style.left = (draftHsv.s * 100) + '%';
+				pickerKnob.style.top = ((1 - draftHsv.v) * 100) + '%';
+				hueKnob.style.left = (draftHsv.h / 360 * 100) + '%';
+			};
+			const setDraftFromHsv = (h, s, v) => {
+				draftHsv = {
+					h: (((Number(h) || 0) % 360) + 360) % 360,
+					s: Math.max(0, Math.min(1, Number(s) || 0)),
+					v: Math.max(0, Math.min(1, Number(v) || 0))
+				};
+				draftColor = _hsvToHex(draftHsv.h, draftHsv.s, draftHsv.v);
+				_applyDialogControlColorVars(preview, draftColor);
+				_applyDialogControlColorVars(pickerKnob, draftColor);
+				palette.querySelectorAll('.dialog-control-swatch').forEach(btn => {
+					btn.classList.toggle('--active', btn.dataset.color === draftColor);
+				});
+				syncPickerVisual();
 			};
 			const applyDraft = (color) => {
 				const next = _normalizeDialogControlColor(color) || '#4d9dff';
 				draftColor = next;
+				draftHsv = _hexToHsv(next) || draftHsv;
 				_applyDialogControlColorVars(preview, next);
 				_applyDialogControlColorVars(pickerKnob, next);
 				palette.querySelectorAll('.dialog-control-swatch').forEach(btn => {
 					btn.classList.toggle('--active', btn.dataset.color === next);
 				});
+				syncPickerVisual();
 			};
 			const commitColor = (color) => {
 				const next = _normalizeDialogControlColor(color);
 				_setDialogControlItemColor(item.id, next);
-				row.classList.toggle('--colored', !!next);
-				if (next) {
-					_applyDialogControlColorVars(row, next);
-					_applyDialogControlColorVars(colorBtn, next);
+				item.color = next || undefined;
+				if (!next) delete item.color;
+				const effective = next;
+				row.classList.toggle('--colored', !!effective);
+				if (effective) {
+					_applyDialogControlColorVars(row, effective);
+					_applyDialogControlColorVars(colorBtn, effective);
 				} else {
 					_clearDialogControlColorVars(row);
 					_clearDialogControlColorVars(colorBtn);
@@ -2490,10 +3558,16 @@ if (_presetChannel) {
 				swatch.dataset.color = color;
 				_applyDialogControlColorVars(swatch, color);
 				swatch.classList.toggle('--active', chipColor === color);
-				swatch.title = 'Применить цвет';
+				const isFolderRef = !!folderColor && color === folderColor;
+				swatch.classList.toggle('--folder-ref', isFolderRef);
+				if (isFolderRef) swatch.innerHTML = _getDialogControlFolderRefIconSvg();
+				swatch.title = isFolderRef
+					? `Применить цвет папки «${parentFolder?.title || 'Папка'}»`
+					: 'Применить цвет';
 				swatch.addEventListener('click', (e) => {
 					e.preventDefault();
 					e.stopPropagation();
+					applyDraft(color);
 					commitColor(color);
 				});
 				swatchWrap.appendChild(swatch);
@@ -2512,7 +3586,11 @@ if (_presetChannel) {
 				}
 				return swatchWrap;
 			};
-			_getVisibleDialogControlColors().forEach(color => {
+			const visibleColors = _getVisibleDialogControlColors();
+			const paletteColors = folderColor && !visibleColors.includes(folderColor)
+				? [folderColor, ...visibleColors]
+				: visibleColors;
+			paletteColors.forEach(color => {
 				swatches.appendChild(makeColorSwatch(color));
 			});
 			const clearColor = document.createElement('button');
@@ -2534,59 +3612,26 @@ if (_presetChannel) {
 			const addColor = document.createElement('button');
 			addColor.type = 'button';
 			addColor.className = 'dialog-control-swatch --add';
-			addColor.textContent = '+';
+			addColor.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 3v10"/><path d="M3 8h10"/></svg>';
 			addColor.title = 'Добавить цвет';
 			const addWrap = document.createElement('span');
 			addWrap.className = 'dialog-control-swatch-wrap';
 			addWrap.appendChild(addColor);
 			swatches.appendChild(addWrap);
-			const pickerStops = [
-				{ p: 0, color: '#f04444' },
-				{ p: .18, color: '#f59e0b' },
-				{ p: .32, color: '#f5e642' },
-				{ p: .48, color: '#3bd671' },
-				{ p: .63, color: '#20c5c7' },
-				{ p: .78, color: '#4d9dff' },
-				{ p: .90, color: '#a855f7' },
-				{ p: 1, color: '#f04444' },
-			].map(stop => ({ ...stop, rgb: _hexToRgb(stop.color) }));
-			const mix = (a, b, t) => Math.round(a + (b - a) * t);
-			const colorFromPickerPoint = (xRatio, yRatio) => {
-				const x = Math.max(0, Math.min(1, xRatio));
-				const y = Math.max(0, Math.min(1, yRatio));
-				let leftStop = pickerStops[0];
-				let rightStop = pickerStops[pickerStops.length - 1];
-				for (let i = 1; i < pickerStops.length; i++) {
-					if (x <= pickerStops[i].p) {
-						leftStop = pickerStops[i - 1];
-						rightStop = pickerStops[i];
-						break;
-					}
-				}
-				const span = Math.max(.0001, rightStop.p - leftStop.p);
-				const t = Math.max(0, Math.min(1, (x - leftStop.p) / span));
-				const base = {
-					r: mix(leftStop.rgb.r, rightStop.rgb.r, t),
-					g: mix(leftStop.rgb.g, rightStop.rgb.g, t),
-					b: mix(leftStop.rgb.b, rightStop.rgb.b, t),
-				};
-				const overlayAlpha = .42 * y;
-				const overlay = 0;
-				return _rgbToHex(
-					base.r * (1 - overlayAlpha) + overlay * overlayAlpha,
-					base.g * (1 - overlayAlpha) + overlay * overlayAlpha,
-					base.b * (1 - overlayAlpha) + overlay * overlayAlpha
-				);
-			};
 			const pickFromPointer = (e, commit = false) => {
 				const rect = miniPicker.getBoundingClientRect();
 				const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
 				const y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
 				const xRatio = x / Math.max(1, rect.width);
 				const yRatio = y / Math.max(1, rect.height);
-				pickerKnob.style.left = x + 'px';
-				pickerKnob.style.top = y + 'px';
-				applyDraft(colorFromPickerPoint(xRatio, yRatio));
+				setDraftFromHsv(draftHsv.h, xRatio, 1 - yRatio);
+				if (commit) commitColor(draftColor);
+			};
+			const pickHueFromPointer = (e, commit = false) => {
+				const rect = hueStrip.getBoundingClientRect();
+				const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+				const xRatio = x / Math.max(1, rect.width);
+				setDraftFromHsv(xRatio * 360, draftHsv.s, draftHsv.v);
 				if (commit) commitColor(draftColor);
 			};
 			let pickingColor = false;
@@ -2606,7 +3651,26 @@ if (_presetChannel) {
 				if (!pickingColor) return;
 				pickingColor = false;
 				e.preventDefault();
-				pickFromPointer(e, false);
+				pickFromPointer(e, true);
+			});
+			let pickingHue = false;
+			hueStrip.addEventListener('pointerdown', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				pickingHue = true;
+				hueStrip.setPointerCapture?.(e.pointerId);
+				pickHueFromPointer(e, false);
+			});
+			hueStrip.addEventListener('pointermove', (e) => {
+				if (!pickingHue) return;
+				e.preventDefault();
+				pickHueFromPointer(e, false);
+			});
+			hueStrip.addEventListener('pointerup', (e) => {
+				if (!pickingHue) return;
+				pickingHue = false;
+				e.preventDefault();
+				pickHueFromPointer(e, true);
 			});
 			addColor.addEventListener('click', (e) => {
 				e.preventDefault();
@@ -2618,7 +3682,7 @@ if (_presetChannel) {
 				}
 				commitColor(draftColor);
 			});
-			palette.append(preview, miniPicker, closePalette, swatches, notice);
+			palette.append(preview, miniPicker, hueStrip, closePalette, swatches, notice);
 			applyDraft(draftColor);
 			colorBtn.addEventListener('click', (e) => {
 				e.preventDefault();
@@ -2628,10 +3692,10 @@ if (_presetChannel) {
 				_forceCloseDialogControlPalettes();
 				if (wasOpen) return;
 				colorWrap.classList.add('--open');
-				const paletteW = 226;
+				const paletteW = 246;
 				const gap = 8;
 				const margin = 12;
-				const paletteH = Math.min(170, window.innerHeight - margin * 2);
+				const paletteH = Math.min(250, window.innerHeight - margin * 2);
 				const btnRect = colorBtn.getBoundingClientRect();
 				const left = Math.max(margin, Math.min(btnRect.right - paletteW, window.innerWidth - paletteW - margin));
 				const placeBelow = btnRect.bottom + gap + paletteH <= window.innerHeight - margin;
@@ -2658,13 +3722,22 @@ if (_presetChannel) {
 			rm.addEventListener('click', (e) => {
 				e.preventDefault();
 				e.stopPropagation();
-				_dialogControlItems[_pMode()] = _getDialogControlItems().filter(x => normId(x.id) !== normId(item.id));
-				_saveDialogControlItems();
-				_renderDialogControlPanel(h);
+				_showDialogControlConfirm(
+					`Убрать «${item.title || 'Диалог'}» из контроля?`,
+					'Убрать', 'Отмена',
+					() => {
+						_dialogControlItems[_pMode()] = _getDialogControlItems().filter(x => normId(x.id) !== normId(item.id));
+						_saveDialogControlItems();
+						_renderDialogControlPanel(h);
+						_showDialogDockToast('Диалог убран из контроля', 'ok');
+					}
+				);
 			});
 			row.append(state, title, colorWrap, rm);
 			list.appendChild(row);
 		});
+		if (titlesChanged) _saveDialogControlItems();
+		_scheduleDialogControlTitleSync(h);
 		_fitDialogDockHeight(true);
 	}
 
@@ -2752,18 +3825,28 @@ if (_presetChannel) {
 		const items = _getDialogControlItems();
 		const existingIdx = items.findIndex(x => normId(x.id) === normId(id));
 		if (existingIdx >= 0) {
-			const removed = items.splice(existingIdx, 1)[0];
-			_dialogControlItems[_pMode()] = items;
-			_saveDialogControlItems();
-			_renderDialogControlPanel();
-			_fitDialogDockHeight(true);
-			_dialogControlDock?.classList.add('--expanded');
-			el.classList.remove('anit-dialog-control-selected');
-			el.classList.add('anit-dialog-controlled-pulse');
-			setTimeout(() => el.classList.remove('anit-dialog-controlled-pulse'), 850);
-			_showDialogDockToast(`Диалог «${removed?.title || title}» убран из контроля`, 'ok');
-			if (keepActive) _scheduleDialogControlIdleExit();
-			else _exitDialogControlMode();
+			const existing = items[existingIdx];
+			_showDialogControlConfirm(
+				`Убрать «${existing?.title || title}» из контроля?`,
+				'Убрать', 'Отмена',
+				() => {
+					const current = _getDialogControlItems();
+					const idx = current.findIndex(x => normId(x.id) === normId(id));
+					if (idx < 0) return;
+					const removed = current.splice(idx, 1)[0];
+					_dialogControlItems[_pMode()] = current;
+					_saveDialogControlItems();
+					_renderDialogControlPanel();
+					_fitDialogDockHeight(true);
+					_dialogControlDock?.classList.add('--expanded');
+					el.classList.remove('anit-dialog-control-selected');
+					el.classList.add('anit-dialog-controlled-pulse');
+					setTimeout(() => el.classList.remove('anit-dialog-controlled-pulse'), 850);
+					_showDialogDockToast(`Диалог «${removed?.title || title}» убран из контроля`, 'ok');
+					if (keepActive) _scheduleDialogControlIdleExit();
+					else _exitDialogControlMode();
+				}
+			);
 			return;
 		}
 		const nextItem = { id, title, addedAt: Date.now() };
@@ -3576,9 +4659,9 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-close:hover{border-color:rgba(255,255,255,.34);background:rgba(255,255,255,.08);transform:translateY(-1px)}
 #anit-dialog-control-dock .dialog-control-close.--active{border-color:rgba(77,157,255,.58);background:rgba(77,157,255,.16);color:#d7eaff}
 #anit-dialog-control-dock .dialog-control-actions{display:flex;align-items:center;justify-content:flex-start;gap:8px;flex:0 0 auto;position:relative;flex-wrap:nowrap;max-width:100%;justify-self:start;margin-left:0;grid-row:2;grid-column:1}
-#anit-dialog-control-dock .dialog-control-mode-btn,#anit-dialog-control-dock .dialog-control-clear-btn,#anit-dialog-control-dock .dialog-control-columns-btn{width:var(--pena-icon-size);height:var(--pena-icon-size);border:1px solid rgba(255,255,255,.18);border-radius:var(--pena-radius);background:rgba(255,255,255,.04);color:#fff;padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;box-sizing:border-box;flex:0 0 var(--pena-icon-size);transition:border-color .15s,background .15s,transform .15s}
-#anit-dialog-control-dock .dialog-control-mode-btn svg,#anit-dialog-control-dock .dialog-control-clear-btn svg,#anit-dialog-control-dock .dialog-control-columns-btn svg{width:12px;height:12px;display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;opacity:.88;flex:0 0 12px;margin:auto}
-#anit-dialog-control-dock .dialog-control-mode-btn:hover,#anit-dialog-control-dock .dialog-control-clear-btn:hover,#anit-dialog-control-dock .dialog-control-columns-btn:hover{border-color:rgba(255,255,255,.34);background:rgba(255,255,255,.08);transform:translateY(-1px)}
+#anit-dialog-control-dock .dialog-control-mode-btn,#anit-dialog-control-dock .dialog-control-folder-add-btn,#anit-dialog-control-dock .dialog-control-clear-btn,#anit-dialog-control-dock .dialog-control-columns-btn{width:var(--pena-icon-size);height:var(--pena-icon-size);border:1px solid rgba(255,255,255,.18);border-radius:var(--pena-radius);background:rgba(255,255,255,.04);color:#fff;padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;box-sizing:border-box;flex:0 0 var(--pena-icon-size);transition:border-color .15s,background .15s,transform .15s}
+#anit-dialog-control-dock .dialog-control-mode-btn svg,#anit-dialog-control-dock .dialog-control-folder-add-btn svg,#anit-dialog-control-dock .dialog-control-clear-btn svg,#anit-dialog-control-dock .dialog-control-columns-btn svg{width:12px;height:12px;display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;opacity:.88;flex:0 0 12px;margin:auto}
+#anit-dialog-control-dock .dialog-control-mode-btn:hover,#anit-dialog-control-dock .dialog-control-folder-add-btn:hover,#anit-dialog-control-dock .dialog-control-clear-btn:hover,#anit-dialog-control-dock .dialog-control-columns-btn:hover{border-color:rgba(255,255,255,.34);background:rgba(255,255,255,.08);transform:translateY(-1px)}
 #anit-dialog-control-dock .dialog-control-mode-btn.--active{border-color:rgba(255,73,73,.58);background:rgba(255,73,73,.16);color:#ffd6d6}
 #anit-dialog-control-dock .dialog-control-columns-btn.--active{border-color:rgba(77,157,255,.5);background:rgba(77,157,255,.12);color:#d6e9ff}
 #anit-filters .controls-pop-close{position:absolute;top:8px;right:8px;width:22px;height:22px;border:0;background:transparent;color:rgba(255,255,255,.72);padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;line-height:1;border-radius:var(--pena-radius)}
@@ -3598,63 +4681,107 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-toast.--show{opacity:1;transform:translateY(0)}
 #anit-dialog-control-dock .dialog-control-toast.--ok{border-color:rgba(93,200,126,.5);color:#5dc87e}
 #anit-dialog-control-dock .dialog-control-toast.--danger{border-color:rgba(239,68,68,.5);color:#ffb3b3}
-#anit-dialog-control-dock .dialog-control-list{display:grid;grid-template-columns:1fr;align-content:start;gap:6px;min-height:0;flex:1 1 auto;overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.28) rgba(255,255,255,.06);padding-right:6px;padding-bottom:12px}
+#anit-dialog-control-dock .dialog-control-list{position:relative;display:grid;grid-template-columns:1fr;align-content:start;gap:6px;min-height:0;flex:1 1 auto;overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.28) rgba(255,255,255,.06);padding-right:6px;padding-bottom:12px}
+#anit-dialog-control-dock .dialog-control-list.--drop-root::after{content:"";grid-column:1 / -1;height:2px;margin:2px 8px 4px;border-radius:999px;background:#4d9dff;box-shadow:0 0 0 1px rgba(77,157,255,.2),0 0 12px rgba(77,157,255,.36);pointer-events:none}
+#anit-dialog-control-dock .dialog-control-drop-line{position:absolute;height:2px;border-radius:999px;background:#4d9dff;box-shadow:0 0 0 1px rgba(77,157,255,.2),0 0 12px rgba(77,157,255,.36);opacity:0;pointer-events:none;z-index:5;transform:translateY(-50%)}
+#anit-dialog-control-dock .dialog-control-drop-line.--show{opacity:1}
 #anit-dialog-control-dock .dialog-control-list::-webkit-scrollbar{width:5px;height:5px}
 #anit-dialog-control-dock .dialog-control-list::-webkit-scrollbar-track{background:rgba(255,255,255,.06);border-radius:var(--pena-radius)}
 #anit-dialog-control-dock .dialog-control-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.28);border-radius:var(--pena-radius)}
 #anit-dialog-control-dock .dialog-control-list::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.42)}
 #anit-dialog-control-dock.--empty .dialog-control-list{display:flex;align-items:flex-start;overflow:hidden;min-height:38px;flex:0 0 auto}
 #anit-dialog-control-dock .dialog-control-empty{display:flex;align-items:center;min-height:38px;color:var(--pena-muted);font-size:var(--pena-font-body);line-height:1.35;padding:0 2px;box-sizing:border-box}
+#anit-dialog-control-dock .dialog-control-folder{position:relative;width:100%;min-width:0;min-height:32px;display:grid;grid-template-columns:22px 34px minmax(0,1fr) 22px 22px;align-items:center;column-gap:7px;border:1px solid rgba(255,255,255,.16);border-radius:var(--pena-radius);background:rgba(255,255,255,.055);padding:4px 6px 4px 8px;box-sizing:border-box;color:#e7edf6;cursor:pointer;overflow:visible}
+#anit-dialog-control-dock .dialog-control-folder.--empty-folder{grid-template-columns:34px minmax(0,1fr) 22px 22px}
+#anit-dialog-control-dock .dialog-control-folder.--colored{border-color:var(--dialog-chip-border);background:linear-gradient(90deg,var(--dialog-chip-bg),rgba(255,255,255,.055) 64%)}
+#anit-dialog-control-dock .dialog-control-folder:hover{border-color:rgba(77,157,255,.5);background:rgba(77,157,255,.1)}
+#anit-dialog-control-dock .dialog-control-folder.--colored:hover{border-color:var(--dialog-chip-border-hover);background:linear-gradient(90deg,var(--dialog-chip-bg-hover),rgba(77,157,255,.1) 66%)}
+#anit-dialog-control-dock .dialog-control-folder.--dragging{opacity:.45}
+#anit-dialog-control-dock .dialog-control-folder.--drop-before::before,#anit-dialog-control-dock .dialog-control-folder.--drop-after::after{content:"";position:absolute;left:8px;right:8px;height:2px;border-radius:999px;background:#4d9dff;box-shadow:0 0 0 1px rgba(77,157,255,.2),0 0 12px rgba(77,157,255,.36);z-index:2;pointer-events:none}
+#anit-dialog-control-dock .dialog-control-folder.--drop-before::before{top:-4px}
+#anit-dialog-control-dock .dialog-control-folder.--drop-after::after{bottom:-4px}
+#anit-dialog-control-dock .dialog-control-folder.--drop-into{outline:1px dashed rgba(93,200,126,.78);outline-offset:-3px;border-color:rgba(93,200,126,.7);background:rgba(93,200,126,.12)}
+#anit-dialog-control-dock .dialog-control-folder-toggle{width:22px;height:22px;min-width:22px;min-height:22px;border:0!important;background:transparent!important;color:#c9d6e8;padding:0;display:inline-grid;place-items:center;box-shadow:none;border-radius:var(--pena-radius);cursor:pointer;line-height:0;box-sizing:border-box}
+#anit-dialog-control-dock .dialog-control-folder-toggle:hover{color:#fff;transform:none;border:0!important;background:rgba(255,255,255,.08)!important}
+#anit-dialog-control-dock .dialog-control-folder-toggle svg{width:14px;height:14px;display:block;fill:none;stroke:currentColor;stroke-width:2.25;stroke-linecap:round;stroke-linejoin:round;transition:transform .16s ease;transform-origin:50% 50%;transform-box:fill-box}
+#anit-dialog-control-dock .dialog-control-folder:not(.--collapsed) .dialog-control-folder-toggle svg{transform:rotate(90deg)}
+#anit-dialog-control-dock .dialog-control-folder-state{width:34px;min-width:34px;justify-self:center}
+#anit-dialog-control-dock .dialog-control-folder-state .dialog-control-dot{width:18px;min-width:18px;max-width:18px;height:18px;border-radius:5px;padding:0}
+#anit-dialog-control-dock .dialog-control-folder-state .dialog-control-dot.--later{width:18px;min-width:18px;max-width:18px;height:18px;border-radius:5px;padding:0}
+#anit-dialog-control-dock .dialog-control-folder-state .dialog-control-dot.--later svg{width:12px;height:12px}
+#anit-dialog-control-dock .dialog-control-folder-state .dialog-control-count{font-size:9px;line-height:1}
+#anit-dialog-control-dock .dialog-control-folder-title{min-width:0;height:22px;border:0!important;background:transparent!important;box-shadow:none!important;color:#e7edf6!important;padding:0!important;font:600 var(--pena-font-body)/22px system-ui,-apple-system,Segoe UI,Roboto,Arial!important;outline:0!important;overflow:hidden;text-overflow:ellipsis}
+#anit-dialog-control-dock .dialog-control-folder-title:focus{color:#fff!important}
+#anit-dialog-control-dock .dialog-control-folder-color-wrap{position:relative;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;justify-self:end}
+#anit-dialog-control-dock .dialog-control-folder-color{width:20px;height:20px;min-height:20px;border:1px solid rgba(255,255,255,.22);border-radius:var(--pena-radius);background:var(--dialog-chip-color,rgba(255,255,255,.08));padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 0 0 1px rgba(0,0,0,.18) inset}
+#anit-dialog-control-dock .dialog-control-folder-color:not([style*="--dialog-chip-color"])::before{content:"";width:9px;height:7px;border:1px solid rgba(255,255,255,.45);border-radius:2px;box-sizing:border-box}
+#anit-dialog-control-dock .dialog-control-folder-remove{width:22px;height:22px;min-height:22px;justify-self:end;border:0!important;background:transparent!important;color:rgba(255,150,150,.76);padding:0;display:inline-flex;align-items:center;justify-content:center;box-shadow:none;border-radius:var(--pena-radius);cursor:pointer}
+#anit-dialog-control-dock .dialog-control-folder-remove:hover{color:#ffd0d0;transform:none;border:0!important;background:transparent!important}
+#anit-dialog-control-dock .dialog-control-folder-remove svg{width:12px;height:12px;display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+#anit-dialog-control-dock .dialog-control-folder-remove svg{fill:currentColor;stroke:none}
 #anit-dialog-control-dock .dialog-control-chip{position:relative;width:100%;min-width:0;min-height:32px;display:grid;grid-template-columns:34px minmax(0,1fr) 22px 22px;align-items:center;column-gap:7px;border:1px solid rgba(255,255,255,.14);border-radius:var(--pena-radius);background:rgba(255,255,255,.04);padding:4px 6px 4px 8px;box-sizing:border-box;text-align:left;color:#e7edf6;cursor:pointer;font-size:var(--pena-font-body);overflow:visible}
+#anit-dialog-control-dock .dialog-control-chip.--in-folder{grid-template-columns:34px minmax(0,1fr) 22px 22px;margin-left:10px;width:calc(100% - 10px);border-left-color:var(--dialog-chip-border,rgba(255,255,255,.24))}
 #anit-dialog-control-dock .dialog-control-chip.--colored{border-color:var(--dialog-chip-border);background:linear-gradient(90deg,var(--dialog-chip-bg),rgba(255,255,255,.04) 58%)}
 #anit-dialog-control-dock .dialog-control-chip.--colored::before{content:"";position:absolute;left:0;top:6px;bottom:6px;width:3px;border-radius:0 999px 999px 0;background:var(--dialog-chip-color);box-shadow:0 0 12px var(--dialog-chip-shadow);pointer-events:none}
 #anit-dialog-control-dock .dialog-control-chip:hover{border-color:rgba(77,157,255,.5);background:rgba(77,157,255,.1);transform:none}
 #anit-dialog-control-dock .dialog-control-chip.--colored:hover{border-color:var(--dialog-chip-border-hover);background:linear-gradient(90deg,var(--dialog-chip-bg-hover),rgba(77,157,255,.1) 62%)}
 #anit-dialog-control-dock .dialog-control-chip[draggable="true"]{cursor:pointer}
 #anit-dialog-control-dock .dialog-control-chip.--dragging{opacity:.45;cursor:pointer}
-#anit-dialog-control-dock .dialog-control-chip.--drop-before::before,#anit-dialog-control-dock .dialog-control-chip.--drop-after::after{content:"";position:absolute;left:8px;right:8px;height:2px;border-radius:999px;background:#4d9dff;box-shadow:0 0 0 1px rgba(77,157,255,.2),0 0 12px rgba(77,157,255,.36);z-index:2;pointer-events:none}
-#anit-dialog-control-dock .dialog-control-chip.--drop-before::before{top:-4px}
-#anit-dialog-control-dock .dialog-control-chip.--drop-after::after{bottom:-4px}
-#anit-dialog-control-dock .dialog-control-state{width:34px;min-width:34px;height:22px;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:700;font-variant-numeric:tabular-nums;justify-self:center}
-#anit-dialog-control-dock .dialog-control-dot{min-width:18px;height:16px;border-radius:999px;background:rgba(77,157,255,.95);box-shadow:0 0 0 2px rgba(77,157,255,.16);display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;padding:0 5px}
-#anit-dialog-control-dock .dialog-control-chip.--mention .dialog-control-dot{background:rgba(239,68,68,.95);box-shadow:0 0 0 2px rgba(239,68,68,.2)}
+#anit-dialog-control-dock .dialog-control-chip.--drop-before::before,#anit-dialog-control-dock .dialog-control-chip.--drop-after::after{content:none}
+#anit-dialog-control-dock .dialog-control-state{width:34px;min-width:34px;height:22px;display:inline-grid;place-items:center;color:#fff;font-size:10px;font-weight:700;font-variant-numeric:tabular-nums;justify-self:center;line-height:0}
+#anit-dialog-control-dock .dialog-control-dot{min-width:18px;height:18px;border-radius:999px;background:rgba(77,157,255,.95);box-shadow:0 0 0 2px rgba(77,157,255,.16);display:inline-grid;place-items:center;box-sizing:border-box;padding:0 5px;line-height:0}
+#anit-dialog-control-dock .dialog-control-chip.--mention .dialog-control-dot,#anit-dialog-control-dock .dialog-control-dot.--mention-dot{background:rgba(239,68,68,.95);box-shadow:0 0 0 2px rgba(239,68,68,.2)}
+#anit-dialog-control-dock .dialog-control-dot.--later{width:20px;min-width:20px;height:18px;padding:0;background:rgba(239,68,68,.95);box-shadow:0 0 0 2px rgba(239,68,68,.2);color:#fff}
+#anit-dialog-control-dock .dialog-control-dot.--later svg{width:12px;height:12px;display:block;fill:none;stroke:currentColor;stroke-width:2.1;stroke-linecap:round;stroke-linejoin:round}
 #anit-dialog-control-dock .dialog-control-dot.--empty{background:transparent;box-shadow:none;border:1px solid rgba(255,255,255,.22);box-sizing:border-box}
-#anit-dialog-control-dock .dialog-control-count{min-width:0;line-height:16px;text-align:center;transform:translateY(-.2px)}
+#anit-dialog-control-dock .dialog-control-count{display:block;min-width:0;line-height:1;text-align:center;transform:none}
+#anit-dialog-control-dock .dialog-control-mention-icon{width:11px;height:11px;display:block;fill:none;stroke:currentColor;stroke-width:2.35;stroke-linecap:round;stroke-linejoin:round}
 #anit-dialog-control-dock .dialog-control-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e7edf6;font-size:var(--pena-font-body)}
 #anit-dialog-control-dock .dialog-control-color-wrap{position:relative;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;justify-self:end}
 #anit-dialog-control-dock .dialog-control-color{width:20px;height:20px;min-height:20px;border:1px solid rgba(255,255,255,.22);border-radius:var(--pena-radius);background:var(--dialog-chip-color,rgba(255,255,255,.08));padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 0 0 1px rgba(0,0,0,.18) inset}
 #anit-dialog-control-dock .dialog-control-color:not([style*="--dialog-chip-color"])::before{content:"";width:8px;height:8px;border-radius:50%;border:1px solid rgba(255,255,255,.42);box-sizing:border-box}
 #anit-dialog-control-dock .dialog-control-color:hover{border-color:rgba(255,255,255,.55);transform:none}
-.dialog-control-palette{position:fixed;z-index:2147483647;width:min(226px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.28) rgba(255,255,255,.06);display:grid;grid-template-columns:28px minmax(0,1fr);grid-auto-rows:min-content;gap:7px;padding:10px 28px 10px 10px;border:1px solid rgba(255,255,255,.16);border-radius:10px;background:radial-gradient(circle at 20% 0%,rgba(77,157,255,.12),transparent 42%),linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));box-shadow:0 18px 42px rgba(0,0,0,.46),0 1px 0 rgba(255,255,255,.04) inset;box-sizing:border-box;opacity:0;visibility:hidden;pointer-events:none;transform:translateY(-8px) scale(.94);transform-origin:top right;transition:opacity .18s ease,transform .18s ease,visibility 0s linear .18s}
+.dialog-control-palette{position:fixed;z-index:2147483647;width:min(246px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.28) rgba(255,255,255,.06);display:grid;grid-template-columns:28px minmax(0,1fr);grid-auto-rows:min-content;gap:7px;padding:10px 28px 10px 10px;border:1px solid rgba(255,255,255,.16);border-radius:10px;background:radial-gradient(circle at 20% 0%,rgba(77,157,255,.12),transparent 42%),linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));box-shadow:0 18px 42px rgba(0,0,0,.46),0 1px 0 rgba(255,255,255,.04) inset;box-sizing:border-box;opacity:0;visibility:hidden;pointer-events:none;transform:translateY(-8px) scale(.94);transform-origin:top right;transition:opacity .18s ease,transform .18s ease,visibility 0s linear .18s}
 .dialog-control-palette::-webkit-scrollbar{width:5px}
 .dialog-control-palette::-webkit-scrollbar-track{background:rgba(255,255,255,.06);border-radius:10px}
 .dialog-control-palette::-webkit-scrollbar-thumb{background:rgba(255,255,255,.28);border-radius:10px}
 .dialog-control-palette.--open{opacity:1;visibility:visible;pointer-events:auto;transform:translateY(0) scale(1);transition:opacity .18s ease,transform .18s ease,visibility 0s}
 .dialog-control-palette.--closing{opacity:0;visibility:visible;pointer-events:none;transform:translateY(-8px) scale(.94)}
-.dialog-control-preview{grid-column:1;grid-row:1;width:28px;height:28px;min-width:28px;min-height:28px;align-self:start;border:1px solid rgba(255,255,255,.14);border-radius:8px;background:var(--dialog-chip-color,#4d9dff);box-shadow:0 0 0 1px rgba(0,0,0,.22) inset,0 10px 22px var(--dialog-chip-shadow,rgba(77,157,255,.35));box-sizing:border-box}
-.dialog-control-mini-picker{grid-column:2;grid-row:1;position:relative;width:100%;height:28px;min-height:28px;align-self:start;min-width:0;border:1px solid rgba(255,255,255,.14);border-radius:8px;background:linear-gradient(90deg,#f04444,#f59e0b 18%,#f5e642 32%,#3bd671 48%,#20c5c7 63%,#4d9dff 78%,#a855f7 90%,#f04444);box-shadow:0 0 0 1px rgba(0,0,0,.22) inset;overflow:hidden;cursor:crosshair;touch-action:none;box-sizing:border-box}
-.dialog-control-mini-picker::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,.42));pointer-events:none}
+.dialog-control-palette.--confirming{overflow:hidden}
+.dialog-control-preview{grid-column:1;grid-row:1 / span 2;width:28px;height:auto;min-width:28px;min-height:109px;align-self:stretch;border:1px solid rgba(255,255,255,.18);border-radius:8px;background:var(--dialog-chip-color,#4d9dff);box-shadow:0 0 0 1px rgba(0,0,0,.36) inset;box-sizing:border-box}
+.dialog-control-mini-picker{--picker-hue-color:#4d9dff;grid-column:2;grid-row:1;position:relative;width:100%;height:88px;min-height:88px;align-self:start;min-width:0;border:1px solid rgba(255,255,255,.18);border-radius:8px;background:rgba(8,12,18,.82);box-shadow:0 0 0 1px rgba(0,0,0,.38) inset;overflow:hidden;cursor:crosshair;touch-action:none;box-sizing:border-box}
+.dialog-control-mini-picker::before{content:"";position:absolute;inset:2px;border-radius:6px;background:linear-gradient(0deg,#000,rgba(0,0,0,0)),linear-gradient(90deg,#fff,var(--picker-hue-color));pointer-events:none}
+.dialog-control-mini-picker::after{content:none}
 .dialog-control-picker-knob{position:absolute;left:50%;top:50%;z-index:1;width:12px;height:12px;border:2px solid #fff;border-radius:50%;background:var(--dialog-chip-color,#4d9dff);box-shadow:0 2px 8px rgba(0,0,0,.55);transform:translate(-50%,-50%);pointer-events:none}
+.dialog-control-hue-strip{grid-column:2;grid-row:2;position:relative;height:14px;min-height:14px;border:1px solid rgba(255,255,255,.18);border-radius:999px;background:rgba(8,12,18,.82);box-shadow:0 0 0 1px rgba(0,0,0,.38) inset;cursor:crosshair;touch-action:none;box-sizing:border-box}
+.dialog-control-hue-strip::before{content:"";position:absolute;inset:2px;border-radius:999px;background:linear-gradient(90deg,#f04444,#f59e0b 16%,#f5e642 32%,#3bd671 48%,#20c5c7 64%,#4d9dff 78%,#a855f7 90%,#f04444);pointer-events:none}
+.dialog-control-hue-knob{position:absolute;left:0;top:50%;z-index:1;width:10px;height:18px;border:2px solid #fff;border-radius:999px;background:transparent;box-shadow:0 2px 8px rgba(0,0,0,.5);transform:translate(-50%,-50%);pointer-events:none;box-sizing:border-box}
 .dialog-control-palette-close{position:absolute;right:8px;top:8px;width:16px;height:16px;min-height:16px;border:0;border-radius:0;background:transparent;color:#ff8f8f;padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
 .dialog-control-palette-close:hover{background:transparent;color:#ffd0d0;transform:none}
 .dialog-control-palette-close svg{width:10px;height:10px;fill:currentColor}
-.dialog-control-swatch.--add{border-color:rgba(77,157,255,.34);background:rgba(77,157,255,.12);color:#d7eaff;font-size:16px;font-weight:700}
+.dialog-control-swatch.--add{border-color:rgba(77,157,255,.34);background:rgba(77,157,255,.12);color:#d7eaff}
 .dialog-control-swatch.--add:hover{border-color:rgba(77,157,255,.62);background:rgba(77,157,255,.2);transform:none}
+.dialog-control-swatch.--add svg{width:12px;height:12px;display:block;fill:none;stroke:currentColor;stroke-width:2.1;stroke-linecap:round;stroke-linejoin:round}
 .dialog-control-swatches{grid-column:1 / -1;display:grid;grid-template-columns:repeat(7,20px);grid-auto-rows:20px;gap:6px;align-items:center;justify-content:space-between}
 .dialog-control-swatch-wrap{position:relative;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center}
-.dialog-control-swatch{width:20px;height:20px;min-width:20px;min-height:20px;border:1px solid rgba(255,255,255,.2);border-radius:7px;background:var(--dialog-chip-color);padding:0;margin:0;cursor:pointer;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;line-height:1}
+.dialog-control-swatch{position:relative;width:20px;height:20px;min-width:20px;min-height:20px;border:1px solid rgba(255,255,255,.2);border-radius:7px;background:var(--dialog-chip-color);padding:0;margin:0;cursor:pointer;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;line-height:1}
 .dialog-control-swatch:hover,.dialog-control-swatch.--active{border-color:#fff;box-shadow:0 0 0 2px rgba(255,255,255,.2)}
+.dialog-control-swatch.--folder-ref{box-shadow:0 0 0 2px rgba(93,200,126,.45),0 0 0 4px rgba(93,200,126,.16)}
+.dialog-control-folder-ref-icon{width:13px;height:13px;display:block;fill:none;stroke:#fff;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45));pointer-events:none;transform:translateY(-.5px)}
 .dialog-control-swatch.--clear{background:linear-gradient(135deg,rgba(255,255,255,.12) 0 24%,rgba(255,255,255,.03) 24% 50%,rgba(255,255,255,.12) 50% 74%,rgba(255,255,255,.03) 74%);color:rgba(255,255,255,.74)}
 .dialog-control-transparent-icon{position:relative;width:12px;height:12px;border:1px solid rgba(255,255,255,.6);border-radius:4px;display:block;box-sizing:border-box;background:repeating-conic-gradient(rgba(255,255,255,.38) 0 25%,transparent 0 50%) 50%/6px 6px}
 .dialog-control-transparent-icon::after{content:"";position:absolute;left:-2px;right:-2px;top:50%;height:1px;background:#ff9a9a;transform:rotate(-45deg)}
 .dialog-control-swatch-delete{position:absolute;right:-5px;top:-5px;width:14px;height:14px;min-height:14px;border:1px solid rgba(255,255,255,.34);border-radius:50%;background:rgba(10,14,20,.96);color:#ffd0d0;padding:0;display:flex;align-items:center;justify-content:center;cursor:pointer;opacity:0;transform:scale(.82);transition:opacity .12s ease,transform .12s ease;box-shadow:0 4px 10px rgba(0,0,0,.34)}
 .dialog-control-swatch-wrap:hover .dialog-control-swatch-delete{opacity:1;transform:scale(1)}
 .dialog-control-swatch-delete svg{width:8px;height:8px;fill:currentColor}
-.dialog-control-delete-notice{grid-column:1 / -1;display:none;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;padding:8px 9px;border:1px solid var(--dialog-chip-border,rgba(255,255,255,.16));border-radius:10px;background:linear-gradient(90deg,var(--dialog-chip-bg,rgba(255,255,255,.06)),rgba(255,255,255,.04));box-shadow:0 10px 24px rgba(0,0,0,.28);box-sizing:border-box}
+.dialog-control-delete-notice{position:absolute;inset:0;z-index:5;display:none;grid-template-columns:1fr;align-items:center;justify-items:center;padding:14px;border:0;border-radius:10px;background:rgba(7,10,15,.9);box-shadow:inset 0 0 0 1px rgba(255,255,255,.12);box-sizing:border-box;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
 .dialog-control-delete-notice.--show{display:grid}
-.dialog-control-delete-text{min-width:0;color:#eef3fb;font-size:clamp(10px,calc(10px * var(--dock-scale,1)),12px);line-height:1.32}
-.dialog-control-delete-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.dialog-control-delete-actions button{height:26px;border:1px solid rgba(255,255,255,.18);border-radius:8px;background:rgba(255,255,255,.07);color:#eef3fb;font-size:clamp(10px,calc(10px * var(--dock-scale,1)),12px);font-weight:700;padding:0 9px;cursor:pointer}
+.dialog-control-delete-card{width:100%;min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;text-align:center}
+.dialog-control-delete-swatch{width:34px;height:34px;min-width:34px;border:1px solid rgba(255,255,255,.28);border-radius:9px;background:var(--dialog-chip-color,#4d9dff);box-shadow:0 0 0 1px rgba(0,0,0,.4) inset,0 8px 18px rgba(0,0,0,.34);box-sizing:border-box}
+.dialog-control-delete-title{color:#fff;font-size:clamp(12px,calc(12px * var(--dock-scale,1)),14px);line-height:1.2;font-weight:800}
+.dialog-control-delete-text{max-width:184px;color:#cfd8e6;font-size:clamp(10px,calc(10px * var(--dock-scale,1)),12px);line-height:1.35}
+.dialog-control-delete-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:min(100%,178px);margin-top:2px}
+.dialog-control-delete-actions button{height:28px;border:1px solid rgba(255,255,255,.18);border-radius:8px;background:rgba(255,255,255,.07);color:#eef3fb;font-size:clamp(10px,calc(10px * var(--dock-scale,1)),12px);font-weight:700;padding:0 9px;cursor:pointer}
 .dialog-control-delete-actions button:hover{background:rgba(255,255,255,.12)}
 .dialog-control-delete-actions button.--danger{border-color:rgba(239,68,68,.48);background:rgba(239,68,68,.16);color:#ffd0d0}
 .dialog-control-delete-actions button.--danger:hover{background:rgba(239,68,68,.26)}
@@ -3663,9 +4790,19 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-remove svg{width:12px;height:12px;display:block;fill:currentColor}
 #anit-dialog-control-dock.dock-dragging,#anit-dialog-control-dock.dock-dragging .dialog-control-window{cursor:grabbing!important;user-select:none}
 #anit-dialog-control-dock.--cols-2 .dialog-control-list{grid-template-columns:repeat(2,minmax(0,1fr))}
+#anit-dialog-control-dock.--cols-2 .dialog-control-folder{grid-template-columns:18px 22px minmax(0,1fr) 18px 18px;column-gap:5px;padding:4px 5px}
+#anit-dialog-control-dock.--cols-2 .dialog-control-folder.--empty-folder{grid-template-columns:22px minmax(0,1fr) 18px 18px}
+#anit-dialog-control-dock.--cols-2 .dialog-control-folder-toggle{width:18px;height:22px;min-height:22px}
+#anit-dialog-control-dock.--cols-2 .dialog-control-folder-toggle svg{width:13px;height:13px}
+#anit-dialog-control-dock.--cols-2 .dialog-control-folder-state{width:22px;min-width:22px;font-size:9px}
+#anit-dialog-control-dock.--cols-2 .dialog-control-folder-state .dialog-control-dot{width:18px;min-width:18px;max-width:18px;height:18px;border-radius:5px}
+#anit-dialog-control-dock.--cols-2 .dialog-control-folder-color-wrap,#anit-dialog-control-dock.--cols-2 .dialog-control-folder-remove{width:18px;height:22px;min-height:22px}
+#anit-dialog-control-dock.--cols-2 .dialog-control-folder-color{width:16px;height:16px;min-height:16px}
 #anit-dialog-control-dock.--cols-2 .dialog-control-chip{grid-template-columns:22px minmax(0,1fr) 18px 18px;column-gap:5px;padding:4px 5px}
+#anit-dialog-control-dock.--cols-2 .dialog-control-chip.--in-folder{grid-template-columns:22px minmax(0,1fr) 18px 18px;margin-left:7px;width:calc(100% - 7px)}
 #anit-dialog-control-dock.--cols-2 .dialog-control-state{width:22px;min-width:22px;font-size:9px}
-#anit-dialog-control-dock.--cols-2 .dialog-control-dot{min-width:16px;max-width:22px;height:16px;padding:0 3px}
+#anit-dialog-control-dock.--cols-2 .dialog-control-dot:not(.--later){min-width:18px;max-width:22px;height:18px;padding:0 3px}
+#anit-dialog-control-dock.--cols-2 .dialog-control-mention-icon{width:10px;height:10px}
 #anit-dialog-control-dock.--cols-2 .dialog-control-color-wrap{width:18px;height:22px}
 #anit-dialog-control-dock.--cols-2 .dialog-control-color{width:16px;height:16px;min-height:16px}
 #anit-dialog-control-dock.--cols-2 .dialog-control-remove{width:18px;height:22px;min-height:22px}
@@ -4639,7 +5776,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.3';
+	if (_verBadge) _verBadge.textContent = 'v7.1.5';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
