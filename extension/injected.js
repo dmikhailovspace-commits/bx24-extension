@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.5';
+	window.__ANITREC_RUNNING__ = '7.1.6';
 
-	const VER = '7.1.5';
+	const VER = '7.1.6';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -1825,6 +1825,50 @@ if (_presetChannel) {
 		}
 	}
 
+	function _detachDialogControlPaletteOutsideHandler(el) {
+		if (!el?._penaOutsideHandler) return;
+		document.removeEventListener('pointerdown', el._penaOutsideHandler, true);
+		el._penaOutsideHandler = null;
+	}
+
+	function _clearDialogControlPaletteRemoveTimer(el) {
+		if (!el?._penaRemoveTimer) return;
+		clearTimeout(el._penaRemoveTimer);
+		el._penaRemoveTimer = null;
+	}
+
+	function _isDialogControlPaletteOpenFor(paletteId) {
+		const id = String(paletteId || '');
+		return Array.from(document.querySelectorAll('.dialog-control-palette')).some(el =>
+			el.dataset.dialogId === id &&
+			el.classList.contains('--open') &&
+			!el.classList.contains('--closing')
+		);
+	}
+
+	function _prepareDialogControlPaletteForOpen(palette) {
+		if (!palette) return;
+		_clearDialogControlPaletteRemoveTimer(palette);
+		_detachDialogControlPaletteOutsideHandler(palette);
+		palette.classList.remove('--open', '--closing', '--confirming');
+		palette.querySelectorAll('.dialog-control-delete-notice.--show').forEach(el => el.classList.remove('--show'));
+	}
+
+	function _armDialogControlPaletteOutsideHandler(palette, closeOnOutside) {
+		if (!palette || typeof closeOnOutside !== 'function') return;
+		_detachDialogControlPaletteOutsideHandler(palette);
+		palette._penaOutsideHandler = closeOnOutside;
+		setTimeout(() => {
+			if (
+				!palette.isConnected ||
+				palette._penaOutsideHandler !== closeOnOutside ||
+				!palette.classList.contains('--open') ||
+				palette.classList.contains('--closing')
+			) return;
+			document.addEventListener('pointerdown', closeOnOutside, true);
+		}, 0);
+	}
+
 	function _scheduleDialogControlPaletteClose(delay = 5000) {
 		_clearDialogControlPaletteClose();
 		_dialogControlPaletteCloseTimer = setTimeout(() => {
@@ -1836,14 +1880,17 @@ if (_presetChannel) {
 	function _closeDialogControlPalettes(animated = true) {
 		_clearDialogControlPaletteClose();
 		document.querySelectorAll('.dialog-control-palette').forEach(el => {
-			if (el._penaOutsideHandler) {
-				document.removeEventListener('pointerdown', el._penaOutsideHandler, true);
-				el._penaOutsideHandler = null;
-			}
-			if (el.classList.contains('--closing')) return;
-			el.classList.remove('--open');
+			_detachDialogControlPaletteOutsideHandler(el);
+			_clearDialogControlPaletteRemoveTimer(el);
+			el.classList.remove('--open', '--confirming');
+			el.querySelectorAll('.dialog-control-delete-notice.--show').forEach(notice => notice.classList.remove('--show'));
 			el.classList.add('--closing');
-			if (animated) setTimeout(() => el.remove(), 190);
+			if (animated) {
+				el._penaRemoveTimer = setTimeout(() => {
+					el._penaRemoveTimer = null;
+					el.remove();
+				}, 190);
+			}
 			else el.remove();
 		});
 		document.querySelectorAll('.dialog-control-color-wrap.--open,.dialog-control-folder-color-wrap.--open').forEach(el => el.classList.remove('--open'));
@@ -1852,10 +1899,8 @@ if (_presetChannel) {
 	function _forceCloseDialogControlPalettes() {
 		_clearDialogControlPaletteClose();
 		document.querySelectorAll('.dialog-control-palette').forEach(el => {
-			if (el._penaOutsideHandler) {
-				document.removeEventListener('pointerdown', el._penaOutsideHandler, true);
-				el._penaOutsideHandler = null;
-			}
+			_detachDialogControlPaletteOutsideHandler(el);
+			_clearDialogControlPaletteRemoveTimer(el);
 			el.remove();
 		});
 		document.querySelectorAll('.dialog-control-color-wrap.--open,.dialog-control-folder-color-wrap.--open').forEach(el => el.classList.remove('--open'));
@@ -1867,7 +1912,7 @@ if (_presetChannel) {
 			e.preventDefault();
 			e.stopPropagation();
 			const paletteId = String(options.id || '');
-			const wasOpen = Array.from(document.querySelectorAll('.dialog-control-palette')).some(el => el.dataset.dialogId === paletteId);
+			const wasOpen = _isDialogControlPaletteOpenFor(paletteId);
 			_clearDialogControlPaletteClose();
 			_forceCloseDialogControlPalettes();
 			if (wasOpen) return;
@@ -2102,11 +2147,13 @@ if (_presetChannel) {
 			palette.style.left = left + 'px';
 			palette.style.top = top + 'px';
 			palette.dataset.dialogId = paletteId;
+			_prepareDialogControlPaletteForOpen(palette);
 			document.body.appendChild(palette);
 			requestAnimationFrame(() => {
+				if (!palette.isConnected) return;
+				palette.classList.remove('--closing');
 				palette.classList.add('--open');
-				palette._penaOutsideHandler = closeOnOutside;
-				setTimeout(() => document.addEventListener('pointerdown', closeOnOutside, true), 0);
+				_armDialogControlPaletteOutsideHandler(palette, closeOnOutside);
 			});
 		});
 	}
@@ -3687,7 +3734,8 @@ if (_presetChannel) {
 			colorBtn.addEventListener('click', (e) => {
 				e.preventDefault();
 				e.stopPropagation();
-				const wasOpen = Array.from(document.querySelectorAll('.dialog-control-palette')).some(el => el.dataset.dialogId === String(item.id));
+				const paletteId = String(item.id);
+				const wasOpen = _isDialogControlPaletteOpenFor(paletteId);
 				_clearDialogControlPaletteClose();
 				_forceCloseDialogControlPalettes();
 				if (wasOpen) return;
@@ -3704,12 +3752,14 @@ if (_presetChannel) {
 					: Math.max(margin, btnRect.top - gap - paletteH);
 				palette.style.left = left + 'px';
 				palette.style.top = top + 'px';
-				palette.dataset.dialogId = String(item.id);
+				palette.dataset.dialogId = paletteId;
+				_prepareDialogControlPaletteForOpen(palette);
 				document.body.appendChild(palette);
 				requestAnimationFrame(() => {
+					if (!palette.isConnected) return;
+					palette.classList.remove('--closing');
 					palette.classList.add('--open');
-					palette._penaOutsideHandler = closeOnOutside;
-					setTimeout(() => document.addEventListener('pointerdown', closeOnOutside, true), 0);
+					_armDialogControlPaletteOutsideHandler(palette, closeOnOutside);
 				});
 			});
 			colorWrap.append(colorBtn);
@@ -5776,7 +5826,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.5';
+	if (_verBadge) _verBadge.textContent = 'v7.1.6';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
