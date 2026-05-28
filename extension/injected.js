@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.7';
+	window.__ANITREC_RUNNING__ = '7.1.8';
 
-	const VER = '7.1.7';
+	const VER = '7.1.8';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -1497,6 +1497,23 @@ if (_presetChannel) {
 		const lastChildIdx = items.reduce((last, x, idx) => x.folderId === folder.id ? idx : last, -1);
 		const folderIdx = items.indexOf(folder);
 		items.splice((lastChildIdx >= 0 ? lastChildIdx : folderIdx) + 1, 0, item);
+		_dialogControlItems[_pMode()] = items;
+		_saveDialogControlItems();
+		_dialogControlLastSig = '';
+		return true;
+	}
+
+	function _moveDialogControlItemToFolderStart(itemId, folderId) {
+		const items = _getDialogControlItems();
+		const item = items.find(x => String(x.id) === String(itemId));
+		const folder = items.find(x => _isDialogControlFolder(x) && String(x.id) === String(folderId));
+		if (!item || !folder || _isDialogControlFolder(item)) return false;
+		const fromIdx = items.indexOf(item);
+		if (fromIdx >= 0) items.splice(fromIdx, 1);
+		item.folderId = folder.id;
+		if (folder.emptyVisibleUntil) delete folder.emptyVisibleUntil;
+		const folderIdx = items.indexOf(folder);
+		items.splice(Math.max(0, folderIdx + 1), 0, item);
 		_dialogControlItems[_pMode()] = items;
 		_saveDialogControlItems();
 		_dialogControlLastSig = '';
@@ -3148,13 +3165,14 @@ if (_presetChannel) {
 			list.classList.remove('--drop-root');
 			if (overRow && overRow !== row) overRow.classList.remove('--drop-before', '--drop-after', '--drop-into');
 			overRow = row;
-			row.classList.toggle('--drop-into', side === 'inside');
+			const visualSide = side === 'folder-start' ? 'after' : side;
+			row.classList.toggle('--drop-into', visualSide === 'inside');
 			row.classList.remove('--drop-before', '--drop-after');
-			if (side === 'inside') {
+			if (visualSide === 'inside') {
 				hideDropLine();
 				return;
 			}
-			const top = side === 'before'
+			const top = visualSide === 'before'
 				? row.offsetTop - 3
 				: row.offsetTop + row.offsetHeight + 3;
 			const left = Math.max(8, row.offsetLeft + 8);
@@ -3164,16 +3182,24 @@ if (_presetChannel) {
 			dropLine.style.right = right + 'px';
 			dropLine.classList.add('--show');
 		};
-		const getFolderGroupEndRow = (folderId, fallbackRow) => {
+		const hasVisibleFolderChildren = (folderId) => {
 			const id = String(folderId || '');
-			const children = Array.from(list.children).filter(el => el.dataset?.parentFolderId === id);
-			return children.length ? children[children.length - 1] : fallbackRow;
+			return !!Array.from(list.children).find(el => el.dataset?.parentFolderId === id);
 		};
 		const getEventElement = (target) => {
 			return target?.nodeType === 1 ? target : target?.parentElement || null;
 		};
 		const getDropTargetId = (row) => {
 			return row?.dataset?.folderId || row?.dataset?.dialogId || '';
+		};
+		const normalizeDropSide = (row, side) => {
+			if (
+				draggingType === 'dialog' &&
+				side === 'after' &&
+				row?.dataset?.folderId &&
+				hasVisibleFolderChildren(row.dataset.folderId)
+			) return 'folder-start';
+			return side;
 		};
 		const getDropRows = () => {
 			return Array.from(list.querySelectorAll('.dialog-control-folder,.dialog-control-chip')).filter(row => {
@@ -3190,7 +3216,7 @@ if (_presetChannel) {
 				if (!rect.width || !rect.height) return;
 				const x = Math.max(rect.left, Math.min(clientX, rect.right));
 				if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
-					const side = clientY > rect.top + rect.height / 2 ? 'after' : 'before';
+					const side = normalizeDropSide(row, clientY > rect.top + rect.height / 2 ? 'after' : 'before');
 					const distance = Math.min(Math.abs(clientY - rect.top), Math.abs(clientY - rect.bottom));
 					if (!best || distance < best.distance) best = { row, side, distance };
 					return;
@@ -3198,7 +3224,7 @@ if (_presetChannel) {
 				const beforeDistance = Math.hypot(clientX - x, clientY - rect.top);
 				const afterDistance = Math.hypot(clientX - x, clientY - rect.bottom);
 				if (!best || beforeDistance < best.distance) best = { row, side: 'before', distance: beforeDistance };
-				if (!best || afterDistance < best.distance) best = { row, side: 'after', distance: afterDistance };
+				if (!best || afterDistance < best.distance) best = { row, side: normalizeDropSide(row, 'after'), distance: afterDistance };
 			});
 			return best;
 		};
@@ -3253,9 +3279,12 @@ if (_presetChannel) {
 			const rootDrop = list.classList.contains('--drop-root');
 			clearDragOver();
 			if (!rootDrop && markerTarget && markerTarget !== item) {
-				const willLeaveFolder = item?.folderId && (_isDialogControlFolder(markerTarget) || !markerTarget.folderId);
+				const willLeaveFolder = dropSide !== 'folder-start' && item?.folderId && (_isDialogControlFolder(markerTarget) || !markerTarget.folderId);
 				const applyMove = () => {
-					if (!_moveDialogControlItemRelative(movedId, markerTarget.id, dropSide)) return;
+					const changed = dropSide === 'folder-start'
+						? _moveDialogControlItemToFolderStart(movedId, markerTarget.id)
+						: _moveDialogControlItemRelative(movedId, markerTarget.id, dropSide);
+					if (!changed) return;
 					list.dataset.lastDragTs = String(Date.now());
 					_renderDialogControlPanel(h);
 				};
@@ -3397,10 +3426,12 @@ if (_presetChannel) {
 					const y = (e.clientY - rect.top) / Math.max(1, rect.height);
 					const moved = _getDialogControlItems().find(x => String(x.id) === String(draggingId));
 					const alreadyInThisFolder = draggingType === 'dialog' && String(moved?.folderId || '') === String(item.id);
-					dropSide = draggingType === 'dialog' && !alreadyInThisFolder && y > .24 && y < .76 ? 'inside' : (e.clientY > rect.top + rect.height / 2 ? 'after' : 'before');
-					const markerRow = dropSide === 'after' && folderStatus.childCount && !item.collapsed
-						? getFolderGroupEndRow(item.id, row)
-						: row;
+					if (draggingType === 'dialog' && folderStatus.childCount && !item.collapsed && y > .24) {
+						dropSide = 'folder-start';
+					} else {
+						dropSide = draggingType === 'dialog' && !alreadyInThisFolder && y > .24 && y < .76 ? 'inside' : (e.clientY > rect.top + rect.height / 2 ? 'after' : 'before');
+					}
+					const markerRow = row;
 					setDropMarker(markerRow, dropSide);
 				});
 				row.addEventListener('dragleave', (e) => {
@@ -3416,12 +3447,14 @@ if (_presetChannel) {
 					const applyMove = () => {
 						const changed = dropSide === 'inside'
 							? _moveDialogControlItemToFolder(movedId, item.id)
-							: _moveDialogControlItemRelative(movedId, item.id, dropSide);
+							: dropSide === 'folder-start'
+								? _moveDialogControlItemToFolderStart(movedId, item.id)
+								: _moveDialogControlItemRelative(movedId, item.id, dropSide);
 						if (!changed) return;
 						list.dataset.lastDragTs = String(Date.now());
 						_renderDialogControlPanel(h);
 					};
-					if (dropSide !== 'inside' && moved?.folderId) confirmFolderOut(moved, applyMove);
+					if (dropSide !== 'inside' && dropSide !== 'folder-start' && moved?.folderId) confirmFolderOut(moved, applyMove);
 					else applyMove();
 				});
 				if (toggleFolder) row.append(toggleFolder, folderState, titleInp, colorWrap, rmFolder);
@@ -5896,7 +5929,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.7';
+	if (_verBadge) _verBadge.textContent = 'v7.1.8';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
