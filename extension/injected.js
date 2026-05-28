@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.6';
+	window.__ANITREC_RUNNING__ = '7.1.7';
 
-	const VER = '7.1.6';
+	const VER = '7.1.7';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -3169,6 +3169,45 @@ if (_presetChannel) {
 			const children = Array.from(list.children).filter(el => el.dataset?.parentFolderId === id);
 			return children.length ? children[children.length - 1] : fallbackRow;
 		};
+		const getEventElement = (target) => {
+			return target?.nodeType === 1 ? target : target?.parentElement || null;
+		};
+		const getDropTargetId = (row) => {
+			return row?.dataset?.folderId || row?.dataset?.dialogId || '';
+		};
+		const getDropRows = () => {
+			return Array.from(list.querySelectorAll('.dialog-control-folder,.dialog-control-chip')).filter(row => {
+				const id = getDropTargetId(row);
+				if (!id || String(id) === String(draggingId)) return false;
+				if (draggingType === 'folder' && row.dataset?.parentFolderId) return false;
+				return true;
+			});
+		};
+		const getNearestDropTarget = (clientX, clientY) => {
+			let best = null;
+			getDropRows().forEach(row => {
+				const rect = row.getBoundingClientRect();
+				if (!rect.width || !rect.height) return;
+				const x = Math.max(rect.left, Math.min(clientX, rect.right));
+				if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
+					const side = clientY > rect.top + rect.height / 2 ? 'after' : 'before';
+					const distance = Math.min(Math.abs(clientY - rect.top), Math.abs(clientY - rect.bottom));
+					if (!best || distance < best.distance) best = { row, side, distance };
+					return;
+				}
+				const beforeDistance = Math.hypot(clientX - x, clientY - rect.top);
+				const afterDistance = Math.hypot(clientX - x, clientY - rect.bottom);
+				if (!best || beforeDistance < best.distance) best = { row, side: 'before', distance: beforeDistance };
+				if (!best || afterDistance < best.distance) best = { row, side: 'after', distance: afterDistance };
+			});
+			return best;
+		};
+		const isBelowAllDropRows = (clientY) => {
+			const rows = getDropRows();
+			if (!rows.length) return true;
+			const bottom = rows.reduce((max, row) => Math.max(max, row.getBoundingClientRect().bottom), -Infinity);
+			return clientY > bottom + 10;
+		};
 		const confirmFolderOut = (item, onOk) => {
 			if (!item?.folderId) { onOk(); return; }
 			_showDialogControlConfirm(
@@ -3179,22 +3218,51 @@ if (_presetChannel) {
 		};
 		list.ondragover = (e) => {
 			if (!draggingId || draggingType !== 'dialog') return;
-			if (e.target.closest?.('.dialog-control-chip,.dialog-control-folder')) return;
+			const targetEl = getEventElement(e.target);
+			if (targetEl?.closest?.('.dialog-control-chip,.dialog-control-folder')) return;
 			e.preventDefault();
 			if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
 			const moved = _getDialogControlItems().find(x => String(x.id) === String(draggingId));
 			clearDragOver();
-			if (moved?.folderId) list.classList.add('--drop-root');
+			if (moved?.folderId && isBelowAllDropRows(e.clientY)) {
+				list.classList.add('--drop-root');
+				return;
+			}
+			const nearest = getNearestDropTarget(e.clientX, e.clientY);
+			if (!nearest) {
+				if (moved?.folderId) list.classList.add('--drop-root');
+				return;
+			}
+			dropSide = nearest.side;
+			setDropMarker(nearest.row, dropSide);
 		};
 		list.ondragleave = (e) => {
 			if (!list.contains(e.relatedTarget)) clearDragOver();
 		};
 		list.ondrop = (e) => {
 			if (!draggingId || draggingType !== 'dialog') return;
-			if (e.target.closest?.('.dialog-control-chip,.dialog-control-folder')) return;
+			const targetEl = getEventElement(e.target);
+			if (targetEl?.closest?.('.dialog-control-chip,.dialog-control-folder')) return;
 			e.preventDefault();
 			const movedId = draggingId;
-			const item = _getDialogControlItems().find(x => String(x.id) === String(movedId));
+			const itemsNow = _getDialogControlItems();
+			const item = itemsNow.find(x => String(x.id) === String(movedId));
+			const markerRow = overRow;
+			const markerTargetId = getDropTargetId(markerRow);
+			const markerTarget = markerTargetId ? itemsNow.find(x => String(x.id) === String(markerTargetId)) : null;
+			const rootDrop = list.classList.contains('--drop-root');
+			clearDragOver();
+			if (!rootDrop && markerTarget && markerTarget !== item) {
+				const willLeaveFolder = item?.folderId && (_isDialogControlFolder(markerTarget) || !markerTarget.folderId);
+				const applyMove = () => {
+					if (!_moveDialogControlItemRelative(movedId, markerTarget.id, dropSide)) return;
+					list.dataset.lastDragTs = String(Date.now());
+					_renderDialogControlPanel(h);
+				};
+				if (willLeaveFolder) confirmFolderOut(item, applyMove);
+				else applyMove();
+				return;
+			}
 			if (!item?.folderId) return;
 			confirmFolderOut(item, () => {
 				if (_moveDialogControlItemToRootEnd(movedId)) {
@@ -3323,6 +3391,7 @@ if (_presetChannel) {
 					if (!draggingId || draggingId === item.id) return;
 					if (draggingType === 'folder' && String(draggingId) === String(item.id)) return;
 					e.preventDefault();
+					e.stopPropagation();
 					if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
 					const rect = row.getBoundingClientRect();
 					const y = (e.clientY - rect.top) / Math.max(1, rect.height);
@@ -3423,6 +3492,7 @@ if (_presetChannel) {
 			row.addEventListener('dragover', (e) => {
 				if (!draggingId || draggingId === item.id) return;
 				e.preventDefault();
+				e.stopPropagation();
 				if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
 				const rect = row.getBoundingClientRect();
 				dropSide = e.clientY > rect.top + rect.height / 2 ? 'after' : 'before';
@@ -5826,7 +5896,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.6';
+	if (_verBadge) _verBadge.textContent = 'v7.1.7';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
