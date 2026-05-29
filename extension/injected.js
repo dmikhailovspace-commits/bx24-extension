@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.10';
+	window.__ANITREC_RUNNING__ = '7.1.11';
 
-	const VER = '7.1.10';
+	const VER = '7.1.11';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -2141,7 +2141,7 @@ if (_presetChannel) {
 				_saveRemovedDefaultDialogControlColors(_getRemovedDefaultDialogControlColors().filter(c => c !== draftColor));
 				_saveCustomDialogControlColors([draftColor, ..._getCustomDialogControlColors()]);
 				if (!palette.querySelector(`.dialog-control-swatch[data-color="${draftColor}"]`)) {
-					swatches.insertBefore(makeColorSwatch(draftColor), addWrap);
+					swatches.insertBefore(makeColorSwatch(draftColor), clearWrap);
 				}
 				commitColor(draftColor);
 			});
@@ -3989,7 +3989,7 @@ if (_presetChannel) {
 				_saveRemovedDefaultDialogControlColors(_getRemovedDefaultDialogControlColors().filter(c => c !== draftColor));
 				_saveCustomDialogControlColors([draftColor, ..._getCustomDialogControlColors()]);
 				if (!palette.querySelector(`.dialog-control-swatch[data-color="${draftColor}"]`)) {
-					swatches.insertBefore(makeColorSwatch(draftColor), addWrap);
+					swatches.insertBefore(makeColorSwatch(draftColor), clearWrap);
 				}
 				commitColor(draftColor);
 			});
@@ -6094,7 +6094,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.10';
+	if (_verBadge) _verBadge.textContent = 'v7.1.11';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',

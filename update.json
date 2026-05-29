@@ -1,7 +1,7 @@
 {
-  "version": "7.1.10",
+  "version": "7.1.11",
   "release_date": "2026-05-29",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.1.10",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.1.11",
   "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension/injected.js",
-  "changelog": "v7.1.10: убраны текстовые подписи переноса; выход из папки выделен отдельным цветом, а папки больше не показывают ложное вложение"
+  "changelog": "v7.1.11: прозрачный цвет в палитре всегда остаётся предпоследним, прямо перед кнопкой добавления"
 }
