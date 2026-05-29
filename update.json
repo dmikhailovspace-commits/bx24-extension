@@ -1,7 +1,7 @@
 {
-  "version": "7.1.9",
+  "version": "7.1.10",
   "release_date": "2026-05-29",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.1.9",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.1.10",
   "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension/injected.js",
-  "changelog": "v7.1.9: добавлен Ctrl-мультивыбор диалогов и улучшена индикация переноса после папки"
+  "changelog": "v7.1.10: убраны текстовые подписи переноса; выход из папки выделен отдельным цветом, а папки больше не показывают ложное вложение"
 }

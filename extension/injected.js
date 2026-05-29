@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.9';
+	window.__ANITREC_RUNNING__ = '7.1.10';
 
-	const VER = '7.1.9';
+	const VER = '7.1.10';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -3246,16 +3246,23 @@ if (_presetChannel) {
 				hideDropLine();
 				return;
 			}
-			dropLine.classList.remove('--folder-start', '--folder-after', '--folder-end');
+			dropLine.classList.remove('--folder-start', '--folder-after', '--folder-end', '--hierarchy-up');
 			dropLine.classList.toggle('--folder-start', side === 'folder-start');
 			dropLine.classList.toggle('--folder-after', side === 'folder-after');
 			dropLine.classList.toggle('--folder-end', side === 'folder-end');
+			const moved = draggingType === 'dialog' ? _getDialogControlItems().find(x => String(x.id) === String(draggingId)) : null;
+			const hierarchyUp = side === 'folder-after' || !!(moved?.folderId && side !== 'folder-start' && side !== 'folder-end' && !row.dataset?.parentFolderId);
+			dropLine.classList.toggle('--hierarchy-up', hierarchyUp);
+			const markerRow = side === 'folder-after' && row?.dataset?.folderId
+				? (getLastVisibleFolderChildRow(row.dataset.folderId) || row)
+				: row;
 			const top = visualSide === 'before'
-				? row.offsetTop - 3
-				: row.offsetTop + row.offsetHeight + 3;
+				? markerRow.offsetTop - 3
+				: markerRow.offsetTop + markerRow.offsetHeight + 3;
 			const isFolderAfter = side === 'folder-after';
-			const left = isFolderAfter ? 8 : Math.max(8, row.offsetLeft + 8);
-			const right = isFolderAfter ? 8 : Math.max(8, list.clientWidth - (row.offsetLeft + row.offsetWidth) + 8);
+			const folderStartIndent = side === 'folder-start' && row?.dataset?.folderId ? 18 : 8;
+			const left = isFolderAfter || hierarchyUp ? 8 : Math.max(8, markerRow.offsetLeft + folderStartIndent);
+			const right = isFolderAfter || hierarchyUp ? 8 : Math.max(8, list.clientWidth - (markerRow.offsetLeft + markerRow.offsetWidth) + 8);
 			dropLine.style.top = Math.max(1, top) + 'px';
 			dropLine.style.left = left + 'px';
 			dropLine.style.right = right + 'px';
@@ -3264,6 +3271,15 @@ if (_presetChannel) {
 		const hasVisibleFolderChildren = (folderId) => {
 			const id = String(folderId || '');
 			return !!Array.from(list.children).find(el => el.dataset?.parentFolderId === id);
+		};
+		const getFolderRow = (folderId) => {
+			const id = String(folderId || '');
+			return Array.from(list.children).find(el => String(el.dataset?.folderId || '') === id) || null;
+		};
+		const getLastVisibleFolderChildRow = (folderId) => {
+			const id = String(folderId || '');
+			const children = Array.from(list.children).filter(el => String(el.dataset?.parentFolderId || '') === id);
+			return children.length ? children[children.length - 1] : null;
 		};
 		const isLastVisibleFolderChild = (row) => {
 			const id = String(row?.dataset?.parentFolderId || '');
@@ -3290,6 +3306,12 @@ if (_presetChannel) {
 				row?.dataset?.parentFolderId &&
 				isLastVisibleFolderChild(row)
 			) return options.gap ? 'folder-after' : 'folder-end';
+			if (
+				draggingType === 'folder' &&
+				side === 'after' &&
+				row?.dataset?.folderId &&
+				hasVisibleFolderChildren(row.dataset.folderId)
+			) return 'folder-after';
 			return side;
 		};
 		const getDropRows = () => {
@@ -3521,7 +3543,9 @@ if (_presetChannel) {
 					const y = (e.clientY - rect.top) / Math.max(1, rect.height);
 					const moved = _getDialogControlItems().find(x => String(x.id) === String(draggingId));
 					const alreadyInThisFolder = draggingType === 'dialog' && String(moved?.folderId || '') === String(item.id);
-					if (draggingType === 'dialog' && folderStatus.childCount && !item.collapsed && y > .24) {
+					if (draggingType === 'folder') {
+						dropSide = normalizeDropSide(row, e.clientY > rect.top + rect.height / 2 ? 'after' : 'before', { gap: false });
+					} else if (draggingType === 'dialog' && folderStatus.childCount && !item.collapsed && y > .24) {
 						dropSide = 'folder-start';
 					} else {
 						dropSide = draggingType === 'dialog' && !alreadyInThisFolder && y > .24 && y < .76 ? 'inside' : (e.clientY > rect.top + rect.height / 2 ? 'after' : 'before');
@@ -3544,7 +3568,7 @@ if (_presetChannel) {
 							? _moveDialogControlItemToFolder(movedId, item.id)
 							: dropSide === 'folder-start'
 								? _moveDialogControlItemToFolderStart(movedId, item.id)
-								: _moveDialogControlItemRelative(movedId, item.id, dropSide);
+								: _moveDialogControlItemRelative(movedId, item.id, dropSide === 'folder-after' ? 'after' : dropSide);
 						if (!changed) return;
 						list.dataset.lastDragTs = String(Date.now());
 						_renderDialogControlPanel(h);
@@ -3634,6 +3658,16 @@ if (_presetChannel) {
 			});
 			row.addEventListener('dragover', (e) => {
 				if (!draggingId || draggingId === item.id) return;
+				if (draggingType === 'folder' && item.folderId) {
+					const folderRow = getFolderRow(item.folderId);
+					if (!folderRow) return;
+					e.preventDefault();
+					e.stopPropagation();
+					if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+					dropSide = 'folder-after';
+					setDropMarker(folderRow, dropSide);
+					return;
+				}
 				e.preventDefault();
 				e.stopPropagation();
 				if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
@@ -3651,6 +3685,14 @@ if (_presetChannel) {
 				clearDragOver();
 				const movedId = draggingId;
 				const moved = _getDialogControlItems().find(x => String(x.id) === String(movedId));
+				if (draggingType === 'folder' && item.folderId) {
+					const parentFolder = _getDialogControlItems().find(x => _isDialogControlFolder(x) && String(x.id) === String(item.folderId));
+					if (parentFolder && _moveDialogControlItemRelative(movedId, parentFolder.id, 'after')) {
+						list.dataset.lastDragTs = String(Date.now());
+						_renderDialogControlPanel(h);
+					}
+					return;
+				}
 				const willLeaveFolder = moved?.folderId && !item.folderId;
 				const applyMove = () => {
 					if (!_moveDialogControlItemRelative(movedId, item.id, dropSide === 'folder-end' ? 'after' : dropSide)) return;
@@ -4954,17 +4996,11 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-toast.--ok{border-color:rgba(93,200,126,.5);color:#5dc87e}
 #anit-dialog-control-dock .dialog-control-toast.--danger{border-color:rgba(239,68,68,.5);color:#ffb3b3}
 #anit-dialog-control-dock .dialog-control-list{position:relative;display:grid;grid-template-columns:1fr;align-content:start;gap:6px;min-height:0;flex:1 1 auto;overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.28) rgba(255,255,255,.06);padding-right:6px;padding-bottom:12px}
-#anit-dialog-control-dock .dialog-control-list.--drop-root::after{content:"";grid-column:1 / -1;height:2px;margin:2px 8px 4px;border-radius:999px;background:#4d9dff;box-shadow:0 0 0 1px rgba(77,157,255,.2),0 0 12px rgba(77,157,255,.36);pointer-events:none}
+#anit-dialog-control-dock .dialog-control-list.--drop-root::after{content:"";grid-column:1 / -1;height:3px;margin:2px 8px 4px;border-radius:999px;background:#f59e0b;box-shadow:0 0 0 1px rgba(245,158,11,.24),0 0 14px rgba(245,158,11,.42);pointer-events:none}
 #anit-dialog-control-dock .dialog-control-drop-line{position:absolute;height:2px;border-radius:999px;background:#4d9dff;box-shadow:0 0 0 1px rgba(77,157,255,.2),0 0 12px rgba(77,157,255,.36);opacity:0;pointer-events:none;z-index:5;transform:translateY(-50%)}
 #anit-dialog-control-dock .dialog-control-drop-line.--show{opacity:1}
-#anit-dialog-control-dock .dialog-control-drop-line.--folder-start,#anit-dialog-control-dock .dialog-control-drop-line.--folder-end,#anit-dialog-control-dock .dialog-control-drop-line.--folder-after{height:3px;box-shadow:0 0 0 1px rgba(0,0,0,.22),0 0 14px currentColor}
-#anit-dialog-control-dock .dialog-control-drop-line.--folder-start{background:#5dc87e;color:rgba(93,200,126,.5)}
-#anit-dialog-control-dock .dialog-control-drop-line.--folder-end{background:#4d9dff;color:rgba(77,157,255,.55)}
-#anit-dialog-control-dock .dialog-control-drop-line.--folder-after{background:#f59e0b;color:rgba(245,158,11,.62);left:8px!important;right:8px!important}
-#anit-dialog-control-dock .dialog-control-drop-line.--folder-start::after,#anit-dialog-control-dock .dialog-control-drop-line.--folder-end::after,#anit-dialog-control-dock .dialog-control-drop-line.--folder-after::after{position:absolute;right:0;top:50%;transform:translateY(-50%);height:18px;padding:0 7px;border-radius:999px;background:rgba(12,16,24,.96);border:1px solid currentColor;color:#eef3fb;font-size:10px;font-weight:800;line-height:18px;white-space:nowrap;box-shadow:0 6px 16px rgba(0,0,0,.38)}
-#anit-dialog-control-dock .dialog-control-drop-line.--folder-start::after{content:"В начало папки"}
-#anit-dialog-control-dock .dialog-control-drop-line.--folder-end::after{content:"В конец папки"}
-#anit-dialog-control-dock .dialog-control-drop-line.--folder-after::after{content:"После папки"}
+#anit-dialog-control-dock .dialog-control-drop-line.--folder-start,#anit-dialog-control-dock .dialog-control-drop-line.--folder-end{height:2px;background:#4d9dff;box-shadow:0 0 0 1px rgba(77,157,255,.22),0 0 12px rgba(77,157,255,.36)}
+#anit-dialog-control-dock .dialog-control-drop-line.--folder-after,#anit-dialog-control-dock .dialog-control-drop-line.--hierarchy-up{height:3px;background:#f59e0b;box-shadow:0 0 0 1px rgba(245,158,11,.24),0 0 14px rgba(245,158,11,.44);left:8px!important;right:8px!important}
 #anit-dialog-control-dock .dialog-control-list::-webkit-scrollbar{width:5px;height:5px}
 #anit-dialog-control-dock .dialog-control-list::-webkit-scrollbar-track{background:rgba(255,255,255,.06);border-radius:var(--pena-radius)}
 #anit-dialog-control-dock .dialog-control-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.28);border-radius:var(--pena-radius)}
@@ -6058,7 +6094,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.9';
+	if (_verBadge) _verBadge.textContent = 'v7.1.10';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',

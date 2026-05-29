@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================
 # PENA Agency — Сборка macOS .pkg установщика
-# Версия: 7.1.9
+# Версия: 7.1.10
 #
 # Требования:
 #   - macOS с Xcode Command Line Tools (xcode-select --install)
@@ -11,7 +11,7 @@
 #   chmod +x installers/build_pkg_macos.sh
 #   ./installers/build_pkg_macos.sh
 #
-# Результат: dist/PENA_Agency_v7.1.9.pkg
+# Результат: dist/PENA_Agency_v7.1.10.pkg
 # ==============================================================
 
 CYAN='\033[0;36m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
@@ -21,7 +21,7 @@ fail() { echo -e "  ${RED}!!   $*${NC}"; exit 1; }
 info() { echo -e "  ${CYAN}->   $*${NC}"; }
 div()  { echo -e "${CYAN}$(printf '=%.0s' {1..54})${NC}"; }
 
-APP_VERSION="7.1.9"
+APP_VERSION="7.1.10"
 APP_NAME="Сортировщик чатов BX24"
 BUNDLE_ID="ru.pena-agency.bx24-extension"
 
@@ -218,7 +218,7 @@ DISTXML_EOF
 # Простые RTF-тексты welcome/conclusion
 cat > "$TMP_ROOT/welcome.rtf" << 'RTF_EOF'
 {\rtf1\ansi\ansicpg1252
-{\b Сортировщик чатов BX24 v7.1.9}\
+{\b Сортировщик чатов BX24 v7.1.10}\
 \
 Расширение добавляет фильтрацию и сортировку чатов Bitrix24 по ключевым словам, тегам и категориям.\
 \
@@ -232,7 +232,7 @@ cat > "$TMP_ROOT/conclusion.rtf" << 'RTF_EOF'
 {\rtf1\ansi\ansicpg1252
 {\b Установка завершена!}\
 \
-Сортировщик чатов BX24 v7.1.9 установлен.\
+Сортировщик чатов BX24 v7.1.10 установлен.\
 \
 Запустите Bitrix24 через ярлык «Bitrix24 + Фильтр чатов» на Рабочем столе или в папке ~/Applications.\
 \
