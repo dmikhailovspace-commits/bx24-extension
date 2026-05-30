@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.12';
+	window.__ANITREC_RUNNING__ = '7.1.13';
 
-	const VER = '7.1.12';
+	const VER = '7.1.13';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -3227,11 +3227,12 @@ if (_presetChannel) {
 		});
 		const multiSelectedCount = _getDialogControlMultiSelectedItems(items).length;
 		const hideDropLine = () => {
-			dropLine.classList.remove('--show', '--folder-start', '--folder-after', '--folder-end', '--hierarchy-up', '--root');
+			dropLine.classList.remove('--show', '--neutral', '--folder-start', '--folder-after', '--folder-end', '--hierarchy-up', '--root');
 			dropLine.removeAttribute('style');
 		};
 		const clearDragOver = () => {
 			if (overRow) overRow.classList.remove('--drop-before', '--drop-after', '--drop-into');
+			list.querySelectorAll('.--drop-before,.--drop-after,.--drop-into').forEach(row => row.classList.remove('--drop-before', '--drop-after', '--drop-into'));
 			overRow = null;
 			list.classList.remove('--drop-root');
 			dropIntent = null;
@@ -3254,13 +3255,14 @@ if (_presetChannel) {
 				hideDropLine();
 				return;
 			}
-			dropLine.classList.remove('--folder-start', '--folder-after', '--folder-end', '--hierarchy-up', '--root');
+			dropLine.classList.remove('--neutral', '--folder-start', '--folder-after', '--folder-end', '--hierarchy-up', '--root');
 			dropLine.classList.toggle('--folder-start', side === 'folder-start');
 			dropLine.classList.toggle('--folder-after', side === 'folder-after');
 			dropLine.classList.toggle('--folder-end', side === 'folder-end');
 			const moved = draggingType === 'dialog' ? _getDialogControlItems().find(x => String(x.id) === String(draggingId)) : null;
-			const hierarchyUp = side === 'folder-after' || !!(moved?.folderId && side !== 'folder-start' && side !== 'folder-end' && !row.dataset?.parentFolderId);
+			const hierarchyUp = draggingType === 'folder' || side === 'folder-after' || !!(moved?.folderId && side !== 'folder-start' && side !== 'folder-end' && !row.dataset?.parentFolderId);
 			dropLine.classList.toggle('--hierarchy-up', hierarchyUp);
+			dropLine.classList.toggle('--neutral', !hierarchyUp && side !== 'folder-start' && side !== 'folder-end');
 			const markerRow = side === 'folder-after' && row?.dataset?.folderId
 				? (getLastVisibleFolderChildRow(row.dataset.folderId) || row)
 				: row;
@@ -3283,7 +3285,7 @@ if (_presetChannel) {
 			dropIntent = { root: true };
 			dropSide = 'root';
 			list.classList.remove('--drop-root');
-			dropLine.classList.remove('--folder-start', '--folder-after', '--folder-end');
+			dropLine.classList.remove('--neutral', '--folder-start', '--folder-after', '--folder-end');
 			dropLine.classList.add('--hierarchy-up', '--root');
 			const rows = getVisibleDropRows().filter(row => String(getDropTargetId(row)) !== String(draggingId));
 			const last = rows[rows.length - 1] || null;
@@ -5007,9 +5009,9 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-toast.--ok{border-color:rgba(93,200,126,.5);color:#5dc87e}
 #anit-dialog-control-dock .dialog-control-toast.--danger{border-color:rgba(239,68,68,.5);color:#ffb3b3}
 #anit-dialog-control-dock .dialog-control-list{position:relative;display:grid;grid-template-columns:1fr;align-content:start;gap:6px;min-height:0;flex:1 1 auto;overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.28) rgba(255,255,255,.06);padding-right:6px;padding-bottom:12px}
-#anit-dialog-control-dock .dialog-control-drop-line{position:absolute;height:2px;border-radius:999px;background:#4d9dff;box-shadow:0 0 0 1px rgba(77,157,255,.2),0 0 12px rgba(77,157,255,.36);opacity:0;pointer-events:none;z-index:5;transform:translateY(-50%)}
+#anit-dialog-control-dock .dialog-control-drop-line{position:absolute;height:2px;border-radius:999px;background:transparent;box-shadow:none;opacity:0;pointer-events:none;z-index:5;transform:translateY(-50%)}
 #anit-dialog-control-dock .dialog-control-drop-line.--show{opacity:1}
-#anit-dialog-control-dock .dialog-control-drop-line.--folder-start,#anit-dialog-control-dock .dialog-control-drop-line.--folder-end{height:2px;background:#4d9dff;box-shadow:0 0 0 1px rgba(77,157,255,.22),0 0 12px rgba(77,157,255,.36)}
+#anit-dialog-control-dock .dialog-control-drop-line.--neutral,#anit-dialog-control-dock .dialog-control-drop-line.--folder-start,#anit-dialog-control-dock .dialog-control-drop-line.--folder-end{height:2px;background:#4d9dff;box-shadow:0 0 0 1px rgba(77,157,255,.22),0 0 12px rgba(77,157,255,.36)}
 #anit-dialog-control-dock .dialog-control-drop-line.--folder-after,#anit-dialog-control-dock .dialog-control-drop-line.--hierarchy-up{height:3px;background:#f59e0b;box-shadow:0 0 0 1px rgba(245,158,11,.24),0 0 14px rgba(245,158,11,.44);left:8px!important;right:8px!important}
 #anit-dialog-control-dock .dialog-control-list::-webkit-scrollbar{width:5px;height:5px}
 #anit-dialog-control-dock .dialog-control-list::-webkit-scrollbar-track{background:rgba(255,255,255,.06);border-radius:var(--pena-radius)}
@@ -5023,9 +5025,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-folder:hover{border-color:rgba(77,157,255,.5);background:rgba(77,157,255,.1)}
 #anit-dialog-control-dock .dialog-control-folder.--colored:hover{border-color:var(--dialog-chip-border-hover);background:linear-gradient(90deg,var(--dialog-chip-bg-hover),rgba(77,157,255,.1) 66%)}
 #anit-dialog-control-dock .dialog-control-folder.--dragging{opacity:.45}
-#anit-dialog-control-dock .dialog-control-folder.--drop-before::before,#anit-dialog-control-dock .dialog-control-folder.--drop-after::after{content:"";position:absolute;left:8px;right:8px;height:2px;border-radius:999px;background:#4d9dff;box-shadow:0 0 0 1px rgba(77,157,255,.2),0 0 12px rgba(77,157,255,.36);z-index:2;pointer-events:none}
-#anit-dialog-control-dock .dialog-control-folder.--drop-before::before{top:-4px}
-#anit-dialog-control-dock .dialog-control-folder.--drop-after::after{bottom:-4px}
+#anit-dialog-control-dock .dialog-control-folder.--drop-before::before,#anit-dialog-control-dock .dialog-control-folder.--drop-after::after{content:none!important}
 #anit-dialog-control-dock .dialog-control-folder.--drop-into{outline:1px dashed rgba(93,200,126,.78);outline-offset:-3px;border-color:rgba(93,200,126,.7);background:rgba(93,200,126,.12)}
 #anit-dialog-control-dock .dialog-control-folder-toggle{width:22px;height:22px;min-width:22px;min-height:22px;border:0!important;background:transparent!important;color:#c9d6e8;padding:0;display:inline-grid;place-items:center;box-shadow:none;border-radius:var(--pena-radius);cursor:pointer;line-height:0;box-sizing:border-box}
 #anit-dialog-control-dock .dialog-control-folder-toggle:hover{color:#fff;transform:none;border:0!important;background:rgba(255,255,255,.08)!important}
@@ -6104,7 +6104,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.12';
+	if (_verBadge) _verBadge.textContent = 'v7.1.13';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
