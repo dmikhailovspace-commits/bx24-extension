@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.18';
+	window.__ANITREC_RUNNING__ = '7.1.19';
 
-	const VER = '7.1.18';
+	const VER = '7.1.19';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -2997,8 +2997,8 @@ if (_presetChannel) {
 		btn.setAttribute('aria-pressed', pinned ? 'true' : 'false');
 		btn.title = pinned ? 'Открепить док контроля' : 'Закрепить док контроля';
 		btn.innerHTML = pinned
-			? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 17v5"/><path d="M5 17h14"/><path d="M7 4h10"/><path d="M9 4v8l-2 5h10l-2-5V4"/></svg>'
-			: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4l16 16"/><path d="M12 17v5"/><path d="M5 17h9"/><path d="M7 4h7"/><path d="M9 4v3"/><path d="M15 11l2 6h-4"/></svg>';
+			? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4l5 5"/><path d="M9 10l5 5"/><path d="M17.5 6.5 11 13"/><path d="M12 14l-6 6"/></svg>'
+			: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4l16 16"/><path d="M15 4l5 5"/><path d="M9 10l5 5"/><path d="M12 14l-6 6"/></svg>';
 	}
 
 	function _applyDialogDockColumns(dock = _dialogControlDock, cols = 1) {
@@ -3075,7 +3075,7 @@ if (_presetChannel) {
 							<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="6" height="14" rx="1.5"/><rect x="14" y="5" width="6" height="14" rx="1.5"/></svg>
 						</button>
 						<button type="button" class="dialog-control-close" title="Свернуть">
-							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4l16 16"/><path d="M12 17v5"/><path d="M5 17h9"/><path d="M7 4h7"/><path d="M9 4v3"/><path d="M15 11l2 6h-4"/></svg>
+							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4l16 16"/><path d="M15 4l5 5"/><path d="M9 10l5 5"/><path d="M12 14l-6 6"/></svg>
 						</button>
 					</div>
 				</div>
@@ -5244,7 +5244,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-logo-fallback{width:20px;height:20px;border-radius:var(--pena-radius);display:inline-flex;align-items:center;justify-content:center;background:#1e2024;color:#fff;font-size:10px;font-weight:800;flex:0 0 20px}
 #anit-dialog-control-dock .dialog-control-section{font-size:var(--pena-font-heading);font-weight:700;color:#fff;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #anit-dialog-control-dock .dialog-control-close{width:var(--pena-icon-size);height:var(--pena-icon-size);border:1px solid rgba(255,255,255,.18);border-radius:var(--pena-radius);background:rgba(255,255,255,.04);color:#fff;padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;line-height:1;box-sizing:border-box;flex:0 0 var(--pena-icon-size)}
-#anit-dialog-control-dock .dialog-control-close svg{width:12px;height:12px;display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;opacity:.88}
+#anit-dialog-control-dock .dialog-control-close svg{width:13px;height:13px;display:block;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;opacity:.9}
 #anit-dialog-control-dock .dialog-control-close:hover{border-color:rgba(255,255,255,.34);background:rgba(255,255,255,.08);transform:translateY(-1px)}
 #anit-dialog-control-dock .dialog-control-close.--active{border-color:rgba(77,157,255,.58);background:rgba(77,157,255,.16);color:#d7eaff}
 #anit-dialog-control-dock .dialog-control-actions{display:flex;align-items:center;justify-content:flex-start;gap:8px;flex:0 0 auto;position:relative;flex-wrap:nowrap;max-width:100%;justify-self:start;margin-left:0;grid-row:2;grid-column:1}
@@ -6370,7 +6370,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.18';
+	if (_verBadge) _verBadge.textContent = 'v7.1.19';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
