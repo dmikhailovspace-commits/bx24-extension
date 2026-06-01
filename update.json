@@ -1,7 +1,7 @@
 {
-  "version": "7.1.16",
+  "version": "7.1.17",
   "release_date": "2026-06-01",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.1.16",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.1.17",
   "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension/injected.js",
-  "changelog": "v7.1.16: доработан сброс мультивыбора и минималистичная подсветка активного диалога"
+  "changelog": "v7.1.17: подсветка активного диалога теперь сверяется с фактически открытым диалогом"
 }

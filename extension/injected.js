@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.16';
+	window.__ANITREC_RUNNING__ = '7.1.17';
 
-	const VER = '7.1.16';
+	const VER = '7.1.17';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -1383,16 +1383,18 @@ if (_presetChannel) {
 			.filter(item => !_isDialogControlFolder(item))
 			.map(item => normId(item.id))
 			.filter(Boolean));
-		const stored = normId(_dialogControlCurrentIds[_pMode()]);
-		if (stored && ids.has(stored)) return stored;
-		if (stored && !ids.has(stored)) _dialogControlCurrentIds[_pMode()] = null;
 		const index = visibleChatIndex || buildChatElementIndex();
 		for (const [id, el] of index.entries()) {
-			if (ids.has(normId(id)) && _isLikelyActiveChatElement(el)) {
-				_setDialogControlCurrentId(id);
-				return normId(id);
+			const activeId = normId(id);
+			if (!activeId || !_isLikelyActiveChatElement(el)) continue;
+			if (ids.has(activeId)) {
+				_setDialogControlCurrentId(activeId);
+				return activeId;
 			}
+			_setDialogControlCurrentId(null);
+			return '';
 		}
+		_setDialogControlCurrentId(null);
 		return '';
 	}
 
@@ -6342,7 +6344,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.16';
+	if (_verBadge) _verBadge.textContent = 'v7.1.17';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
