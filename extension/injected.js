@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.20';
+	window.__ANITREC_RUNNING__ = '7.1.21';
 
-	const VER = '7.1.20';
+	const VER = '7.1.21';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -3637,10 +3637,7 @@ if (_presetChannel) {
 			return _getDialogControlItems().filter(item => !_isDialogControlFolder(item) && activeIds.has(String(item.id)));
 		};
 		const markDraggingRows = (active) => {
-			list.querySelectorAll('.dialog-control-chip.--dragging,.dialog-control-folder.--dragging,.dialog-control-chip.--drag-origin').forEach(el => {
-				el.classList.remove('--dragging', '--drag-origin');
-				delete el.dataset.dragCount;
-			});
+			list.querySelectorAll('.dialog-control-chip.--dragging,.dialog-control-folder.--dragging').forEach(el => el.classList.remove('--dragging'));
 			list.classList.remove('--multi-dragging');
 			delete list.dataset.dragCount;
 			if (!active) return;
@@ -3652,14 +3649,45 @@ if (_presetChannel) {
 				if (activeIds.has(String(getDropTargetId(el)))) el.classList.add('--dragging');
 			});
 		};
-		const setMultiDragImage = (event, count) => {
+		const setMultiDragImage = (event, dragItems, primaryItem) => {
+			const selected = (Array.isArray(dragItems) ? dragItems : []).filter(Boolean);
+			const count = selected.length;
 			if (!event?.dataTransfer || count < 2) return;
+			const primaryId = String(primaryItem?.id || '');
+			const primary = selected.find(candidate => String(candidate.id || '') === primaryId) || primaryItem || selected[0];
+			const otherTitles = selected
+				.filter(candidate => String(candidate.id || '') !== String(primary?.id || ''))
+				.map(candidate => String(candidate.title || '').trim())
+				.filter(Boolean)
+				.slice(0, 2);
+			const hiddenCount = Math.max(0, count - 1 - otherTitles.length);
 			const ghost = document.createElement('div');
-			ghost.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:74px;height:34px;border:1px solid rgba(77,157,255,.72);border-radius:8px;background:rgba(12,16,24,.96);box-shadow:0 10px 24px rgba(0,0,0,.36);display:grid;place-items:center;color:#fff;font:800 13px system-ui,-apple-system,Segoe UI,Roboto,Arial;box-sizing:border-box;pointer-events:none;';
-			ghost.innerHTML = '<span style="position:absolute;left:13px;top:9px;width:24px;height:16px;border:1px solid rgba(255,255,255,.38);border-radius:5px;background:rgba(255,255,255,.08);box-shadow:8px 3px 0 rgba(255,255,255,.12)"></span><span style="position:absolute;right:10px;top:7px;min-width:20px;height:20px;border-radius:999px;background:#4d9dff;display:grid;place-items:center;box-shadow:0 0 0 2px rgba(12,16,24,.96)">' + String(count) + '</span>';
+			ghost.className = 'dialog-control-drag-preview';
+			const back = document.createElement('span');
+			back.className = 'dialog-control-drag-preview-layer --back';
+			const mid = document.createElement('span');
+			mid.className = 'dialog-control-drag-preview-layer --mid';
+			const card = document.createElement('span');
+			card.className = 'dialog-control-drag-preview-card';
+			const text = document.createElement('span');
+			text.className = 'dialog-control-drag-preview-text';
+			const title = document.createElement('span');
+			title.className = 'dialog-control-drag-preview-title';
+			title.textContent = String(primary?.title || 'Диалог').trim() || 'Диалог';
+			const subtitle = document.createElement('span');
+			subtitle.className = 'dialog-control-drag-preview-subtitle';
+			subtitle.textContent = otherTitles.length
+				? `${otherTitles.join(' · ')}${hiddenCount ? ` +${hiddenCount}` : ''}`
+				: `${count} ${_ruPlural(count, 'диалог', 'диалога', 'диалогов')}`;
+			const badge = document.createElement('span');
+			badge.className = 'dialog-control-drag-preview-badge';
+			badge.textContent = String(count);
+			text.append(title, subtitle);
+			card.append(text, badge);
+			ghost.append(back, mid, card);
 			document.body.appendChild(ghost);
-			try { event.dataTransfer.setDragImage(ghost, 22, 17); } catch {}
-			setTimeout(() => ghost.remove(), 0);
+			try { event.dataTransfer.setDragImage(ghost, 26, 18); } catch {}
+			setTimeout(() => ghost.remove(), 80);
 		};
 		const normalizeDropSide = (row, side, options = {}) => {
 			if (
@@ -4109,9 +4137,7 @@ if (_presetChannel) {
 				invalidateDropMetrics();
 				markDraggingRows(true);
 				if (draggingIds.size > 1) {
-					row.classList.add('--drag-origin');
-					row.dataset.dragCount = String(draggingIds.size);
-					setMultiDragImage(e, draggingIds.size);
+					setMultiDragImage(e, draggingItems, item);
 				}
 				if (e.dataTransfer) {
 					e.dataTransfer.effectAllowed = 'move';
@@ -5480,8 +5506,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-chip.--current.--multi-selected{box-shadow:0 0 0 1px rgba(77,157,255,.36) inset,0 0 0 1px rgba(77,157,255,.18)}
 #anit-dialog-control-dock .dialog-control-chip[draggable="true"]{cursor:pointer}
 #anit-dialog-control-dock .dialog-control-chip.--dragging{opacity:.45;cursor:pointer}
-#anit-dialog-control-dock .dialog-control-list.--multi-dragging .dialog-control-chip.--dragging{opacity:.56}
-#anit-dialog-control-dock .dialog-control-chip.--drag-origin[data-drag-count]::after{content:attr(data-drag-count);position:absolute;right:-6px;top:-7px;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:#4d9dff;color:#fff;font-size:10px;font-weight:800;line-height:18px;text-align:center;box-shadow:0 0 0 2px rgba(12,16,24,.96),0 6px 12px rgba(0,0,0,.32);box-sizing:border-box;pointer-events:none}
+#anit-dialog-control-dock .dialog-control-list.--multi-dragging .dialog-control-chip.--dragging{opacity:.5;border-color:rgba(77,157,255,.56);box-shadow:0 0 0 1px rgba(77,157,255,.16) inset}
 #anit-dialog-control-dock .dialog-control-chip.--drop-before::before,#anit-dialog-control-dock .dialog-control-chip.--drop-after::after{content:none}
 #anit-dialog-control-dock .dialog-control-state{width:34px;min-width:34px;height:22px;display:inline-grid;place-items:center;color:#fff;font-size:10px;font-weight:700;font-variant-numeric:tabular-nums;justify-self:center;line-height:0}
 #anit-dialog-control-dock .dialog-control-dot{min-width:18px;height:18px;border-radius:999px;background:rgba(77,157,255,.95);box-shadow:0 0 0 2px rgba(77,157,255,.16);display:inline-grid;place-items:center;box-sizing:border-box;padding:0 5px;line-height:0}
@@ -5496,6 +5521,16 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-color{width:20px;height:20px;min-height:20px;border:1px solid rgba(255,255,255,.22);border-radius:var(--pena-radius);background:var(--dialog-chip-color,rgba(255,255,255,.08));padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 0 0 1px rgba(0,0,0,.18) inset}
 #anit-dialog-control-dock .dialog-control-color:not([style*="--dialog-chip-color"])::before{content:"";width:8px;height:8px;border-radius:50%;border:1px solid rgba(255,255,255,.42);box-sizing:border-box}
 #anit-dialog-control-dock .dialog-control-color:hover{border-color:rgba(255,255,255,.55);transform:none}
+.dialog-control-drag-preview{position:fixed;left:-9999px;top:-9999px;z-index:2147483647;width:196px;height:48px;pointer-events:none;color:#eef6ff;font:600 12px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial;box-sizing:border-box;contain:layout style paint}
+.dialog-control-drag-preview-layer{position:absolute;inset:0;border:1px solid rgba(77,157,255,.36);border-radius:10px;background:rgba(22,29,40,.82);box-shadow:0 10px 22px rgba(0,0,0,.26);box-sizing:border-box}
+.dialog-control-drag-preview-layer.--back{transform:translate(10px,7px);opacity:.34}
+.dialog-control-drag-preview-layer.--mid{transform:translate(5px,4px);opacity:.58}
+.dialog-control-drag-preview-card{position:absolute;inset:0;display:grid;grid-template-columns:minmax(0,1fr) 28px;align-items:center;gap:8px;padding:8px 9px 8px 11px;border:1px solid rgba(77,157,255,.72);border-radius:10px;background:linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));box-shadow:0 14px 34px rgba(0,0,0,.42),0 0 0 1px rgba(255,255,255,.06) inset;box-sizing:border-box}
+.dialog-control-drag-preview-text{min-width:0;display:grid;gap:2px}
+.dialog-control-drag-preview-title,.dialog-control-drag-preview-subtitle{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dialog-control-drag-preview-title{color:#fff;font-weight:800}
+.dialog-control-drag-preview-subtitle{color:rgba(214,226,241,.72);font-size:10px;font-weight:600}
+.dialog-control-drag-preview-badge{width:24px;height:24px;border-radius:999px;background:#4d9dff;color:#fff;display:grid;place-items:center;font-size:11px;font-weight:900;box-shadow:0 0 0 2px rgba(12,16,24,.96),0 6px 12px rgba(0,0,0,.32)}
 .dialog-control-palette{position:fixed;z-index:2147483647;width:min(246px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.28) rgba(255,255,255,.06);display:grid;grid-template-columns:28px minmax(0,1fr);grid-auto-rows:min-content;gap:7px;padding:10px 28px 10px 10px;border:1px solid rgba(255,255,255,.16);border-radius:10px;background:radial-gradient(circle at 20% 0%,rgba(77,157,255,.12),transparent 42%),linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));box-shadow:0 18px 42px rgba(0,0,0,.46),0 1px 0 rgba(255,255,255,.04) inset;box-sizing:border-box;opacity:0;visibility:hidden;pointer-events:none;transform:translateY(-8px) scale(.94);transform-origin:top right;transition:opacity .18s ease,transform .18s ease,visibility 0s linear .18s}
 .dialog-control-palette::-webkit-scrollbar{width:5px}
 .dialog-control-palette::-webkit-scrollbar-track{background:rgba(255,255,255,.06);border-radius:10px}
@@ -6528,7 +6563,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.20';
+	if (_verBadge) _verBadge.textContent = 'v7.1.21';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
