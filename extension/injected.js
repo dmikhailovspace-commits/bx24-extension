@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.17';
+	window.__ANITREC_RUNNING__ = '7.1.18';
 
-	const VER = '7.1.17';
+	const VER = '7.1.18';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -3356,7 +3356,27 @@ if (_presetChannel) {
 			if (_syncDialogControlItemTitleFromElement(item, visibleChatIndex)) titlesChanged = true;
 		});
 		const multiSelectedCount = _getDialogControlMultiSelectedItems(items).length;
-		const currentDialogId = multiSelectedCount > 1 ? null : _getDialogControlCurrentId(items, visibleChatIndex);
+		const currentDialogId = multiSelectedCount > 0 ? null : _getDialogControlCurrentId(items, visibleChatIndex);
+		const syncCurrentHighlightInPanel = (selectedCount = null) => {
+			const count = Number.isFinite(selectedCount) ? selectedCount : _getDialogControlMultiSelectedItems(_getDialogControlItems()).length;
+			const activeId = count > 0 ? '' : _getDialogControlCurrentId(_getDialogControlItems(), buildChatElementIndex());
+			list.querySelectorAll('.dialog-control-chip').forEach(el => {
+				const isCurrent = !!activeId && normId(el.dataset.dialogId) === activeId;
+				el.classList.toggle('--current', isCurrent);
+				el.setAttribute('aria-current', isCurrent ? 'true' : 'false');
+			});
+		};
+		const syncMultiSelectionInPanel = () => {
+			const selected = _getDialogControlMultiSelectedItems(_getDialogControlItems());
+			const selectedIds = new Set(selected.map(item => String(item.id)));
+			list.querySelectorAll('.dialog-control-chip').forEach(el => {
+				const isSelected = selectedIds.has(String(el.dataset.dialogId || ''));
+				el.classList.toggle('--multi-selected', isSelected);
+				el.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+			});
+			syncCurrentHighlightInPanel(selected.length);
+			return selected.length;
+		};
 		const clearMultiSelectionInPanel = (options = {}) => {
 			const changed = _clearDialogControlMultiSelection();
 			if (!changed) return false;
@@ -3364,7 +3384,7 @@ if (_presetChannel) {
 				el.classList.remove('--multi-selected');
 				el.setAttribute('aria-selected', 'false');
 			});
-			if (options.render) requestAnimationFrame(() => _renderDialogControlPanel(h));
+			if (!options.skipCurrentSync) syncCurrentHighlightInPanel(0);
 			return true;
 		};
 		panel._penaClearDialogControlMultiSelection = clearMultiSelectionInPanel;
@@ -3374,7 +3394,7 @@ if (_presetChannel) {
 				const targetEl = e.target?.nodeType === 1 ? e.target : e.target?.parentElement || null;
 				if (targetEl?.closest?.('.dialog-control-chip')) return;
 				if (targetEl?.closest?.('button,input,select,textarea,a,[contenteditable],.dialog-control-palette')) return;
-				panel._penaClearDialogControlMultiSelection?.({ render: true });
+				panel._penaClearDialogControlMultiSelection?.();
 			});
 		}
 		if (!panel._penaOutsideMultiSelectionClearAttached) {
@@ -3385,7 +3405,7 @@ if (_presetChannel) {
 				const dock = document.getElementById('anit-dialog-control-dock');
 				const filtersPanel = document.getElementById('anit-filters');
 				if (dock?.contains(targetEl) || filtersPanel?.contains(targetEl) || targetEl.closest?.('.dialog-control-palette')) return;
-				dock?._penaClearDialogControlMultiSelection?.({ render: true });
+				dock?._penaClearDialogControlMultiSelection?.();
 			}, true);
 		}
 		const hideDropLine = () => {
@@ -3711,7 +3731,7 @@ if (_presetChannel) {
 			const targetEl = getEventElement(e.target);
 			if (targetEl?.closest?.('.dialog-control-chip')) return;
 			if (targetEl?.closest?.('button,input,select,textarea,a,[contenteditable],.dialog-control-palette')) return;
-			clearMultiSelectionInPanel({ render: true });
+			clearMultiSelectionInPanel();
 		});
 		items.forEach(item => {
 			if (_isDialogControlFolder(item)) {
@@ -3859,9 +3879,10 @@ if (_presetChannel) {
 			const folderColor = _normalizeDialogControlColor(parentFolder?.color);
 			const unreadCount = meta?.unreadCount || 0;
 			const isUnread = !!(meta?.hasUnread || meta?.hasLater || meta?.hasMention);
-			const row = document.createElement('button');
-			row.type = 'button';
+			const row = document.createElement('div');
 			row.className = 'dialog-control-chip';
+			row.setAttribute('role', 'button');
+			row.tabIndex = 0;
 			row.draggable = true;
 			const isMultiSelected = _dialogControlMultiSelected.has(String(item.id));
 			const isCurrentDialog = !!currentDialogId && normId(item.id) === currentDialogId;
@@ -3901,7 +3922,7 @@ if (_presetChannel) {
 				if (ts && (Date.now() - ts) < 250) return;
 				if (e.ctrlKey || e.metaKey) {
 					_toggleDialogControlMultiSelection(item.id, items);
-					_renderDialogControlPanel(h);
+					syncMultiSelectionInPanel();
 					return;
 				}
 				clearMultiSelectionInPanel();
@@ -3921,6 +3942,11 @@ if (_presetChannel) {
 				if (!targetEl) {
 					_showDialogDockToast(_pMode() === 'tasks' ? 'Задача не найдена в текущей ленте' : 'Диалог не найден в текущей ленте', 'danger');
 				}
+			});
+			row.addEventListener('keydown', (e) => {
+				if (e.key !== 'Enter' && e.key !== ' ') return;
+				e.preventDefault();
+				row.click();
 			});
 			row.addEventListener('dragstart', (e) => {
 				draggingId = item.id;
@@ -5282,9 +5308,9 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-folder-remove svg{width:12px;height:12px;display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 #anit-dialog-control-dock .dialog-control-folder-remove svg{fill:currentColor;stroke:none}
 #anit-dialog-control-dock .dialog-control-chip{position:relative;width:100%;min-width:0;min-height:32px;display:grid;grid-template-columns:34px minmax(0,1fr) 22px 22px;align-items:center;column-gap:7px;border:1px solid rgba(255,255,255,.14);border-radius:var(--pena-radius);background:rgba(255,255,255,.04);padding:4px 6px 4px 8px;box-sizing:border-box;text-align:left;color:#e7edf6;cursor:pointer;font-size:var(--pena-font-body);overflow:visible}
-#anit-dialog-control-dock .dialog-control-chip.--in-folder{grid-template-columns:34px minmax(0,1fr) 22px 22px;margin-left:10px;width:calc(100% - 10px);border-left-color:var(--dialog-chip-border,rgba(255,255,255,.24))}
+#anit-dialog-control-dock .dialog-control-chip.--in-folder{grid-template-columns:34px minmax(0,1fr) 22px 22px;margin-left:10px;width:calc(100% - 10px)}
 #anit-dialog-control-dock .dialog-control-chip.--colored{border-color:var(--dialog-chip-border);background:linear-gradient(90deg,var(--dialog-chip-bg),rgba(255,255,255,.04) 58%)}
-#anit-dialog-control-dock .dialog-control-chip.--colored::before{content:"";position:absolute;left:0;top:6px;bottom:6px;width:3px;border-radius:0 999px 999px 0;background:var(--dialog-chip-color);box-shadow:0 0 12px var(--dialog-chip-shadow);pointer-events:none}
+#anit-dialog-control-dock .dialog-control-chip.--colored::before{content:none}
 #anit-dialog-control-dock .dialog-control-chip:hover{border-color:rgba(77,157,255,.5);background:rgba(77,157,255,.1);transform:none}
 #anit-dialog-control-dock .dialog-control-chip.--colored:hover{border-color:var(--dialog-chip-border-hover);background:linear-gradient(90deg,var(--dialog-chip-bg-hover),rgba(77,157,255,.1) 62%)}
 #anit-dialog-control-dock .dialog-control-chip.--current{border-color:rgba(77,157,255,.78);box-shadow:0 0 0 1px rgba(77,157,255,.34) inset}
@@ -6344,7 +6370,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.17';
+	if (_verBadge) _verBadge.textContent = 'v7.1.18';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
