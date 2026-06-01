@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.14';
+	window.__ANITREC_RUNNING__ = '7.1.15';
 
-	const VER = '7.1.14';
+	const VER = '7.1.15';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -1340,6 +1340,21 @@ if (_presetChannel) {
 		return id ? [id] : [];
 	}
 
+	function _normalizeDialogControlMoveIds(ids) {
+		const raw = Array.isArray(ids) ? ids : [ids];
+		return Array.from(new Set(raw.map(id => String(id || '')).filter(Boolean)));
+	}
+
+	function _getDialogControlMoveGroupIds(movedId, items = _getDialogControlItems()) {
+		const id = String(movedId || '');
+		if (!id) return [];
+		const selected = _getDialogControlMultiSelectedItems(items);
+		if (_dialogControlMultiSelected.has(id) && selected.length > 1) {
+			return selected.map(item => String(item.id));
+		}
+		return [id];
+	}
+
 	function _setDialogControlCurrentId(dialogId) {
 		if (!_dialogControlCurrentIds || typeof _dialogControlCurrentIds !== 'object') _dialogControlCurrentIds = { chats: null, tasks: null };
 		_dialogControlCurrentIds[_pMode()] = dialogId ? normId(dialogId) : null;
@@ -1639,6 +1654,76 @@ if (_presetChannel) {
 		if (fromIdx >= 0) items.splice(fromIdx, 1);
 		delete item.folderId;
 		items.push(item);
+		_dialogControlItems[_pMode()] = items;
+		_saveDialogControlItems();
+		_dialogControlLastSig = '';
+		return true;
+	}
+
+	function _moveDialogControlItemsRelative(movedIds, targetId, side = 'before') {
+		const items = _getDialogControlItems();
+		const ids = _normalizeDialogControlMoveIds(movedIds);
+		if (!ids.length) return false;
+		const idSet = new Set(ids);
+		const moved = items.filter(item => !_isDialogControlFolder(item) && idSet.has(String(item.id)));
+		const target = items.find(item => String(item.id) === String(targetId));
+		if (!moved.length || !target || idSet.has(String(target.id))) return false;
+		const remaining = items.filter(item => !(!_isDialogControlFolder(item) && idSet.has(String(item.id))));
+		const targetIdx = remaining.indexOf(target);
+		if (targetIdx < 0) return false;
+		const nextFolderId = !_isDialogControlFolder(target) && target.folderId ? String(target.folderId) : '';
+		let insertIdx = Math.max(0, targetIdx + (side === 'after' ? 1 : 0));
+		if (side === 'after' && _isDialogControlFolder(target)) {
+			const folderId = String(target.id || '');
+			const lastChildIdx = remaining.reduce((last, x, idx) => String(x.folderId || '') === folderId ? idx : last, targetIdx);
+			insertIdx = Math.max(0, lastChildIdx + 1);
+		}
+		moved.forEach(item => {
+			if (nextFolderId) item.folderId = nextFolderId;
+			else delete item.folderId;
+		});
+		remaining.splice(insertIdx, 0, ...moved);
+		items.splice(0, items.length, ...remaining);
+		_dialogControlItems[_pMode()] = items;
+		_saveDialogControlItems();
+		_dialogControlLastSig = '';
+		return true;
+	}
+
+	function _moveDialogControlItemsToFolder(movedIds, folderId, atStart = false) {
+		const items = _getDialogControlItems();
+		const ids = _normalizeDialogControlMoveIds(movedIds);
+		if (!ids.length) return false;
+		const idSet = new Set(ids);
+		const folder = items.find(item => _isDialogControlFolder(item) && String(item.id) === String(folderId));
+		const moved = items.filter(item => !_isDialogControlFolder(item) && idSet.has(String(item.id)));
+		if (!folder || !moved.length) return false;
+		const remaining = items.filter(item => !(!_isDialogControlFolder(item) && idSet.has(String(item.id))));
+		const folderIdx = remaining.indexOf(folder);
+		if (folderIdx < 0) return false;
+		moved.forEach(item => { item.folderId = folder.id; });
+		if (folder.emptyVisibleUntil) delete folder.emptyVisibleUntil;
+		const lastChildIdx = remaining.reduce((last, x, idx) => String(x.folderId || '') === String(folder.id) ? idx : last, -1);
+		const insertIdx = atStart ? folderIdx + 1 : (lastChildIdx >= 0 ? lastChildIdx + 1 : folderIdx + 1);
+		remaining.splice(Math.max(0, insertIdx), 0, ...moved);
+		items.splice(0, items.length, ...remaining);
+		_dialogControlItems[_pMode()] = items;
+		_saveDialogControlItems();
+		_dialogControlLastSig = '';
+		return true;
+	}
+
+	function _moveDialogControlItemsToRootEnd(movedIds) {
+		const items = _getDialogControlItems();
+		const ids = _normalizeDialogControlMoveIds(movedIds);
+		if (!ids.length) return false;
+		const idSet = new Set(ids);
+		const moved = items.filter(item => !_isDialogControlFolder(item) && idSet.has(String(item.id)));
+		if (!moved.length) return false;
+		const remaining = items.filter(item => !(!_isDialogControlFolder(item) && idSet.has(String(item.id))));
+		moved.forEach(item => { delete item.folderId; });
+		remaining.push(...moved);
+		items.splice(0, items.length, ...remaining);
 		_dialogControlItems[_pMode()] = items;
 		_saveDialogControlItems();
 		_dialogControlLastSig = '';
@@ -3260,6 +3345,7 @@ if (_presetChannel) {
 		list.appendChild(dropLine);
 		let draggingId = null;
 		let draggingType = '';
+		let draggingIds = new Set();
 		let overRow = null;
 		let dropSide = 'before';
 		let dropIntent = null;
@@ -3321,8 +3407,8 @@ if (_presetChannel) {
 			dropLine.classList.toggle('--folder-start', side === 'folder-start');
 			dropLine.classList.toggle('--folder-after', side === 'folder-after');
 			dropLine.classList.toggle('--folder-end', side === 'folder-end');
-			const moved = draggingType === 'dialog' ? _getDialogControlItems().find(x => String(x.id) === String(draggingId)) : null;
-			const hierarchyUp = draggingType === 'folder' || side === 'folder-after' || !!(moved?.folderId && side !== 'folder-start' && side !== 'folder-end' && !row.dataset?.parentFolderId);
+			const movedItems = draggingType === 'dialog' ? getCurrentDragItems() : [];
+			const hierarchyUp = draggingType === 'folder' || side === 'folder-after' || !!(movedItems.some(item => item?.folderId) && side !== 'folder-start' && side !== 'folder-end' && !row.dataset?.parentFolderId);
 			dropLine.classList.toggle('--hierarchy-up', hierarchyUp);
 			dropLine.classList.toggle('--neutral', !hierarchyUp && side !== 'folder-start' && side !== 'folder-end');
 			const markerRow = side === 'folder-after' && row?.dataset?.folderId
@@ -3349,7 +3435,7 @@ if (_presetChannel) {
 			list.classList.remove('--drop-root');
 			dropLine.classList.remove('--neutral', '--folder-start', '--folder-after', '--folder-end');
 			dropLine.classList.add('--hierarchy-up', '--root');
-			const rows = getVisibleDropRows().filter(row => String(getDropTargetId(row)) !== String(draggingId));
+			const rows = getVisibleDropRows().filter(row => !isDraggingTargetId(getDropTargetId(row)));
 			const last = rows[rows.length - 1] || null;
 			const top = last ? last.offsetTop + last.offsetHeight + 3 : 4;
 			dropLine.style.top = Math.max(1, top) + 'px';
@@ -3382,7 +3468,26 @@ if (_presetChannel) {
 		const getDropTargetId = (row) => {
 			return row?.dataset?.folderId || row?.dataset?.dialogId || '';
 		};
-		const getCurrentDragItem = () => _getDialogControlItems().find(x => String(x.id) === String(draggingId));
+		const getDraggingIds = () => draggingIds instanceof Set && draggingIds.size
+			? draggingIds
+			: new Set(draggingId ? [String(draggingId)] : []);
+		const isDraggingTargetId = (id) => {
+			const value = String(id || '');
+			return !!value && getDraggingIds().has(value);
+		};
+		const getCurrentDragItems = () => {
+			const activeIds = getDraggingIds();
+			if (!activeIds.size) return [];
+			return _getDialogControlItems().filter(item => !_isDialogControlFolder(item) && activeIds.has(String(item.id)));
+		};
+		const markDraggingRows = (active) => {
+			list.querySelectorAll('.dialog-control-chip.--dragging,.dialog-control-folder.--dragging').forEach(el => el.classList.remove('--dragging'));
+			if (!active) return;
+			const activeIds = getDraggingIds();
+			list.querySelectorAll('.dialog-control-chip,.dialog-control-folder').forEach(el => {
+				if (activeIds.has(String(getDropTargetId(el)))) el.classList.add('--dragging');
+			});
+		};
 		const normalizeDropSide = (row, side, options = {}) => {
 			if (
 				draggingType === 'dialog' &&
@@ -3407,10 +3512,10 @@ if (_presetChannel) {
 		const getDropIntentForRow = (row, clientY, options = {}) => {
 			if (!row) return null;
 			const id = getDropTargetId(row);
-			if (!id || String(id) === String(draggingId)) return null;
+			if (!id || isDraggingTargetId(id)) return null;
 			if (draggingType === 'folder' && row.dataset?.parentFolderId) {
 				const folderRow = getFolderRow(row.dataset.parentFolderId);
-				return folderRow && String(folderRow.dataset.folderId || '') !== String(draggingId)
+				return folderRow && !isDraggingTargetId(folderRow.dataset.folderId || '')
 					? { row: folderRow, side: 'folder-after' }
 					: null;
 			}
@@ -3419,8 +3524,8 @@ if (_presetChannel) {
 			const side = clientY > rect.top + rect.height / 2 ? 'after' : 'before';
 			if (row.dataset?.folderId) {
 				if (draggingType === 'dialog') {
-					const moved = getCurrentDragItem();
-					const alreadyInThisFolder = String(moved?.folderId || '') === String(row.dataset.folderId || '');
+					const movedItems = getCurrentDragItems();
+					const alreadyInThisFolder = movedItems.length > 0 && movedItems.every(item => String(item?.folderId || '') === String(row.dataset.folderId || ''));
 					if (hasVisibleFolderChildren(row.dataset.folderId) && y > .24) return { row, side: 'folder-start' };
 					if (!alreadyInThisFolder && y > .24 && y < .76) return { row, side: 'inside' };
 				}
@@ -3431,7 +3536,7 @@ if (_presetChannel) {
 		const getDropRows = () => {
 			return getVisibleDropRows().filter(row => {
 				const id = getDropTargetId(row);
-				if (!id || String(id) === String(draggingId)) return false;
+				if (!id || isDraggingTargetId(id)) return false;
 				return true;
 			});
 		};
@@ -3463,20 +3568,32 @@ if (_presetChannel) {
 			const bottom = rows.reduce((max, row) => Math.max(max, row.getBoundingClientRect().bottom), -Infinity);
 			return clientY > bottom + 10;
 		};
-		const confirmFolderOut = (item, onOk) => {
-			if (!item?.folderId) { onOk(); return; }
+		const confirmFolderOut = (moveItems, onOk) => {
+			const group = (Array.isArray(moveItems) ? moveItems : [moveItems]).filter(Boolean);
+			const leaving = group.filter(item => item?.folderId);
+			if (!leaving.length) { onOk(); return; }
+			const count = leaving.length;
 			_showDialogControlConfirm(
-				`Вынести «${item.title || 'Диалог'}» из папки?`,
+				count === 1
+					? `Вынести «${leaving[0].title || 'Диалог'}» из папки?`
+					: `Вынести ${count} ${_ruPlural(count, 'диалог', 'диалога', 'диалогов')} из папок?`,
 				'Вынести', 'Отмена',
 				onOk
 			);
 		};
-		const moveItemToRootEnd = (movedId) => {
+		const moveItemsToRootEnd = (movedIds) => {
+			const ids = _normalizeDialogControlMoveIds(movedIds);
+			if (!ids.length) return false;
 			const itemsNow = _getDialogControlItems();
-			const moved = itemsNow.find(x => String(x.id) === String(movedId));
-			if (!moved) return false;
-			if (!_isDialogControlFolder(moved) && moved.folderId) return _moveDialogControlItemToRootEnd(movedId);
-			const rootRows = getVisibleDropRows().filter(row => !row.dataset?.parentFolderId && String(getDropTargetId(row)) !== String(movedId));
+			const moved = itemsNow.filter(item => !_isDialogControlFolder(item) && ids.includes(String(item.id)));
+			if (!moved.length) return false;
+			const rootRows = getVisibleDropRows().filter(row => !row.dataset?.parentFolderId && !isDraggingTargetId(getDropTargetId(row)));
+			const lastTargetId = getDropTargetId(rootRows[rootRows.length - 1]);
+			if (!lastTargetId) return _moveDialogControlItemsToRootEnd(ids);
+			return _moveDialogControlItemsRelative(ids, lastTargetId, 'after');
+		};
+		const moveFolderToRootEnd = (movedId) => {
+			const rootRows = getVisibleDropRows().filter(row => !row.dataset?.parentFolderId && !isDraggingTargetId(getDropTargetId(row)));
 			const lastTargetId = getDropTargetId(rootRows[rootRows.length - 1]);
 			if (!lastTargetId) return false;
 			return _moveDialogControlItemRelative(movedId, lastTargetId, 'after');
@@ -3514,6 +3631,10 @@ if (_presetChannel) {
 			const movedId = draggingId;
 			const itemsNow = _getDialogControlItems();
 			const item = itemsNow.find(x => String(x.id) === String(movedId));
+			const moveIds = draggingType === 'dialog' ? Array.from(getDraggingIds()) : [String(movedId)];
+			const moveItems = draggingType === 'dialog'
+				? itemsNow.filter(x => !_isDialogControlFolder(x) && moveIds.includes(String(x.id)))
+				: (item ? [item] : []);
 			const intent = dropIntent || updateDropFromPointer(e.clientX, e.clientY);
 			const markerRow = intent?.row || overRow;
 			const markerTargetId = getDropTargetId(markerRow);
@@ -3521,33 +3642,47 @@ if (_presetChannel) {
 			const activeSide = intent?.side || dropSide;
 			const rootDrop = !!intent?.root;
 			clearDragOver();
-			if (!item || !intent) return true;
+			if (!item || !intent || !moveItems.length) return true;
 			if (rootDrop) {
 				const applyMove = () => {
-					if (!moveItemToRootEnd(movedId)) return;
-					list.dataset.lastDragTs = String(Date.now());
-					_renderDialogControlPanel(h);
-				};
-				if (draggingType === 'dialog' && item?.folderId) confirmFolderOut(item, applyMove);
-				else applyMove();
-				return true;
-			}
-			if (!rootDrop && markerTarget && markerTarget !== item) {
-				if (draggingType === 'folder' && !_isDialogControlFolder(markerTarget) && markerTarget.folderId) return true;
-				const willLeaveFolder = draggingType === 'dialog' && (activeSide === 'folder-after' || (activeSide !== 'folder-start' && item?.folderId && (_isDialogControlFolder(markerTarget) || !markerTarget.folderId)));
-				const applyMove = () => {
-					const parentFolderId = String(markerRow?.dataset?.parentFolderId || '');
-					const parentFolder = parentFolderId ? _getDialogControlItems().find(x => _isDialogControlFolder(x) && String(x.id) === parentFolderId) : null;
-					const changed = draggingType === 'dialog' && activeSide === 'folder-start'
-						? _moveDialogControlItemToFolderStart(movedId, markerTarget.id)
-						: activeSide === 'folder-after' && parentFolder
-							? _moveDialogControlItemRelative(movedId, parentFolder.id, 'after')
-							: _moveDialogControlItemRelative(movedId, markerTarget.id, activeSide === 'folder-end' || activeSide === 'folder-after' ? 'after' : activeSide);
+					const changed = draggingType === 'dialog'
+						? moveItemsToRootEnd(moveIds)
+						: moveFolderToRootEnd(movedId);
 					if (!changed) return;
 					list.dataset.lastDragTs = String(Date.now());
 					_renderDialogControlPanel(h);
 				};
-				if (willLeaveFolder) confirmFolderOut(item, applyMove);
+				if (draggingType === 'dialog') confirmFolderOut(moveItems, applyMove);
+				else applyMove();
+				return true;
+			}
+			if (!rootDrop && markerTarget && !isDraggingTargetId(markerTarget.id)) {
+				if (draggingType === 'folder' && !_isDialogControlFolder(markerTarget) && markerTarget.folderId) return true;
+				const getDestinationFolderId = () => {
+					if (draggingType !== 'dialog' || !markerTarget) return '';
+					if ((activeSide === 'inside' || activeSide === 'folder-start') && _isDialogControlFolder(markerTarget)) return String(markerTarget.id || '');
+					if (activeSide === 'folder-end') return String(markerTarget.folderId || markerRow?.dataset?.parentFolderId || '');
+					if (activeSide === 'folder-after') return '';
+					if (!_isDialogControlFolder(markerTarget) && markerTarget.folderId) return String(markerTarget.folderId);
+					return '';
+				};
+				const destinationFolderId = getDestinationFolderId();
+				const willLeaveFolder = draggingType === 'dialog' && !destinationFolderId && moveItems.some(moveItem => moveItem?.folderId);
+				const applyMove = () => {
+					const parentFolderId = String(markerRow?.dataset?.parentFolderId || '');
+					const parentFolder = parentFolderId ? _getDialogControlItems().find(x => _isDialogControlFolder(x) && String(x.id) === parentFolderId) : null;
+					const changed = draggingType === 'dialog' && (activeSide === 'folder-start' || activeSide === 'inside') && _isDialogControlFolder(markerTarget)
+						? _moveDialogControlItemsToFolder(moveIds, markerTarget.id, activeSide === 'folder-start')
+						: draggingType === 'dialog' && activeSide === 'folder-after' && parentFolder
+							? _moveDialogControlItemsRelative(moveIds, parentFolder.id, 'after')
+							: draggingType === 'dialog'
+								? _moveDialogControlItemsRelative(moveIds, markerTarget.id, activeSide === 'folder-end' || activeSide === 'folder-after' ? 'after' : activeSide)
+								: _moveDialogControlItemRelative(movedId, markerTarget.id, activeSide === 'folder-end' || activeSide === 'folder-after' ? 'after' : activeSide);
+					if (!changed) return;
+					list.dataset.lastDragTs = String(Date.now());
+					_renderDialogControlPanel(h);
+				};
+				if (willLeaveFolder) confirmFolderOut(moveItems, applyMove);
 				else applyMove();
 				return true;
 			}
@@ -3667,29 +3802,30 @@ if (_presetChannel) {
 				row.addEventListener('dragstart', (e) => {
 					draggingId = item.id;
 					draggingType = 'folder';
-					row.classList.add('--dragging');
+					draggingIds = new Set([String(item.id)]);
+					markDraggingRows(true);
 					if (e.dataTransfer) {
 						e.dataTransfer.effectAllowed = 'move';
 						try { e.dataTransfer.setData('text/plain', item.id); } catch {}
 					}
 				});
 				row.addEventListener('dragend', () => {
-					row.classList.remove('--dragging');
+					markDraggingRows(false);
 					clearDragOver();
 					draggingId = null;
 					draggingType = '';
+					draggingIds = new Set();
 					list.dataset.lastDragTs = String(Date.now());
 				});
 				row.addEventListener('dragover', (e) => {
-					if (!draggingId || draggingId === item.id) return;
-					if (draggingType === 'folder' && String(draggingId) === String(item.id)) return;
+					if (!draggingId || isDraggingTargetId(item.id)) return;
 					handleControlDragOver(e);
 				});
 				row.addEventListener('dragleave', (e) => {
 					if (e.relatedTarget && !list.contains(e.relatedTarget)) clearDragOver();
 				});
 				row.addEventListener('drop', (e) => {
-					if (!draggingId || draggingId === item.id) return;
+					if (!draggingId || isDraggingTargetId(item.id)) return;
 					applyCurrentDrop(e);
 				});
 				if (toggleFolder) row.append(toggleFolder, folderState, titleInp, colorWrap, rmFolder);
@@ -3775,28 +3911,30 @@ if (_presetChannel) {
 			row.addEventListener('dragstart', (e) => {
 				draggingId = item.id;
 				draggingType = 'dialog';
-				row.classList.add('--dragging');
+				draggingIds = new Set(_getDialogControlMoveGroupIds(item.id, items));
+				markDraggingRows(true);
 				if (e.dataTransfer) {
 					e.dataTransfer.effectAllowed = 'move';
-					try { e.dataTransfer.setData('text/plain', item.id); } catch {}
+					try { e.dataTransfer.setData('text/plain', Array.from(draggingIds).join(',')); } catch {}
 				}
 			});
 			row.addEventListener('dragend', () => {
-				row.classList.remove('--dragging');
+				markDraggingRows(false);
 				clearDragOver();
 				draggingId = null;
 				draggingType = '';
+				draggingIds = new Set();
 				list.dataset.lastDragTs = String(Date.now());
 			});
 			row.addEventListener('dragover', (e) => {
-				if (!draggingId || draggingId === item.id) return;
+				if (!draggingId || isDraggingTargetId(item.id)) return;
 				handleControlDragOver(e);
 			});
 			row.addEventListener('dragleave', (e) => {
 				if (e.relatedTarget && !list.contains(e.relatedTarget)) clearDragOver();
 			});
 			row.addEventListener('drop', (e) => {
-				if (!draggingId || draggingId === item.id) return;
+				if (!draggingId || isDraggingTargetId(item.id)) return;
 				applyCurrentDrop(e);
 			});
 			const state = document.createElement('span');
@@ -6192,7 +6330,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.14';
+	if (_verBadge) _verBadge.textContent = 'v7.1.15';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
