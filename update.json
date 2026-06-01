@@ -1,7 +1,7 @@
 {
-  "version": "7.1.19",
+  "version": "7.1.20",
   "release_date": "2026-06-01",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.1.19",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.1.20",
   "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension/injected.js",
-  "changelog": "v7.1.19: упрощена иконка закрепа окна панели контроля"
+  "changelog": "v7.1.20: dialog control panel two-column folders, multiselect drag, active dialog realtime"
 }

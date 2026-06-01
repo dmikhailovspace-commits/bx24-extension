@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.19';
+	window.__ANITREC_RUNNING__ = '7.1.20';
 
-	const VER = '7.1.19';
+	const VER = '7.1.20';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -421,6 +421,91 @@
 			if (title) return title;
 		}
 		return clean(el.getAttribute('title') || el.dataset?.title || el.getAttribute('aria-label')) || 'Диалог';
+	}
+
+	function _normalizeDialogControlTitle(value) {
+		return String(value || '')
+			.replace(/\s+/g, ' ')
+			.replace(/[«»"']/g, '')
+			.trim()
+			.toLowerCase();
+	}
+
+	function _isVisibleTextNodeCandidate(node) {
+		if (!node || !node.isConnected) return false;
+		const rect = node.getBoundingClientRect?.();
+		if (!rect || rect.width < 8 || rect.height < 8) return false;
+		const style = window.getComputedStyle?.(node);
+		return !(style?.display === 'none' || style?.visibility === 'hidden' || Number(style?.opacity) === 0);
+	}
+
+	function _getActiveDialogTitleFromScreen() {
+		if (IS_OL_FRAME) return '';
+		const clean = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+		const chatSelectors = [
+			'.bx-im-dialog-chat-header__title',
+			'.bx-im-dialog-header__title',
+			'.bx-im-dialog-header__name',
+			'.bx-im-chat-title__text',
+			'.bx-im-dialog-chat__title',
+			'.bx-im-sidebar-header__title',
+			'[class*="dialog" i][class*="header" i] [class*="title" i]',
+			'[class*="chat" i][class*="header" i] [class*="title" i]'
+		];
+		const taskSelectors = _isTaskViewRouteNow() ? [
+			'.tasks-task-full-card-title',
+			'.tasks-task-detail-title',
+			'.tasks-task-title',
+			'.task-detail-title',
+			'.task-view-title',
+			'[class*="task" i][class*="title" i]'
+		] : [];
+		const selectors = [...chatSelectors, ...taskSelectors];
+		for (const sel of selectors) {
+			let nodes = [];
+			try { nodes = Array.from(document.querySelectorAll(sel)); } catch { nodes = []; }
+			for (const node of nodes) {
+				if (!_isVisibleTextNodeCandidate(node)) continue;
+				if (node.closest?.('#anit-filters,#anit-dialog-control-dock,.dialog-control-palette')) continue;
+				const title = clean(node.value || node.getAttribute?.('title') || node.getAttribute?.('aria-label') || node.textContent);
+				if (title && title.length >= 2 && title.length <= 180) return title;
+			}
+		}
+		return '';
+	}
+
+	function _getActiveDialogControlTaskIdFromScreen() {
+		const fromUrl = (value) => _extractTaskIdFromTaskUrl(value || '');
+		const current = fromUrl(`${window.location.pathname || ''}${window.location.search || ''}${window.location.hash || ''}`);
+		if (current) return current;
+		try {
+			const frame = Array.from(document.querySelectorAll('iframe[src],iframe[data-src],iframe[data-url]'))
+				.map(el => el.getAttribute('src') || el.getAttribute('data-src') || el.getAttribute('data-url') || '')
+				.find(url => /\/tasks\/task\/view\/\d+/i.test(url));
+			const id = fromUrl(frame);
+			if (id) return id;
+		} catch {}
+		return '';
+	}
+
+	function _findDialogControlItemIdByTaskId(taskId, items = _getDialogControlItems()) {
+		const id = String(taskId || '').trim();
+		if (!/^\d+$/.test(id)) return '';
+		const item = (Array.isArray(items) ? items : []).find(candidate =>
+			!_isDialogControlFolder(candidate) && String(candidate.taskId || '').trim() === id
+		);
+		return item ? normId(item.id) : '';
+	}
+
+	function _findDialogControlItemIdByTitle(title, items = _getDialogControlItems()) {
+		const wanted = _normalizeDialogControlTitle(title);
+		if (!wanted) return '';
+		const candidates = (Array.isArray(items) ? items : []).filter(item => !_isDialogControlFolder(item));
+		for (const item of candidates) {
+			const current = _normalizeDialogControlTitle(item.title);
+			if (current && (current === wanted || current.includes(wanted) || wanted.includes(current))) return normId(item.id);
+		}
+		return '';
 	}
 
 		function findChatElementById(id) {
@@ -872,7 +957,6 @@ if (_presetChannel) {
 	unreadOnly: false,
 	query: '',
 	typesSelected: [],
-	hideCompletedTasks: false,
 	projectIndexes: [],
 	responsibleIndexes: [],
 	statusIndexes: [],
@@ -1065,18 +1149,9 @@ if (_presetChannel) {
 		);
 	}
 
-	function isTaskCompletedByLastMessage(meta) {
-		const t = (meta?.lastText || '').toLowerCase();
-		// Учитываем мужской/женский род и пассивные формы
-		return /завершил[аи]?\s+задачу|принял[аи]?\s+задачу|задача\s+завершена|задача\s+принята/.test(t);
-	}
-
 	function matchByFilters(meta) {
 	if (filters.unreadOnly && !meta.hasUnread && !meta.hasLater) return false;
 
-	if (filters.hideCompletedTasks && isTasksChatsModeNow()) {
-		if (isTaskCompletedByLastMessage(meta)) return false;
-	}
 	const sel = Array.isArray(filters.typesSelected) ? filters.typesSelected : [];
 	if (sel.length && !sel.includes(meta.type)) return false;
 	const q = (filters.query || '').trim().toLowerCase();
@@ -1384,6 +1459,7 @@ if (_presetChannel) {
 			.map(item => normId(item.id))
 			.filter(Boolean));
 		const index = visibleChatIndex || buildChatElementIndex();
+		let activeListItemOutsideControl = false;
 		for (const [id, el] of index.entries()) {
 			const activeId = normId(id);
 			if (!activeId || !_isLikelyActiveChatElement(el)) continue;
@@ -1391,8 +1467,23 @@ if (_presetChannel) {
 				_setDialogControlCurrentId(activeId);
 				return activeId;
 			}
+			activeListItemOutsideControl = true;
+			break;
+		}
+		const taskId = _getActiveDialogControlTaskIdFromScreen();
+		const taskItemId = _findDialogControlItemIdByTaskId(taskId, items);
+		if (taskItemId && ids.has(taskItemId)) {
+			_setDialogControlCurrentId(taskItemId);
+			return taskItemId;
+		}
+		if (activeListItemOutsideControl) {
 			_setDialogControlCurrentId(null);
 			return '';
+		}
+		const titleId = _findDialogControlItemIdByTitle(_getActiveDialogTitleFromScreen(), items);
+		if (titleId && ids.has(titleId)) {
+			_setDialogControlCurrentId(titleId);
+			return titleId;
 		}
 		_setDialogControlCurrentId(null);
 		return '';
@@ -2399,7 +2490,8 @@ if (_presetChannel) {
 		const index = buildChatElementIndex();
 		const items = _getDialogControlItems();
 		const folderMap = _getDialogControlFolderMap(items);
-		return items.map(item => {
+		const activePart = `active:${_getDialogControlCurrentId(items, index) || ''}:${_getActiveDialogControlTaskIdFromScreen()}:${_normalizeDialogControlTitle(_getActiveDialogTitleFromScreen())}`;
+		return activePart + '|' + items.map(item => {
 			if (_isDialogControlFolder(item)) {
 				const childCount = _getDialogControlFolderChildCount(item.id, items);
 				return [
@@ -2997,8 +3089,8 @@ if (_presetChannel) {
 		btn.setAttribute('aria-pressed', pinned ? 'true' : 'false');
 		btn.title = pinned ? 'Открепить док контроля' : 'Закрепить док контроля';
 		btn.innerHTML = pinned
-			? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4l5 5"/><path d="M9 10l5 5"/><path d="M17.5 6.5 11 13"/><path d="M12 14l-6 6"/></svg>'
-			: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4l16 16"/><path d="M15 4l5 5"/><path d="M9 10l5 5"/><path d="M12 14l-6 6"/></svg>';
+			? '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="10" width="11" height="9" rx="2"/><path d="M9 10V7.5a3 3 0 0 1 6 0V10"/></svg>'
+			: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="10" width="11" height="9" rx="2"/><path d="M9 10V7.7a3 3 0 0 1 5.4-1.8"/></svg>';
 	}
 
 	function _applyDialogDockColumns(dock = _dialogControlDock, cols = 1) {
@@ -3075,7 +3167,7 @@ if (_presetChannel) {
 							<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="6" height="14" rx="1.5"/><rect x="14" y="5" width="6" height="14" rx="1.5"/></svg>
 						</button>
 						<button type="button" class="dialog-control-close" title="Свернуть">
-							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4l16 16"/><path d="M15 4l5 5"/><path d="M9 10l5 5"/><path d="M12 14l-6 6"/></svg>
+							<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="10" width="11" height="9" rx="2"/><path d="M9 10V7.7a3 3 0 0 1 5.4-1.8"/></svg>
 						</button>
 					</div>
 				</div>
@@ -3348,9 +3440,18 @@ if (_presetChannel) {
 		let draggingId = null;
 		let draggingType = '';
 		let draggingIds = new Set();
+		let draggingItems = [];
 		let overRow = null;
 		let dropSide = 'before';
 		let dropIntent = null;
+		let dropRowsCache = null;
+		let visibleFolderChildrenCache = null;
+		let lastDropKey = '';
+		const invalidateDropMetrics = () => {
+			dropRowsCache = null;
+			visibleFolderChildrenCache = null;
+			lastDropKey = '';
+		};
 		const visibleChatIndex = buildChatElementIndex();
 		items.forEach(item => {
 			if (_syncDialogControlItemTitleFromElement(item, visibleChatIndex)) titlesChanged = true;
@@ -3376,6 +3477,13 @@ if (_presetChannel) {
 			});
 			syncCurrentHighlightInPanel(selected.length);
 			return selected.length;
+		};
+		const includeCurrentDialogInFreshMultiSelection = (clickedId) => {
+			if (_getDialogControlMultiSelectedItems(items).length) return;
+			const activeId = _getDialogControlCurrentId(items, visibleChatIndex);
+			if (!activeId || activeId === normId(clickedId)) return;
+			const activeItem = items.find(candidate => !_isDialogControlFolder(candidate) && normId(candidate.id) === activeId);
+			if (activeItem) _dialogControlMultiSelected.add(String(activeItem.id));
 		};
 		const clearMultiSelectionInPanel = (options = {}) => {
 			const changed = _clearDialogControlMultiSelection();
@@ -3418,6 +3526,7 @@ if (_presetChannel) {
 			overRow = null;
 			list.classList.remove('--drop-root');
 			dropIntent = null;
+			lastDropKey = '';
 			hideDropLine();
 		};
 		const setDropMarker = (row, side) => {
@@ -3461,16 +3570,28 @@ if (_presetChannel) {
 			dropLine.classList.add('--show');
 		};
 		const getVisibleDropRows = () => Array.from(list.querySelectorAll('.dialog-control-folder,.dialog-control-chip'));
+		const getVisibleFolderChildrenMap = () => {
+			if (visibleFolderChildrenCache) return visibleFolderChildrenCache;
+			const map = new Map();
+			Array.from(list.children).forEach(el => {
+				const id = String(el.dataset?.parentFolderId || '');
+				if (!id) return;
+				if (!map.has(id)) map.set(id, []);
+				map.get(id).push(el);
+			});
+			visibleFolderChildrenCache = map;
+			return map;
+		};
 		const setRootDropMarker = () => {
 			if (overRow) overRow.classList.remove('--drop-before', '--drop-after', '--drop-into');
 			overRow = null;
 			dropIntent = { root: true };
 			dropSide = 'root';
 			list.classList.remove('--drop-root');
-			dropLine.classList.remove('--neutral', '--folder-start', '--folder-after', '--folder-end');
+			dropLine.classList.remove('--neutral', '--folder-start', '--folder-after', '--folder-end', '--hierarchy-up', '--root');
 			dropLine.classList.add('--hierarchy-up', '--root');
-			const rows = getVisibleDropRows().filter(row => !isDraggingTargetId(getDropTargetId(row)));
-			const last = rows[rows.length - 1] || null;
+			const rows = getDropRowInfos();
+			const last = rows[rows.length - 1]?.row || null;
 			const top = last ? last.offsetTop + last.offsetHeight + 3 : 4;
 			dropLine.style.top = Math.max(1, top) + 'px';
 			dropLine.style.left = '8px';
@@ -3479,7 +3600,7 @@ if (_presetChannel) {
 		};
 		const hasVisibleFolderChildren = (folderId) => {
 			const id = String(folderId || '');
-			return !!Array.from(list.children).find(el => el.dataset?.parentFolderId === id);
+			return !!getVisibleFolderChildrenMap().get(id)?.length;
 		};
 		const getFolderRow = (folderId) => {
 			const id = String(folderId || '');
@@ -3487,13 +3608,13 @@ if (_presetChannel) {
 		};
 		const getLastVisibleFolderChildRow = (folderId) => {
 			const id = String(folderId || '');
-			const children = Array.from(list.children).filter(el => String(el.dataset?.parentFolderId || '') === id);
+			const children = getVisibleFolderChildrenMap().get(id) || [];
 			return children.length ? children[children.length - 1] : null;
 		};
 		const isLastVisibleFolderChild = (row) => {
 			const id = String(row?.dataset?.parentFolderId || '');
 			if (!id) return false;
-			const children = Array.from(list.children).filter(el => String(el.dataset?.parentFolderId || '') === id);
+			const children = getVisibleFolderChildrenMap().get(id) || [];
 			return !!children.length && children[children.length - 1] === row;
 		};
 		const getEventElement = (target) => {
@@ -3510,17 +3631,35 @@ if (_presetChannel) {
 			return !!value && getDraggingIds().has(value);
 		};
 		const getCurrentDragItems = () => {
+			if (draggingItems.length) return draggingItems;
 			const activeIds = getDraggingIds();
 			if (!activeIds.size) return [];
 			return _getDialogControlItems().filter(item => !_isDialogControlFolder(item) && activeIds.has(String(item.id)));
 		};
 		const markDraggingRows = (active) => {
-			list.querySelectorAll('.dialog-control-chip.--dragging,.dialog-control-folder.--dragging').forEach(el => el.classList.remove('--dragging'));
+			list.querySelectorAll('.dialog-control-chip.--dragging,.dialog-control-folder.--dragging,.dialog-control-chip.--drag-origin').forEach(el => {
+				el.classList.remove('--dragging', '--drag-origin');
+				delete el.dataset.dragCount;
+			});
+			list.classList.remove('--multi-dragging');
+			delete list.dataset.dragCount;
 			if (!active) return;
 			const activeIds = getDraggingIds();
+			const dragCount = activeIds.size;
+			list.classList.toggle('--multi-dragging', dragCount > 1);
+			if (dragCount > 1) list.dataset.dragCount = String(dragCount);
 			list.querySelectorAll('.dialog-control-chip,.dialog-control-folder').forEach(el => {
 				if (activeIds.has(String(getDropTargetId(el)))) el.classList.add('--dragging');
 			});
+		};
+		const setMultiDragImage = (event, count) => {
+			if (!event?.dataTransfer || count < 2) return;
+			const ghost = document.createElement('div');
+			ghost.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:74px;height:34px;border:1px solid rgba(77,157,255,.72);border-radius:8px;background:rgba(12,16,24,.96);box-shadow:0 10px 24px rgba(0,0,0,.36);display:grid;place-items:center;color:#fff;font:800 13px system-ui,-apple-system,Segoe UI,Roboto,Arial;box-sizing:border-box;pointer-events:none;';
+			ghost.innerHTML = '<span style="position:absolute;left:13px;top:9px;width:24px;height:16px;border:1px solid rgba(255,255,255,.38);border-radius:5px;background:rgba(255,255,255,.08);box-shadow:8px 3px 0 rgba(255,255,255,.12)"></span><span style="position:absolute;right:10px;top:7px;min-width:20px;height:20px;border-radius:999px;background:#4d9dff;display:grid;place-items:center;box-shadow:0 0 0 2px rgba(12,16,24,.96)">' + String(count) + '</span>';
+			document.body.appendChild(ghost);
+			try { event.dataTransfer.setDragImage(ghost, 22, 17); } catch {}
+			setTimeout(() => ghost.remove(), 0);
 		};
 		const normalizeDropSide = (row, side, options = {}) => {
 			if (
@@ -3543,7 +3682,7 @@ if (_presetChannel) {
 			) return 'folder-after';
 			return side;
 		};
-		const getDropIntentForRow = (row, clientY, options = {}) => {
+		const getDropIntentForRow = (row, clientY, options = {}, rectOverride = null) => {
 			if (!row) return null;
 			const id = getDropTargetId(row);
 			if (!id || isDraggingTargetId(id)) return null;
@@ -3553,7 +3692,7 @@ if (_presetChannel) {
 					? { row: folderRow, side: 'folder-after' }
 					: null;
 			}
-			const rect = row.getBoundingClientRect();
+			const rect = rectOverride || row.getBoundingClientRect();
 			const y = (clientY - rect.top) / Math.max(1, rect.height);
 			const side = clientY > rect.top + rect.height / 2 ? 'after' : 'before';
 			if (row.dataset?.folderId) {
@@ -3574,14 +3713,19 @@ if (_presetChannel) {
 				return true;
 			});
 		};
+		const getDropRowInfos = () => {
+			if (dropRowsCache) return dropRowsCache;
+			dropRowsCache = getDropRows()
+				.map(row => ({ row, rect: row.getBoundingClientRect() }))
+				.filter(info => info.rect.width && info.rect.height);
+			return dropRowsCache;
+		};
 		const getNearestDropTarget = (clientX, clientY) => {
 			let best = null;
-			getDropRows().forEach(row => {
-				const rect = row.getBoundingClientRect();
-				if (!rect.width || !rect.height) return;
+			getDropRowInfos().forEach(({ row, rect }) => {
 				const x = Math.max(rect.left, Math.min(clientX, rect.right));
 				if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
-					const intent = getDropIntentForRow(row, clientY, { gap: false });
+					const intent = getDropIntentForRow(row, clientY, { gap: false }, rect);
 					if (!intent) return;
 					const distance = Math.min(Math.abs(clientY - rect.top), Math.abs(clientY - rect.bottom));
 					if (!best || distance < best.distance) best = { ...intent, distance };
@@ -3589,17 +3733,17 @@ if (_presetChannel) {
 				}
 				const beforeDistance = Math.hypot(clientX - x, clientY - rect.top);
 				const afterDistance = Math.hypot(clientX - x, clientY - rect.bottom);
-				const beforeIntent = getDropIntentForRow(row, rect.top, { gap: clientY < rect.top });
-				const afterIntent = getDropIntentForRow(row, rect.bottom + 1, { gap: clientY > rect.bottom });
+				const beforeIntent = getDropIntentForRow(row, rect.top, { gap: clientY < rect.top }, rect);
+				const afterIntent = getDropIntentForRow(row, rect.bottom + 1, { gap: clientY > rect.bottom }, rect);
 				if (beforeIntent && (!best || beforeDistance < best.distance)) best = { ...beforeIntent, side: beforeIntent.side === 'inside' ? 'before' : beforeIntent.side, distance: beforeDistance };
 				if (afterIntent && (!best || afterDistance < best.distance)) best = { ...afterIntent, distance: afterDistance };
 			});
 			return best;
 		};
 		const isBelowAllDropRows = (clientY) => {
-			const rows = getDropRows();
+			const rows = getDropRowInfos();
 			if (!rows.length) return true;
-			const bottom = rows.reduce((max, row) => Math.max(max, row.getBoundingClientRect().bottom), -Infinity);
+			const bottom = rows.reduce((max, info) => Math.max(max, info.rect.bottom), -Infinity);
 			return clientY > bottom + 10;
 		};
 		const confirmFolderOut = (moveItems, onOk) => {
@@ -3637,6 +3781,9 @@ if (_presetChannel) {
 				clearDragOver();
 				return;
 			}
+			const key = intent.root ? 'root' : `${getDropTargetId(intent.row)}:${intent.side}`;
+			if (key && key === lastDropKey) return;
+			lastDropKey = key;
 			if (intent.root) setRootDropMarker();
 			else setDropMarker(intent.row, intent.side);
 		};
@@ -3723,6 +3870,7 @@ if (_presetChannel) {
 			return true;
 		};
 		list.ondragover = handleControlDragOver;
+		list.addEventListener('scroll', invalidateDropMetrics, { passive: true });
 		list.ondragleave = (e) => {
 			if (!list.contains(e.relatedTarget)) clearDragOver();
 		};
@@ -3837,6 +3985,8 @@ if (_presetChannel) {
 					draggingId = item.id;
 					draggingType = 'folder';
 					draggingIds = new Set([String(item.id)]);
+					draggingItems = [];
+					invalidateDropMetrics();
 					markDraggingRows(true);
 					if (e.dataTransfer) {
 						e.dataTransfer.effectAllowed = 'move';
@@ -3849,6 +3999,8 @@ if (_presetChannel) {
 					draggingId = null;
 					draggingType = '';
 					draggingIds = new Set();
+					draggingItems = [];
+					invalidateDropMetrics();
 					list.dataset.lastDragTs = String(Date.now());
 				});
 				row.addEventListener('dragover', (e) => {
@@ -3921,6 +4073,7 @@ if (_presetChannel) {
 				const ts = Number(list.dataset.lastDragTs || 0);
 				if (ts && (Date.now() - ts) < 250) return;
 				if (e.ctrlKey || e.metaKey) {
+					includeCurrentDialogInFreshMultiSelection(item.id);
 					_toggleDialogControlMultiSelection(item.id, items);
 					syncMultiSelectionInPanel();
 					return;
@@ -3952,7 +4105,14 @@ if (_presetChannel) {
 				draggingId = item.id;
 				draggingType = 'dialog';
 				draggingIds = new Set(_getDialogControlMoveGroupIds(item.id, items));
+				draggingItems = items.filter(candidate => !_isDialogControlFolder(candidate) && draggingIds.has(String(candidate.id)));
+				invalidateDropMetrics();
 				markDraggingRows(true);
+				if (draggingIds.size > 1) {
+					row.classList.add('--drag-origin');
+					row.dataset.dragCount = String(draggingIds.size);
+					setMultiDragImage(e, draggingIds.size);
+				}
 				if (e.dataTransfer) {
 					e.dataTransfer.effectAllowed = 'move';
 					try { e.dataTransfer.setData('text/plain', Array.from(draggingIds).join(',')); } catch {}
@@ -3964,6 +4124,8 @@ if (_presetChannel) {
 				draggingId = null;
 				draggingType = '';
 				draggingIds = new Set();
+				draggingItems = [];
+				invalidateDropMetrics();
 				list.dataset.lastDragTs = String(Date.now());
 			});
 			row.addEventListener('dragover', (e) => {
@@ -4702,8 +4864,6 @@ if (_presetChannel) {
 		function uiFromFilters(host){
 			host.querySelector('#anit_unread').checked = !!filters.unreadOnly;
 			host.querySelector('#anit_query').value = String(filters.query || '');
-			const hc = host.querySelector('#anit_hide_completed');
-			if (hc) hc.checked = !!filters.hideCompletedTasks;
 			updateTypeChipsUI(host);
 			if (host.querySelector('#anit_project_input')) {
 				try { syncProjectInputFromFilters?.(); } catch {}
@@ -4740,7 +4900,6 @@ if (_presetChannel) {
 		function filtersFromUI(host){
 			filters.unreadOnly = host.querySelector('#anit_unread').checked;
 			filters.query      = host.querySelector('#anit_query').value;
-			filters.hideCompletedTasks = host.querySelector('#anit_hide_completed')?.checked || false;
 				filters.typesSelected = readTypesFromUI(host);
 			const pInp = host.querySelector('#anit_project_input');
 			if (pInp) {
@@ -5244,7 +5403,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-logo-fallback{width:20px;height:20px;border-radius:var(--pena-radius);display:inline-flex;align-items:center;justify-content:center;background:#1e2024;color:#fff;font-size:10px;font-weight:800;flex:0 0 20px}
 #anit-dialog-control-dock .dialog-control-section{font-size:var(--pena-font-heading);font-weight:700;color:#fff;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #anit-dialog-control-dock .dialog-control-close{width:var(--pena-icon-size);height:var(--pena-icon-size);border:1px solid rgba(255,255,255,.18);border-radius:var(--pena-radius);background:rgba(255,255,255,.04);color:#fff;padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;line-height:1;box-sizing:border-box;flex:0 0 var(--pena-icon-size)}
-#anit-dialog-control-dock .dialog-control-close svg{width:13px;height:13px;display:block;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;opacity:.9}
+#anit-dialog-control-dock .dialog-control-close svg{width:16px;height:16px;display:block;fill:none;stroke:currentColor;stroke-width:2.15;stroke-linecap:round;stroke-linejoin:round;opacity:.94}
 #anit-dialog-control-dock .dialog-control-close:hover{border-color:rgba(255,255,255,.34);background:rgba(255,255,255,.08);transform:translateY(-1px)}
 #anit-dialog-control-dock .dialog-control-close.--active{border-color:rgba(77,157,255,.58);background:rgba(77,157,255,.16);color:#d7eaff}
 #anit-dialog-control-dock .dialog-control-actions{display:flex;align-items:center;justify-content:flex-start;gap:8px;flex:0 0 auto;position:relative;flex-wrap:nowrap;max-width:100%;justify-self:start;margin-left:0;grid-row:2;grid-column:1}
@@ -5321,6 +5480,8 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-chip.--current.--multi-selected{box-shadow:0 0 0 1px rgba(77,157,255,.36) inset,0 0 0 1px rgba(77,157,255,.18)}
 #anit-dialog-control-dock .dialog-control-chip[draggable="true"]{cursor:pointer}
 #anit-dialog-control-dock .dialog-control-chip.--dragging{opacity:.45;cursor:pointer}
+#anit-dialog-control-dock .dialog-control-list.--multi-dragging .dialog-control-chip.--dragging{opacity:.56}
+#anit-dialog-control-dock .dialog-control-chip.--drag-origin[data-drag-count]::after{content:attr(data-drag-count);position:absolute;right:-6px;top:-7px;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:#4d9dff;color:#fff;font-size:10px;font-weight:800;line-height:18px;text-align:center;box-shadow:0 0 0 2px rgba(12,16,24,.96),0 6px 12px rgba(0,0,0,.32);box-sizing:border-box;pointer-events:none}
 #anit-dialog-control-dock .dialog-control-chip.--drop-before::before,#anit-dialog-control-dock .dialog-control-chip.--drop-after::after{content:none}
 #anit-dialog-control-dock .dialog-control-state{width:34px;min-width:34px;height:22px;display:inline-grid;place-items:center;color:#fff;font-size:10px;font-weight:700;font-variant-numeric:tabular-nums;justify-self:center;line-height:0}
 #anit-dialog-control-dock .dialog-control-dot{min-width:18px;height:18px;border-radius:999px;background:rgba(77,157,255,.95);box-shadow:0 0 0 2px rgba(77,157,255,.16);display:inline-grid;place-items:center;box-sizing:border-box;padding:0 5px;line-height:0}
@@ -5384,7 +5545,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-remove svg{width:12px;height:12px;display:block;fill:currentColor}
 #anit-dialog-control-dock.dock-dragging,#anit-dialog-control-dock.dock-dragging .dialog-control-window{cursor:grabbing!important;user-select:none}
 #anit-dialog-control-dock.--cols-2 .dialog-control-list{grid-template-columns:repeat(2,minmax(0,1fr))}
-#anit-dialog-control-dock.--cols-2 .dialog-control-folder{grid-template-columns:18px 22px minmax(0,1fr) 18px 18px;column-gap:5px;padding:4px 5px}
+#anit-dialog-control-dock.--cols-2 .dialog-control-folder{grid-column:1 / -1;grid-template-columns:18px 22px minmax(0,1fr) 18px 18px;column-gap:5px;padding:4px 5px}
 #anit-dialog-control-dock.--cols-2 .dialog-control-folder.--empty-folder{grid-template-columns:22px minmax(0,1fr) 18px 18px}
 #anit-dialog-control-dock.--cols-2 .dialog-control-folder-toggle{width:18px;height:22px;min-height:22px}
 #anit-dialog-control-dock.--cols-2 .dialog-control-folder-toggle svg{width:13px;height:13px}
@@ -5393,7 +5554,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock.--cols-2 .dialog-control-folder-color-wrap,#anit-dialog-control-dock.--cols-2 .dialog-control-folder-remove{width:18px;height:22px;min-height:22px}
 #anit-dialog-control-dock.--cols-2 .dialog-control-folder-color{width:16px;height:16px;min-height:16px}
 #anit-dialog-control-dock.--cols-2 .dialog-control-chip{grid-template-columns:22px minmax(0,1fr) 18px 18px;column-gap:5px;padding:4px 5px}
-#anit-dialog-control-dock.--cols-2 .dialog-control-chip.--in-folder{grid-template-columns:22px minmax(0,1fr) 18px 18px;margin-left:7px;width:calc(100% - 7px)}
+#anit-dialog-control-dock.--cols-2 .dialog-control-chip.--in-folder{grid-column:1 / -1;grid-template-columns:22px minmax(0,1fr) 18px 18px;margin-left:18px;width:calc(100% - 18px)}
 #anit-dialog-control-dock.--cols-2 .dialog-control-state{width:22px;min-width:22px;font-size:9px}
 #anit-dialog-control-dock.--cols-2 .dialog-control-dot:not(.--later){min-width:18px;max-width:22px;height:18px;padding:0 3px}
 #anit-dialog-control-dock.--cols-2 .dialog-control-mention-icon{width:10px;height:10px}
@@ -5545,9 +5706,6 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
     <div class="group-title">Быстрые фильтры</div>
     <div class="row">
     <label><input type="checkbox" id="anit_unread"> Непрочитанные</label>
-	${isTasksMode ? `
-	  <label><input type="checkbox" id="anit_hide_completed"> Скрыть завершённые</label>
-	` : ``}
     </div>
     ${IS_OL_FRAME ? `<div class="row">
       <label><input type="checkbox" id="anit_wa"> WhatsApp</label>
@@ -6370,7 +6528,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.19';
+	if (_verBadge) _verBadge.textContent = 'v7.1.20';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
@@ -6491,8 +6649,6 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	host.querySelector('#anit_unread').checked = !!filters.unreadOnly;
 	host.querySelector('#anit_query').value = String(filters.query || '');
-	const hc = host.querySelector('#anit_hide_completed');
-	if (hc) hc.checked = !!filters.hideCompletedTasks;
 
 	if (!isTasksMode) {
 		updateTypeChipsUI(host);
@@ -6507,12 +6663,11 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 	// Не вмешиваемся в процесс сброса (change-события чекбоксов могут стрелять в ходе reset)
 	if (_isResetting) return;
 	// При активном пресете без debug-режима: разрешаем только unreadOnly,
-	// hideCompletedTasks, текстовый поиск и сброс; остальные изменения отклоняем
+		// Текстовый поиск и сброс остаются временными поверх пресета; остальные изменения отклоняем
 	const _presetLocked = _getActiveId() && !_debugModeActive;
 	if (_presetLocked) {
 		// Поиск остаётся временным фильтром поверх пресета и не должен менять его снимок.
 		filters.unreadOnly        = host.querySelector('#anit_unread')?.checked || false;
-		filters.hideCompletedTasks = host.querySelector('#anit_hide_completed')?.checked || false;
 		filters.query             = host.querySelector('#anit_query')?.value || '';
 		persistFilters({ excludeQuery: true });
 		applyFilters();
@@ -6520,7 +6675,6 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 	}
 	filters.unreadOnly = host.querySelector('#anit_unread').checked;
 	filters.query      = host.querySelector('#anit_query').value;
-	filters.hideCompletedTasks = host.querySelector('#anit_hide_completed')?.checked || false;
 
 	if (!isTasksMode){
 	filters.typesSelected = readTypesFromUI(host);
@@ -6587,8 +6741,6 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 	if (_ixChipsR) _ixChipsR.querySelectorAll('.kw-tag-chip').forEach(c => c.classList.remove('is-active'));
 	try { renderTypeChips(); } catch(e){}
 	host.querySelector('#anit_unread').checked = false;
-	const hc = host.querySelector('#anit_hide_completed');
-	if (hc) hc.checked = false;
 	host.querySelector('#anit_query').value = '';
 	if (!isTasksMode) {
 		host.querySelectorAll('#anit_types .anit-type-chip').forEach(btn => { btn.classList.remove('is-selected'); btn.setAttribute('aria-pressed','false'); });
