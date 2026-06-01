@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.26';
+	window.__ANITREC_RUNNING__ = '7.1.27';
 
-	const VER = '7.1.26';
+	const VER = '7.1.27';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -3243,6 +3243,7 @@ if (_presetChannel) {
 			const next = dock.classList.contains('--cols-2') ? 1 : 2;
 			_applyDialogDockColumns(dock, next);
 			_syncDialogDockWidthToPanel(panelHost, !!_getDialogControlItems().length);
+			_refreshDialogControlPanel(panelHost, true);
 			_saveDialogDockState();
 		});
 		dock.querySelector('.dialog-control-mode-btn')?.addEventListener('click', (e) => {
@@ -3549,6 +3550,14 @@ if (_presetChannel) {
 			const column = row?.closest?.('.dialog-control-column') || null;
 			if (column && list.contains(column)) {
 				const box = getElementDropBox(column);
+				const inset = 4;
+				return {
+					left: Math.max(4, box.left + inset),
+					width: Math.max(24, box.width - inset * 2)
+				};
+			}
+			if (panel?.classList?.contains('--cols-2') && row) {
+				const box = getElementDropBox(row);
 				const inset = 4;
 				return {
 					left: Math.max(4, box.left + inset),
@@ -6695,7 +6704,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.26';
+	if (_verBadge) _verBadge.textContent = 'v7.1.27';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
