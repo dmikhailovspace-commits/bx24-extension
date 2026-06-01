@@ -1,4 +1,4 @@
-﻿
+
 
 	// URL логотипа: через data-атрибут (обычная инъекция) или через глобал (executeScript-инъекция)
 	const _PENA_LOGO_URL = (function() {
@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.24';
+	window.__ANITREC_RUNNING__ = '7.1.25';
 
-	const VER = '7.1.24';
+	const VER = '7.1.25';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -4014,8 +4014,9 @@ if (_presetChannel) {
 			masonryColumns[idx].appendChild(node);
 			masonryWeights[idx] += Math.max(1, Number(weight) || 1);
 		};
-		const getFolderUnitWeight = (folderStatus, folderItem) => {
-			if (!folderStatus?.childCount || folderItem?.collapsed) return 1;
+		const getFolderUnitWeight = (folderStatus) => {
+			// Keep masonry assignment stable when a folder is collapsed or expanded.
+			if (!folderStatus?.childCount) return 1;
 			return 1 + folderStatus.childCount;
 		};
 		const folderGroupMap = new Map();
@@ -4165,7 +4166,7 @@ if (_presetChannel) {
 				if (toggleFolder) row.append(toggleFolder, folderState, titleInp, colorWrap, rmFolder);
 				else row.append(folderState, titleInp, colorWrap, rmFolder);
 				folderGroup.appendChild(row);
-				appendRootControlUnit(folderGroup, getFolderUnitWeight(folderStatus, item));
+				appendRootControlUnit(folderGroup, getFolderUnitWeight(folderStatus));
 				return;
 			}
 			if (item.folderId && folderMap.get(String(item.folderId))?.collapsed) return;
@@ -6688,7 +6689,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.24';
+	if (_verBadge) _verBadge.textContent = 'v7.1.25';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
