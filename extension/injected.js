@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.23';
+	window.__ANITREC_RUNNING__ = '7.1.24';
 
-	const VER = '7.1.23';
+	const VER = '7.1.24';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -3445,10 +3445,12 @@ if (_presetChannel) {
 		let dropSide = 'before';
 		let dropIntent = null;
 		let dropRowsCache = null;
+		let dropColumnsCache = null;
 		let visibleFolderChildrenCache = null;
 		let lastDropKey = '';
 		const invalidateDropMetrics = () => {
 			dropRowsCache = null;
+			dropColumnsCache = null;
 			visibleFolderChildrenCache = null;
 			lastDropKey = '';
 		};
@@ -3529,15 +3531,39 @@ if (_presetChannel) {
 			lastDropKey = '';
 			hideDropLine();
 		};
-		const getRowBoxInList = (row) => {
+		const getElementBoxInList = (el) => {
 			const listRect = list.getBoundingClientRect();
-			const rect = row.getBoundingClientRect();
+			const rect = el.getBoundingClientRect();
 			return {
 				top: rect.top - listRect.top + list.scrollTop,
 				left: rect.left - listRect.left + list.scrollLeft,
 				width: rect.width,
 				height: rect.height
 			};
+		};
+		const getRowBoxInList = (row) => getElementBoxInList(row);
+		const getDropLineScopeBox = (row) => {
+			const column = row?.closest?.('.dialog-control-column') || null;
+			if (column && list.contains(column)) {
+				const box = getElementBoxInList(column);
+				const inset = 4;
+				return {
+					left: Math.max(4, box.left + inset),
+					width: Math.max(24, box.width - inset * 2)
+				};
+			}
+			return {
+				left: 8,
+				width: Math.max(24, list.clientWidth - 16)
+			};
+		};
+		const setDropLineBox = (top, left, width) => {
+			const safeLeft = Math.max(4, Math.min(left, Math.max(4, list.clientWidth - 24)));
+			const maxWidth = Math.max(24, list.clientWidth - safeLeft - 4);
+			dropLine.style.top = Math.max(1, top) + 'px';
+			dropLine.style.left = safeLeft + 'px';
+			dropLine.style.width = Math.max(24, Math.min(width, maxWidth)) + 'px';
+			dropLine.style.right = 'auto';
 		};
 		const setDropMarker = (row, side) => {
 			if (!row) {
@@ -3572,12 +3598,15 @@ if (_presetChannel) {
 				? markerBox.top - 3
 				: markerBox.top + markerBox.height + 3;
 			const isFolderAfter = side === 'folder-after';
-			const folderStartIndent = side === 'folder-start' && row?.dataset?.folderId ? 18 : 8;
-			const left = isFolderAfter || hierarchyUp ? 8 : Math.max(8, markerBox.left + folderStartIndent);
-			const right = isFolderAfter || hierarchyUp ? 8 : Math.max(8, list.clientWidth - (markerBox.left + markerBox.width) + 8);
-			dropLine.style.top = Math.max(1, top) + 'px';
-			dropLine.style.left = left + 'px';
-			dropLine.style.right = right + 'px';
+			const scopeBox = getDropLineScopeBox(markerRow);
+			let lineLeft = scopeBox.left;
+			let lineWidth = scopeBox.width;
+			if (!isFolderAfter && !hierarchyUp) {
+				const indent = side === 'folder-start' && row?.dataset?.folderId ? 18 : 0;
+				lineLeft = Math.max(4, markerBox.left + indent);
+				lineWidth = Math.max(24, markerBox.width - indent);
+			}
+			setDropLineBox(top, lineLeft, lineWidth);
 			dropLine.classList.add('--show');
 		};
 		const getVisibleDropRows = () => Array.from(list.querySelectorAll('.dialog-control-folder,.dialog-control-chip'));
@@ -3607,9 +3636,7 @@ if (_presetChannel) {
 				return Math.max(max, box.top + box.height);
 			}, -Infinity);
 			const top = Number.isFinite(bottom) ? bottom + 3 : 4;
-			dropLine.style.top = Math.max(1, top) + 'px';
-			dropLine.style.left = '8px';
-			dropLine.style.right = '8px';
+			setDropLineBox(top, 8, Math.max(24, list.clientWidth - 16));
 			dropLine.classList.add('--show');
 		};
 		const hasVisibleFolderChildren = (folderId) => {
@@ -3762,9 +3789,36 @@ if (_presetChannel) {
 				.filter(info => info.rect.width && info.rect.height);
 			return dropRowsCache;
 		};
+		const getDropColumnInfos = () => {
+			if (dropColumnsCache) return dropColumnsCache;
+			dropColumnsCache = Array.from(list.children)
+				.filter(el => el.classList?.contains('dialog-control-column'))
+				.map(el => ({ el, rect: el.getBoundingClientRect() }))
+				.filter(info => info.rect.width && info.rect.height);
+			return dropColumnsCache;
+		};
+		const getActiveDropColumnInfo = (clientX) => {
+			const columns = getDropColumnInfos();
+			if (!columns.length) return null;
+			const inside = columns.find(info => clientX >= info.rect.left && clientX <= info.rect.right);
+			if (inside) return inside;
+			return columns.reduce((best, info) => {
+				const distance = clientX < info.rect.left
+					? info.rect.left - clientX
+					: clientX - info.rect.right;
+				return !best || distance < best.distance ? { ...info, distance } : best;
+			}, null);
+		};
+		const getDropRowInfosForPointer = (clientX) => {
+			const rows = getDropRowInfos();
+			const column = getActiveDropColumnInfo(clientX);
+			if (!column) return rows;
+			const scoped = rows.filter(info => column.el.contains(info.row));
+			return scoped.length ? scoped : rows;
+		};
 		const getNearestDropTarget = (clientX, clientY) => {
 			let best = null;
-			getDropRowInfos().forEach(({ row, rect }) => {
+			getDropRowInfosForPointer(clientX).forEach(({ row, rect }) => {
 				const x = Math.max(rect.left, Math.min(clientX, rect.right));
 				if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
 					const intent = getDropIntentForRow(row, clientY, { gap: false }, rect);
@@ -3826,7 +3880,19 @@ if (_presetChannel) {
 				clearDragOver();
 				return;
 			}
-			const key = intent.root ? 'root' : `${getDropTargetId(intent.row)}:${intent.side}`;
+			const makeDropKey = () => {
+				if (intent.root) {
+					const rows = getDropRowInfos();
+					const bottom = rows.reduce((max, info) => Math.max(max, Math.round(info.rect.bottom)), -Infinity);
+					return `root:${bottom}:${Math.round(list.scrollTop)}:${list.clientWidth}`;
+				}
+				const markerRow = intent.side === 'folder-after' && intent.row?.dataset?.folderId
+					? (getLastVisibleFolderChildRow(intent.row.dataset.folderId) || intent.row)
+					: intent.row;
+				const box = markerRow ? getRowBoxInList(markerRow) : null;
+				return `${getDropTargetId(intent.row)}:${intent.side}:${Math.round(box?.top || 0)}:${Math.round(box?.left || 0)}:${Math.round(box?.width || 0)}`;
+			};
+			const key = makeDropKey();
 			if (key && key === lastDropKey) return;
 			lastDropKey = key;
 			if (intent.root) setRootDropMarker();
@@ -5514,7 +5580,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-drop-line{position:absolute;height:2px;border-radius:999px;background:transparent;box-shadow:none;opacity:0;pointer-events:none;z-index:5;transform:translateY(-50%)}
 #anit-dialog-control-dock .dialog-control-drop-line.--show{opacity:1}
 #anit-dialog-control-dock .dialog-control-drop-line.--neutral,#anit-dialog-control-dock .dialog-control-drop-line.--folder-start,#anit-dialog-control-dock .dialog-control-drop-line.--folder-end{height:2px;background:#4d9dff;box-shadow:0 0 0 1px rgba(77,157,255,.22),0 0 12px rgba(77,157,255,.36)}
-#anit-dialog-control-dock .dialog-control-drop-line.--folder-after,#anit-dialog-control-dock .dialog-control-drop-line.--hierarchy-up{height:3px;background:#f59e0b;box-shadow:0 0 0 1px rgba(245,158,11,.24),0 0 14px rgba(245,158,11,.44);left:8px!important;right:8px!important}
+#anit-dialog-control-dock .dialog-control-drop-line.--folder-after,#anit-dialog-control-dock .dialog-control-drop-line.--hierarchy-up{height:3px;background:#f59e0b;box-shadow:0 0 0 1px rgba(245,158,11,.24),0 0 14px rgba(245,158,11,.44)}
 #anit-dialog-control-dock .dialog-control-list::-webkit-scrollbar{width:5px;height:5px}
 #anit-dialog-control-dock .dialog-control-list::-webkit-scrollbar-track{background:rgba(255,255,255,.06);border-radius:var(--pena-radius)}
 #anit-dialog-control-dock .dialog-control-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.28);border-radius:var(--pena-radius)}
@@ -6622,7 +6688,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.23';
+	if (_verBadge) _verBadge.textContent = 'v7.1.24';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
