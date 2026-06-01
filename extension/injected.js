@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.13';
+	window.__ANITREC_RUNNING__ = '7.1.14';
 
-	const VER = '7.1.13';
+	const VER = '7.1.14';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -787,6 +787,7 @@ let _dialogControlActive = false;
 let _dialogControlTimer = null;
 let _dialogControlItems = {};
 let _dialogControlMultiSelected = new Set();
+let _dialogControlCurrentIds = { chats: null, tasks: null };
 let _dialogControlMissTimer = null;
 	let _dialogControlRefreshTimer = null;
 	let _dialogControlLastSig = '';
@@ -1337,6 +1338,47 @@ if (_presetChannel) {
 			return selected.map(x => String(x.id));
 		}
 		return id ? [id] : [];
+	}
+
+	function _setDialogControlCurrentId(dialogId) {
+		if (!_dialogControlCurrentIds || typeof _dialogControlCurrentIds !== 'object') _dialogControlCurrentIds = { chats: null, tasks: null };
+		_dialogControlCurrentIds[_pMode()] = dialogId ? normId(dialogId) : null;
+	}
+
+	function _isLikelyActiveChatElement(el) {
+		if (!el) return false;
+		const className = String(el.className || '').replace(/\banit-dialog-control-selected\b/g, '');
+		const own = [
+			className,
+			el.getAttribute?.('aria-selected'),
+			el.getAttribute?.('aria-current'),
+			el.getAttribute?.('data-selected'),
+			el.getAttribute?.('data-active')
+		].join(' ');
+		if (/(^|\s|_|-)(selected|active|current|opened)(\s|_|-|$)/i.test(own)) return true;
+		try {
+			return !!el.querySelector?.('[aria-selected="true"],[aria-current="true"],[data-selected="true"],[data-active="true"],[class*="--selected"],[class*="--active"],[class*="_selected"],[class*="_active"]');
+		} catch {}
+		return false;
+	}
+
+	function _getDialogControlCurrentId(items = _getDialogControlItems(), visibleChatIndex = null) {
+		if (!_dialogControlCurrentIds || typeof _dialogControlCurrentIds !== 'object') _dialogControlCurrentIds = { chats: null, tasks: null };
+		const ids = new Set((Array.isArray(items) ? items : [])
+			.filter(item => !_isDialogControlFolder(item))
+			.map(item => normId(item.id))
+			.filter(Boolean));
+		const stored = normId(_dialogControlCurrentIds[_pMode()]);
+		if (stored && ids.has(stored)) return stored;
+		if (stored && !ids.has(stored)) _dialogControlCurrentIds[_pMode()] = null;
+		const index = visibleChatIndex || buildChatElementIndex();
+		for (const [id, el] of index.entries()) {
+			if (ids.has(normId(id)) && _isLikelyActiveChatElement(el)) {
+				_setDialogControlCurrentId(id);
+				return normId(id);
+			}
+		}
+		return '';
 	}
 
 	const _DIALOG_CONTROL_EMPTY_FOLDER_GRACE_MS = 45000;
@@ -3226,6 +3268,26 @@ if (_presetChannel) {
 			if (_syncDialogControlItemTitleFromElement(item, visibleChatIndex)) titlesChanged = true;
 		});
 		const multiSelectedCount = _getDialogControlMultiSelectedItems(items).length;
+		const currentDialogId = _getDialogControlCurrentId(items, visibleChatIndex);
+		const clearMultiSelectionInPanel = () => {
+			const changed = _clearDialogControlMultiSelection();
+			if (!changed) return false;
+			list.querySelectorAll('.dialog-control-chip.--multi-selected').forEach(el => {
+				el.classList.remove('--multi-selected');
+				el.setAttribute('aria-selected', 'false');
+			});
+			return true;
+		};
+		panel._penaClearDialogControlMultiSelection = clearMultiSelectionInPanel;
+		if (!panel._penaMultiSelectionClearAttached) {
+			panel._penaMultiSelectionClearAttached = true;
+			panel.addEventListener('click', (e) => {
+				const targetEl = e.target?.nodeType === 1 ? e.target : e.target?.parentElement || null;
+				if (targetEl?.closest?.('.dialog-control-chip')) return;
+				if (targetEl?.closest?.('button,input,select,textarea,a,[contenteditable],.dialog-control-palette')) return;
+				panel._penaClearDialogControlMultiSelection?.();
+			});
+		}
 		const hideDropLine = () => {
 			dropLine.classList.remove('--show', '--neutral', '--folder-start', '--folder-after', '--folder-end', '--hierarchy-up', '--root');
 			dropLine.removeAttribute('style');
@@ -3496,6 +3558,12 @@ if (_presetChannel) {
 			if (!list.contains(e.relatedTarget)) clearDragOver();
 		};
 		list.ondrop = applyCurrentDrop;
+		list.addEventListener('click', (e) => {
+			const targetEl = getEventElement(e.target);
+			if (targetEl?.closest?.('.dialog-control-chip')) return;
+			if (targetEl?.closest?.('button,input,select,textarea,a,[contenteditable],.dialog-control-palette')) return;
+			clearMultiSelectionInPanel();
+		});
 		items.forEach(item => {
 			if (_isDialogControlFolder(item)) {
 				const folderStatus = _getDialogControlFolderStatus(item.id, items, visibleChatIndex);
@@ -3646,13 +3714,16 @@ if (_presetChannel) {
 			row.className = 'dialog-control-chip';
 			row.draggable = true;
 			const isMultiSelected = _dialogControlMultiSelected.has(String(item.id));
+			const isCurrentDialog = !!currentDialogId && normId(item.id) === currentDialogId;
 			row.classList.toggle('--unread', isUnread);
 			row.classList.toggle('--later', !!meta?.hasLater && !meta?.hasUnread);
 			row.classList.toggle('--mention', !!meta?.hasMention);
 			row.classList.toggle('--in-folder', !!parentFolder);
 			row.classList.toggle('--folder-colored', !!folderColor);
 			row.classList.toggle('--multi-selected', isMultiSelected);
+			row.classList.toggle('--current', isCurrentDialog);
 			row.setAttribute('aria-selected', isMultiSelected ? 'true' : 'false');
+			row.setAttribute('aria-current', isCurrentDialog ? 'true' : 'false');
 			const chipColor = _normalizeDialogControlColor(item.color);
 			const effectiveChipColor = chipColor;
 			row.classList.toggle('--colored', !!effectiveChipColor);
@@ -3662,6 +3733,15 @@ if (_presetChannel) {
 			row.title = _pMode() === 'tasks'
 				? 'Открыть задачу; Ctrl+клик — мультивыбор'
 				: 'Открыть диалог; Ctrl+клик — мультивыбор';
+			const markCurrentRow = () => {
+				_setDialogControlCurrentId(item.id);
+				list.querySelectorAll('.dialog-control-chip.--current').forEach(el => {
+					el.classList.remove('--current');
+					el.setAttribute('aria-current', 'false');
+				});
+				row.classList.add('--current');
+				row.setAttribute('aria-current', 'true');
+			};
 			row.addEventListener('click', async (e) => {
 				e.preventDefault();
 				e.stopPropagation();
@@ -3674,17 +3754,21 @@ if (_presetChannel) {
 					_renderDialogControlPanel(h);
 					return;
 				}
-				const hadMultiSelection = _clearDialogControlMultiSelection();
-				if (hadMultiSelection) {
-					list.querySelectorAll('.dialog-control-chip.--multi-selected').forEach(el => {
-						el.classList.remove('--multi-selected');
-						el.setAttribute('aria-selected', 'false');
-					});
+				clearMultiSelectionInPanel();
+				if (_pMode() === 'tasks' && _isTaskViewRouteNow() && await _openTaskForDialogControlItem(item)) {
+					markCurrentRow();
+					return;
 				}
-				if (_pMode() === 'tasks' && _isTaskViewRouteNow() && await _openTaskForDialogControlItem(item)) return;
 				const targetEl = findChatElementById(item.id);
-				if (!targetEl || !openChatElement(targetEl)) {
-					if (_pMode() === 'tasks' && await _openTaskForDialogControlItem(item)) return;
+				if (targetEl && openChatElement(targetEl)) {
+					markCurrentRow();
+					return;
+				}
+				if (_pMode() === 'tasks' && await _openTaskForDialogControlItem(item)) {
+					markCurrentRow();
+					return;
+				}
+				if (!targetEl) {
 					_showDialogDockToast(_pMode() === 'tasks' ? 'Задача не найдена в текущей ленте' : 'Диалог не найден в текущей ленте', 'danger');
 				}
 			});
@@ -5051,8 +5135,12 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-chip.--colored::before{content:"";position:absolute;left:0;top:6px;bottom:6px;width:3px;border-radius:0 999px 999px 0;background:var(--dialog-chip-color);box-shadow:0 0 12px var(--dialog-chip-shadow);pointer-events:none}
 #anit-dialog-control-dock .dialog-control-chip:hover{border-color:rgba(77,157,255,.5);background:rgba(77,157,255,.1);transform:none}
 #anit-dialog-control-dock .dialog-control-chip.--colored:hover{border-color:var(--dialog-chip-border-hover);background:linear-gradient(90deg,var(--dialog-chip-bg-hover),rgba(77,157,255,.1) 62%)}
+#anit-dialog-control-dock .dialog-control-chip.--current{border-color:rgba(245,158,11,.86);background:linear-gradient(90deg,rgba(245,158,11,.22),rgba(255,255,255,.055));box-shadow:0 0 0 1px rgba(245,158,11,.28) inset,0 0 0 1px rgba(245,158,11,.16)}
+#anit-dialog-control-dock .dialog-control-chip.--current::after{content:"";position:absolute;inset:-2px;border:1px solid rgba(245,158,11,.52);border-radius:calc(var(--pena-radius) + 2px);pointer-events:none}
+#anit-dialog-control-dock .dialog-control-chip.--current.--colored{background:linear-gradient(90deg,var(--dialog-chip-bg),rgba(245,158,11,.18) 62%)}
 #anit-dialog-control-dock .dialog-control-chip.--multi-selected{border-color:rgba(77,157,255,.9);background:linear-gradient(90deg,rgba(77,157,255,.24),rgba(255,255,255,.055));box-shadow:0 0 0 1px rgba(77,157,255,.3) inset,0 0 0 1px rgba(77,157,255,.18)}
 #anit-dialog-control-dock .dialog-control-chip.--multi-selected.--colored{background:linear-gradient(90deg,var(--dialog-chip-bg),rgba(77,157,255,.16) 62%)}
+#anit-dialog-control-dock .dialog-control-chip.--current.--multi-selected{box-shadow:0 0 0 1px rgba(77,157,255,.26) inset,0 0 0 2px rgba(245,158,11,.28)}
 #anit-dialog-control-dock .dialog-control-chip[draggable="true"]{cursor:pointer}
 #anit-dialog-control-dock .dialog-control-chip.--dragging{opacity:.45;cursor:pointer}
 #anit-dialog-control-dock .dialog-control-chip.--drop-before::before,#anit-dialog-control-dock .dialog-control-chip.--drop-after::after{content:none}
@@ -6104,7 +6192,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.13';
+	if (_verBadge) _verBadge.textContent = 'v7.1.14';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
