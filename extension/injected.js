@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.22';
+	window.__ANITREC_RUNNING__ = '7.1.23';
 
-	const VER = '7.1.22';
+	const VER = '7.1.23';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -3807,16 +3807,19 @@ if (_presetChannel) {
 			const itemsNow = _getDialogControlItems();
 			const moved = itemsNow.filter(item => !_isDialogControlFolder(item) && ids.includes(String(item.id)));
 			if (!moved.length) return false;
-			const rootRows = getVisibleDropRows().filter(row => !row.dataset?.parentFolderId && !isDraggingTargetId(getDropTargetId(row)));
-			const lastTargetId = getDropTargetId(rootRows[rootRows.length - 1]);
-			if (!lastTargetId) return _moveDialogControlItemsToRootEnd(ids);
-			return _moveDialogControlItemsRelative(ids, lastTargetId, 'after');
+			return _moveDialogControlItemsToRootEnd(ids);
 		};
 		const moveFolderToRootEnd = (movedId) => {
-			const rootRows = getVisibleDropRows().filter(row => !row.dataset?.parentFolderId && !isDraggingTargetId(getDropTargetId(row)));
-			const lastTargetId = getDropTargetId(rootRows[rootRows.length - 1]);
-			if (!lastTargetId) return false;
-			return _moveDialogControlItemRelative(movedId, lastTargetId, 'after');
+			const itemsNow = _getDialogControlItems();
+			const moved = itemsNow.find(item => _isDialogControlFolder(item) && String(item.id) === String(movedId));
+			if (!moved) return false;
+			const remaining = itemsNow.filter(item => item !== moved);
+			remaining.push(moved);
+			itemsNow.splice(0, itemsNow.length, ...remaining);
+			_dialogControlItems[_pMode()] = itemsNow;
+			_saveDialogControlItems();
+			_dialogControlLastSig = '';
+			return true;
 		};
 		const showDropIntent = (intent) => {
 			if (!intent) {
@@ -3923,11 +3926,38 @@ if (_presetChannel) {
 			if (targetEl?.closest?.('button,input,select,textarea,a,[contenteditable],.dialog-control-palette')) return;
 			clearMultiSelectionInPanel();
 		});
+		const useMasonryColumns = panel.classList.contains('--cols-2');
+		list.classList.toggle('--masonry', useMasonryColumns);
+		const masonryColumns = [];
+		const masonryWeights = [0, 0];
+		if (useMasonryColumns) {
+			for (let i = 0; i < 2; i += 1) {
+				const col = document.createElement('div');
+				col.className = 'dialog-control-column';
+				col.dataset.column = String(i + 1);
+				masonryColumns.push(col);
+				list.appendChild(col);
+			}
+		}
+		const appendRootControlUnit = (node, weight = 1) => {
+			if (!useMasonryColumns) {
+				list.appendChild(node);
+				return;
+			}
+			const idx = masonryWeights[0] <= masonryWeights[1] ? 0 : 1;
+			masonryColumns[idx].appendChild(node);
+			masonryWeights[idx] += Math.max(1, Number(weight) || 1);
+		};
+		const getFolderUnitWeight = (folderStatus, folderItem) => {
+			if (!folderStatus?.childCount || folderItem?.collapsed) return 1;
+			return 1 + folderStatus.childCount;
+		};
 		const folderGroupMap = new Map();
 		const appendDialogControlRow = (row, parentFolder = null) => {
 			const folderId = parentFolder?.id ? String(parentFolder.id) : '';
 			const group = folderId ? folderGroupMap.get(folderId) : null;
-			(group || list).appendChild(row);
+			if (group) group.appendChild(row);
+			else appendRootControlUnit(row, 1);
 		};
 		items.forEach(item => {
 			if (_isDialogControlFolder(item)) {
@@ -4069,7 +4099,7 @@ if (_presetChannel) {
 				if (toggleFolder) row.append(toggleFolder, folderState, titleInp, colorWrap, rmFolder);
 				else row.append(folderState, titleInp, colorWrap, rmFolder);
 				folderGroup.appendChild(row);
-				list.appendChild(folderGroup);
+				appendRootControlUnit(folderGroup, getFolderUnitWeight(folderStatus, item));
 				return;
 			}
 			if (item.folderId && folderMap.get(String(item.folderId))?.collapsed) return;
@@ -5491,6 +5521,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-list::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.42)}
 #anit-dialog-control-dock.--empty .dialog-control-list{display:flex;align-items:flex-start;overflow:hidden;min-height:38px;flex:0 0 auto}
 #anit-dialog-control-dock .dialog-control-empty{display:flex;align-items:center;min-height:38px;color:var(--pena-muted);font-size:var(--pena-font-body);line-height:1.35;padding:0 2px;box-sizing:border-box}
+#anit-dialog-control-dock .dialog-control-column{min-width:0;display:grid;grid-template-columns:1fr;align-content:start;gap:6px}
 #anit-dialog-control-dock .dialog-control-folder-group{min-width:0;width:100%;display:grid;grid-template-columns:1fr;align-content:start;gap:6px;break-inside:avoid}
 #anit-dialog-control-dock .dialog-control-folder{position:relative;width:100%;min-width:0;min-height:32px;display:grid;grid-template-columns:22px 34px minmax(0,1fr) 22px 22px;align-items:center;column-gap:7px;border:1px solid rgba(255,255,255,.16);border-radius:var(--pena-radius);background:rgba(255,255,255,.055);padding:4px 6px 4px 8px;box-sizing:border-box;color:#e7edf6;cursor:pointer;overflow:visible}
 #anit-dialog-control-dock .dialog-control-folder.--empty-folder{grid-template-columns:34px minmax(0,1fr) 22px 22px}
@@ -5606,6 +5637,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-remove svg{width:12px;height:12px;display:block;fill:currentColor}
 #anit-dialog-control-dock.dock-dragging,#anit-dialog-control-dock.dock-dragging .dialog-control-window{cursor:grabbing!important;user-select:none}
 #anit-dialog-control-dock.--cols-2 .dialog-control-list{grid-template-columns:repeat(2,minmax(0,1fr))}
+#anit-dialog-control-dock.--cols-2 .dialog-control-list.--masonry{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}
 #anit-dialog-control-dock.--cols-2 .dialog-control-folder-group{align-self:start}
 #anit-dialog-control-dock.--cols-2 .dialog-control-folder{grid-template-columns:18px 22px minmax(0,1fr) 18px 18px;column-gap:5px;padding:4px 5px}
 #anit-dialog-control-dock.--cols-2 .dialog-control-folder.--empty-folder{grid-template-columns:22px minmax(0,1fr) 18px 18px}
@@ -6590,7 +6622,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.22';
+	if (_verBadge) _verBadge.textContent = 'v7.1.23';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
