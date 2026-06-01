@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.15';
+	window.__ANITREC_RUNNING__ = '7.1.16';
 
-	const VER = '7.1.15';
+	const VER = '7.1.16';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -3354,14 +3354,15 @@ if (_presetChannel) {
 			if (_syncDialogControlItemTitleFromElement(item, visibleChatIndex)) titlesChanged = true;
 		});
 		const multiSelectedCount = _getDialogControlMultiSelectedItems(items).length;
-		const currentDialogId = _getDialogControlCurrentId(items, visibleChatIndex);
-		const clearMultiSelectionInPanel = () => {
+		const currentDialogId = multiSelectedCount > 1 ? null : _getDialogControlCurrentId(items, visibleChatIndex);
+		const clearMultiSelectionInPanel = (options = {}) => {
 			const changed = _clearDialogControlMultiSelection();
 			if (!changed) return false;
 			list.querySelectorAll('.dialog-control-chip.--multi-selected').forEach(el => {
 				el.classList.remove('--multi-selected');
 				el.setAttribute('aria-selected', 'false');
 			});
+			if (options.render) requestAnimationFrame(() => _renderDialogControlPanel(h));
 			return true;
 		};
 		panel._penaClearDialogControlMultiSelection = clearMultiSelectionInPanel;
@@ -3371,8 +3372,19 @@ if (_presetChannel) {
 				const targetEl = e.target?.nodeType === 1 ? e.target : e.target?.parentElement || null;
 				if (targetEl?.closest?.('.dialog-control-chip')) return;
 				if (targetEl?.closest?.('button,input,select,textarea,a,[contenteditable],.dialog-control-palette')) return;
-				panel._penaClearDialogControlMultiSelection?.();
+				panel._penaClearDialogControlMultiSelection?.({ render: true });
 			});
+		}
+		if (!panel._penaOutsideMultiSelectionClearAttached) {
+			panel._penaOutsideMultiSelectionClearAttached = true;
+			document.addEventListener('click', (e) => {
+				const targetEl = e.target?.nodeType === 1 ? e.target : e.target?.parentElement || null;
+				if (!targetEl) return;
+				const dock = document.getElementById('anit-dialog-control-dock');
+				const filtersPanel = document.getElementById('anit-filters');
+				if (dock?.contains(targetEl) || filtersPanel?.contains(targetEl) || targetEl.closest?.('.dialog-control-palette')) return;
+				dock?._penaClearDialogControlMultiSelection?.({ render: true });
+			}, true);
 		}
 		const hideDropLine = () => {
 			dropLine.classList.remove('--show', '--neutral', '--folder-start', '--folder-after', '--folder-end', '--hierarchy-up', '--root');
@@ -3697,7 +3709,7 @@ if (_presetChannel) {
 			const targetEl = getEventElement(e.target);
 			if (targetEl?.closest?.('.dialog-control-chip')) return;
 			if (targetEl?.closest?.('button,input,select,textarea,a,[contenteditable],.dialog-control-palette')) return;
-			clearMultiSelectionInPanel();
+			clearMultiSelectionInPanel({ render: true });
 		});
 		items.forEach(item => {
 			if (_isDialogControlFolder(item)) {
@@ -5273,12 +5285,12 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-chip.--colored::before{content:"";position:absolute;left:0;top:6px;bottom:6px;width:3px;border-radius:0 999px 999px 0;background:var(--dialog-chip-color);box-shadow:0 0 12px var(--dialog-chip-shadow);pointer-events:none}
 #anit-dialog-control-dock .dialog-control-chip:hover{border-color:rgba(77,157,255,.5);background:rgba(77,157,255,.1);transform:none}
 #anit-dialog-control-dock .dialog-control-chip.--colored:hover{border-color:var(--dialog-chip-border-hover);background:linear-gradient(90deg,var(--dialog-chip-bg-hover),rgba(77,157,255,.1) 62%)}
-#anit-dialog-control-dock .dialog-control-chip.--current{border-color:rgba(245,158,11,.86);background:linear-gradient(90deg,rgba(245,158,11,.22),rgba(255,255,255,.055));box-shadow:0 0 0 1px rgba(245,158,11,.28) inset,0 0 0 1px rgba(245,158,11,.16)}
-#anit-dialog-control-dock .dialog-control-chip.--current::after{content:"";position:absolute;inset:-2px;border:1px solid rgba(245,158,11,.52);border-radius:calc(var(--pena-radius) + 2px);pointer-events:none}
-#anit-dialog-control-dock .dialog-control-chip.--current.--colored{background:linear-gradient(90deg,var(--dialog-chip-bg),rgba(245,158,11,.18) 62%)}
+#anit-dialog-control-dock .dialog-control-chip.--current{border-color:rgba(77,157,255,.78);box-shadow:0 0 0 1px rgba(77,157,255,.34) inset}
+#anit-dialog-control-dock .dialog-control-chip.--current::after{content:"";position:absolute;inset:-2px;border:1px solid rgba(77,157,255,.38);border-radius:calc(var(--pena-radius) + 2px);pointer-events:none}
+#anit-dialog-control-dock .dialog-control-chip.--current.--colored{background:linear-gradient(90deg,var(--dialog-chip-bg),rgba(255,255,255,.04) 62%)}
 #anit-dialog-control-dock .dialog-control-chip.--multi-selected{border-color:rgba(77,157,255,.9);background:linear-gradient(90deg,rgba(77,157,255,.24),rgba(255,255,255,.055));box-shadow:0 0 0 1px rgba(77,157,255,.3) inset,0 0 0 1px rgba(77,157,255,.18)}
 #anit-dialog-control-dock .dialog-control-chip.--multi-selected.--colored{background:linear-gradient(90deg,var(--dialog-chip-bg),rgba(77,157,255,.16) 62%)}
-#anit-dialog-control-dock .dialog-control-chip.--current.--multi-selected{box-shadow:0 0 0 1px rgba(77,157,255,.26) inset,0 0 0 2px rgba(245,158,11,.28)}
+#anit-dialog-control-dock .dialog-control-chip.--current.--multi-selected{box-shadow:0 0 0 1px rgba(77,157,255,.36) inset,0 0 0 1px rgba(77,157,255,.18)}
 #anit-dialog-control-dock .dialog-control-chip[draggable="true"]{cursor:pointer}
 #anit-dialog-control-dock .dialog-control-chip.--dragging{opacity:.45;cursor:pointer}
 #anit-dialog-control-dock .dialog-control-chip.--drop-before::before,#anit-dialog-control-dock .dialog-control-chip.--drop-after::after{content:none}
@@ -6330,7 +6342,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.15';
+	if (_verBadge) _verBadge.textContent = 'v7.1.16';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
