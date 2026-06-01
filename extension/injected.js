@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.21';
+	window.__ANITREC_RUNNING__ = '7.1.22';
 
-	const VER = '7.1.21';
+	const VER = '7.1.22';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -3529,6 +3529,16 @@ if (_presetChannel) {
 			lastDropKey = '';
 			hideDropLine();
 		};
+		const getRowBoxInList = (row) => {
+			const listRect = list.getBoundingClientRect();
+			const rect = row.getBoundingClientRect();
+			return {
+				top: rect.top - listRect.top + list.scrollTop,
+				left: rect.left - listRect.left + list.scrollLeft,
+				width: rect.width,
+				height: rect.height
+			};
+		};
 		const setDropMarker = (row, side) => {
 			if (!row) {
 				clearDragOver();
@@ -3557,13 +3567,14 @@ if (_presetChannel) {
 			const markerRow = side === 'folder-after' && row?.dataset?.folderId
 				? (getLastVisibleFolderChildRow(row.dataset.folderId) || row)
 				: row;
+			const markerBox = getRowBoxInList(markerRow);
 			const top = visualSide === 'before'
-				? markerRow.offsetTop - 3
-				: markerRow.offsetTop + markerRow.offsetHeight + 3;
+				? markerBox.top - 3
+				: markerBox.top + markerBox.height + 3;
 			const isFolderAfter = side === 'folder-after';
 			const folderStartIndent = side === 'folder-start' && row?.dataset?.folderId ? 18 : 8;
-			const left = isFolderAfter || hierarchyUp ? 8 : Math.max(8, markerRow.offsetLeft + folderStartIndent);
-			const right = isFolderAfter || hierarchyUp ? 8 : Math.max(8, list.clientWidth - (markerRow.offsetLeft + markerRow.offsetWidth) + 8);
+			const left = isFolderAfter || hierarchyUp ? 8 : Math.max(8, markerBox.left + folderStartIndent);
+			const right = isFolderAfter || hierarchyUp ? 8 : Math.max(8, list.clientWidth - (markerBox.left + markerBox.width) + 8);
 			dropLine.style.top = Math.max(1, top) + 'px';
 			dropLine.style.left = left + 'px';
 			dropLine.style.right = right + 'px';
@@ -3573,7 +3584,7 @@ if (_presetChannel) {
 		const getVisibleFolderChildrenMap = () => {
 			if (visibleFolderChildrenCache) return visibleFolderChildrenCache;
 			const map = new Map();
-			Array.from(list.children).forEach(el => {
+			getVisibleDropRows().forEach(el => {
 				const id = String(el.dataset?.parentFolderId || '');
 				if (!id) return;
 				if (!map.has(id)) map.set(id, []);
@@ -3591,8 +3602,11 @@ if (_presetChannel) {
 			dropLine.classList.remove('--neutral', '--folder-start', '--folder-after', '--folder-end', '--hierarchy-up', '--root');
 			dropLine.classList.add('--hierarchy-up', '--root');
 			const rows = getDropRowInfos();
-			const last = rows[rows.length - 1]?.row || null;
-			const top = last ? last.offsetTop + last.offsetHeight + 3 : 4;
+			const bottom = rows.reduce((max, info) => {
+				const box = getRowBoxInList(info.row);
+				return Math.max(max, box.top + box.height);
+			}, -Infinity);
+			const top = Number.isFinite(bottom) ? bottom + 3 : 4;
 			dropLine.style.top = Math.max(1, top) + 'px';
 			dropLine.style.left = '8px';
 			dropLine.style.right = '8px';
@@ -3604,7 +3618,7 @@ if (_presetChannel) {
 		};
 		const getFolderRow = (folderId) => {
 			const id = String(folderId || '');
-			return Array.from(list.children).find(el => String(el.dataset?.folderId || '') === id) || null;
+			return Array.from(list.querySelectorAll('.dialog-control-folder')).find(el => String(el.dataset?.folderId || '') === id) || null;
 		};
 		const getLastVisibleFolderChildRow = (folderId) => {
 			const id = String(folderId || '');
@@ -3909,10 +3923,20 @@ if (_presetChannel) {
 			if (targetEl?.closest?.('button,input,select,textarea,a,[contenteditable],.dialog-control-palette')) return;
 			clearMultiSelectionInPanel();
 		});
+		const folderGroupMap = new Map();
+		const appendDialogControlRow = (row, parentFolder = null) => {
+			const folderId = parentFolder?.id ? String(parentFolder.id) : '';
+			const group = folderId ? folderGroupMap.get(folderId) : null;
+			(group || list).appendChild(row);
+		};
 		items.forEach(item => {
 			if (_isDialogControlFolder(item)) {
 				const folderStatus = _getDialogControlFolderStatus(item.id, items, visibleChatIndex);
 				if (!folderStatus.childCount && !_shouldKeepEmptyDialogControlFolder(item)) return;
+				const folderGroup = document.createElement('div');
+				folderGroup.className = 'dialog-control-folder-group';
+				folderGroup.dataset.folderGroupId = item.id;
+				folderGroupMap.set(String(item.id), folderGroup);
 				const folderColor = _normalizeDialogControlColor(item.color);
 				const row = document.createElement('div');
 				row.className = 'dialog-control-folder';
@@ -4044,7 +4068,8 @@ if (_presetChannel) {
 				});
 				if (toggleFolder) row.append(toggleFolder, folderState, titleInp, colorWrap, rmFolder);
 				else row.append(folderState, titleInp, colorWrap, rmFolder);
-				list.appendChild(row);
+				folderGroup.appendChild(row);
+				list.appendChild(folderGroup);
 				return;
 			}
 			if (item.folderId && folderMap.get(String(item.folderId))?.collapsed) return;
@@ -4511,7 +4536,7 @@ if (_presetChannel) {
 				);
 			});
 			row.append(state, title, colorWrap, rm);
-			list.appendChild(row);
+			appendDialogControlRow(row, parentFolder);
 		});
 		if (titlesChanged) _saveDialogControlItems();
 		_scheduleDialogControlTitleSync(h);
@@ -5466,6 +5491,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-list::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.42)}
 #anit-dialog-control-dock.--empty .dialog-control-list{display:flex;align-items:flex-start;overflow:hidden;min-height:38px;flex:0 0 auto}
 #anit-dialog-control-dock .dialog-control-empty{display:flex;align-items:center;min-height:38px;color:var(--pena-muted);font-size:var(--pena-font-body);line-height:1.35;padding:0 2px;box-sizing:border-box}
+#anit-dialog-control-dock .dialog-control-folder-group{min-width:0;width:100%;display:grid;grid-template-columns:1fr;align-content:start;gap:6px;break-inside:avoid}
 #anit-dialog-control-dock .dialog-control-folder{position:relative;width:100%;min-width:0;min-height:32px;display:grid;grid-template-columns:22px 34px minmax(0,1fr) 22px 22px;align-items:center;column-gap:7px;border:1px solid rgba(255,255,255,.16);border-radius:var(--pena-radius);background:rgba(255,255,255,.055);padding:4px 6px 4px 8px;box-sizing:border-box;color:#e7edf6;cursor:pointer;overflow:visible}
 #anit-dialog-control-dock .dialog-control-folder.--empty-folder{grid-template-columns:34px minmax(0,1fr) 22px 22px}
 #anit-dialog-control-dock .dialog-control-folder.--colored{border-color:var(--dialog-chip-border);background:linear-gradient(90deg,var(--dialog-chip-bg),rgba(255,255,255,.055) 64%)}
@@ -5580,7 +5606,8 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-remove svg{width:12px;height:12px;display:block;fill:currentColor}
 #anit-dialog-control-dock.dock-dragging,#anit-dialog-control-dock.dock-dragging .dialog-control-window{cursor:grabbing!important;user-select:none}
 #anit-dialog-control-dock.--cols-2 .dialog-control-list{grid-template-columns:repeat(2,minmax(0,1fr))}
-#anit-dialog-control-dock.--cols-2 .dialog-control-folder{grid-column:1 / -1;grid-template-columns:18px 22px minmax(0,1fr) 18px 18px;column-gap:5px;padding:4px 5px}
+#anit-dialog-control-dock.--cols-2 .dialog-control-folder-group{align-self:start}
+#anit-dialog-control-dock.--cols-2 .dialog-control-folder{grid-template-columns:18px 22px minmax(0,1fr) 18px 18px;column-gap:5px;padding:4px 5px}
 #anit-dialog-control-dock.--cols-2 .dialog-control-folder.--empty-folder{grid-template-columns:22px minmax(0,1fr) 18px 18px}
 #anit-dialog-control-dock.--cols-2 .dialog-control-folder-toggle{width:18px;height:22px;min-height:22px}
 #anit-dialog-control-dock.--cols-2 .dialog-control-folder-toggle svg{width:13px;height:13px}
@@ -5589,7 +5616,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock.--cols-2 .dialog-control-folder-color-wrap,#anit-dialog-control-dock.--cols-2 .dialog-control-folder-remove{width:18px;height:22px;min-height:22px}
 #anit-dialog-control-dock.--cols-2 .dialog-control-folder-color{width:16px;height:16px;min-height:16px}
 #anit-dialog-control-dock.--cols-2 .dialog-control-chip{grid-template-columns:22px minmax(0,1fr) 18px 18px;column-gap:5px;padding:4px 5px}
-#anit-dialog-control-dock.--cols-2 .dialog-control-chip.--in-folder{grid-column:1 / -1;grid-template-columns:22px minmax(0,1fr) 18px 18px;margin-left:18px;width:calc(100% - 18px)}
+#anit-dialog-control-dock.--cols-2 .dialog-control-chip.--in-folder{grid-template-columns:22px minmax(0,1fr) 18px 18px;margin-left:10px;width:calc(100% - 10px)}
 #anit-dialog-control-dock.--cols-2 .dialog-control-state{width:22px;min-width:22px;font-size:9px}
 #anit-dialog-control-dock.--cols-2 .dialog-control-dot:not(.--later){min-width:18px;max-width:22px;height:18px;padding:0 3px}
 #anit-dialog-control-dock.--cols-2 .dialog-control-mention-icon{width:10px;height:10px}
@@ -6563,7 +6590,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.21';
+	if (_verBadge) _verBadge.textContent = 'v7.1.22';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
