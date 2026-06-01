@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.25';
+	window.__ANITREC_RUNNING__ = '7.1.26';
 
-	const VER = '7.1.25';
+	const VER = '7.1.26';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -3425,6 +3425,7 @@ if (_presetChannel) {
 		panel.classList.toggle('--empty', !items.length);
 		panel.classList.toggle('--has-items', !!items.length);
 		list.innerHTML = '';
+		document.querySelectorAll('.dialog-control-drop-line[data-dialog-control-drop-line="1"]').forEach(el => el.remove());
 		if (!items.length) {
 			_clearDialogControlMultiSelection();
 			const empty = document.createElement('div');
@@ -3436,7 +3437,8 @@ if (_presetChannel) {
 		}
 		const dropLine = document.createElement('div');
 		dropLine.className = 'dialog-control-drop-line';
-		list.appendChild(dropLine);
+		dropLine.dataset.dialogControlDropLine = '1';
+		document.body.appendChild(dropLine);
 		let draggingId = null;
 		let draggingType = '';
 		let draggingIds = new Set();
@@ -3531,35 +3533,38 @@ if (_presetChannel) {
 			lastDropKey = '';
 			hideDropLine();
 		};
-		const getElementBoxInList = (el) => {
-			const listRect = list.getBoundingClientRect();
+		const getElementDropBox = (el) => {
 			const rect = el.getBoundingClientRect();
 			return {
-				top: rect.top - listRect.top + list.scrollTop,
-				left: rect.left - listRect.left + list.scrollLeft,
+				top: rect.top,
+				left: rect.left,
 				width: rect.width,
-				height: rect.height
+				height: rect.height,
+				right: rect.right,
+				bottom: rect.bottom
 			};
 		};
-		const getRowBoxInList = (row) => getElementBoxInList(row);
+		const getRowBoxInList = (row) => getElementDropBox(row);
 		const getDropLineScopeBox = (row) => {
 			const column = row?.closest?.('.dialog-control-column') || null;
 			if (column && list.contains(column)) {
-				const box = getElementBoxInList(column);
+				const box = getElementDropBox(column);
 				const inset = 4;
 				return {
 					left: Math.max(4, box.left + inset),
 					width: Math.max(24, box.width - inset * 2)
 				};
 			}
+			const listBox = getElementDropBox(list);
 			return {
-				left: 8,
-				width: Math.max(24, list.clientWidth - 16)
+				left: Math.max(4, listBox.left + 8),
+				width: Math.max(24, listBox.width - 16)
 			};
 		};
 		const setDropLineBox = (top, left, width) => {
-			const safeLeft = Math.max(4, Math.min(left, Math.max(4, list.clientWidth - 24)));
-			const maxWidth = Math.max(24, list.clientWidth - safeLeft - 4);
+			const viewportWidth = Math.max(document.documentElement?.clientWidth || 0, window.innerWidth || 0, 0);
+			const safeLeft = Math.max(4, Math.min(left, Math.max(4, viewportWidth - 24)));
+			const maxWidth = Math.max(24, viewportWidth - safeLeft - 4);
 			dropLine.style.top = Math.max(1, top) + 'px';
 			dropLine.style.left = safeLeft + 'px';
 			dropLine.style.width = Math.max(24, Math.min(width, maxWidth)) + 'px';
@@ -3635,8 +3640,9 @@ if (_presetChannel) {
 				const box = getRowBoxInList(info.row);
 				return Math.max(max, box.top + box.height);
 			}, -Infinity);
-			const top = Number.isFinite(bottom) ? bottom + 3 : 4;
-			setDropLineBox(top, 8, Math.max(24, list.clientWidth - 16));
+			const listBox = getElementDropBox(list);
+			const top = Number.isFinite(bottom) ? bottom + 3 : listBox.top + 4;
+			setDropLineBox(top, listBox.left + 8, Math.max(24, listBox.width - 16));
 			dropLine.classList.add('--show');
 		};
 		const hasVisibleFolderChildren = (folderId) => {
@@ -5578,10 +5584,10 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-toast.--ok{border-color:rgba(93,200,126,.5);color:#5dc87e}
 #anit-dialog-control-dock .dialog-control-toast.--danger{border-color:rgba(239,68,68,.5);color:#ffb3b3}
 #anit-dialog-control-dock .dialog-control-list{position:relative;display:grid;grid-template-columns:1fr;align-content:start;gap:6px;min-height:0;flex:1 1 auto;overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.28) rgba(255,255,255,.06);padding-right:6px;padding-bottom:12px}
-#anit-dialog-control-dock .dialog-control-drop-line{position:absolute;height:2px;border-radius:999px;background:transparent;box-shadow:none;opacity:0;pointer-events:none;z-index:5;transform:translateY(-50%)}
-#anit-dialog-control-dock .dialog-control-drop-line.--show{opacity:1}
-#anit-dialog-control-dock .dialog-control-drop-line.--neutral,#anit-dialog-control-dock .dialog-control-drop-line.--folder-start,#anit-dialog-control-dock .dialog-control-drop-line.--folder-end{height:2px;background:#4d9dff;box-shadow:0 0 0 1px rgba(77,157,255,.22),0 0 12px rgba(77,157,255,.36)}
-#anit-dialog-control-dock .dialog-control-drop-line.--folder-after,#anit-dialog-control-dock .dialog-control-drop-line.--hierarchy-up{height:3px;background:#f59e0b;box-shadow:0 0 0 1px rgba(245,158,11,.24),0 0 14px rgba(245,158,11,.44)}
+.dialog-control-drop-line[data-dialog-control-drop-line="1"]{position:fixed;height:2px;border-radius:999px;background:transparent;box-shadow:none;opacity:0;pointer-events:none;z-index:10008;transform:translateY(-50%)}
+.dialog-control-drop-line[data-dialog-control-drop-line="1"].--show{opacity:1}
+.dialog-control-drop-line[data-dialog-control-drop-line="1"].--neutral,.dialog-control-drop-line[data-dialog-control-drop-line="1"].--folder-start,.dialog-control-drop-line[data-dialog-control-drop-line="1"].--folder-end{height:2px;background:#4d9dff;box-shadow:0 0 0 1px rgba(77,157,255,.22),0 0 12px rgba(77,157,255,.36)}
+.dialog-control-drop-line[data-dialog-control-drop-line="1"].--folder-after,.dialog-control-drop-line[data-dialog-control-drop-line="1"].--hierarchy-up{height:3px;background:#f59e0b;box-shadow:0 0 0 1px rgba(245,158,11,.24),0 0 14px rgba(245,158,11,.44)}
 #anit-dialog-control-dock .dialog-control-list::-webkit-scrollbar{width:5px;height:5px}
 #anit-dialog-control-dock .dialog-control-list::-webkit-scrollbar-track{background:rgba(255,255,255,.06);border-radius:var(--pena-radius)}
 #anit-dialog-control-dock .dialog-control-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.28);border-radius:var(--pena-radius)}
@@ -6689,7 +6695,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.25';
+	if (_verBadge) _verBadge.textContent = 'v7.1.26';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
