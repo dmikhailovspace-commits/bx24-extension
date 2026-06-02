@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================
 # PENA Agency — Установщик расширения для Битрикс24
-# Версия: 7.1.33  |  Платформа: macOS  |  Бандл (автономный)
+# Версия: 7.1.34  |  Платформа: macOS  |  Бандл (автономный)
 # ==============================================================
 # Запуск: дважды щёлкните по этому файлу в Finder.
 # Если macOS не даёт открыть — правый клик → Открыть.
@@ -34,7 +34,7 @@ error_exit() {
 
 div
 echo -e "${CYAN}  Сортировщик чатов BX24 — Установщик${NC}"
-echo -e "${CYAN}  для PENA Agency  |  macOS  |  v7.1.33${NC}"
+echo -e "${CYAN}  для PENA Agency  |  macOS  |  v7.1.34${NC}"
 div
 echo ""
 
@@ -143,7 +143,7 @@ LAUNCHER_EOF
     <key>CFBundleName</key>         <string>Bitrix24 (PENA Agency)</string>
     <key>CFBundleDisplayName</key>  <string>Bitrix24 (PENA Agency)</string>
     <key>CFBundlePackageType</key>  <string>APPL</string>
-    <key>CFBundleShortVersionString</key> <string>7.1.33</string>
+    <key>CFBundleShortVersionString</key> <string>7.1.34</string>
     <key>LSMinimumSystemVersion</key>    <string>10.13</string>
     ${ICON_KEY}
 </dict>

@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.33';
+	window.__ANITREC_RUNNING__ = '7.1.34';
 
-	const VER = '7.1.33';
+	const VER = '7.1.34';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -3722,6 +3722,11 @@ if (_presetChannel) {
 		let dropColumnsCache = null;
 		let visibleFolderChildrenCache = null;
 		let lastDropKey = '';
+		let dragAutoScrollFrame = null;
+		let dragAutoScrollX = 0;
+		let dragAutoScrollY = 0;
+		const dragAutoScrollEdge = 42;
+		const dragAutoScrollMaxStep = 18;
 		const invalidateDropMetrics = () => {
 			dropRowsCache = null;
 			dropColumnsCache = null;
@@ -4128,6 +4133,59 @@ if (_presetChannel) {
 			const bottom = rows.reduce((max, info) => Math.max(max, info.rect.bottom), -Infinity);
 			return clientY > bottom + 10;
 		};
+		const getDragAutoScrollIntent = (clientX, clientY) => {
+			if (!draggingId || !list || list.scrollHeight <= list.clientHeight + 1) return null;
+			const rect = list.getBoundingClientRect();
+			const xPad = 24;
+			if (clientX < rect.left - xPad || clientX > rect.right + xPad) return null;
+			const maxScroll = Math.max(0, list.scrollHeight - list.clientHeight);
+			const topDistance = clientY - rect.top;
+			const bottomDistance = rect.bottom - clientY;
+			let dir = 0;
+			let intensity = 0;
+			if (topDistance >= 0 && topDistance < dragAutoScrollEdge && list.scrollTop > 0) {
+				dir = -1;
+				intensity = (dragAutoScrollEdge - topDistance) / dragAutoScrollEdge;
+			} else if (bottomDistance >= 0 && bottomDistance < dragAutoScrollEdge && list.scrollTop < maxScroll - 1) {
+				dir = 1;
+				intensity = (dragAutoScrollEdge - bottomDistance) / dragAutoScrollEdge;
+			}
+			if (!dir) return null;
+			const step = Math.max(3, Math.round(3 + Math.pow(Math.max(0, Math.min(1, intensity)), 1.35) * (dragAutoScrollMaxStep - 3)));
+			return { dir, step, maxScroll };
+		};
+		const stopDragAutoScroll = () => {
+			if (!dragAutoScrollFrame) return;
+			_cancelDialogControlFrame(dragAutoScrollFrame);
+			dragAutoScrollFrame = null;
+		};
+		const runDragAutoScroll = () => {
+			dragAutoScrollFrame = null;
+			const intent = getDragAutoScrollIntent(dragAutoScrollX, dragAutoScrollY);
+			if (!intent) return;
+			const before = list.scrollTop;
+			const next = Math.max(0, Math.min(intent.maxScroll, before + intent.dir * intent.step));
+			if (Math.abs(next - before) > 0.5) {
+				list.scrollTop = next;
+				invalidateDropMetrics();
+				const nearest = getNearestDropTarget(dragAutoScrollX, dragAutoScrollY);
+				if (nearest) showDropIntent(nearest);
+			}
+			if (draggingId && getDragAutoScrollIntent(dragAutoScrollX, dragAutoScrollY)) {
+				dragAutoScrollFrame = _requestDialogControlFrame(runDragAutoScroll);
+			}
+		};
+		const updateDragAutoScroll = (clientX, clientY) => {
+			dragAutoScrollX = clientX;
+			dragAutoScrollY = clientY;
+			const intent = getDragAutoScrollIntent(clientX, clientY);
+			if (!intent) {
+				stopDragAutoScroll();
+				return false;
+			}
+			if (!dragAutoScrollFrame) dragAutoScrollFrame = _requestDialogControlFrame(runDragAutoScroll);
+			return true;
+		};
 		const confirmFolderOut = (moveItems, onOk) => {
 			const group = (Array.isArray(moveItems) ? moveItems : [moveItems]).filter(Boolean);
 			const leaving = group.filter(item => item?.folderId);
@@ -4186,12 +4244,25 @@ if (_presetChannel) {
 		};
 		const updateDropFromPointer = (clientX, clientY) => {
 			if (!draggingId) return null;
+			const autoScrolling = updateDragAutoScroll(clientX, clientY);
+			const nearest = getNearestDropTarget(clientX, clientY);
+			if (nearest) {
+				showDropIntent(nearest);
+				return dropIntent;
+			}
+			if (autoScrolling) {
+				if (dropIntent?.root) {
+					dropIntent = null;
+					dropSide = 'before';
+					hideDropLine();
+				}
+				return dropIntent;
+			}
 			if (isBelowAllDropRows(clientY)) {
 				showDropIntent({ root: true });
 				return dropIntent;
 			}
-			const nearest = getNearestDropTarget(clientX, clientY);
-			showDropIntent(nearest);
+			showDropIntent(null);
 			return dropIntent;
 		};
 		const handleControlDragOver = (e) => {
@@ -4206,6 +4277,7 @@ if (_presetChannel) {
 			if (!draggingId || (draggingType !== 'dialog' && draggingType !== 'folder')) return false;
 			e.preventDefault();
 			e.stopPropagation();
+			stopDragAutoScroll();
 			const movedId = draggingId;
 			const itemsNow = _getDialogControlItems();
 			const item = itemsNow.find(x => String(x.id) === String(movedId));
@@ -4214,6 +4286,7 @@ if (_presetChannel) {
 				? itemsNow.filter(x => !_isDialogControlFolder(x) && moveIds.includes(String(x.id)))
 				: (item ? [item] : []);
 			const intent = dropIntent || updateDropFromPointer(e.clientX, e.clientY);
+			stopDragAutoScroll();
 			const markerRow = intent?.row || overRow;
 			const markerTargetId = getDropTargetId(markerRow);
 			const markerTarget = markerTargetId ? itemsNow.find(x => String(x.id) === String(markerTargetId)) : null;
@@ -4269,7 +4342,10 @@ if (_presetChannel) {
 		list.ondragover = handleControlDragOver;
 		list.addEventListener('scroll', invalidateDropMetrics, { passive: true });
 		list.ondragleave = (e) => {
-			if (!list.contains(e.relatedTarget)) clearDragOver();
+			if (!list.contains(e.relatedTarget)) {
+				stopDragAutoScroll();
+				clearDragOver();
+			}
 		};
 		list.ondrop = applyCurrentDrop;
 		list.addEventListener('click', (e) => {
@@ -4449,6 +4525,7 @@ if (_presetChannel) {
 					}
 				});
 				row.addEventListener('dragend', () => {
+					stopDragAutoScroll();
 					markDraggingRows(false);
 					clearDragOver();
 					draggingId = null;
@@ -4463,7 +4540,10 @@ if (_presetChannel) {
 					handleControlDragOver(e);
 				});
 				row.addEventListener('dragleave', (e) => {
-					if (e.relatedTarget && !list.contains(e.relatedTarget)) clearDragOver();
+					if (e.relatedTarget && !list.contains(e.relatedTarget)) {
+						stopDragAutoScroll();
+						clearDragOver();
+					}
 				});
 				row.addEventListener('drop', (e) => {
 					if (!draggingId || isDraggingTargetId(item.id)) return;
@@ -4574,6 +4654,7 @@ if (_presetChannel) {
 				}
 			});
 			row.addEventListener('dragend', () => {
+				stopDragAutoScroll();
 				markDraggingRows(false);
 				clearDragOver();
 				draggingId = null;
@@ -4588,7 +4669,10 @@ if (_presetChannel) {
 				handleControlDragOver(e);
 			});
 			row.addEventListener('dragleave', (e) => {
-				if (e.relatedTarget && !list.contains(e.relatedTarget)) clearDragOver();
+				if (e.relatedTarget && !list.contains(e.relatedTarget)) {
+					stopDragAutoScroll();
+					clearDragOver();
+				}
 			});
 			row.addEventListener('drop', (e) => {
 				if (!draggingId || isDraggingTargetId(item.id)) return;
@@ -7000,7 +7084,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.33';
+	if (_verBadge) _verBadge.textContent = 'v7.1.34';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
