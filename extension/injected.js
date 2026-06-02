@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.28';
+	window.__ANITREC_RUNNING__ = '7.1.29';
 
-	const VER = '7.1.28';
+	const VER = '7.1.29';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -546,7 +546,7 @@
 	}
 
 	function _getActiveTaskTitleFromTopFrame() {
-		const info = _getTopVisibleDialogControlTaskFrameInfo();
+		const info = _getActiveDialogControlScreenSnapshot().taskFrameInfo;
 		if (!info?.frame) return '';
 		try {
 			const title = _getTaskTitleFromDocument(info.frame.contentDocument || info.frame.contentWindow?.document);
@@ -555,11 +555,40 @@
 		return '';
 	}
 
+	let _dialogControlActiveScreenCache = null;
+	const _DIALOG_CONTROL_ACTIVE_SCREEN_CACHE_MS = 180;
+	function _getDialogControlPerfNow() {
+		try { return performance.now(); } catch { return Date.now(); }
+	}
+
+	function _getActiveDialogControlScreenSnapshot(force = false) {
+		const now = _getDialogControlPerfNow();
+		if (
+			!force &&
+			_dialogControlActiveScreenCache &&
+			(now - _dialogControlActiveScreenCache.ts) < _DIALOG_CONTROL_ACTIVE_SCREEN_CACHE_MS
+		) return _dialogControlActiveScreenCache.value;
+		const taskFrameInfo = _getTopVisibleDialogControlTaskFrameInfo();
+		const routeTaskId = _extractTaskIdFromTaskUrl(`${window.location.pathname || ''}${window.location.search || ''}${window.location.hash || ''}`);
+		const value = {
+			taskFrameInfo,
+			taskId: taskFrameInfo?.taskId || routeTaskId || '',
+			title: undefined
+		};
+		_dialogControlActiveScreenCache = { ts: now, value };
+		return value;
+	}
+
 	function _getActiveDialogTitleFromScreen() {
 		if (IS_OL_FRAME) return '';
 		const clean = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+		const snapshot = _getActiveDialogControlScreenSnapshot();
+		if (snapshot.title !== undefined) return snapshot.title;
 		const topTaskTitle = _getActiveTaskTitleFromTopFrame();
-		if (topTaskTitle) return topTaskTitle;
+		if (topTaskTitle) {
+			snapshot.title = topTaskTitle;
+			return snapshot.title;
+		}
 		const chatSelectors = [
 			'.bx-im-dialog-chat-header__title',
 			'.bx-im-dialog-header__title',
@@ -586,19 +615,18 @@
 				if (!_isVisibleTextNodeCandidate(node)) continue;
 				if (node.closest?.('#anit-filters,#anit-dialog-control-dock,.dialog-control-palette')) continue;
 				const title = clean(node.value || node.getAttribute?.('title') || node.getAttribute?.('aria-label') || node.textContent);
-				if (title && title.length >= 2 && title.length <= 180) return title;
+				if (title && title.length >= 2 && title.length <= 180) {
+					snapshot.title = title;
+					return snapshot.title;
+				}
 			}
 		}
-		return '';
+		snapshot.title = '';
+		return snapshot.title;
 	}
 
 	function _getActiveDialogControlTaskIdFromScreen() {
-		const fromUrl = (value) => _extractTaskIdFromTaskUrl(value || '');
-		const topFrameTaskId = _getTopVisibleDialogControlTaskFrameInfo()?.taskId || '';
-		if (topFrameTaskId) return topFrameTaskId;
-		const current = fromUrl(`${window.location.pathname || ''}${window.location.search || ''}${window.location.hash || ''}`);
-		if (current) return current;
-		return '';
+		return _getActiveDialogControlScreenSnapshot().taskId || '';
 	}
 
 	function _findDialogControlItemIdByTaskId(taskId, items = _getDialogControlItems()) {
@@ -868,7 +896,7 @@ function _rememberTaskMetaForDialogControlItem(item, meta) {
 
 	function _isTaskViewRouteNow() {
 		if (/\/tasks\/task\/view\/\d+/i.test(`${window.location.pathname || ''}${window.location.search || ''}`)) return true;
-		return !!_getTopVisibleDialogControlTaskFrameInfo();
+		return !!_getActiveDialogControlScreenSnapshot().taskFrameInfo;
 	}
 
 	async function _openTaskForDialogControlItem(item) {
@@ -3746,7 +3774,7 @@ if (_presetChannel) {
 			setDropLineBox(top, lineLeft, lineWidth);
 			dropLine.classList.add('--show');
 		};
-		const getVisibleDropRows = () => Array.from(list.querySelectorAll('.dialog-control-folder,.dialog-control-chip'));
+		const getVisibleDropRows = () => Array.from(list.querySelectorAll('.dialog-control-folder,.dialog-control-chip')).filter(isVisibleElement);
 		const getVisibleFolderChildrenMap = () => {
 			if (visibleFolderChildrenCache) return visibleFolderChildrenCache;
 			const map = new Map();
@@ -4189,11 +4217,26 @@ if (_presetChannel) {
 					toggleFolder.title = item.collapsed ? 'Развернуть папку' : 'Свернуть папку';
 					toggleFolder.setAttribute('aria-expanded', item.collapsed ? 'false' : 'true');
 					toggleFolder.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M6 4l4 4-4 4"/></svg>';
+					const applyFolderCollapsedDomState = (collapsed) => {
+						const childRows = Array.from(folderGroup.children).filter(el => el !== row && el.classList?.contains('dialog-control-chip'));
+						if (!collapsed && childRows.length < folderStatus.childCount) return false;
+						row.classList.toggle('--collapsed', !!collapsed);
+						toggleFolder.title = collapsed ? 'Развернуть папку' : 'Свернуть папку';
+						toggleFolder.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+						childRows.forEach(child => { child.hidden = !!collapsed; });
+						visibleFolderChildrenCache = null;
+						invalidateDropMetrics();
+						_fitDialogDockHeight(false);
+						_dialogControlLastSig = _getDialogControlStatusSig();
+						return true;
+					};
 					toggleFolder.addEventListener('click', (e) => {
 						e.preventDefault();
 						e.stopPropagation();
-						_setDialogControlFolderCollapsed(item.id, !item.collapsed);
-						_renderDialogControlPanel(h);
+						const nextCollapsed = !item.collapsed;
+						_setDialogControlFolderCollapsed(item.id, nextCollapsed);
+						item.collapsed = nextCollapsed;
+						if (!applyFolderCollapsedDomState(nextCollapsed)) _renderDialogControlPanel(h);
 					});
 				} else {
 					toggleFolder = null;
@@ -6827,7 +6870,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.28';
+	if (_verBadge) _verBadge.textContent = 'v7.1.29';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
