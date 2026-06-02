@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.31';
+	window.__ANITREC_RUNNING__ = '7.1.32';
 
-	const VER = '7.1.31';
+	const VER = '7.1.32';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -1025,6 +1025,11 @@ let _dialogControlMissTimer = null;
 	let _dialogControlLastPointerY = null;
 	let _dialogControlLastPointerTs = 0;
 	let _dialogControlSelectionSyncTimer = null;
+	let _dialogControlSelectionIndexCache = null;
+	let _dialogControlOutlinedElements = new Set();
+	let _dialogControlPanelRenderTimer = null;
+	let _dialogControlPanelRenderRaf = null;
+	let _dialogControlPanelRenderHost = null;
 	let _dialogControlTitleSyncTimer = null;
 	let _dialogControlTitleSyncInFlight = false;
 	let _dialogControlTitleLastSyncAt = 0;
@@ -1034,6 +1039,7 @@ let _dialogControlMissTimer = null;
 	let _dialogDockAutoCloseTimer = null;
 	let _panelModeSwitching = false;
 	let _panelModeSwitchingVisualTimer = null;
+	const _DIALOG_CONTROL_BATCH_RENDER_MS = 110;
 	function _setPanelModeSwitching(active) {
 		_panelModeSwitching = !!active;
 		if (_panelModeSwitchingVisualTimer) {
@@ -2617,24 +2623,128 @@ if (_presetChannel) {
 		});
 	}
 
+	function _requestDialogControlFrame(fn) {
+		if (typeof requestAnimationFrame === 'function') return { type: 'raf', id: requestAnimationFrame(fn) };
+		return { type: 'timer', id: setTimeout(fn, 0) };
+	}
+
+	function _cancelDialogControlFrame(handle) {
+		if (!handle) return;
+		if (handle.type === 'raf' && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(handle.id);
+		else clearTimeout(handle.id);
+	}
+
+	function _invalidateDialogControlSelectionIndex() {
+		_dialogControlSelectionIndexCache = null;
+	}
+
+	function _getDialogControlSelectionIndex(force = false) {
+		const now = _getDialogControlPerfNow();
+		if (!force && _dialogControlSelectionIndexCache && (now - _dialogControlSelectionIndexCache.ts) < 450) {
+			return _dialogControlSelectionIndexCache.map;
+		}
+		const map = buildChatElementIndex();
+		_dialogControlSelectionIndexCache = { ts: now, map };
+		return map;
+	}
+
+	function _clearDialogControlSelectionOutlines() {
+		if (_dialogControlOutlinedElements instanceof Set) {
+			_dialogControlOutlinedElements.forEach(el => el?.classList?.remove('anit-dialog-control-selected'));
+			_dialogControlOutlinedElements.clear();
+		}
+	}
+
+	function _markDialogControlElementSelected(el, selected = true) {
+		if (!el) return;
+		if (!(_dialogControlOutlinedElements instanceof Set)) _dialogControlOutlinedElements = new Set();
+		el.classList.toggle('anit-dialog-control-selected', !!selected);
+		if (selected) {
+			_dialogControlOutlinedElements.add(el);
+			const id = getChatIdFromElement(el);
+			if (id && _dialogControlSelectionIndexCache?.map) _dialogControlSelectionIndexCache.map.set(id, el);
+		} else {
+			_dialogControlOutlinedElements.delete(el);
+		}
+	}
+
 	function _syncDialogControlSelectionOutlines() {
 		if (_panelModeSwitching) return;
-		const index = buildChatElementIndex();
-		index.forEach(el => el.classList.remove('anit-dialog-control-selected'));
-		if (!_dialogControlActive) return;
+		if (!_dialogControlActive) {
+			_clearDialogControlSelectionOutlines();
+			_invalidateDialogControlSelectionIndex();
+			return;
+		}
+		const index = _getDialogControlSelectionIndex();
 		const ids = new Set(_getDialogControlItems().filter(item => !_isDialogControlFolder(item)).map(item => normId(item.id)).filter(Boolean));
+		const nextOutlined = new Set();
 		ids.forEach(id => {
 			const el = index.get(id);
-			if (el) el.classList.add('anit-dialog-control-selected');
+			if (!el) return;
+			el.classList.add('anit-dialog-control-selected');
+			nextOutlined.add(el);
 		});
+		if (_dialogControlOutlinedElements instanceof Set) {
+			_dialogControlOutlinedElements.forEach(el => {
+				if (!nextOutlined.has(el)) el?.classList?.remove('anit-dialog-control-selected');
+			});
+		}
+		_dialogControlOutlinedElements = nextOutlined;
 	}
 
 	function _scheduleDialogControlSelectionOutlines() {
 		if (_dialogControlSelectionSyncTimer) return;
-		_dialogControlSelectionSyncTimer = setTimeout(() => {
+		_dialogControlSelectionSyncTimer = _requestDialogControlFrame(() => {
 			_dialogControlSelectionSyncTimer = null;
 			_syncDialogControlSelectionOutlines();
-		}, 0);
+		});
+	}
+
+	function _runScheduledDialogControlPanelRender() {
+		const host = _dialogControlPanelRenderHost || filtersHost;
+		_dialogControlPanelRenderHost = null;
+		if (host && document.body.contains(host)) _renderDialogControlPanel(host);
+	}
+
+	function _queueDialogControlPanelRenderFrame() {
+		if (_dialogControlPanelRenderRaf) return;
+		_dialogControlPanelRenderRaf = _requestDialogControlFrame(() => {
+			_dialogControlPanelRenderRaf = null;
+			_runScheduledDialogControlPanelRender();
+		});
+	}
+
+	function _scheduleDialogControlPanelRender(h = filtersHost, delay = 0) {
+		_dialogControlPanelRenderHost = h || filtersHost || _dialogControlPanelRenderHost;
+		if (_dialogControlPanelRenderTimer || _dialogControlPanelRenderRaf) {
+			if (delay <= 0 && _dialogControlPanelRenderTimer) {
+				clearTimeout(_dialogControlPanelRenderTimer);
+				_dialogControlPanelRenderTimer = null;
+				_queueDialogControlPanelRenderFrame();
+			}
+			return;
+		}
+		if (delay > 0) {
+			_dialogControlPanelRenderTimer = setTimeout(() => {
+				_dialogControlPanelRenderTimer = null;
+				_queueDialogControlPanelRenderFrame();
+			}, delay);
+			return;
+		}
+		_queueDialogControlPanelRenderFrame();
+	}
+
+	function _flushDialogControlPanelRender() {
+		if (!_dialogControlPanelRenderTimer && !_dialogControlPanelRenderRaf) return;
+		if (_dialogControlPanelRenderTimer) {
+			clearTimeout(_dialogControlPanelRenderTimer);
+			_dialogControlPanelRenderTimer = null;
+		}
+		if (_dialogControlPanelRenderRaf) {
+			_cancelDialogControlFrame(_dialogControlPanelRenderRaf);
+			_dialogControlPanelRenderRaf = null;
+		}
+		_runScheduledDialogControlPanelRender();
 	}
 
 	function _getDialogControlStatusSig() {
@@ -4885,11 +4995,13 @@ if (_presetChannel) {
 	function _exitDialogControlMode() {
 		_dialogControlActive = false;
 		_disarmDialogControlIdleTracking();
+		_flushDialogControlPanelRender();
 		_updateDialogControlUI();
 	}
 
 	function _enterDialogControlMode() {
 		_dialogControlActive = true;
+		_invalidateDialogControlSelectionIndex();
 		if (_toastTimer) {
 			clearTimeout(_toastTimer);
 			_toastTimer = null;
@@ -4922,10 +5034,10 @@ if (_presetChannel) {
 					const removed = current.splice(idx, 1)[0];
 					_dialogControlItems[_pMode()] = current;
 					_saveDialogControlItems();
-					_renderDialogControlPanel();
-					_fitDialogDockHeight(true);
+					_dialogControlLastSig = '';
+					_scheduleDialogControlPanelRender(filtersHost, keepActive ? _DIALOG_CONTROL_BATCH_RENDER_MS : 0);
 					_dialogControlDock?.classList.add('--expanded');
-					el.classList.remove('anit-dialog-control-selected');
+					_markDialogControlElementSelected(el, false);
 					el.classList.add('anit-dialog-controlled-pulse');
 					setTimeout(() => el.classList.remove('anit-dialog-controlled-pulse'), 850);
 					_showDialogDockToast(`Диалог «${removed?.title || title}» убран из контроля`, 'ok');
@@ -4941,11 +5053,11 @@ if (_presetChannel) {
 		items.unshift(nextItem);
 		_dialogControlItems[_pMode()] = items;
 		_saveDialogControlItems();
-		_renderDialogControlPanel();
-		_fitDialogDockHeight(true);
+		_dialogControlLastSig = '';
+		_scheduleDialogControlPanelRender(filtersHost, keepActive ? _DIALOG_CONTROL_BATCH_RENDER_MS : 0);
 		_dialogControlDock?.classList.add('--expanded');
 		el.classList.add('anit-dialog-controlled-pulse');
-		el.classList.add('anit-dialog-control-selected');
+		_markDialogControlElementSelected(el, true);
 		setTimeout(() => el.classList.remove('anit-dialog-controlled-pulse'), 850);
 		_showDialogDockToast(`Диалог «${title}» выбран`, 'ok');
 		if (keepActive) {
@@ -6877,7 +6989,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.31';
+	if (_verBadge) _verBadge.textContent = 'v7.1.32';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
@@ -7907,7 +8019,10 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	log('rebuild ok.', { total: items.length, source: tsMapLocal.size ? 'rest' : 'dom', reason });
 	applyFilters();
-	if (_dialogControlActive) _scheduleDialogControlSelectionOutlines();
+	if (_dialogControlActive) {
+		_invalidateDialogControlSelectionIndex();
+		_scheduleDialogControlSelectionOutlines();
+	}
 	rebuildDateGroups(tsMapLocal);
 	}
 
