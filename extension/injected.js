@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.32';
+	window.__ANITREC_RUNNING__ = '7.1.33';
 
-	const VER = '7.1.32';
+	const VER = '7.1.33';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -3358,6 +3358,16 @@ if (_presetChannel) {
 		if (!dock) return;
 		const two = Number(cols) === 2;
 		dock.classList.toggle('--cols-2', two);
+		const list = dock.querySelector('#anit_dialog_control_list');
+		if (list) {
+			const hasMasonryColumns = Array.from(list.children).some(el => el.classList?.contains('dialog-control-column'));
+			const hasRenderedContent = list.children.length > 0;
+			const hasRenderableItems = hasRenderedContent && _getDialogControlItems().length > 0 && !dock.classList.contains('--empty');
+			if (hasRenderableItems && two !== hasMasonryColumns) {
+				_dialogControlLastSig = '';
+				_scheduleDialogControlPanelRender(filtersHost, 0);
+			}
+		}
 		const btn = dock.querySelector('.dialog-control-columns-btn');
 		if (btn) {
 			btn.classList.toggle('--active', two);
@@ -5889,6 +5899,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-empty{display:flex;align-items:center;min-height:38px;color:var(--pena-muted);font-size:var(--pena-font-body);line-height:1.35;padding:0 2px;box-sizing:border-box}
 #anit-dialog-control-dock .dialog-control-column{min-width:0;display:grid;grid-template-columns:1fr;align-content:start;gap:6px}
 #anit-dialog-control-dock .dialog-control-folder-group{min-width:0;width:100%;display:grid;grid-template-columns:1fr;align-content:start;gap:6px;break-inside:avoid}
+#anit-dialog-control-dock .dialog-control-folder-group.--collapsed > .dialog-control-chip{display:none!important}
 #anit-dialog-control-dock .dialog-control-folder{position:relative;width:100%;min-width:0;min-height:32px;display:grid;grid-template-columns:22px 34px minmax(0,1fr) 22px 22px;align-items:center;column-gap:7px;border:1px solid rgba(255,255,255,.16);border-radius:var(--pena-radius);background:rgba(255,255,255,.055);padding:4px 6px 4px 8px;box-sizing:border-box;color:#e7edf6;cursor:pointer;overflow:visible}
 #anit-dialog-control-dock .dialog-control-folder.--empty-folder{grid-template-columns:34px minmax(0,1fr) 22px 22px}
 #anit-dialog-control-dock .dialog-control-folder.--colored{border-color:var(--dialog-chip-border);background:linear-gradient(90deg,var(--dialog-chip-bg),rgba(255,255,255,.055) 64%)}
@@ -6003,7 +6014,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-remove:hover{color:#ffd0d0;transform:none;border:0!important;background:transparent!important}
 #anit-dialog-control-dock .dialog-control-remove svg{width:12px;height:12px;display:block;fill:currentColor}
 #anit-dialog-control-dock.dock-dragging,#anit-dialog-control-dock.dock-dragging .dialog-control-window{cursor:grabbing!important;user-select:none}
-#anit-dialog-control-dock.--cols-2 .dialog-control-list{grid-template-columns:repeat(2,minmax(0,1fr))}
+#anit-dialog-control-dock.--cols-2 .dialog-control-list{grid-template-columns:1fr}
 #anit-dialog-control-dock.--cols-2 .dialog-control-list.--masonry{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}
 #anit-dialog-control-dock.--cols-2 .dialog-control-folder-group{align-self:start}
 #anit-dialog-control-dock.--cols-2 .dialog-control-folder{grid-template-columns:18px 22px minmax(0,1fr) 18px 18px;column-gap:5px;padding:4px 5px}
@@ -6989,7 +7000,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.32';
+	if (_verBadge) _verBadge.textContent = 'v7.1.33';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
