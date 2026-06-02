@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.34';
+	window.__ANITREC_RUNNING__ = '7.1.35';
 
-	const VER = '7.1.34';
+	const VER = '7.1.35';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -3848,12 +3848,18 @@ if (_presetChannel) {
 		};
 		const setDropLineBox = (top, left, width) => {
 			const viewportWidth = Math.max(document.documentElement?.clientWidth || 0, window.innerWidth || 0, 0);
+			const listRect = list.getBoundingClientRect();
+			if (top < listRect.top - 1 || top > listRect.bottom + 1) {
+				hideDropLine();
+				return false;
+			}
 			const safeLeft = Math.max(4, Math.min(left, Math.max(4, viewportWidth - 24)));
 			const maxWidth = Math.max(24, viewportWidth - safeLeft - 4);
 			dropLine.style.top = Math.max(1, top) + 'px';
 			dropLine.style.left = safeLeft + 'px';
 			dropLine.style.width = Math.max(24, Math.min(width, maxWidth)) + 'px';
 			dropLine.style.right = 'auto';
+			return true;
 		};
 		const setDropMarker = (row, side) => {
 			if (!row) {
@@ -3896,7 +3902,13 @@ if (_presetChannel) {
 				lineLeft = Math.max(4, markerBox.left + indent);
 				lineWidth = Math.max(24, markerBox.width - indent);
 			}
-			setDropLineBox(top, lineLeft, lineWidth);
+			if (!setDropLineBox(top, lineLeft, lineWidth)) {
+				row.classList.remove('--drop-before', '--drop-after', '--drop-into');
+				if (overRow === row) overRow = null;
+				dropIntent = null;
+				dropSide = 'before';
+				return;
+			}
 			dropLine.classList.add('--show');
 		};
 		const getVisibleDropRows = () => Array.from(list.querySelectorAll('.dialog-control-folder,.dialog-control-chip')).filter(isVisibleElement);
@@ -3927,7 +3939,12 @@ if (_presetChannel) {
 			}, -Infinity);
 			const listBox = getElementDropBox(list);
 			const top = Number.isFinite(bottom) ? bottom + 3 : listBox.top + 4;
-			setDropLineBox(top, listBox.left + 8, Math.max(24, listBox.width - 16));
+			if (!setDropLineBox(top, listBox.left + 8, Math.max(24, listBox.width - 16))) {
+				dropIntent = null;
+				dropSide = 'before';
+				dropLine.classList.remove('--root', '--hierarchy-up');
+				return;
+			}
 			dropLine.classList.add('--show');
 		};
 		const hasVisibleFolderChildren = (folderId) => {
@@ -4075,9 +4092,15 @@ if (_presetChannel) {
 		};
 		const getDropRowInfos = () => {
 			if (dropRowsCache) return dropRowsCache;
+			const listRect = list.getBoundingClientRect();
 			dropRowsCache = getDropRows()
 				.map(row => ({ row, rect: row.getBoundingClientRect() }))
-				.filter(info => info.rect.width && info.rect.height);
+				.filter(info =>
+					info.rect.width &&
+					info.rect.height &&
+					info.rect.bottom >= listRect.top + 1 &&
+					info.rect.top <= listRect.bottom - 1
+				);
 			return dropRowsCache;
 		};
 		const getDropColumnInfos = () => {
@@ -7084,7 +7107,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.34';
+	if (_verBadge) _verBadge.textContent = 'v7.1.35';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
