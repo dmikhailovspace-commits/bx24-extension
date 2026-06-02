@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.30';
+	window.__ANITREC_RUNNING__ = '7.1.31';
 
-	const VER = '7.1.30';
+	const VER = '7.1.31';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -4180,10 +4180,9 @@ if (_presetChannel) {
 			masonryColumns[idx].appendChild(node);
 			masonryWeights[idx] += Math.max(1, Number(weight) || 1);
 		};
-		const getFolderUnitWeight = (folderStatus) => {
-			// Keep masonry assignment stable when a folder is collapsed or expanded.
+		const getFolderUnitWeight = (folder, folderStatus) => {
 			if (!folderStatus?.childCount) return 1;
-			return 1 + folderStatus.childCount;
+			return folder?.collapsed ? 1 : 1 + folderStatus.childCount;
 		};
 		const folderGroupMap = new Map();
 		const appendDialogControlRow = (row, parentFolder = null) => {
@@ -4199,6 +4198,7 @@ if (_presetChannel) {
 				const folderGroup = document.createElement('div');
 				folderGroup.className = 'dialog-control-folder-group';
 				folderGroup.dataset.folderGroupId = item.id;
+				folderGroup.classList.toggle('--collapsed', !!item.collapsed);
 				folderGroupMap.set(String(item.id), folderGroup);
 				const folderColor = _normalizeDialogControlColor(item.color);
 				const row = document.createElement('div');
@@ -4221,6 +4221,7 @@ if (_presetChannel) {
 						const childRows = Array.from(folderGroup.children).filter(el => el !== row && el.classList?.contains('dialog-control-chip'));
 						if (!collapsed && childRows.length < folderStatus.childCount) return false;
 						row.classList.toggle('--collapsed', !!collapsed);
+						folderGroup.classList.toggle('--collapsed', !!collapsed);
 						toggleFolder.title = collapsed ? 'Развернуть папку' : 'Свернуть папку';
 						toggleFolder.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
 						childRows.forEach(child => {
@@ -4351,10 +4352,11 @@ if (_presetChannel) {
 				if (toggleFolder) row.append(toggleFolder, folderState, titleInp, colorWrap, rmFolder);
 				else row.append(folderState, titleInp, colorWrap, rmFolder);
 				folderGroup.appendChild(row);
-				appendRootControlUnit(folderGroup, getFolderUnitWeight(folderStatus));
+				appendRootControlUnit(folderGroup, getFolderUnitWeight(item, folderStatus));
 				return;
 			}
-			if (item.folderId && folderMap.get(String(item.folderId))?.collapsed) return;
+			const parentFolder = item.folderId ? folderMap.get(String(item.folderId)) : null;
+			const parentFolderCollapsed = !!parentFolder?.collapsed;
 			const el = visibleChatIndex.get(normId(item.id)) || null;
 			const meta = el ? getItemMeta(el) : null;
 			const liveTitle = el ? getChatTitleFromElement(el) : '';
@@ -4362,7 +4364,6 @@ if (_presetChannel) {
 				item.title = liveTitle;
 				titlesChanged = true;
 			}
-			const parentFolder = item.folderId ? folderMap.get(String(item.folderId)) : null;
 			const folderColor = _normalizeDialogControlColor(parentFolder?.color);
 			const unreadCount = meta?.unreadCount || 0;
 			const isUnread = !!(meta?.hasUnread || meta?.hasLater || meta?.hasMention);
@@ -4377,6 +4378,7 @@ if (_presetChannel) {
 			row.classList.toggle('--later', !!meta?.hasLater && !meta?.hasUnread);
 			row.classList.toggle('--mention', !!meta?.hasMention);
 			row.classList.toggle('--in-folder', !!parentFolder);
+			row.classList.toggle('--folder-hidden', parentFolderCollapsed);
 			row.classList.toggle('--folder-colored', !!folderColor);
 			row.classList.toggle('--multi-selected', isMultiSelected);
 			row.classList.toggle('--current', isCurrentDialog);
@@ -6875,7 +6877,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.30';
+	if (_verBadge) _verBadge.textContent = 'v7.1.31';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',

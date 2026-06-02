@@ -1,7 +1,7 @@
 {
-    "version":  "7.1.30",
+    "version":  "7.1.31",
     "release_date":  "2026-06-02",
-    "release_url":  "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.1.30",
+    "release_url":  "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.1.31",
     "injected_js_url":  "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension/injected.js",
-    "changelog":  "v7.1.30: fix folder collapse visibility in dialog control panel"
+    "changelog":  "v7.1.31: fix two-column collapsed folder masonry gaps"
 }
