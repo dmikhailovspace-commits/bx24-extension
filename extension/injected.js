@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.27';
+	window.__ANITREC_RUNNING__ = '7.1.28';
 
-	const VER = '7.1.27';
+	const VER = '7.1.28';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -435,13 +435,131 @@
 		if (!node || !node.isConnected) return false;
 		const rect = node.getBoundingClientRect?.();
 		if (!rect || rect.width < 8 || rect.height < 8) return false;
-		const style = window.getComputedStyle?.(node);
+		const style = (node.ownerDocument?.defaultView || window).getComputedStyle?.(node);
 		return !(style?.display === 'none' || style?.visibility === 'hidden' || Number(style?.opacity) === 0);
+	}
+
+	function _getDialogControlTaskFrameUrl(frame) {
+		if (!frame) return '';
+		const values = [];
+		try {
+			['src', 'data-src', 'data-url', 'data-slider-url', 'data-bx-url'].forEach(name => {
+				const value = frame.getAttribute?.(name);
+				if (value) values.push(value);
+			});
+		} catch {}
+		try {
+			const href = frame.contentWindow?.location?.href;
+			if (href) values.push(href);
+		} catch {}
+		try {
+			const href = frame.contentDocument?.location?.href;
+			if (href) values.push(href);
+		} catch {}
+		return values.find(value => _extractTaskIdFromTaskUrl(value)) || '';
+	}
+
+	function _getElementStackScore(el, index = 0) {
+		let z = 0;
+		let layer = 0;
+		let node = el;
+		let depth = 0;
+		while (node && node.nodeType === 1 && depth < 16) {
+			const cls = String(node.className || '');
+			if (/(side-panel|slider|popup|overlay|modal)/i.test(cls)) layer += 1;
+			try {
+				const value = parseInt(window.getComputedStyle(node).zIndex, 10);
+				if (Number.isFinite(value)) z = Math.max(z, value);
+			} catch {}
+			node = node.parentElement;
+			depth += 1;
+		}
+		return { layer, z, index };
+	}
+
+	function _isElementTopHit(el) {
+		const rect = el?.getBoundingClientRect?.();
+		if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+		const points = [
+			[rect.left + rect.width / 2, rect.top + rect.height / 2],
+			[rect.left + Math.min(24, rect.width / 2), rect.top + Math.min(24, rect.height / 2)],
+			[rect.right - Math.min(24, rect.width / 2), rect.top + Math.min(24, rect.height / 2)]
+		];
+		return points.some(([x, y]) => {
+			if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) return false;
+			const hit = document.elementFromPoint(x, y);
+			return hit === el || el.contains?.(hit);
+		});
+	}
+
+	function _getTopVisibleDialogControlTaskFrameInfo() {
+		const frames = (() => {
+			try { return Array.from(document.querySelectorAll('iframe')); } catch { return []; }
+		})();
+		const candidates = frames.map((frame, index) => {
+			if (!isVisibleElement(frame)) return null;
+			if (frame.closest?.('#anit-filters,#anit-dialog-control-dock,.dialog-control-palette')) return null;
+			const url = _getDialogControlTaskFrameUrl(frame);
+			const taskId = _extractTaskIdFromTaskUrl(url);
+			if (!taskId) return null;
+			const rect = frame.getBoundingClientRect();
+			if (rect.width < 160 || rect.height < 120) return null;
+			return {
+				frame,
+				url,
+				taskId,
+				topHit: _isElementTopHit(frame) ? 1 : 0,
+				..._getElementStackScore(frame, index)
+			};
+		}).filter(Boolean);
+		if (!candidates.length) return null;
+		candidates.sort((a, b) =>
+			(a.topHit - b.topHit) ||
+			(a.layer - b.layer) ||
+			(a.z - b.z) ||
+			(a.index - b.index)
+		);
+		return candidates[candidates.length - 1] || null;
+	}
+
+	function _getTaskTitleFromDocument(doc) {
+		if (!doc) return '';
+		const clean = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+		const selectors = [
+			'.tasks-task-full-card-title',
+			'.tasks-task-detail-title',
+			'.tasks-task-title',
+			'.task-detail-title',
+			'.task-view-title',
+			'[class*="task" i][class*="title" i]'
+		];
+		for (const sel of selectors) {
+			let nodes = [];
+			try { nodes = Array.from(doc.querySelectorAll(sel)); } catch { nodes = []; }
+			for (const node of nodes) {
+				if (!_isVisibleTextNodeCandidate(node)) continue;
+				const title = clean(node.value || node.getAttribute?.('title') || node.getAttribute?.('aria-label') || node.textContent);
+				if (title && title.length >= 2 && title.length <= 180) return title;
+			}
+		}
+		return '';
+	}
+
+	function _getActiveTaskTitleFromTopFrame() {
+		const info = _getTopVisibleDialogControlTaskFrameInfo();
+		if (!info?.frame) return '';
+		try {
+			const title = _getTaskTitleFromDocument(info.frame.contentDocument || info.frame.contentWindow?.document);
+			if (title) return title;
+		} catch {}
+		return '';
 	}
 
 	function _getActiveDialogTitleFromScreen() {
 		if (IS_OL_FRAME) return '';
 		const clean = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+		const topTaskTitle = _getActiveTaskTitleFromTopFrame();
+		if (topTaskTitle) return topTaskTitle;
 		const chatSelectors = [
 			'.bx-im-dialog-chat-header__title',
 			'.bx-im-dialog-header__title',
@@ -476,15 +594,10 @@
 
 	function _getActiveDialogControlTaskIdFromScreen() {
 		const fromUrl = (value) => _extractTaskIdFromTaskUrl(value || '');
+		const topFrameTaskId = _getTopVisibleDialogControlTaskFrameInfo()?.taskId || '';
+		if (topFrameTaskId) return topFrameTaskId;
 		const current = fromUrl(`${window.location.pathname || ''}${window.location.search || ''}${window.location.hash || ''}`);
 		if (current) return current;
-		try {
-			const frame = Array.from(document.querySelectorAll('iframe[src],iframe[data-src],iframe[data-url]'))
-				.map(el => el.getAttribute('src') || el.getAttribute('data-src') || el.getAttribute('data-url') || '')
-				.find(url => /\/tasks\/task\/view\/\d+/i.test(url));
-			const id = fromUrl(frame);
-			if (id) return id;
-		} catch {}
 		return '';
 	}
 
@@ -492,7 +605,10 @@
 		const id = String(taskId || '').trim();
 		if (!/^\d+$/.test(id)) return '';
 		const item = (Array.isArray(items) ? items : []).find(candidate =>
-			!_isDialogControlFolder(candidate) && String(candidate.taskId || '').trim() === id
+			!_isDialogControlFolder(candidate) && (
+				String(candidate.taskId || '').trim() === id ||
+				_extractTaskIdFromTaskUrl(candidate.taskUrl || '') === id
+			)
 		);
 		return item ? normId(item.id) : '';
 	}
@@ -752,9 +868,7 @@ function _rememberTaskMetaForDialogControlItem(item, meta) {
 
 	function _isTaskViewRouteNow() {
 		if (/\/tasks\/task\/view\/\d+/i.test(`${window.location.pathname || ''}${window.location.search || ''}`)) return true;
-		try {
-			return !!document.querySelector('iframe[src*="/tasks/task/view/"],iframe[data-src*="/tasks/task/view/"]');
-		} catch { return false; }
+		return !!_getTopVisibleDialogControlTaskFrameInfo();
 	}
 
 	async function _openTaskForDialogControlItem(item) {
@@ -1459,6 +1573,21 @@ if (_presetChannel) {
 			.map(item => normId(item.id))
 			.filter(Boolean));
 		const index = visibleChatIndex || buildChatElementIndex();
+		const taskId = _getActiveDialogControlTaskIdFromScreen();
+		if (taskId) {
+			const taskItemId = _findDialogControlItemIdByTaskId(taskId, items);
+			if (taskItemId && ids.has(taskItemId)) {
+				_setDialogControlCurrentId(taskItemId);
+				return taskItemId;
+			}
+			const taskTitleId = _findDialogControlItemIdByTitle(_getActiveDialogTitleFromScreen(), items);
+			if (taskTitleId && ids.has(taskTitleId)) {
+				_setDialogControlCurrentId(taskTitleId);
+				return taskTitleId;
+			}
+			_setDialogControlCurrentId(null);
+			return '';
+		}
 		let activeListItemOutsideControl = false;
 		for (const [id, el] of index.entries()) {
 			const activeId = normId(id);
@@ -1469,12 +1598,6 @@ if (_presetChannel) {
 			}
 			activeListItemOutsideControl = true;
 			break;
-		}
-		const taskId = _getActiveDialogControlTaskIdFromScreen();
-		const taskItemId = _findDialogControlItemIdByTaskId(taskId, items);
-		if (taskItemId && ids.has(taskItemId)) {
-			_setDialogControlCurrentId(taskItemId);
-			return taskItemId;
 		}
 		if (activeListItemOutsideControl) {
 			_setDialogControlCurrentId(null);
@@ -6704,7 +6827,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.27';
+	if (_verBadge) _verBadge.textContent = 'v7.1.28';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
