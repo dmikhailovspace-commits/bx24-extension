@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.38';
+	window.__ANITREC_RUNNING__ = '7.1.39';
 
-	const VER = '7.1.38';
+	const VER = '7.1.39';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -3944,9 +3944,8 @@ if (_presetChannel) {
 			let lineLeft = scopeBox.left;
 			let lineWidth = scopeBox.width;
 			if (!isFolderAfter && !hierarchyUp) {
-				const indent = side === 'folder-start' && row?.dataset?.folderId ? 18 : 0;
-				lineLeft = Math.max(4, markerBox.left + indent);
-				lineWidth = Math.max(24, markerBox.width - indent);
+				lineLeft = Math.max(4, markerBox.left);
+				lineWidth = Math.max(24, markerBox.width);
 			}
 			if (!setDropLineBox(top, lineLeft, lineWidth)) {
 				row.classList.remove('--drop-before', '--drop-after', '--drop-into');
@@ -4203,9 +4202,8 @@ if (_presetChannel) {
 			let lineLeft = scopeBox.left;
 			let lineWidth = scopeBox.width;
 			if (side !== 'folder-after' && !hierarchyUp) {
-				const indent = side === 'folder-start' && row?.dataset?.folderId ? 18 : 0;
-				lineLeft = Math.max(4, markerBox.left + indent);
-				lineWidth = Math.max(24, markerBox.width - indent);
+				lineLeft = Math.max(4, markerBox.left);
+				lineWidth = Math.max(24, markerBox.width);
 			}
 			return {
 				tone: hierarchyUp || side === 'folder-after' ? 'hierarchy' : 'inline',
@@ -7249,7 +7247,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.38';
+	if (_verBadge) _verBadge.textContent = 'v7.1.39';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
