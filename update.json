@@ -1,7 +1,7 @@
 {
-    "version":  "7.1.35",
-    "release_date":  "2026-06-02",
-    "release_url":  "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.1.35",
+    "version":  "7.1.36",
+    "release_date":  "2026-06-03",
+    "release_url":  "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.1.36",
     "injected_js_url":  "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension/injected.js",
-    "changelog":  "v7.1.35: keep dialog control drop lines inside the visible scroll area"
+    "changelog":  "v7.1.36: improve multi-select drag payloads and deduplicate drop indicators"
 }
