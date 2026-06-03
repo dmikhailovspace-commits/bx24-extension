@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.43';
+	window.__ANITREC_RUNNING__ = '7.1.44';
 
-	const VER = '7.1.43';
+	const VER = '7.1.44';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -792,41 +792,11 @@
 		return false;
 	}
 
-	async function _setDialogControlReadFlag(dialogId, chatId = null) {
+	async function _setDialogControlReadFlag(dialogId) {
 		const id = normId(dialogId);
-		const numericChatId = Number(chatId);
-		const primaryAttempts = [];
-		const fallbackAttempts = [];
-		let lastError = null;
-		if (Number.isFinite(numericChatId)) {
-			primaryAttempts.push(() => _runBitrixAction('im.v2.Chat.read', { chat: numericChatId }));
-		}
-		if (id) {
-			primaryAttempts.push(() => _callBxRestMethod('im.recent.unread', { DIALOG_ID: id, ACTION: 'N' }));
-		}
-		if (primaryAttempts.length) {
-			try {
-				await _runFirstSuccessfulDialogControlAttempt(primaryAttempts);
-				return true;
-			} catch (e) {
-				lastError = e;
-			}
-		}
-		if (Number.isFinite(numericChatId)) {
-			fallbackAttempts.push(() => _runBitrixAction('im.v2.Chat.read', { chat: String(numericChatId) }));
-			fallbackAttempts.push(() => _runBitrixAction('im.v2.Chat.read', { chatId: numericChatId }));
-			fallbackAttempts.push(() => _runBitrixAction('im.v2.Chat.read', { chat_id: numericChatId }));
-		}
-		for (const attempt of fallbackAttempts) {
-			try {
-				await attempt();
-				return true;
-			} catch (e) {
-				lastError = e;
-			}
-		}
-		if (lastError) throw lastError;
-		return false;
+		if (!id) return false;
+		await _callBxRestMethod('im.recent.unread', { DIALOG_ID: id, ACTION: 'N' });
+		return true;
 	}
 
 
@@ -3053,13 +3023,12 @@ if (_presetChannel) {
 
 	function _getDialogControlEffectiveMeta(itemOrId, meta = null) {
 		const id = normId(typeof itemOrId === 'object' ? itemOrId?.id : itemOrId);
-		const isClean = !meta?.hasUnread && !meta?.hasLater && !meta?.hasMention && !(Number(meta?.unreadCount) > 0);
 		if (id && _isDialogControlOptimisticRead(id)) {
-			if (isClean) {
+			if (!meta?.hasLater || meta?.hasUnread || meta?.hasMention) {
 				_dialogControlOptimisticRead.delete(id);
 				return meta;
 			}
-			return Object.assign({}, meta || {}, { hasUnread: false, hasLater: false, hasMention: false, unreadCount: 0 });
+			return Object.assign({}, meta || {}, { hasLater: false, unreadCount: 0 });
 		}
 		if (id && meta?.hasLater && !meta?.hasUnread && !meta?.hasMention) {
 			_dialogControlOptimisticLater.delete(id);
@@ -3360,18 +3329,16 @@ if (_presetChannel) {
 		if (!item || _isDialogControlFolder(item)) return false;
 		const targetEl = findChatElementById(item.id);
 		const meta = _getDialogControlEffectiveMeta(item, targetEl ? getItemMeta(targetEl) : null);
-		const unreadCount = Number(meta?.unreadCount) || 0;
-		if (!meta?.hasLater && !meta?.hasUnread && !meta?.hasMention && unreadCount <= 0) {
-			_showDialogDockToast('Диалог уже прочитан', 'ok');
+		if (!meta?.hasLater || meta?.hasUnread || meta?.hasMention) {
+			_showDialogDockToast('Метка «посмотреть позже» не стоит', 'ok');
 			return true;
 		}
-		const chatId = _getDialogControlChatNumber(item.id, targetEl);
 		_setDialogControlOptimisticRead(item.id, true);
 		_applyDialogControlItemDomState(item.id, h);
-		_setDialogControlReadFlag(item.id, chatId)
+		_setDialogControlReadFlag(item.id)
 			.then(ok => {
-				if (!ok) throw new Error('Bitrix API rejected read mark');
-				_showDialogDockToast('Диалог отмечен прочитанным', 'ok');
+				if (!ok) throw new Error('Bitrix API rejected later clear');
+				_showDialogDockToast('Метка «посмотреть позже» снята', 'ok');
 				_refreshDialogControlLaterState(h);
 			})
 			.catch(() => {
@@ -3379,7 +3346,7 @@ if (_presetChannel) {
 				_applyDialogControlItemDomState(item.id, h);
 				_dialogControlLastSig = '';
 				_scheduleDialogControlPanelRender(h || filtersHost, 0);
-				_showDialogDockToast('Не удалось отметить прочитанным через Bitrix API', 'danger');
+				_showDialogDockToast('Не удалось снять метку через Bitrix API', 'danger');
 			});
 		return true;
 	}
@@ -3388,6 +3355,7 @@ if (_presetChannel) {
 		if (!event || !item || _isDialogControlFolder(item)) return;
 		event.preventDefault();
 		event.stopPropagation();
+		event.stopImmediatePropagation?.();
 		_closeDialogControlPalettes(true);
 		_closeDialogControlContextMenu();
 		const menu = document.createElement('div');
@@ -3400,7 +3368,6 @@ if (_presetChannel) {
 		laterBtn.setAttribute('role', 'menuitem');
 		laterBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg><span>Посмотреть позже</span>';
 		if (meta?.hasLater && !meta?.hasUnread && !meta?.hasMention) {
-			laterBtn.classList.add('--active');
 			laterBtn.title = 'Метка уже стоит';
 		}
 		const readBtn = document.createElement('button');
@@ -3410,11 +3377,16 @@ if (_presetChannel) {
 		readBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg><span>Прочитано</span>';
 		const isRead = !meta?.hasLater && !meta?.hasUnread && !meta?.hasMention && !(Number(meta?.unreadCount) > 0);
 		if (isRead) {
-			readBtn.classList.add('--active', '--read');
-			readBtn.title = 'Диалог уже прочитан';
+			readBtn.title = 'Метка не стоит';
 		}
 		menu.append(laterBtn, readBtn);
 		document.body.appendChild(menu);
+		['pointerdown', 'mousedown', 'mouseup', 'click', 'auxclick', 'contextmenu'].forEach(type => {
+			menu.addEventListener(type, (e) => {
+				if (type === 'contextmenu') e.preventDefault();
+				e.stopPropagation();
+			});
+		});
 		const margin = 8;
 		const rect = menu.getBoundingClientRect();
 		const left = Math.max(margin, Math.min(event.clientX, window.innerWidth - rect.width - margin));
@@ -3438,12 +3410,14 @@ if (_presetChannel) {
 		laterBtn.addEventListener('click', async (e) => {
 			e.preventDefault();
 			e.stopPropagation();
+			e.stopImmediatePropagation?.();
 			close();
 			await _markDialogControlItemLater(item, h);
 		});
 		readBtn.addEventListener('click', async (e) => {
 			e.preventDefault();
 			e.stopPropagation();
+			e.stopImmediatePropagation?.();
 			close();
 			await _markDialogControlItemRead(item, h);
 		});
@@ -5215,9 +5189,18 @@ if (_presetChannel) {
 					_showDialogDockToast(_pMode() === 'tasks' ? 'Задача не найдена в текущей ленте' : 'Диалог не найден в текущей ленте', 'danger');
 				}
 			});
+			const stopDialogControlRightButton = (e) => {
+				if (e.button !== 2) return;
+				if (e.type === 'auxclick') e.preventDefault();
+				e.stopPropagation();
+				e.stopImmediatePropagation?.();
+			};
+			['pointerdown', 'mousedown', 'mouseup', 'auxclick'].forEach(type => {
+				row.addEventListener(type, stopDialogControlRightButton, true);
+			});
 			row.addEventListener('contextmenu', (e) => {
 				_showDialogControlContextMenu(e, item, meta, h);
-			});
+			}, true);
 			row.addEventListener('keydown', (e) => {
 				if (e.key !== 'Enter' && e.key !== ' ') return;
 				e.preventDefault();
@@ -6550,10 +6533,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .dialog-control-context-menu[data-dialog-control-context-menu="1"]{position:fixed;z-index:10020;min-width:164px;padding:4px;border:1px solid rgba(255,255,255,.14);border-radius:8px;background:rgba(12,16,24,.98);box-shadow:0 14px 34px rgba(0,0,0,.42),0 1px 0 rgba(255,255,255,.05) inset;color:#e7edf6;box-sizing:border-box}
 .dialog-control-context-item{width:100%;min-height:30px;display:grid;grid-template-columns:20px minmax(0,1fr);align-items:center;gap:8px;border:0;border-radius:6px;background:transparent;color:inherit;padding:5px 8px;text-align:left;font:600 12px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial;cursor:pointer;box-sizing:border-box}
 .dialog-control-context-item:hover,.dialog-control-context-item:focus-visible{background:rgba(77,157,255,.13);outline:0}
-.dialog-control-context-item.--active{color:#ffb3b3}
-.dialog-control-context-item.--read{color:#bff3d0}
-.dialog-control-context-item.--read svg{stroke:#5dc87e}
-.dialog-control-context-item svg{width:16px;height:16px;fill:none;stroke:#ef4444;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.dialog-control-context-item svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;opacity:.9}
 #anit-dialog-control-dock .dialog-control-list{position:relative;display:grid;grid-template-columns:1fr;align-content:start;gap:6px;min-height:0;flex:1 1 auto;overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.28) rgba(255,255,255,.06);padding-right:6px;padding-bottom:12px}
 .dialog-control-drop-line[data-dialog-control-drop-line="1"]{position:fixed;height:2px;border-radius:999px;background:transparent;box-shadow:none;opacity:0;pointer-events:none;z-index:10008;transform:translateY(-50%)}
 .dialog-control-drop-line[data-dialog-control-drop-line="1"].--show{opacity:1}
@@ -7668,7 +7648,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.43';
+	if (_verBadge) _verBadge.textContent = 'v7.1.44';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
