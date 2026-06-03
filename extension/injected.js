@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.39';
+	window.__ANITREC_RUNNING__ = '7.1.40';
 
-	const VER = '7.1.39';
+	const VER = '7.1.40';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -669,6 +669,134 @@
 		return true;
 	}
 
+	function _getDialogControlChatNumber(dialogId, el = null) {
+		const fromEl = extractChatIdNumber(el);
+		if (Number.isFinite(fromEl)) return fromEl;
+		const match = /^chat(\d+)$/i.exec(normId(dialogId));
+		const value = match ? parseInt(match[1], 10) : NaN;
+		return Number.isFinite(value) ? value : null;
+	}
+
+	function _getBitrixNamespaces() {
+		const topWin = _getSafeTopWindow();
+		return Array.from(new Set([window.BX, topWin?.BX].filter(Boolean)));
+	}
+
+	function _getBitrixSessid() {
+		for (const BXNS of _getBitrixNamespaces()) {
+			try {
+				const value = typeof BXNS?.bitrix_sessid === 'function'
+					? BXNS.bitrix_sessid()
+					: (typeof BXNS?.message === 'function' ? BXNS.message('bitrix_sessid') : '');
+				if (value) return String(value);
+			} catch {}
+		}
+		return '';
+	}
+
+	async function _runBitrixAction(action, data = {}) {
+		let lastError = null;
+		for (const BXNS of _getBitrixNamespaces()) {
+			const runAction = BXNS?.ajax?.runAction;
+			if (typeof runAction !== 'function') continue;
+			try {
+				await runAction.call(BXNS.ajax, action, { data });
+				return true;
+			} catch (e) {
+				lastError = e;
+			}
+		}
+		const sessid = _getBitrixSessid();
+		if (sessid) {
+			try {
+				const form = new FormData();
+				form.append('sessid', sessid);
+				Object.entries(data || {}).forEach(([key, value]) => {
+					form.append(key, String(value));
+					form.append(`data[${key}]`, String(value));
+				});
+				const res = await fetch(`/bitrix/services/main/ajax.php?action=${encodeURIComponent(action)}`, {
+					method: 'POST',
+					credentials: 'same-origin',
+					body: form
+				});
+				if (!res.ok) throw new Error(`HTTP ${res.status}`);
+				let json = null;
+				try { json = await res.json(); } catch {}
+				if (json?.status && json.status !== 'success') throw new Error(json?.errors?.[0]?.message || json?.status);
+				return true;
+			} catch (e) {
+				lastError = e;
+			}
+		}
+		throw lastError || new Error('Bitrix action unavailable');
+	}
+
+	function _findBitrixLaterMenuItem() {
+		const docs = [document];
+		const topWin = _getSafeTopWindow();
+		try {
+			const topDoc = topWin?.document;
+			if (topDoc && topDoc !== document) docs.push(topDoc);
+		} catch {}
+		const selectors = [
+			'button',
+			'a',
+			'[role="menuitem"]',
+			'.menu-popup-item',
+			'.popup-window-button',
+			'[class*="menu" i][class*="item" i]'
+		].join(',');
+		for (const doc of docs) {
+			let nodes = [];
+			try { nodes = Array.from(doc.querySelectorAll(selectors)); } catch { nodes = []; }
+			for (const node of nodes) {
+				if (node.closest?.('#anit-dialog-control-dock,.dialog-control-context-menu')) continue;
+				const text = String(node.textContent || node.getAttribute?.('title') || node.getAttribute?.('aria-label') || '').replace(/\s+/g, ' ').trim().toLowerCase();
+				if (!text) continue;
+				if (/посмотреть\s+позже|отметить\s+непрочитан|mark\s+as\s+unread|unread/.test(text)) return node;
+			}
+		}
+		return null;
+	}
+
+	function _tryNativeBitrixLaterMenu(el) {
+		return new Promise((resolve) => {
+			if (!el) { resolve(false); return; }
+			const rect = el.getBoundingClientRect();
+			const x = Math.max(1, Math.min(window.innerWidth - 1, rect.left + Math.min(rect.width - 8, Math.max(8, rect.width / 2))));
+			const y = Math.max(1, Math.min(window.innerHeight - 1, rect.top + Math.min(rect.height - 8, Math.max(8, rect.height / 2))));
+			const target = el.querySelector?.('a,button,[role="button"],.bx-im-list-recent-item__content,.bx-messenger-cl-user') || el;
+			try {
+				target.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 2, buttons: 2 }));
+			} catch {
+				resolve(false);
+				return;
+			}
+			const started = Date.now();
+			const tick = () => {
+				const menuItem = _findBitrixLaterMenuItem();
+				if (menuItem) {
+					try {
+						menuItem.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+						menuItem.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+						menuItem.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+						resolve(true);
+					} catch {
+						resolve(false);
+					}
+					return;
+				}
+				if (Date.now() - started > 900) {
+					resolve(false);
+					return;
+				}
+				setTimeout(tick, 90);
+			};
+			setTimeout(tick, 80);
+		});
+	}
+
 	function _getSafeTopWindow() {
 		try {
 			return window.top && window.top.location?.origin === window.location.origin ? window.top : null;
@@ -1033,6 +1161,7 @@ let _dialogControlMissTimer = null;
 	let _dialogControlTitleSyncTimer = null;
 	let _dialogControlTitleSyncInFlight = false;
 	let _dialogControlTitleLastSyncAt = 0;
+	let _dialogControlContextMenu = null;
 	let _lastExpandedFiltersPaneHeight = 0;
 	let _lastExpandedFiltersPaneBottom = 0;
 	let _dialogDockHideFinalizeTimer = null;
@@ -3044,6 +3173,105 @@ if (_presetChannel) {
 		overlay.classList.add('--show');
 	}
 
+	function _refreshDialogControlLaterState(h = filtersHost) {
+		[0, 260, 900].forEach(delay => {
+			setTimeout(() => {
+				_dialogControlLastSig = '';
+				_scheduleDialogControlPanelRender(h || filtersHost, 0);
+			}, delay);
+		});
+	}
+
+	function _closeDialogControlContextMenu() {
+		if (!_dialogControlContextMenu) return;
+		try { _dialogControlContextMenu.close?.(); } catch {}
+		_dialogControlContextMenu = null;
+	}
+
+	async function _markDialogControlItemLater(item, h = filtersHost) {
+		if (!item || _isDialogControlFolder(item)) return false;
+		const targetEl = findChatElementById(item.id);
+		const meta = targetEl ? getItemMeta(targetEl) : null;
+		if (meta?.hasLater && !meta?.hasUnread && !meta?.hasMention) {
+			_showDialogDockToast('Метка «посмотреть позже» уже стоит', 'ok');
+			return true;
+		}
+		const chatId = _getDialogControlChatNumber(item.id, targetEl);
+		if (!Number.isFinite(chatId)) {
+			_showDialogDockToast('Не удалось определить chat id', 'danger');
+			return false;
+		}
+		let ok = false;
+		try {
+			ok = await _runBitrixAction('im.v2.Chat.unread', { chat: chatId });
+		} catch {}
+		if (!ok) {
+			ok = await _tryNativeBitrixLaterMenu(targetEl);
+		}
+		if (!ok) {
+			_showDialogDockToast(targetEl ? 'Не удалось поставить метку' : 'Диалог не найден в текущей ленте', 'danger');
+			return false;
+		}
+		_showDialogDockToast('Метка «посмотреть позже» поставлена', 'ok');
+		_refreshDialogControlLaterState(h);
+		return true;
+	}
+
+	function _showDialogControlContextMenu(event, item, meta, h = filtersHost) {
+		if (!event || !item || _isDialogControlFolder(item)) return;
+		event.preventDefault();
+		event.stopPropagation();
+		_closeDialogControlPalettes(true);
+		_closeDialogControlContextMenu();
+		const menu = document.createElement('div');
+		menu.className = 'dialog-control-context-menu';
+		menu.dataset.dialogControlContextMenu = '1';
+		menu.setAttribute('role', 'menu');
+		const laterBtn = document.createElement('button');
+		laterBtn.type = 'button';
+		laterBtn.className = 'dialog-control-context-item';
+		laterBtn.setAttribute('role', 'menuitem');
+		laterBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg><span>Посмотреть позже</span>';
+		if (meta?.hasLater && !meta?.hasUnread && !meta?.hasMention) {
+			laterBtn.classList.add('--active');
+			laterBtn.title = 'Метка уже стоит';
+		}
+		menu.append(laterBtn);
+		document.body.appendChild(menu);
+		const margin = 8;
+		const rect = menu.getBoundingClientRect();
+		const left = Math.max(margin, Math.min(event.clientX, window.innerWidth - rect.width - margin));
+		const top = Math.max(margin, Math.min(event.clientY, window.innerHeight - rect.height - margin));
+		menu.style.left = left + 'px';
+		menu.style.top = top + 'px';
+		const close = () => {
+			document.removeEventListener('pointerdown', onPointerDown, true);
+			document.removeEventListener('keydown', onKeyDown, true);
+			window.removeEventListener('scroll', close, true);
+			menu.remove();
+			if (_dialogControlContextMenu?.menu === menu) _dialogControlContextMenu = null;
+		};
+		const onPointerDown = (e) => {
+			if (menu.contains(e.target)) return;
+			close();
+		};
+		const onKeyDown = (e) => {
+			if (e.key === 'Escape') close();
+		};
+		laterBtn.addEventListener('click', async (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			close();
+			await _markDialogControlItemLater(item, h);
+		});
+		setTimeout(() => {
+			document.addEventListener('pointerdown', onPointerDown, true);
+			document.addEventListener('keydown', onKeyDown, true);
+			window.addEventListener('scroll', close, true);
+		}, 0);
+		_dialogControlContextMenu = { menu, close };
+	}
+
 	function _placeDialogDockNearPanel(dock, panelHost = filtersHost) {
 		if (!dock || !panelHost) return;
 		const iconW = parseFloat(getComputedStyle(panelHost).getPropertyValue('--pena-icon-size')) || 24;
@@ -3689,6 +3917,7 @@ if (_presetChannel) {
 		const panel = _ensureDialogControlDock(h);
 		const list = panel?.querySelector('#anit_dialog_control_list');
 		if (!panel || !list) return;
+		_closeDialogControlContextMenu();
 		const items = _getDialogControlItems();
 		_ensureDialogControlFoldersIntegrity(items);
 		_pruneDialogControlMultiSelection(items);
@@ -3787,7 +4016,7 @@ if (_presetChannel) {
 			panel.addEventListener('click', (e) => {
 				const targetEl = e.target?.nodeType === 1 ? e.target : e.target?.parentElement || null;
 				if (targetEl?.closest?.('.dialog-control-chip')) return;
-				if (targetEl?.closest?.('button,input,select,textarea,a,[contenteditable],.dialog-control-palette')) return;
+				if (targetEl?.closest?.('button,input,select,textarea,a,[contenteditable],.dialog-control-palette,.dialog-control-context-menu')) return;
 				panel._penaClearDialogControlMultiSelection?.();
 			});
 		}
@@ -3798,7 +4027,7 @@ if (_presetChannel) {
 				if (!targetEl) return;
 				const dock = document.getElementById('anit-dialog-control-dock');
 				const filtersPanel = document.getElementById('anit-filters');
-				if (dock?.contains(targetEl) || filtersPanel?.contains(targetEl) || targetEl.closest?.('.dialog-control-palette')) return;
+				if (dock?.contains(targetEl) || filtersPanel?.contains(targetEl) || targetEl.closest?.('.dialog-control-palette,.dialog-control-context-menu')) return;
 				dock?._penaClearDialogControlMultiSelection?.();
 			}, true);
 		}
@@ -4767,6 +4996,7 @@ if (_presetChannel) {
 				e.preventDefault();
 				e.stopPropagation();
 				_closeDialogControlPalettes(true);
+				_closeDialogControlContextMenu();
 				list.querySelectorAll('.dialog-control-color-wrap.--open,.dialog-control-folder-color-wrap.--open').forEach(el => el.classList.remove('--open'));
 				const ts = Number(list.dataset.lastDragTs || 0);
 				if (ts && (Date.now() - ts) < 250) return;
@@ -4793,6 +5023,9 @@ if (_presetChannel) {
 				if (!targetEl) {
 					_showDialogDockToast(_pMode() === 'tasks' ? 'Задача не найдена в текущей ленте' : 'Диалог не найден в текущей ленте', 'danger');
 				}
+			});
+			row.addEventListener('contextmenu', (e) => {
+				_showDialogControlContextMenu(e, item, meta, h);
 			});
 			row.addEventListener('keydown', (e) => {
 				if (e.key !== 'Enter' && e.key !== ' ') return;
@@ -6133,6 +6366,11 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-toast.--show{opacity:1;transform:translateY(0)}
 #anit-dialog-control-dock .dialog-control-toast.--ok{border-color:rgba(93,200,126,.5);color:#5dc87e}
 #anit-dialog-control-dock .dialog-control-toast.--danger{border-color:rgba(239,68,68,.5);color:#ffb3b3}
+.dialog-control-context-menu[data-dialog-control-context-menu="1"]{position:fixed;z-index:10020;min-width:164px;padding:4px;border:1px solid rgba(255,255,255,.14);border-radius:8px;background:rgba(12,16,24,.98);box-shadow:0 14px 34px rgba(0,0,0,.42),0 1px 0 rgba(255,255,255,.05) inset;color:#e7edf6;box-sizing:border-box}
+.dialog-control-context-item{width:100%;min-height:30px;display:grid;grid-template-columns:20px minmax(0,1fr);align-items:center;gap:8px;border:0;border-radius:6px;background:transparent;color:inherit;padding:5px 8px;text-align:left;font:600 12px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial;cursor:pointer;box-sizing:border-box}
+.dialog-control-context-item:hover,.dialog-control-context-item:focus-visible{background:rgba(77,157,255,.13);outline:0}
+.dialog-control-context-item.--active{color:#ffb3b3}
+.dialog-control-context-item svg{width:16px;height:16px;fill:none;stroke:#ef4444;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 #anit-dialog-control-dock .dialog-control-list{position:relative;display:grid;grid-template-columns:1fr;align-content:start;gap:6px;min-height:0;flex:1 1 auto;overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.28) rgba(255,255,255,.06);padding-right:6px;padding-bottom:12px}
 .dialog-control-drop-line[data-dialog-control-drop-line="1"]{position:fixed;height:2px;border-radius:999px;background:transparent;box-shadow:none;opacity:0;pointer-events:none;z-index:10008;transform:translateY(-50%)}
 .dialog-control-drop-line[data-dialog-control-drop-line="1"].--show{opacity:1}
@@ -7247,7 +7485,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.39';
+	if (_verBadge) _verBadge.textContent = 'v7.1.40';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
