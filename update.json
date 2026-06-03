@@ -1,7 +1,7 @@
 {
-    "version":  "7.1.42",
+    "version":  "7.1.43",
     "release_date":  "2026-06-03",
-    "release_url":  "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.1.42",
+    "release_url":  "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.1.43",
     "injected_js_url":  "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension/injected.js",
-    "changelog":  "v7.1.42: make watch-later marking instant and preserve dialog-control scroll position"
+    "changelog":  "v7.1.43: add read action to dialog-control context menu"
 }
