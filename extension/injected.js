@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.37';
+	window.__ANITREC_RUNNING__ = '7.1.38';
 
-	const VER = '7.1.37';
+	const VER = '7.1.38';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -3721,6 +3721,7 @@ if (_presetChannel) {
 		let dropRowsCache = null;
 		let dropColumnsCache = null;
 		let dropBoundaryRowsCache = null;
+		let dropDraggingRowRectsCache = null;
 		let visibleFolderChildrenCache = null;
 		let lastDropKey = '';
 		let dragAutoScrollFrame = null;
@@ -3733,6 +3734,7 @@ if (_presetChannel) {
 			dropRowsCache = null;
 			dropColumnsCache = null;
 			dropBoundaryRowsCache = null;
+			dropDraggingRowRectsCache = null;
 			visibleFolderChildrenCache = null;
 			lastDropKey = '';
 		};
@@ -3856,6 +3858,17 @@ if (_presetChannel) {
 				hideDropLine();
 				return false;
 			}
+			if (!dropDraggingRowRectsCache) {
+				dropDraggingRowRectsCache = Array.from(list.querySelectorAll('.dialog-control-chip.--dragging,.dialog-control-folder.--dragging'))
+					.map(row => row.getBoundingClientRect());
+			}
+			const insideDraggingRow = dropDraggingRowRectsCache.some(rect => {
+				return rect.height > 8 && top > rect.top + 3 && top < rect.bottom - 3;
+			});
+			if (insideDraggingRow) {
+				hideDropLine();
+				return false;
+			}
 			const safeLeft = Math.max(4, Math.min(left, Math.max(4, viewportWidth - 24)));
 			const maxWidth = Math.max(24, viewportWidth - safeLeft - 4);
 			dropLine.style.top = Math.max(1, top) + 'px';
@@ -3866,8 +3879,7 @@ if (_presetChannel) {
 		};
 		const getDropBoundaryRows = () => {
 			if (dropBoundaryRowsCache) return dropBoundaryRowsCache;
-			dropBoundaryRowsCache = getVisibleDropRows()
-				.filter(row => !isDraggingTargetId(getDropTargetId(row)));
+			dropBoundaryRowsCache = getVisibleDropRows();
 			return dropBoundaryRowsCache;
 		};
 		const getDropStackRoot = (row) => row?.closest?.('.dialog-control-column') || list;
@@ -7237,7 +7249,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.37';
+	if (_verBadge) _verBadge.textContent = 'v7.1.38';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
