@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.36';
+	window.__ANITREC_RUNNING__ = '7.1.37';
 
-	const VER = '7.1.36';
+	const VER = '7.1.37';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -3720,6 +3720,7 @@ if (_presetChannel) {
 		let dropIntent = null;
 		let dropRowsCache = null;
 		let dropColumnsCache = null;
+		let dropBoundaryRowsCache = null;
 		let visibleFolderChildrenCache = null;
 		let lastDropKey = '';
 		let dragAutoScrollFrame = null;
@@ -3731,6 +3732,7 @@ if (_presetChannel) {
 		const invalidateDropMetrics = () => {
 			dropRowsCache = null;
 			dropColumnsCache = null;
+			dropBoundaryRowsCache = null;
 			visibleFolderChildrenCache = null;
 			lastDropKey = '';
 		};
@@ -3862,6 +3864,39 @@ if (_presetChannel) {
 			dropLine.style.right = 'auto';
 			return true;
 		};
+		const getDropBoundaryRows = () => {
+			if (dropBoundaryRowsCache) return dropBoundaryRowsCache;
+			dropBoundaryRowsCache = getVisibleDropRows()
+				.filter(row => !isDraggingTargetId(getDropTargetId(row)));
+			return dropBoundaryRowsCache;
+		};
+		const getDropStackRoot = (row) => row?.closest?.('.dialog-control-column') || list;
+		const getAdjacentDropBoundaryRow = (markerRow, direction) => {
+			if (!markerRow) return null;
+			const rows = getDropBoundaryRows();
+			const index = rows.indexOf(markerRow);
+			if (index < 0) return null;
+			const candidate = rows[index + direction] || null;
+			if (!candidate || getDropStackRoot(candidate) !== getDropStackRoot(markerRow)) return null;
+			return candidate;
+		};
+		const getCenteredDropLineTop = (markerRow, visualSide) => {
+			const markerBox = getRowBoxInList(markerRow);
+			if (visualSide === 'before') {
+				const prevRow = getAdjacentDropBoundaryRow(markerRow, -1);
+				if (prevRow) {
+					const prevBox = getRowBoxInList(prevRow);
+					return (prevBox.top + prevBox.height + markerBox.top) / 2;
+				}
+				return markerBox.top - 3;
+			}
+			const nextRow = getAdjacentDropBoundaryRow(markerRow, 1);
+			if (nextRow) {
+				const nextBox = getRowBoxInList(nextRow);
+				return (markerBox.top + markerBox.height + nextBox.top) / 2;
+			}
+			return markerBox.top + markerBox.height + 3;
+		};
 		const setDropMarker = (row, side) => {
 			if (!row) {
 				clearDragOver();
@@ -3891,9 +3926,7 @@ if (_presetChannel) {
 				? (getLastVisibleFolderChildRow(row.dataset.folderId) || row)
 				: row;
 			const markerBox = getRowBoxInList(markerRow);
-			const top = visualSide === 'before'
-				? markerBox.top - 3
-				: markerBox.top + markerBox.height + 3;
+			const top = getCenteredDropLineTop(markerRow, visualSide);
 			const isFolderAfter = side === 'folder-after';
 			const scopeBox = getDropLineScopeBox(markerRow);
 			let lineLeft = scopeBox.left;
@@ -4153,9 +4186,7 @@ if (_presetChannel) {
 				? (getLastVisibleFolderChildRow(row.dataset.folderId) || row)
 				: row;
 			const markerBox = getRowBoxInList(markerRow);
-			const top = visualSide === 'before'
-				? markerBox.top - 3
-				: markerBox.top + markerBox.height + 3;
+			const top = getCenteredDropLineTop(markerRow, visualSide);
 			const scopeBox = getDropLineScopeBox(markerRow);
 			let lineLeft = scopeBox.left;
 			let lineWidth = scopeBox.width;
@@ -7206,7 +7237,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.36';
+	if (_verBadge) _verBadge.textContent = 'v7.1.37';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
