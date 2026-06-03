@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.40';
+	window.__ANITREC_RUNNING__ = '7.1.41';
 
-	const VER = '7.1.40';
+	const VER = '7.1.41';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -732,70 +732,32 @@
 		throw lastError || new Error('Bitrix action unavailable');
 	}
 
-	function _findBitrixLaterMenuItem() {
-		const docs = [document];
-		const topWin = _getSafeTopWindow();
-		try {
-			const topDoc = topWin?.document;
-			if (topDoc && topDoc !== document) docs.push(topDoc);
-		} catch {}
-		const selectors = [
-			'button',
-			'a',
-			'[role="menuitem"]',
-			'.menu-popup-item',
-			'.popup-window-button',
-			'[class*="menu" i][class*="item" i]'
-		].join(',');
-		for (const doc of docs) {
-			let nodes = [];
-			try { nodes = Array.from(doc.querySelectorAll(selectors)); } catch { nodes = []; }
-			for (const node of nodes) {
-				if (node.closest?.('#anit-dialog-control-dock,.dialog-control-context-menu')) continue;
-				const text = String(node.textContent || node.getAttribute?.('title') || node.getAttribute?.('aria-label') || '').replace(/\s+/g, ' ').trim().toLowerCase();
-				if (!text) continue;
-				if (/посмотреть\s+позже|отметить\s+непрочитан|mark\s+as\s+unread|unread/.test(text)) return node;
+	async function _setDialogControlLaterFlag(dialogId, chatId = null) {
+		const id = normId(dialogId);
+		const numericChatId = Number(chatId);
+		const attempts = [];
+		if (id) {
+			attempts.push(() => _callBxRestMethod('im.recent.unread', { DIALOG_ID: id, ACTION: 'Y' }));
+		}
+		if (Number.isFinite(numericChatId)) {
+			attempts.push(() => _runBitrixAction('im.v2.Chat.unread', { chat: numericChatId }));
+			attempts.push(() => _runBitrixAction('im.v2.Chat.unread', { chat: String(numericChatId) }));
+			attempts.push(() => _runBitrixAction('im.v2.Chat.unread', { chatId: numericChatId }));
+			attempts.push(() => _runBitrixAction('im.v2.Chat.unread', { chat_id: numericChatId }));
+		}
+		let lastError = null;
+		for (const attempt of attempts) {
+			try {
+				await attempt();
+				return true;
+			} catch (e) {
+				lastError = e;
 			}
 		}
-		return null;
+		if (lastError) throw lastError;
+		return false;
 	}
 
-	function _tryNativeBitrixLaterMenu(el) {
-		return new Promise((resolve) => {
-			if (!el) { resolve(false); return; }
-			const rect = el.getBoundingClientRect();
-			const x = Math.max(1, Math.min(window.innerWidth - 1, rect.left + Math.min(rect.width - 8, Math.max(8, rect.width / 2))));
-			const y = Math.max(1, Math.min(window.innerHeight - 1, rect.top + Math.min(rect.height - 8, Math.max(8, rect.height / 2))));
-			const target = el.querySelector?.('a,button,[role="button"],.bx-im-list-recent-item__content,.bx-messenger-cl-user') || el;
-			try {
-				target.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 2, buttons: 2 }));
-			} catch {
-				resolve(false);
-				return;
-			}
-			const started = Date.now();
-			const tick = () => {
-				const menuItem = _findBitrixLaterMenuItem();
-				if (menuItem) {
-					try {
-						menuItem.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
-						menuItem.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
-						menuItem.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-						resolve(true);
-					} catch {
-						resolve(false);
-					}
-					return;
-				}
-				if (Date.now() - started > 900) {
-					resolve(false);
-					return;
-				}
-				setTimeout(tick, 90);
-			};
-			setTimeout(tick, 80);
-		});
-	}
 
 	function _getSafeTopWindow() {
 		try {
@@ -3197,19 +3159,12 @@ if (_presetChannel) {
 			return true;
 		}
 		const chatId = _getDialogControlChatNumber(item.id, targetEl);
-		if (!Number.isFinite(chatId)) {
-			_showDialogDockToast('Не удалось определить chat id', 'danger');
-			return false;
-		}
 		let ok = false;
 		try {
-			ok = await _runBitrixAction('im.v2.Chat.unread', { chat: chatId });
+			ok = await _setDialogControlLaterFlag(item.id, chatId);
 		} catch {}
 		if (!ok) {
-			ok = await _tryNativeBitrixLaterMenu(targetEl);
-		}
-		if (!ok) {
-			_showDialogDockToast(targetEl ? 'Не удалось поставить метку' : 'Диалог не найден в текущей ленте', 'danger');
+			_showDialogDockToast('Не удалось поставить метку через Bitrix API', 'danger');
 			return false;
 		}
 		_showDialogDockToast('Метка «посмотреть позже» поставлена', 'ok');
@@ -7485,7 +7440,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.40';
+	if (_verBadge) _verBadge.textContent = 'v7.1.41';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
