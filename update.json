@@ -1,7 +1,7 @@
 {
-    "version":  "7.1.44",
-    "release_date":  "2026-06-03",
-    "release_url":  "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.1.44",
+    "version":  "7.1.45",
+    "release_date":  "2026-06-04",
+    "release_url":  "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.1.45",
     "injected_js_url":  "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension/injected.js",
-    "changelog":  "v7.1.44: make read menu item only clear watch-later and keep context menu neutral"
+    "changelog":  "v7.1.45: keep empty folders visible while they are actively moved or edited"
 }

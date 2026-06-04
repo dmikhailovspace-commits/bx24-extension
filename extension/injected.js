@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.1.44';
+	window.__ANITREC_RUNNING__ = '7.1.45';
 
-	const VER = '7.1.44';
+	const VER = '7.1.45';
 	const TAG = 'PENA: CHAT SORTER';
 	const LBL = `%c[${TAG}]`;
 	const CSS_LOG  = 'background:#000;color:#fff;padding:1px 4px;border-radius:10px';
@@ -1805,6 +1805,19 @@ if (_presetChannel) {
 		return Number(folder?.emptyVisibleUntil || 0) > now;
 	}
 
+	function _touchEmptyDialogControlFolder(folder, items = _getDialogControlItems(), now = Date.now()) {
+		if (!_isDialogControlFolder(folder)) return false;
+		if (_getDialogControlFolderChildCount(folder.id, items) > 0) {
+			if (!folder.emptyVisibleUntil) return false;
+			delete folder.emptyVisibleUntil;
+			return true;
+		}
+		const next = now + _DIALOG_CONTROL_EMPTY_FOLDER_GRACE_MS;
+		if (Number(folder.emptyVisibleUntil || 0) >= next - 1000) return false;
+		folder.emptyVisibleUntil = next;
+		return true;
+	}
+
 	function _pruneEmptyDialogControlFolders(items = _getDialogControlItems()) {
 		if (!Array.isArray(items)) return false;
 		let changed = false;
@@ -1922,6 +1935,7 @@ if (_presetChannel) {
 		const item = _getDialogControlItems().find(x => _isDialogControlFolder(x) && String(x.id) === id);
 		if (!item || item.title === next) return false;
 		item.title = next;
+		_touchEmptyDialogControlFolder(item);
 		_saveDialogControlItems();
 		_dialogControlLastSig = '';
 		return true;
@@ -1934,6 +1948,7 @@ if (_presetChannel) {
 		const next = _normalizeDialogControlColor(color);
 		if (next) item.color = next;
 		else delete item.color;
+		_touchEmptyDialogControlFolder(item);
 		_saveDialogControlItems();
 		_dialogControlLastSig = '';
 		return true;
@@ -1944,6 +1959,7 @@ if (_presetChannel) {
 		const item = _getDialogControlItems().find(x => _isDialogControlFolder(x) && String(x.id) === id);
 		if (!item) return false;
 		item.collapsed = !!collapsed;
+		_touchEmptyDialogControlFolder(item);
 		_saveDialogControlItems();
 		_dialogControlLastSig = '';
 		return true;
@@ -1973,6 +1989,7 @@ if (_presetChannel) {
 			else moved.folderId = target.folderId;
 		}
 		_insertDialogControlItemRelative(items, moved, target, side);
+		if (_isDialogControlFolder(moved)) _touchEmptyDialogControlFolder(moved, items);
 		_dialogControlItems[_pMode()] = items;
 		_saveDialogControlItems();
 		_dialogControlLastSig = '';
@@ -4780,6 +4797,7 @@ if (_presetChannel) {
 			const remaining = itemsNow.filter(item => item !== moved);
 			remaining.push(moved);
 			itemsNow.splice(0, itemsNow.length, ...remaining);
+			_touchEmptyDialogControlFolder(moved, itemsNow);
 			_dialogControlItems[_pMode()] = itemsNow;
 			_saveDialogControlItems();
 			_dialogControlLastSig = '';
@@ -5072,6 +5090,7 @@ if (_presetChannel) {
 					draggingType = 'folder';
 					draggingIds = new Set([String(item.id)]);
 					draggingItems = [];
+					if (_touchEmptyDialogControlFolder(item, _getDialogControlItems())) _saveDialogControlItems();
 					invalidateDropMetrics();
 					markDraggingRows(true);
 					if (e.dataTransfer) {
@@ -7648,7 +7667,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 	// Версия в нижнем правом углу
 	const _verBadge = host.querySelector('#anit_ver_badge');
-	if (_verBadge) _verBadge.textContent = 'v7.1.44';
+	if (_verBadge) _verBadge.textContent = 'v7.1.45';
 
 	// Очистка устарев?их ключей localStorage
 	['pena.update.info','pena.last_seen_ver','anit.filters.v2',
