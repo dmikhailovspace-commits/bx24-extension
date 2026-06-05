@@ -1,7 +1,7 @@
 {
-    "version":  "7.1.45",
-    "release_date":  "2026-06-04",
-    "release_url":  "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.1.45",
+    "version":  "7.1.46",
+    "release_date":  "2026-06-06",
+    "release_url":  "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.1.46",
     "injected_js_url":  "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension/injected.js",
-    "changelog":  "v7.1.45: keep empty folders visible while they are actively moved or edited"
+    "changelog":  "v7.1.46: make drag-and-drop ordering more predictable by moving folders together with their dialogs"
 }

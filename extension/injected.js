@@ -1966,16 +1966,34 @@ if (_presetChannel) {
 	}
 
 	function _insertDialogControlItemRelative(items, moved, target, side) {
-		const fromIdx = items.indexOf(moved);
-		if (fromIdx >= 0) items.splice(fromIdx, 1);
-		const toIdx = items.indexOf(target);
+		return _insertDialogControlItemRefsRelative(items, [moved], target, side);
+	}
+
+	function _getDialogControlFolderBlock(items, folder) {
+		if (!_isDialogControlFolder(folder)) return [folder].filter(Boolean);
+		const folderId = String(folder.id || '');
+		return (Array.isArray(items) ? items : []).filter(item =>
+			item === folder || (!_isDialogControlFolder(item) && String(item.folderId || '') === folderId)
+		);
+	}
+
+	function _insertDialogControlItemRefsRelative(items, movedRefs, target, side) {
+		const moved = (Array.isArray(movedRefs) ? movedRefs : [movedRefs]).filter(Boolean);
+		if (!Array.isArray(items) || !moved.length || !target) return false;
+		const movedSet = new Set(moved);
+		if (movedSet.has(target)) return false;
+		const remaining = items.filter(item => !movedSet.has(item));
+		const toIdx = remaining.indexOf(target);
+		if (toIdx < 0) return false;
 		let insertIdx = Math.max(0, toIdx + (side === 'after' ? 1 : 0));
 		if (side === 'after' && _isDialogControlFolder(target)) {
 			const folderId = String(target.id || '');
-			const lastChildIdx = items.reduce((last, x, idx) => String(x.folderId || '') === folderId ? idx : last, toIdx);
+			const lastChildIdx = remaining.reduce((last, x, idx) => String(x.folderId || '') === folderId ? idx : last, toIdx);
 			insertIdx = Math.max(0, lastChildIdx + 1);
 		}
-		items.splice(insertIdx, 0, moved);
+		remaining.splice(insertIdx, 0, ...moved);
+		items.splice(0, items.length, ...remaining);
+		return true;
 	}
 
 	function _moveDialogControlItemRelative(movedId, targetId, side = 'before') {
@@ -1988,7 +2006,8 @@ if (_presetChannel) {
 			if (_isDialogControlFolder(target) || !target.folderId) delete moved.folderId;
 			else moved.folderId = target.folderId;
 		}
-		_insertDialogControlItemRelative(items, moved, target, side);
+		const movedRefs = _isDialogControlFolder(moved) ? _getDialogControlFolderBlock(items, moved) : [moved];
+		if (!_insertDialogControlItemRefsRelative(items, movedRefs, target, side)) return false;
 		if (_isDialogControlFolder(moved)) _touchEmptyDialogControlFolder(moved, items);
 		_dialogControlItems[_pMode()] = items;
 		_saveDialogControlItems();
@@ -4794,8 +4813,10 @@ if (_presetChannel) {
 			const itemsNow = _getDialogControlItems();
 			const moved = itemsNow.find(item => _isDialogControlFolder(item) && String(item.id) === String(movedId));
 			if (!moved) return false;
-			const remaining = itemsNow.filter(item => item !== moved);
-			remaining.push(moved);
+			const movedRefs = _getDialogControlFolderBlock(itemsNow, moved);
+			const movedSet = new Set(movedRefs);
+			const remaining = itemsNow.filter(item => !movedSet.has(item));
+			remaining.push(...movedRefs);
 			itemsNow.splice(0, itemsNow.length, ...remaining);
 			_touchEmptyDialogControlFolder(moved, itemsNow);
 			_dialogControlItems[_pMode()] = itemsNow;
