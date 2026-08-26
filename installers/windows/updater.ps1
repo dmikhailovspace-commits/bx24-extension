@@ -15,7 +15,8 @@ param(
     [switch]$Setup,                 # первоначальная настройка (из Inno Setup)
     [switch]$Launch,                # запустить Bitrix24 с расширением
     [switch]$LaunchWithUpdate,      # проверить обновление + запустить (из ярлыка)
-    [switch]$CreateDesktopShortcut  # создать ярлык на рабочем столе (postinstall чекбокс)
+    [switch]$CreateDesktopShortcut, # создать ярлык на рабочем столе (postinstall чекбокс)
+    [string]$InstallFrom            # атомарно опубликовать staging-каталог установщика
 )
 
 # ── Конфигурация (замените URL на свой реальный репозиторий) ──
@@ -24,6 +25,31 @@ $INSTALL_DIR     = "$env:LOCALAPPDATA\PENA Agency\Extension"
 $TASK_NAME       = "PENAAgencyUpdater"
 $LOG_FILE        = "$env:LOCALAPPDATA\PENA Agency\updater.log"
 $BITRIX_PATH_FILE = "$env:LOCALAPPDATA\PENA Agency\bitrix_path.txt"
+$TRUSTED_RAW_PREFIX = "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension"
+$REQUIRED_EXTENSION_FILES = @(
+    'background.js',
+    'content.js',
+    'native-catalog.js',
+    'native-interaction-state.js',
+	'native-time-control.js',
+    'native-lifecycle.js',
+    'dialog-repository.js',
+    'injected.js',
+    'injected.css',
+    'manifest.json',
+    'popup.html',
+    'popup.js',
+    'icons/icon16.png',
+    'icons/icon48.png',
+    'icons/icon128.png',
+    'icons/logo.png'
+)
+$REQUIRED_WINDOWS_RELEASE_FILES = @(
+    'installers/windows/updater.ps1',
+    'installers/windows/pena_host.ps1',
+    'installers/windows/pena_host.bat'
+)
+$REQUIRED_WINDOWS_TARGET_FILES = @('updater.ps1', 'pena_host.ps1', 'pena_host.bat')
 # ──────────────────────────────────────────────────────────────
 
 $ErrorActionPreference = "SilentlyContinue"
@@ -63,6 +89,207 @@ function CompareVersions($a, $b) {
         $vb = [System.Version]$b
         return $va.CompareTo($vb)
     } catch { return 0 }
+}
+
+function ConvertTo-SafeReleasePath($Path) {
+    $normalized = ([string]$Path).Replace('\', '/').Trim()
+    if ([string]::IsNullOrWhiteSpace($normalized) -or
+        $normalized.StartsWith('/') -or
+        $normalized -match '(^|/)\.\.(/|$)' -or
+        $normalized -notmatch '^[A-Za-z0-9._/-]+$') {
+        throw "Недопустимый путь release-файла: $Path"
+    }
+    return $normalized
+}
+
+function Get-BitrixExecutable {
+    if (Test-Path $BITRIX_PATH_FILE) {
+        $savedPath = (Get-Content $BITRIX_PATH_FILE -Raw -ErrorAction SilentlyContinue).Trim()
+        if ($savedPath -and (Test-Path $savedPath)) { return $savedPath }
+    }
+    foreach ($candidate in @(
+        "$env:LOCALAPPDATA\Programs\Bitrix24\Bitrix24.exe",
+        "$env:LOCALAPPDATA\Bitrix24\Bitrix24.exe",
+        "C:\Program Files (x86)\Bitrix24\Bitrix24.exe",
+        "C:\Program Files\Bitrix24\Bitrix24.exe"
+    )) {
+        if (Test-Path $candidate) { return $candidate }
+    }
+    return $null
+}
+
+function Test-StagedRelease($StageDir, $ExpectedVersion, $ExpectedFiles) {
+    $manifestPath = Join-Path $StageDir 'manifest.json'
+    if (-not (Test-Path $manifestPath -PathType Leaf)) {
+        throw "В staging-каталоге отсутствует manifest.json"
+    }
+    try {
+        $manifest = Get-Content $manifestPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        throw "Некорректный manifest.json в staging-каталоге: $($_.Exception.Message)"
+    }
+    if ([string]$manifest.version -ne [string]$ExpectedVersion) {
+        throw "Версия staging manifest ($($manifest.version)) не совпадает с release ($ExpectedVersion)"
+    }
+
+    foreach ($relativePath in $ExpectedFiles) {
+        $safePath = ConvertTo-SafeReleasePath $relativePath
+        $filePath = Join-Path $StageDir ($safePath.Replace('/', '\'))
+        if (-not (Test-Path $filePath -PathType Leaf) -or (Get-Item $filePath -ErrorAction Stop).Length -le 0) {
+            throw "В staging-каталоге отсутствует обязательный файл: $safePath"
+        }
+    }
+
+    $resources = @($manifest.web_accessible_resources | ForEach-Object { @($_.resources) })
+    foreach ($module in @('native-catalog.js', 'native-interaction-state.js', 'native-time-control.js', 'native-lifecycle.js', 'dialog-repository.js', 'injected.js')) {
+        if ($resources -notcontains $module) {
+            throw "manifest.json не публикует обязательный runtime-модуль: $module"
+        }
+    }
+}
+
+function Test-InstalledReleaseHealth($ExpectedVersion) {
+    try {
+        $expectedFiles = @($REQUIRED_EXTENSION_FILES + $REQUIRED_WINDOWS_TARGET_FILES)
+        Test-StagedRelease $INSTALL_DIR $ExpectedVersion $expectedFiles
+        return $true
+    } catch {
+        Log "Установленный release неполный: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Publish-StagedRelease($StageDir, $ExpectedVersion, $ExpectedFiles) {
+    $stageFull = [System.IO.Path]::GetFullPath($StageDir).TrimEnd('\')
+    $installFull = [System.IO.Path]::GetFullPath($INSTALL_DIR).TrimEnd('\')
+    $stageParent = Split-Path $stageFull -Parent
+    $installParent = Split-Path $installFull -Parent
+    if (-not $stageParent.Equals($installParent, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Staging и install должны находиться на одном томе и в одном каталоге"
+    }
+    if ($stageFull.Equals($installFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Staging-каталог совпадает с install-каталогом"
+    }
+
+    Test-StagedRelease $stageFull $ExpectedVersion $ExpectedFiles
+
+    $runningBitrix = @(Get-Process -Name 'Bitrix24' -ErrorAction SilentlyContinue)
+    if ($runningBitrix.Count -gt 0) {
+        Log "Останавливаю Bitrix24 перед атомарной публикацией release."
+        $runningBitrix | Stop-Process -Force -ErrorAction SilentlyContinue
+        $runningBitrix | Wait-Process -Timeout 8 -ErrorAction SilentlyContinue
+    }
+
+    $backupDir = "$installFull.previous"
+    if (Test-Path $backupDir) {
+        Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction Stop
+    }
+
+    $currentMoved = $false
+    try {
+        if (Test-Path $installFull) {
+            Move-Item -LiteralPath $installFull -Destination $backupDir -ErrorAction Stop
+            $currentMoved = $true
+        }
+        Move-Item -LiteralPath $stageFull -Destination $installFull -ErrorAction Stop
+    } catch {
+        if (-not (Test-Path $installFull) -and $currentMoved -and (Test-Path $backupDir)) {
+            Move-Item -LiteralPath $backupDir -Destination $installFull -ErrorAction SilentlyContinue
+        }
+        throw "Не удалось опубликовать release; выполнен rollback: $($_.Exception.Message)"
+    }
+
+    if (Test-Path $backupDir) {
+        try {
+            Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction Stop
+        } catch {
+            Log "Предыдущая версия оставлена для отложенной очистки: $backupDir"
+        }
+    }
+}
+
+function Invoke-WithUpdateLock([scriptblock]$Action) {
+    $mutex = New-Object System.Threading.Mutex($false, 'Local\PENAAgencyExtensionUpdate')
+    $hasLock = $false
+    try {
+        try {
+            $hasLock = $mutex.WaitOne([TimeSpan]::FromSeconds(30))
+        } catch [System.Threading.AbandonedMutexException] {
+            $hasLock = $true
+        }
+        if (-not $hasLock) { throw "Другой процесс уже обновляет расширение" }
+        return & $Action
+    } finally {
+        if ($hasLock) { $mutex.ReleaseMutex() }
+        $mutex.Dispose()
+    }
+}
+
+function Invoke-AtomicExtensionUpdate($UpdateInfo) {
+    $remoteVersion = [string]$UpdateInfo.version
+    $rawBase = ([string]$UpdateInfo.raw_base_url).TrimEnd('/')
+    $expectedBase = "$TRUSTED_RAW_PREFIX/v$remoteVersion"
+    if ($rawBase -ne $expectedBase) {
+        throw "raw_base_url должен указывать на неизменяемый тег $expectedBase"
+    }
+
+    $extensionFiles = @($UpdateInfo.extension_files | ForEach-Object { ConvertTo-SafeReleasePath $_ })
+    if ($extensionFiles.Count -eq 0) { throw "update.json не содержит extension_files" }
+    foreach ($requiredFile in $REQUIRED_EXTENSION_FILES) {
+        if ($extensionFiles -notcontains $requiredFile) {
+            throw "update.json не содержит обязательный runtime-файл: $requiredFile"
+        }
+    }
+    $windowsFiles = @($UpdateInfo.windows_files | ForEach-Object { ConvertTo-SafeReleasePath $_ })
+    foreach ($requiredFile in $REQUIRED_WINDOWS_RELEASE_FILES) {
+        if ($windowsFiles -notcontains $requiredFile) {
+            throw "update.json не содержит обязательный Windows release-файл: $requiredFile"
+        }
+    }
+
+    $installParent = Split-Path $INSTALL_DIR -Parent
+    if (-not (Test-Path $installParent)) {
+        New-Item -Path $installParent -ItemType Directory -Force -ErrorAction Stop | Out-Null
+    }
+    $stageDir = Join-Path $installParent ("Extension.update.{0}.{1}" -f $PID, [Guid]::NewGuid().ToString('N'))
+    New-Item -Path $stageDir -ItemType Directory -ErrorAction Stop | Out-Null
+
+    try {
+        if (Test-Path $INSTALL_DIR) {
+            Get-ChildItem -LiteralPath $INSTALL_DIR -Force -ErrorAction Stop |
+                Copy-Item -Destination $stageDir -Recurse -Force -ErrorAction Stop
+        }
+
+        foreach ($relativePath in $extensionFiles) {
+            $outFile = Join-Path $stageDir ($relativePath.Replace('/', '\'))
+            $outDir = Split-Path $outFile -Parent
+            if (-not (Test-Path $outDir)) { New-Item $outDir -ItemType Directory -Force -ErrorAction Stop | Out-Null }
+            $downloadPath = "$outFile.download"
+            Invoke-WebRequest -Uri "$rawBase/extension/$relativePath" -OutFile $downloadPath `
+                -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop
+            Move-Item -LiteralPath $downloadPath -Destination $outFile -Force -ErrorAction Stop
+            Log "Загружен: $relativePath"
+        }
+
+        foreach ($sourcePath in $windowsFiles) {
+            $targetName = Split-Path $sourcePath -Leaf
+            $outFile = Join-Path $stageDir $targetName
+            $downloadPath = "$outFile.download"
+            Invoke-WebRequest -Uri "$rawBase/$sourcePath" -OutFile $downloadPath `
+                -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop
+            Move-Item -LiteralPath $downloadPath -Destination $outFile -Force -ErrorAction Stop
+            Log "Загружен release-файл: $sourcePath"
+        }
+
+        $expectedStageFiles = @($extensionFiles + $REQUIRED_WINDOWS_TARGET_FILES)
+        Test-StagedRelease $stageDir $remoteVersion $expectedStageFiles
+        Publish-StagedRelease $stageDir $remoteVersion $expectedStageFiles
+        return $true
+    } finally {
+        if (Test-Path $stageDir) {
+            Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 function Register-NativeHost {
@@ -118,6 +345,21 @@ function MakeShortcut($Path, $Target, $LnkArgs, $WorkDir, $Desc, $Icon) {
         $sc.Save()
         return $true
     } catch { return $false }
+}
+
+if ($InstallFrom) {
+    try {
+        Invoke-WithUpdateLock {
+            $stageManifest = Get-Content (Join-Path $InstallFrom 'manifest.json') -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            $expectedStageFiles = @($REQUIRED_EXTENSION_FILES + $REQUIRED_WINDOWS_TARGET_FILES)
+            Publish-StagedRelease $InstallFrom ([string]$stageManifest.version) $expectedStageFiles
+        } | Out-Null
+        Log "Release атомарно установлен в: $INSTALL_DIR"
+        exit 0
+    } catch {
+        Log "ОШИБКА атомарной установки: $($_.Exception.Message)"
+        exit 1
+    }
 }
 
 # ==============================================================
@@ -347,68 +589,41 @@ if ($Launch) {
 # РЕЖИМ ЗАПУСКА С ОБНОВЛЕНИЕМ (-LaunchWithUpdate)
 # Вызывается из ярлыка «Bitrix24 (PENA Agency)».
 # 1. Проверяет update.json (макс. 8 сек)
-# 2. Если есть обновление — скачивает файлы расширения с GitHub
+# 2. Если есть обновление — проверяет его в staging и атомарно публикует
 # 3. Запускает Bitrix24 с --load-extension
 # ==============================================================
 if ($LaunchWithUpdate) {
-    # Убеждаемся что Native Messaging Host зарегистрирован (на случай если -Setup не запускался)
-    Register-NativeHost
-
-    $RAW_BASE = "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension"
-    $UPD_FILES = @("background.js", "content.js", "injected.js", "manifest.json")
-
-    # — Текущая версия —
     $localVersion = "0.0.0"
     $manifestPath = Join-Path $INSTALL_DIR "manifest.json"
     if (Test-Path $manifestPath) {
         try {
-            $mf = Get-Content $manifestPath -Raw | ConvertFrom-Json
+            $mf = Get-Content $manifestPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
             $localVersion = $mf.version
         } catch {}
     }
+    $releaseHealthy = Test-InstalledReleaseHealth $localVersion
 
-    # — Проверяем update.json (таймаут 8 сек, чтобы не задерживать запуск) —
-    $needsUpdate = $false
     try {
-        $updateInfo = Invoke-RestMethod -Uri $UPDATE_JSON_URL -TimeoutSec 8
+        $updateInfo = Invoke-RestMethod -Uri $UPDATE_JSON_URL -TimeoutSec 8 -ErrorAction Stop
         $remoteVersion = $updateInfo.version
-        if ($remoteVersion -and (CompareVersions $remoteVersion $localVersion) -gt 0) {
-            $needsUpdate = $true
-            Log "Обновление: $localVersion -> $remoteVersion"
+        $versionComparison = CompareVersions $remoteVersion $localVersion
+        if ($remoteVersion -and ($versionComparison -gt 0 -or ($versionComparison -eq 0 -and -not $releaseHealthy))) {
+            if ($versionComparison -gt 0) {
+                Log "Обновление: $localVersion -> $remoteVersion"
+            } else {
+                Log "Восстанавливаю неполный release $remoteVersion"
+            }
+            Invoke-WithUpdateLock { Invoke-AtomicExtensionUpdate $updateInfo } | Out-Null
+            Log "Обновление до $remoteVersion установлено атомарно."
+            ShowBalloon "PENA Agency" "Расширение обновлено до v$remoteVersion"
         }
     } catch {
-        Log "Не удалось проверить обновление (сеть недоступна) — запускаем как есть."
+        Log "Проверка или установка обновления не удалась; запускаю целую предыдущую версию: $($_.Exception.Message)"
     }
 
-    # — Скачиваем файлы если нужно —
-    if ($needsUpdate) {
-        foreach ($f in $UPD_FILES) {
-            try {
-                Invoke-WebRequest -Uri "$RAW_BASE/$f" -OutFile (Join-Path $INSTALL_DIR $f) `
-                    -UseBasicParsing -TimeoutSec 30
-                Log "Загружен: $f"
-            } catch {
-                Log "ОШИБКА загрузки $f — пропускаем."
-            }
-        }
-        ShowBalloon "PENA Agency" "Расширение обновлено до v$remoteVersion"
-    }
-
-    # — Запускаем Bitrix24 (идентично -Launch) —
+    Register-NativeHost
     $extArgs = "--disable-extensions-except=`"$INSTALL_DIR`" --load-extension=`"$INSTALL_DIR`""
-    $BitrixExe = $null
-    if (Test-Path $BITRIX_PATH_FILE) {
-        $p = (Get-Content $BITRIX_PATH_FILE -Raw -ErrorAction SilentlyContinue).Trim()
-        if ($p -and (Test-Path $p)) { $BitrixExe = $p }
-    }
-    if (-not $BitrixExe) {
-        @("$env:LOCALAPPDATA\Programs\Bitrix24\Bitrix24.exe",
-          "$env:LOCALAPPDATA\Bitrix24\Bitrix24.exe",
-          "C:\Program Files (x86)\Bitrix24\Bitrix24.exe",
-          "C:\Program Files\Bitrix24\Bitrix24.exe") | ForEach-Object {
-            if (-not $BitrixExe -and (Test-Path $_)) { $BitrixExe = $_ }
-        }
-    }
+    $BitrixExe = Get-BitrixExecutable
     if ($BitrixExe) {
         Start-Process -FilePath $BitrixExe -ArgumentList $extArgs
     } else {
@@ -430,67 +645,47 @@ if (-not (Test-Path (Join-Path $INSTALL_DIR "manifest.json"))) {
 
 # Текущая версия
 try {
-    $manifest    = Get-Content (Join-Path $INSTALL_DIR "manifest.json") -Raw | ConvertFrom-Json
+    $manifest = Get-Content (Join-Path $INSTALL_DIR "manifest.json") -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
     $localVersion = $manifest.version
 } catch {
     Log "Ошибка чтения manifest.json: $($_.Exception.Message)"
     exit 1
 }
 Log "Установлена версия: $localVersion"
+$releaseHealthy = Test-InstalledReleaseHealth $localVersion
 
 # Получаем update.json
 try {
-    $updateInfo = Invoke-RestMethod -Uri $UPDATE_JSON_URL -TimeoutSec 15
+    $updateInfo = Invoke-RestMethod -Uri $UPDATE_JSON_URL -TimeoutSec 15 -ErrorAction Stop
 } catch {
     Log "Не удалось получить update.json: $($_.Exception.Message)"
     exit 0   # не критично — пробуем завтра
 }
 
 $remoteVersion = $updateInfo.version
-$rawBase       = "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension"
-$updateFiles   = @('background.js', 'content.js', 'injected.js', 'manifest.json')
 Log "Доступна версия: $remoteVersion"
 
-if ((CompareVersions $remoteVersion $localVersion) -le 0) {
+$versionComparison = CompareVersions $remoteVersion $localVersion
+if ($versionComparison -lt 0 -or ($versionComparison -eq 0 -and $releaseHealthy)) {
     Log "Обновление не требуется."
     exit 0
+}
+
+if ($versionComparison -eq 0) {
+    Log "Восстанавливаю неполный release $remoteVersion"
 }
 
 Log "Загружаю обновление $remoteVersion ..."
 
 try {
-    # Скачиваем файлы расширения из GitHub напрямую в папку установки
-    foreach ($f in $updateFiles) {
-        $url     = "$rawBase/$f"
-        $outFile = Join-Path $INSTALL_DIR $f
-        Invoke-WebRequest -Uri $url -OutFile $outFile -UseBasicParsing -TimeoutSec 60
-        Log "Загружен: $f"
-    }
+    Invoke-WithUpdateLock { Invoke-AtomicExtensionUpdate $updateInfo } | Out-Null
+    Log "Release атомарно опубликован в: $INSTALL_DIR"
 
-    Log "Файлы обновлены в: $INSTALL_DIR"
-
-    # Перезапускаем Bitrix24 с расширением
     $extArgs = "--disable-extensions-except=`"$INSTALL_DIR`" --load-extension=`"$INSTALL_DIR`""
-    $bitrixExe = $null
+    $bitrixExe = Get-BitrixExecutable
 
-    # Сначала из сохранённого пути
-    if (Test-Path $BITRIX_PATH_FILE) {
-        $p = (Get-Content $BITRIX_PATH_FILE -Raw -ErrorAction SilentlyContinue).Trim()
-        if ($p -and (Test-Path $p)) { $bitrixExe = $p }
-    }
-    # Fallback: стандартные пути
-    if (-not $bitrixExe) {
-        @(
-            "$env:LOCALAPPDATA\Programs\Bitrix24\Bitrix24.exe",
-            "$env:LOCALAPPDATA\Bitrix24\Bitrix24.exe",
-            "C:\Program Files (x86)\Bitrix24\Bitrix24.exe",
-            "C:\Program Files\Bitrix24\Bitrix24.exe"
-        ) | ForEach-Object { if (-not $bitrixExe -and (Test-Path $_)) { $bitrixExe = $_ } }
-    }
-
+    Register-NativeHost
     if ($bitrixExe) {
-        Stop-Process -Name "Bitrix24" -Force -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 3
         Start-Process -FilePath $bitrixExe -ArgumentList $extArgs
         Log "Bitrix24 перезапущен: $bitrixExe"
         ShowBalloon "PENA Agency обновлён" "Установлена версия $remoteVersion. Bitrix24 перезапускается."

@@ -10,10 +10,16 @@ Thumbs.db
 *.tmp
 *Temp*_b64.txt
 C*Temp*.txt
+*.bak*
+*.broken-encoding-*
+
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
 
 # Build output (compiled installers)
 dist/
-!dist/Install_Browser.html
 
 # Archives
 *.zip

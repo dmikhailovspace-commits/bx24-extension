@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>PENA native cold-start layout</title>
+  <link rel="stylesheet" href="../extension/injected.css">
+  <style>
+    :root { --final-rail-width: 220px; --final-chat-width: 380px; }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body { font: 14px/1.35 Arial, sans-serif; color: #1f2937; background: #e8eef5; }
+    #workspace { display: flex; width: 100vw; height: 100vh; overflow: hidden; }
+    #left-rail, #conversation { flex: 0 0 0; width: 0; overflow: hidden; }
+    #chat-column { display: flex; flex: 0 0 100vw; width: 100vw; min-width: 0; height: 100vh; background: #fff; }
+    #workspace.layout-ready #left-rail { flex-basis: var(--final-rail-width); width: var(--final-rail-width); background: #344558; }
+    #workspace.layout-ready #chat-column { flex-basis: var(--final-chat-width); width: var(--final-chat-width); }
+    #workspace.layout-ready #conversation { flex: 1 1 auto; width: auto; background: #dce7f2; }
+    .test-host { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-height: 0; width: 100%; height: 100%; }
+    .native-header { flex: 0 0 52px; height: 52px; padding: 9px 10px; border-bottom: 1px solid #dbe3ec; }
+    .native-header input { width: 100%; height: 34px; padding: 0 12px; border: 1px solid #cbd5e1; }
+    .bx-im-list-container-recent__container,
+    .test-intermediate-shell { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-height: 0; width: 100%; }
+    .bx-im-list-container-recent__scroll-container,
+    .test-compatible-viewport { flex: 1 1 auto; min-width: 0; min-height: 0; width: 100%; overflow-x: hidden; overflow-y: auto; }
+    .bx-im-list-container-recent__elements { position: relative; width: 100%; min-height: 100%; background: #fff; }
+    .bx-im-list-recent-item__wrap { position: relative; width: 100%; height: 58px; background: #fff; }
+    .bx-im-list-recent-item__container { display: flex; align-items: center; width: 100%; height: 58px; padding: 8px 12px; border-bottom: 1px solid #e5eaf0; }
+    .test-avatar { flex: 0 0 40px; width: 40px; height: 40px; margin-right: 10px; border-radius: 50%; background: #94a3b8; }
+    .bx-im-chat-title__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #anit-filters, #anit-dialog-control-dock { display: none !important; }
+  </style>
+</head>
+<body>
+  <main id="workspace" data-layout-phase="provisional">
+    <aside id="left-rail"></aside>
+    <section id="chat-column">
+      <div id="native-host" class="test-host">
+        <div class="native-header bx-im-list-container-recent__header_container">
+          <input type="search" placeholder="Найти чат">
+        </div>
+        <div class="bx-im-list-container-recent__container">
+          <div id="native-viewport" class="bx-im-list-container-recent__scroll-container">
+            <div id="native-list" class="bx-im-list-container-recent__elements"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section id="conversation"></section>
+  </main>
+  <script>
+	window.__PENA_TEST_MANAGED_CATALOG__ = true;
+    (() => {
+	  window.__PENA_FORCE_REST_CATALOG__ = true;
+      const query = new URLSearchParams(location.search);
+      const standalone = query.has('standalone');
+      const FINAL_RAIL_WIDTH = 220;
+      const FINAL_CHAT_WIDTH = standalone ? document.documentElement.clientWidth : 380;
+      const injectPanelFault = query.has('panelFault');
+      let panelFaults = 0;
+      if (injectPanelFault) {
+        const replaceChildren = Element.prototype.replaceChildren;
+        Element.prototype.replaceChildren = function (...nodes) {
+          if (!panelFaults && this.classList?.contains('pena-native-folder-switcher')) {
+            panelFaults += 1;
+            throw new Error('intentional native panel render fault');
+          }
+          return replaceChildren.apply(this, nodes);
+        };
+      }
+      const workspace = document.getElementById('workspace');
+      const chatColumn = document.getElementById('chat-column');
+      const sourceViewport = document.getElementById('native-viewport');
+      const sourceList = document.getElementById('native-list');
+      const nativeHeader = document.querySelector('.native-header');
+      if (query.has('compatibleViewport')) sourceViewport.className = 'test-compatible-viewport bx-im-scrollbar__container';
+      if (query.has('liveViewport')) sourceViewport.className = 'test-compatible-viewport bx-im-list-container-recent__elements_container';
+      if (query.has('deepList')) {
+        const decoy = document.createElement('div');
+        decoy.className = 'bx-im-list-container-recent__scroll-container';
+        Object.assign(decoy.style, { position: 'fixed', left: '0', top: '0', width: '80px', height: '80px', overflowY: 'auto' });
+        document.body.insertBefore(decoy, document.body.firstChild);
+        let branch = document.createElement('div');
+        const root = branch;
+        for (let depth = 0; depth < 8; depth += 1) {
+          const child = document.createElement('div');
+          branch.appendChild(child);
+          branch = child;
+        }
+        branch.appendChild(sourceList);
+        sourceViewport.replaceChildren(root);
+      }
+      if (query.has('compatibleHost') || query.has('unsafeHost')) {
+        sourceViewport.parentElement.className = 'test-intermediate-shell';
+      }
+      if (query.has('unsafeHost')) {
+        Object.assign(sourceViewport.parentElement.style, {
+          position: 'fixed', left: '0', top: '52px', width: '100vw', height: 'calc(100vh - 52px)'
+        });
+      }
+      const now = Date.now();
+      const records = Array.from({ length: 48 }, (_, index) => ({
+        id: `chat${index + 1}`,
+        title: `Холодный диалог ${String(index + 1).padStart(2, '0')}`,
+        addedAt: now - index * 60000
+      }));
+
+      records.forEach(record => {
+        const row = document.createElement('div');
+        row.className = 'bx-im-list-recent-item__wrap';
+        row.dataset.id = record.id;
+        row.innerHTML = `<div class="bx-im-list-recent-item__container"><span class="test-avatar"></span><span class="bx-im-chat-title__text"></span></div>`;
+        row.querySelector('.bx-im-chat-title__text').textContent = record.title;
+        sourceList.appendChild(row);
+      });
+
+      localStorage.setItem('pena.extension.enabled', '1');
+      localStorage.setItem('pena.dialogControl.v1.chats', JSON.stringify(records));
+      localStorage.setItem('pena.dialogControlNative.v1.chats', '1');
+      localStorage.setItem('pena.dialogControlView.chats', JSON.stringify({
+        sortMode: 'date',
+        sortDirection: 'asc',
+        unreadOnly: false
+      }));
+
+      const recentEntries = records.map((record, index) => ({
+        dialog_id: record.id,
+        title: record.title,
+        counter: index % 9 === 0 ? 1 : 0,
+        message: {
+          id: 5000 - index,
+          text: `Сообщение ${index + 1}`,
+          date: new Date(record.addedAt).toISOString()
+        }
+      }));
+      window.BX = {
+        rest: {
+          callMethod(method, params, callback) {
+            setTimeout(() => callback({
+              error: () => null,
+              data: () => ({ items: recentEntries, hasMore: false, hasMorePages: false }),
+              next: () => false,
+              total: () => recentEntries.length
+            }), 8);
+          }
+        },
+        Messenger: { Public: { openChat: () => Promise.resolve(true) } }
+      };
+
+      const visible = element => {
+        if (!element?.isConnected) return false;
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return !element.hidden && element.getAttribute('aria-hidden') !== 'true' &&
+          style.display !== 'none' && style.visibility !== 'hidden' &&
+          Number(style.opacity) > 0.001 && rect.width > 1 && rect.height > 1;
+      };
+      const rounded = value => Math.round((Number(value) || 0) * 10) / 10;
+      const samples = [];
+      const startedAt = performance.now();
+      let extensionLoadedAt = 0;
+      let finalLayoutAt = 0;
+      let settledAt = 0;
+      let running = true;
+
+      const describe = element => {
+        if (!element) return { exists: false, visible: false, width: 0, left: 0, right: 0 };
+        const rect = element.getBoundingClientRect();
+        return {
+          exists: true,
+          visible: visible(element),
+          width: rounded(rect.width),
+          left: rounded(rect.left),
+          right: rounded(rect.right)
+        };
+      };
+      const takeSample = timestamp => {
+        const managed = document.querySelector('.pena-native-managed-viewport');
+        const panel = document.querySelector('.pena-native-folder-switcher');
+        const nativeMode = document.documentElement.classList.contains('pena-dialog-native-mode');
+        const readyHostCount = document.querySelectorAll('.pena-native-folder-switcher-ready').length;
+        const managedParent = managed?.parentElement || null;
+        const panelParent = panel?.parentElement || null;
+        samples.push({
+          at: rounded(timestamp - startedAt),
+          phase: workspace.dataset.layoutPhase,
+          chat: describe(chatColumn),
+          source: {
+            ...describe(sourceViewport),
+            hiddenClass: sourceViewport.classList.contains('pena-native-source-viewport-hidden')
+          },
+          managed: describe(managed),
+          panel: describe(panel),
+          header: describe(nativeHeader),
+          nativeMode,
+          readyHostCount,
+          coherent: !!(managed && panel && managedParent === panelParent && panel.nextElementSibling === managed),
+          invalidDirectMount: !!(
+            (managedParent && (managedParent === document.body || managedParent === document.documentElement)) ||
+            (panelParent && (panelParent === document.body || panelParent === document.documentElement))
+          ),
+          managedCount: document.querySelectorAll('.pena-native-managed-viewport').length,
+          panelCount: document.querySelectorAll('.pena-native-folder-switcher').length,
+          documentWidth: document.documentElement.scrollWidth
+        });
+        if (running) requestAnimationFrame(takeSample);
+      };
+      requestAnimationFrame(takeSample);
+
+      setTimeout(() => {
+        if (!standalone) workspace.classList.add('layout-ready');
+        workspace.dataset.layoutPhase = 'final';
+        finalLayoutAt = performance.now();
+      }, 520);
+
+      setTimeout(() => {
+        workspace.dataset.layoutPhase = 'settled';
+        settledAt = performance.now();
+        requestAnimationFrame(() => { running = false; });
+      }, 1500);
+
+      const report = () => {
+        const provisional = samples.filter(sample => sample.phase === 'provisional' && sample.at >= rounded(extensionLoadedAt - startedAt));
+        const afterFinal = samples.filter(sample => sample.phase !== 'provisional');
+        const visibleManaged = samples.filter(sample => sample.managed.visible);
+        const visiblePanels = samples.filter(sample => sample.panel.visible);
+        const final = samples.at(-1) || null;
+        return {
+          constants: { FINAL_RAIL_WIDTH, FINAL_CHAT_WIDTH },
+          timing: {
+            extensionLoadedAt: rounded(extensionLoadedAt - startedAt),
+            finalLayoutAt: rounded(finalLayoutAt - startedAt),
+            settledAt: rounded(settledAt - startedAt)
+          },
+          sampleCount: samples.length,
+          provisionalSamples: provisional.length,
+          provisionalManagedFrames: provisional.filter(sample => sample.managed.visible).length,
+          provisionalPanelFrames: provisional.filter(sample => sample.panel.visible).length,
+          provisionalSourceHiddenFrames: provisional.filter(sample => sample.source.hiddenClass || !sample.source.visible).length,
+          nativeModeWithoutReadyFrames: samples.filter(sample => sample.nativeMode && (sample.readyHostCount !== 1 || !sample.coherent)).length,
+          invalidDirectMountFrames: samples.filter(sample => sample.invalidDirectMount).length,
+          brokenCompositionFrames: samples.filter(sample =>
+            (sample.source.hiddenClass || !sample.source.visible) && (!sample.managed.visible || !sample.panel.visible || !sample.coherent)
+          ).length,
+          blankListFrames: samples.filter(sample => !sample.source.visible && !sample.managed.visible).length,
+          hiddenHeaderFrames: samples.filter(sample => !sample.header.visible).length,
+          fullWidthManagedFrames: visibleManaged.filter(sample => sample.managed.width > FINAL_CHAT_WIDTH + 2).length,
+          fullWidthPanelFrames: visiblePanels.filter(sample => sample.panel.width > FINAL_CHAT_WIDTH + 2).length,
+          maxManagedWidth: Math.max(0, ...visibleManaged.map(sample => sample.managed.width)),
+          maxPanelWidth: Math.max(0, ...visiblePanels.map(sample => sample.panel.width)),
+          maxManagedCount: Math.max(0, ...samples.map(sample => sample.managedCount)),
+          maxPanelCount: Math.max(0, ...samples.map(sample => sample.panelCount)),
+          firstManaged: visibleManaged[0] || null,
+          firstPanel: visiblePanels[0] || null,
+          final,
+          afterFinalSamples: afterFinal.length,
+          managedDebug: window.__PENA_MANAGED_DEBUG__ || null,
+          activeContext: window.__PENA_ACTIVE_LIST_CONTEXT__ ? {
+            mode: window.__PENA_ACTIVE_LIST_CONTEXT__.mode,
+            listIsSource: window.__PENA_ACTIVE_LIST_CONTEXT__.list === sourceList,
+            viewportIsSource: window.__PENA_ACTIVE_LIST_CONTEXT__.viewport === sourceViewport
+          } : null,
+          panelFaults
+        };
+      };
+
+      window.__coldStartHarness = {
+        get phase() { return workspace.dataset.layoutPhase; },
+        get extensionLoadedAt() { return extensionLoadedAt; },
+        markExtensionLoaded() { extensionLoadedAt = performance.now(); },
+        report
+      };
+    })();
+  </script>
+  <script src="../extension/native-catalog.js"></script>
+  <script src="../extension/native-interaction-state.js"></script>
+  <script src="../extension/native-time-control.js"></script>
+  <script src="../extension/native-lifecycle.js"></script>
+  <script src="../extension/injected.js"></script>
+  <script>window.__coldStartHarness.markExtensionLoaded();</script>
+</body>
+</html>

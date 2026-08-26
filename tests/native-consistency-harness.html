@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>PENA native consistency harness</title>
+  <link rel="stylesheet" href="../extension/injected.css">
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; }
+    body { font: 16px/2 Georgia, serif; color: purple; }
+    button { font: 18px/2 Georgia, serif; letter-spacing: 3px; text-transform: uppercase; }
+    .test-host { width: 360px; height: 680px; }
+    .test-host[hidden] { display: none; }
+    .bx-im-list-container-recent__container,
+    .bx-im-list-container-task__container { width: 360px; height: 680px; }
+    .bx-im-list-container-recent__scroll-container,
+    .bx-im-list-container-task__scroll-container { width: 360px; height: 600px; overflow-y: auto; }
+    .bx-im-list-container-recent__elements,
+    .bx-im-list-container-task__elements { width: 360px; min-height: 600px; }
+    .bx-im-list-recent-item__wrap,
+    .bx-im-list-item { width: 340px; height: 64px; }
+    .bx-im-list-recent-item__wrap.is-pinned,
+    .bx-im-list-item.is-pinned { height: 72px; }
+    .bx-im-list-recent-item__container,
+    .bx-im-list-item__container { display: flex; align-items: center; height: 64px; padding-left: 2px; }
+	.bx-im-list-recent-item__avatar,.bx-im-avatar__container { display: inline-flex; width: 40px; height: 40px; flex: 0 0 40px; border-radius: 50%; }
+	.bx-im-list-recent-item__avatar { margin-right: 8px; }
+	.test-avatar { width: 40px; height: 40px; flex: 0 0 40px; margin-right: 8px; border-radius: 50%; background: #94a3b8; }
+	.bx-im-avatar__container>.test-avatar { display:block; margin-right:0; }
+	.is-selected > .bx-im-list-recent-item__container,
+	.is-selected > .bx-im-list-item__container { padding-left: 0; }
+    #anit-filters, #anit-dialog-control-dock { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="test-host recent-host">
+	<div class="bx-im-list-container-recent__header_container"><input type="search" placeholder="Найти чат"></div>
+    <div class="bx-im-list-container-recent__container">
+      <div class="bx-im-list-container-recent__scroll-container">
+        <div class="bx-im-list-container-recent__elements">
+		  <div class="bx-im-list-recent-item__wrap is-pinned" data-id="chat225"><div class="bx-im-list-recent-item__container"><span class="test-avatar"></span><span class="bx-im-chat-title__text">Чат 225</span><span class="bx-im-list-recent-item__counter_number">3</span></div></div>
+		  <div class="bx-im-list-recent-item__wrap" data-id="chat5"><div class="bx-im-list-recent-item__container"><span class="test-avatar"></span><span class="bx-im-chat-title__text">Чат 5</span></div></div>
+		  <div class="bx-im-list-recent-item__wrap" data-id="chat77"><span class="test-avatar"></span><span class="bx-im-chat-title__text">Прямая строка</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="test-host task-host" hidden>
+	<div class="bx-im-list-container-task__header_container"><input type="search" placeholder="Найти задачу"></div>
+    <div class="bx-im-list-container-task__container">
+      <div class="bx-im-list-container-task__scroll-container">
+        <div class="bx-im-list-container-task__elements">
+		  <div class="bx-im-list-item bx-im-list-recent-item__wrap is-pinned" data-id="chat225"><div class="bx-im-list-item__container"><span class="test-avatar"></span><span class="bx-im-chat-title__text">Чат 225</span><span class="bx-im-list-recent-item__counter_number">3</span></div></div>
+		  <div class="bx-im-list-item bx-im-list-recent-item__wrap" data-id="chat5"><div class="bx-im-list-item__container"><span class="test-avatar"></span><span class="bx-im-chat-title__text">Чат 5</span></div></div>
+		  <div class="bx-im-list-item bx-im-list-recent-item__wrap" data-id="chat77"><span class="test-avatar"></span><span class="bx-im-chat-title__text">Прямая строка</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <button id="switch-mode" type="button">Переключить тестовый режим</button>
+  <button id="dispatch-wheel" type="button">Проверить событие колеса</button>
+<script>
+	document.querySelectorAll('.recent-host input[type="search"],.task-host input[type="search"]').forEach(input => { input.value = ''; });
+	const nativePassThrough = new URLSearchParams(location.search).get('passThrough') === '1';
+	if (nativePassThrough) {
+	  document.querySelectorAll('[data-id="chat225"] .test-avatar').forEach(avatar => {
+		const outer = document.createElement('span');
+		outer.className = 'bx-im-list-recent-item__avatar';
+		const inner = document.createElement('span');
+		inner.className = 'bx-im-avatar__container';
+		avatar.replaceWith(outer);
+		inner.appendChild(avatar);
+		outer.appendChild(inner);
+	  });
+	}
+	window.__PENA_FORCE_REST_CATALOG__ = new URLSearchParams(location.search).get('nativeCatalog') !== '1';
+	window.__PENA_TEST_NATIVE_SCROLL_MAX_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('startupBudget')) || 0);
+	window.__PENA_TEST_MANAGED_CATALOG__ = !nativePassThrough;
+	window.__PENA_TEST_NATIVE_SCROLL__ = !nativePassThrough && new URLSearchParams(location.search).get('nativeCatalog') === '1';
+    const mode = new URLSearchParams(location.search).get('mode') === 'tasks' ? 'tasks' : 'chats';
+	const clonePanel = new URLSearchParams(location.search).get('clone') === '1';
+	const relocatePanel = new URLSearchParams(location.search).get('relocate') === '1';
+	const duplicateLists = new URLSearchParams(location.search).get('duplicate') === '1';
+	const transformedView = new URLSearchParams(location.search).get('transform') === '1';
+	const allUnread = new URLSearchParams(location.search).get('allUnread') === '1';
+	const shortList = new URLSearchParams(location.search).get('short') === '1';
+	if (shortList) localStorage.removeItem('pena.dialogRecentCache.v2');
+	const manyRows = new URLSearchParams(location.search).get('many') === '1';
+	const lazyRows = new URLSearchParams(location.search).get('lazy') === '1';
+	const catalogRows = Math.max(0, Number(new URLSearchParams(location.search).get('catalogRows')) || (manyRows ? 120 : 18));
+	const lazyChunk = Math.max(1, Number(new URLSearchParams(location.search).get('lazyChunk')) || 4);
+	const lazyDelay = Math.max(0, Number(new URLSearchParams(location.search).get('lazyDelay')) || 0);
+	const detailDelay = Math.max(0, Number(new URLSearchParams(location.search).get('detailDelay')) || 0);
+	const restDelay = Math.max(0, Number(new URLSearchParams(location.search).get('restDelay')) || 0);
+	let recentListFailuresRemaining = Math.max(0, Number(new URLSearchParams(location.search).get('restFailCount')) || 0);
+	const generatedManaged = new URLSearchParams(location.search).get('generatedManaged') === '1';
+	const wideParent = new URLSearchParams(location.search).get('wide') === '1';
+    document.querySelector('.recent-host').hidden = mode === 'tasks';
+    document.querySelector('.task-host').hidden = mode !== 'tasks';
+	if (duplicateLists && mode === 'chats') {
+	  const stale = document.createElement('div');
+	  stale.className = 'stale-test-host';
+	  stale.style.cssText = 'position:fixed;left:0;top:0;width:360px;height:680px;z-index:0';
+	  stale.innerHTML = '<div class="bx-im-list-container-recent__header_container"><input type="search" placeholder="Найти чат"></div><div class="bx-im-list-container-recent__container"><div class="bx-im-list-container-recent__scroll-container"><div class="bx-im-list-container-recent__elements"><div class="bx-im-list-recent-item__wrap" data-id="chat999"><span class="bx-im-chat-title__text">Устаревший экран</span></div></div></div></div>';
+	  const active = document.querySelector('.recent-host');
+	  active.style.position = 'relative';
+	  active.style.zIndex = '2';
+	  active.before(stale);
+	}
+	if (wideParent) {
+	  document.querySelectorAll('.bx-im-list-container-recent__container,.bx-im-list-container-task__container').forEach(node => { node.style.width = '1000px'; });
+	  document.querySelectorAll('.bx-im-list-container-recent__scroll-container,.bx-im-list-container-task__scroll-container').forEach(node => { node.style.marginLeft = '120px'; });
+	}
+    const now = Date.now();
+    const items = [
+      { id: 'folder:test', type: 'folder', title: 'Тестовая папка', color: '#f59e0b', icon: 'folder', addedAt: now },
+      { id: 'chat225', title: 'Диалог 225', color: '#22c55e', folderId: 'folder:test', addedAt: now },
+      { id: 'chat5', title: 'Диалог 5', addedAt: now - 1 },
+	  { id: 'chat77', title: 'Прямая строка', addedAt: now - 2 }
+    ];
+    if (new URLSearchParams(location.search).get('pendingControl') === '1') {
+	  items.push({ id: 'chat9000', title: 'Старый диалог в папке', folderId: 'folder:test', addedAt: now - 999999 });
+	}
+	if (manyRows) items.push({ id: 'folder:colors', type: 'folder', title: 'Цветовая сортировка', icon: 'folder', addedAt: now - 50 });
+    if (!shortList) document.querySelectorAll('.bx-im-list-container-recent__elements,.bx-im-list-container-task__elements').forEach(list => {
+      const template = list.lastElementChild;
+	  for (let index = 0; index < catalogRows; index += 1) {
+        const row = template.cloneNode(true);
+		const id = `chat${1000 + index}`;
+		const title = `Заполнитель ${index + 1}`;
+		row.dataset.id = id;
+        row.querySelector('.bx-im-chat-title__text').textContent = title;
+        list.appendChild(row);
+		if (!items.some(item => item.id === id)) {
+		  const palette = ['', '#16a34a', '#eab308', '#3b82f6', '#ef4444'];
+		  const color = palette[index % palette.length];
+		  items.push({ id, title, ...(generatedManaged ? { recentManaged: true } : {}), ...(color && manyRows ? { color, folderId: 'folder:colors' } : {}), addedAt: now - 100 - index });
+		}
+      }
+    });
+	if (lazyRows) document.querySelectorAll('.bx-im-list-container-recent__elements,.bx-im-list-container-task__elements').forEach(list => {
+	  const pending = Array.from(list.children).slice(10);
+	  pending.forEach(row => row.remove());
+	  const viewport = list.parentElement;
+	  let loading = false;
+	  viewport.addEventListener('scroll', () => {
+		if (loading || viewport.scrollTop + viewport.clientHeight < viewport.scrollHeight - 2 || !pending.length) return;
+		const append = () => {
+		  pending.splice(0, lazyChunk).forEach(row => list.appendChild(row));
+		  loading = false;
+		};
+		if (lazyDelay > 0) {
+		  loading = true;
+		  setTimeout(append, lazyDelay);
+		} else append();
+	  });
+	});
+	const initialScrollTop = Math.max(0, Number(new URLSearchParams(location.search).get('initialTop')) || 0);
+	document.querySelectorAll('.bx-im-list-container-recent__scroll-container,.bx-im-list-container-task__scroll-container').forEach(viewport => {
+	  if (nativePassThrough) viewport.style.overflowY = 'scroll';
+	  viewport.scrollTop = initialScrollTop;
+	});
+	window.nativeScrollAudit = [];
+	window.nativeScrollbarBaseline = {};
+	document.querySelectorAll('.recent-host,.task-host').forEach(host => {
+	  const key = host.classList.contains('task-host') ? 'tasks' : 'chats';
+	  const viewport = host.querySelector('[class*="scroll-container"]');
+	  const style = getComputedStyle(viewport);
+	  window.nativeScrollbarBaseline[key] = {
+		top: viewport.scrollTop,
+		overflowY: style.overflowY,
+		scrollbarWidth: style.scrollbarWidth || 'auto'
+	  };
+	  viewport.addEventListener('scroll', () => {
+		window.nativeScrollAudit.push({ key, top: viewport.scrollTop, loader: !!host.querySelector('.pena-native-original-load-guard') });
+	  });
+	});
+    ['chats', 'tasks'].forEach(storageMode => {
+      localStorage.setItem(`pena.dialogControl.v1.${storageMode}`, JSON.stringify(items));
+      localStorage.setItem(`pena.dialogControlNative.v1.${storageMode}`, '1');
+	  localStorage.setItem(`pena.dialogControlView.${storageMode}`, JSON.stringify({ sortMode: 'date', sortDirection: transformedView ? 'asc' : 'desc', unreadOnly: false }));
+	  localStorage.setItem(`pena.filters.${storageMode}`, JSON.stringify({ query: '' }));
+	  const segmentFixture = new URLSearchParams(location.search).get('segments') === '1'
+		? [{ id: 'segment:target', title: 'Целевая группа', addedAt: now + 1 }]
+		: [];
+	  localStorage.setItem(`pena.dialogControlSegments.v1.${storageMode}`, JSON.stringify(segmentFixture));
+	  localStorage.removeItem(`pena.dialogControlSegments.v1.active.${storageMode}`);
+	  localStorage.removeItem(`pena.dialogControlNativeFolder.v1.${storageMode}`);
+    });
+	window.nativeSearchRuns = 0;
+	document.querySelectorAll('.recent-host input[type="search"],.task-host input[type="search"]').forEach(input => {
+	  input.addEventListener('input', () => {
+		window.nativeSearchRuns += 1;
+		const query = String(input.value || '').trim().toLowerCase();
+		const list = input.closest('.test-host')?.querySelector('.bx-im-list-container-recent__elements,.bx-im-list-container-task__elements');
+		Array.from(list?.children || []).forEach(row => {
+		  const title = String(row.querySelector('.bx-im-chat-title__text')?.textContent || '').toLowerCase();
+		  row.style.display = !query || title.includes(query) ? '' : 'none';
+		});
+	  });
+	});
+	window.nativeRowClicks = [];
+	window.nativeContextMenus = 0;
+	document.addEventListener('contextmenu', event => {
+	  const row = event.target.closest?.('.bx-im-list-recent-item__wrap,.bx-im-list-item');
+	  if (!row || !row.closest('.test-host')) return;
+	  window.nativeContextMenus += 1;
+	  event.preventDefault();
+	  document.getElementById('bitrix-native-menu')?.remove();
+	  const menu = document.createElement('div');
+	  menu.id = 'bitrix-native-menu';
+	  menu.className = 'menu-popup';
+	  menu.setAttribute('role', 'menu');
+	  menu.innerHTML = '<div class="menu-popup-item" role="menuitem"><span class="menu-popup-item-text">Отключить звук</span></div>';
+	  document.body.appendChild(menu);
+	});
+	document.addEventListener('click', event => {
+	  const row = event.target.closest?.('[data-id]');
+	  if (row) {
+		window.nativeRowClicks.push(String(row.dataset.id || ''));
+		if (nativePassThrough) setTimeout(() => {
+		  const input = row.closest('.test-host')?.querySelector('input[type="search"]');
+		  if (!input) return;
+		  input.value = '';
+		  input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+		}, 0);
+	  } else if (nativePassThrough && event.target.closest?.('#dispatch-wheel')) {
+		const input = document.querySelector('.test-host:not([hidden]) input[type="search"]');
+		if (input) {
+		  input.value = '';
+		  input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+		}
+	  }
+	});
+	const recentEntries = items.filter(item => item.type !== 'folder').map((item, index) => ({
+	  dialog_id: item.id,
+	  chat_id: Number(String(item.id).replace(/^chat/, '')),
+	  type: 'chat',
+	  title: document.querySelector(`[data-id="${item.id}"] .bx-im-chat-title__text`)?.textContent || item.title,
+	  avatar: { url: `https://cdn.example.test/${item.id}.png`, color: '#dbeafe' },
+	  counter: allUnread || index % 6 === 0 ? 2 : 0,
+	  message: {
+		id: 10000 - index,
+		text: `Сообщение ${item.title}`,
+		date: new Date(item.addedAt).toISOString()
+	  }
+	}));
+	window.timeRestCalls = [];
+	window.timeAddCalls = [];
+	window.timeAddedItems = [];
+	window.timeAddFailures = 0;
+	window.nativeRestCalls = [];
+	window.nativeBatchCalls = 0;
+	const recentPageResult = params => {
+	  const offset = Math.max(0, Number(params?.OFFSET) || 0);
+	  const limit = Math.max(1, Number(params?.LIMIT) || 50);
+	  const taskMode = !document.querySelector('.task-host')?.hidden;
+	  const pageItems = recentEntries.slice(offset, offset + limit).map(entry => taskMode ? {
+		...entry,
+		chat: {
+		  ...(entry.chat || {}),
+		  type: 'taskstask',
+		  entity_type: 'TASKS_TASK',
+		  entity_id: String(entry.chat_id)
+		},
+		entity_link: { type: 'TASKS', id: String(entry.chat_id) }
+	  } : entry);
+	  const next = offset + limit < recentEntries.length ? offset + limit : null;
+	  return {
+		error: () => null,
+		data: () => ({ items: pageItems, hasMore: next != null, hasMorePages: next != null }),
+		total: () => recentEntries.length,
+		next: () => next
+	  };
+	};
+	window.BX = {
+	  message(key) { return key === 'USER_ID' ? '7' : ''; },
+	  rest: { callMethod(method, params, callback) {
+		window.nativeRestCalls.push({ method, dialogId: String(params?.DIALOG_ID || params?.ID || '') });
+		if (method === 'im.counters.get') {
+		  callback({ error: () => null, data: () => ({
+			CHAT: Object.fromEntries(recentEntries.filter(entry => entry.counter > 0).map(entry => [String(entry.chat_id), entry.counter])),
+			DIALOG: {}, CHAT_UNREAD: [], DIALOG_UNREAD: []
+		  }) });
+		  return;
+		}
+		if (method === 'im.dialog.get') {
+		  const dialogId = String(params?.DIALOG_ID || '');
+		  const entry = recentEntries.find(candidate => candidate.dialog_id === dialogId);
+		  const respond = () => callback({ error: () => null, data: () => ({ chat: {
+			  id: Number(dialogId.replace(/^chat/, '')),
+			  dialog_id: dialogId,
+			  name: entry?.title || dialogId,
+			  avatar: entry?.avatar || null
+		  } }) });
+		  if (detailDelay > 0) setTimeout(respond, detailDelay);
+		  else respond();
+		  return;
+		}
+		if (method === 'server.time') {
+		  const now = new Date();
+		  const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+		  callback({ error: () => null, data: () => `${localDate}T12:00:00+03:00` });
+		  return;
+		}
+		if (method === 'task.elapseditem.getlist') {
+		  window.timeRestCalls.push(params);
+		  const now = new Date();
+		  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+		  const elapsedItems = [
+			{ ID: 'time-1', TASK_ID: '101', USER_ID: '7', SECONDS: '3600', CREATED_DATE: `${today}T10:00:00+03:00` },
+			{ ID: 'time-2', TASK_ID: '102', USER_ID: '7', SECONDS: '1800', CREATED_DATE: `${today}T12:00:00+03:00` },
+			...window.timeAddedItems
+		  ];
+		  callback({
+			error: () => null,
+			data: () => elapsedItems,
+			total: () => elapsedItems.length
+		  });
+		  return;
+		}
+		if (method === 'task.elapseditem.add') {
+		  window.timeAddCalls.push(params);
+		  if (window.timeAddFailures > 0) {
+			window.timeAddFailures -= 1;
+			callback({ error: () => 'TEMPORARY_ERROR', error_description: () => 'temporary elapsed-item failure' });
+			return;
+		  }
+		  const now = new Date();
+		  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+		  const item = {
+			ID: `time-added-${window.timeAddedItems.length + 1}`,
+			TASK_ID: String(params?.TASKID || ''),
+			USER_ID: '7',
+			SECONDS: String(params?.ARFIELDS?.SECONDS || 0),
+			CREATED_DATE: `${today}T14:00:00+03:00`
+		  };
+		  window.timeAddedItems.push(item);
+		  callback({ error: () => null, data: () => item.ID });
+		  return;
+		}
+		if (method === 'tasks.task.get') {
+		  const taskId = String(params?.taskId || params?.id || '');
+		  callback({ error: () => null, data: () => ({ task: { id: taskId, title: `Задача ${taskId}` } }) });
+		  return;
+		}
+		if (method === 'im.recent.list') {
+		  const respond = () => {
+			if (recentListFailuresRemaining > 0) {
+			  recentListFailuresRemaining -= 1;
+			  callback({ error: () => 'TEMPORARY_ERROR', error_description: () => 'temporary recent-list failure' });
+			  return;
+			}
+			callback(recentPageResult(params));
+		  };
+		  if (restDelay > 0) setTimeout(respond, restDelay);
+		  else respond();
+		  return;
+		}
+		callback({ error: () => null, data: () => ({ items: recentEntries }), total: () => recentEntries.length });
+	  } }
+	};
+	window.BX24 = {
+	  callBatch(calls, callback) {
+		window.nativeBatchCalls += 1;
+		const respond = () => callback(Object.fromEntries(Object.entries(calls).map(([key, call]) => [
+		  key,
+		  call?.method === 'im.recent.list'
+			? recentPageResult(call.params || {})
+			: call?.method === 'tasks.task.get'
+			  ? { error: () => null, data: () => ({ task: { id: String(call.params?.taskId || ''), title: `Задача ${call.params?.taskId || ''}` } }) }
+			  : { error: () => null, data: () => ({}) }
+		])));
+		if (restDelay > 0) setTimeout(respond, restDelay);
+		else respond();
+	  }
+	};
+  </script>
+	<script src="../extension/native-catalog.js"></script>
+	<script src="../extension/native-interaction-state.js"></script>
+	<script src="../extension/native-time-control.js"></script>
+	<script src="../extension/native-lifecycle.js"></script>
+  <script src="../extension/injected.js"></script>
+  <output id="test-output" hidden></output>
+  <script>
+    let lastNativeFilterPanel = null;
+    let nativeFilterPanelReplacements = 0;
+    let nativeSwitcherMaxCount = 0;
+	let nativeSwitcherCloned = false;
+	let invalidSwitcherMounts = 0;
+	let mountingLayoutFrames = 0;
+	let routeLayoutShiftFrames = 0;
+	let panelShiftFrames = 0;
+	let stablePanelOffset = null;
+	const stableListOffsets = {};
+	const observedListOffsets = [];
+	const observedListOffsetsByMode = { chats: [], tasks: [] };
+	const transitionGap = new URLSearchParams(location.search).get('transition') === '1';
+    let modeSwitchCount = 0;
+	let syntheticWheelCanceled = null;
+	if (relocatePanel) setTimeout(() => {
+	  const panel = document.querySelector('.pena-native-folder-switcher');
+	  if (panel) {
+		panel.classList.add('--mounting');
+		document.body.appendChild(panel);
+	  }
+	}, 650);
+    document.getElementById('switch-mode').addEventListener('click', () => {
+      const recentHost = document.querySelector('.recent-host');
+      const taskHost = document.querySelector('.task-host');
+      const showTasks = taskHost.hidden;
+	  if (transitionGap) {
+		recentHost.hidden = true;
+		taskHost.hidden = true;
+		setTimeout(() => {
+		  recentHost.hidden = showTasks;
+		  taskHost.hidden = !showTasks;
+		}, 180);
+	  } else {
+		recentHost.hidden = showTasks;
+		taskHost.hidden = !showTasks;
+	  }
+      modeSwitchCount += 1;
+    });
+    document.getElementById('dispatch-wheel').addEventListener('click', () => {
+	  const activeHost = document.querySelector('.test-host:not([hidden])');
+      const row = activeHost?.querySelector('.pena-native-chat-row') || null;
+      syntheticWheelCanceled = row ? !row.dispatchEvent(new WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        deltaY: 120
+      })) : null;
+    });
+    const css = (selector, properties) => {
+      const node = document.querySelector(selector);
+      if (!node) return null;
+      const style = getComputedStyle(node);
+      return Object.fromEntries(properties.map(property => [property, style.getPropertyValue(property)]));
+    };
+	const cursorOf = selector => {
+	  const node = document.querySelector(selector);
+	  return node ? getComputedStyle(node).cursor : null;
+	};
+    setInterval(() => {
+	  const activeHost = document.querySelector('.test-host:not([hidden])');
+	  const allSwitchers = Array.from(document.querySelectorAll('.pena-native-folder-switcher'));
+	  const switcher = allSwitchers.find(panel => activeHost?.contains(panel)) || allSwitchers.find(panel => getComputedStyle(panel).display !== 'none') || allSwitchers[0] || null;
+	  if (clonePanel && switcher && !nativeSwitcherCloned) {
+		nativeSwitcherCloned = true;
+		switcher.parentElement.append(switcher.cloneNode(true), switcher.cloneNode(true));
+	  }
+	  nativeSwitcherMaxCount = Math.max(nativeSwitcherMaxCount, document.querySelectorAll('.pena-native-folder-switcher').length);
+	  if (switcher) {
+		const rect = switcher.getBoundingClientRect();
+		if (switcher.parentElement === document.body || rect.width > 600) invalidSwitcherMounts += 1;
+		if (switcher.classList.contains('--mounting') && rect.height > 0.5) mountingLayoutFrames += 1;
+	  }
+      const nativeFilterPanel = document.querySelector('.pena-native-filter-panel');
+      if (lastNativeFilterPanel && nativeFilterPanel && lastNativeFilterPanel !== nativeFilterPanel) nativeFilterPanelReplacements += 1;
+      lastNativeFilterPanel = nativeFilterPanel;
+      const row = activeHost?.querySelector('.pena-native-managed-row.--native-colored,.pena-native-managed-row.--native-folder-colored') ||
+		activeHost?.querySelector('.pena-native-chat-row.--native-colored,.pena-native-chat-row.--native-folder-colored');
+      const content = row?.querySelector('.pena-native-chat-row-content');
+      const list = activeHost?.querySelector('.pena-native-container') || null;
+      const switcherRect = switcher?.getBoundingClientRect?.();
+	  const listViewport = activeHost?.querySelector('.pena-native-managed-viewport') ||
+		activeHost?.querySelector('.pena-native-list-scroll-viewport:not(.pena-native-source-viewport-hidden)') || null;
+	  const listRect = listViewport?.getBoundingClientRect?.();
+	  const activeHostRect = document.querySelector('.test-host:not([hidden])')?.getBoundingClientRect?.();
+	  if (listRect && activeHostRect && listRect.height > 0 && switcher && activeHost?.contains(switcher) && !switcher.classList.contains('--mounting') && Number(getComputedStyle(listViewport).opacity) > 0) {
+		const panelOffset = Math.round((switcherRect.top - activeHostRect.top) * 10) / 10;
+		if (stablePanelOffset == null) stablePanelOffset = panelOffset;
+		else if (Math.abs(panelOffset - stablePanelOffset) > 1) panelShiftFrames += 1;
+		const offset = Math.round((listRect.top - activeHostRect.top) * 10) / 10;
+		if (!observedListOffsets.includes(offset)) observedListOffsets.push(offset);
+		const offsetMode = listViewport?.closest('.task-host') ? 'tasks' : 'chats';
+		if (!observedListOffsetsByMode[offsetMode].includes(offset)) observedListOffsetsByMode[offsetMode].push(offset);
+		if (stableListOffsets[offsetMode] == null) stableListOffsets[offsetMode] = offset;
+		else if (Math.abs(offset - stableListOffsets[offsetMode]) > 1) routeLayoutShiftFrames += 1;
+	  }
+	  const managedRows = Array.from(activeHost?.querySelectorAll('.pena-native-managed-row') || []);
+	  const firstVisibleManagedRow = listRect ? managedRows.find(candidate => {
+		const rect = candidate.getBoundingClientRect();
+		return rect.bottom > listRect.top + .5 && rect.top < listRect.bottom - .5;
+	  }) : null;
+	  const firstRowRect = firstVisibleManagedRow?.getBoundingClientRect?.() || list?.querySelector('.pena-native-chat-row')?.getBoundingClientRect?.();
+	  const avatar = row?.querySelector('.test-avatar,.pena-native-remote-avatar');
+	  const avatarRect = avatar?.getBoundingClientRect?.();
+	  const rowRect = row?.getBoundingClientRect?.();
+	  const marker = row?.querySelector('.pena-native-avatar-ring') || null;
+	  const markerStyle = marker ? getComputedStyle(marker) : null;
+	  const markerRect = marker?.getBoundingClientRect?.();
+	  const directRow = document.querySelector('.pena-native-chat-row[data-id="chat77"]');
+	  const selectedColorButtons = Array.from(document.querySelectorAll('.dialog-control-context-color.--selected'));
+	  const storedItems = JSON.parse(localStorage.getItem(`pena.dialogControl.v1.${mode}`) || '[]');
+      document.getElementById('test-output').textContent = JSON.stringify({
+        mode,
+        activeMode: listViewport?.closest('.task-host') ? 'tasks' : 'chats',
+		activeContextHost: window.__PENA_ACTIVE_LIST_CONTEXT__?.host?.closest?.('.test-host,.stale-test-host')?.className || null,
+		activeContextPriority: window.__PENA_ACTIVE_LIST_CONTEXT__?.source?.priority ?? null,
+		activeContextRoute: window.__PENA_ACTIVE_LIST_CONTEXT__?.source?.routeActive ?? null,
+        modeSwitchCount,
+        syntheticWheelCanceled,
+        version: window.__ANITREC_RUNNING__ || '',
+		legacyFloatingPanels: document.querySelectorAll('#anit-filters').length,
+		legacyDockPanels: document.querySelectorAll('#anit-dialog-control-dock').length,
+		switcherCount: document.querySelectorAll('.pena-native-folder-switcher').length,
+		visibleSwitcherCount: allSwitchers.filter(panel => {
+		  const rect = panel.getBoundingClientRect();
+		  const style = getComputedStyle(panel);
+		  return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+		}).length,
+		switcherMaxCount: nativeSwitcherMaxCount,
+		switcherCloned: nativeSwitcherCloned,
+		invalidSwitcherMounts,
+		mountingLayoutFrames,
+		routeLayoutShiftFrames,
+		panelShiftFrames,
+		observedListOffsets,
+		observedListOffsetsByMode,
+		switcherMounting: !!switcher?.classList.contains('--mounting'),
+		switcherInActiveHost: !!switcher?.closest('.test-host:not([hidden])'),
+		controlButtonCount: Array.from(document.querySelectorAll('.pena-native-command-btn')).filter(button => /Контроль/i.test(button.textContent || '')).length,
+		filterButtonCount: Array.from(document.querySelectorAll('.pena-native-command-btn')).filter(button => /Фильтры/i.test(button.textContent || '')).length,
+		timeButtonCount: document.querySelectorAll('.pena-native-time-button').length,
+		tabCursors: {
+		  group: cursorOf('.pena-native-group-tab'),
+		  folder: cursorOf('.pena-native-folder-tab')
+		},
+        command: css('.pena-native-command-btn', ['height', 'padding-left', 'font-family', 'font-size', 'line-height', 'letter-spacing', 'text-transform']),
+        group: css('.pena-native-group-tab', ['height', 'padding-left', 'font-family', 'font-size', 'line-height', 'border-radius']),
+        folder: css('.pena-native-folder-tab', ['height', 'padding-left', 'font-family', 'font-size', 'line-height', 'border-radius']),
+        count: css('.pena-native-tab-count', ['width', 'height', 'font-size', 'line-height', 'border-radius']),
+        filter: css('.pena-native-filter-panel', ['display', 'padding', 'gap', 'background-color', 'border-radius', 'font-family', 'font-size']),
+        filterPanelReplacements: nativeFilterPanelReplacements,
+        geometry: switcherRect && listRect ? {
+          switcherBottom: Math.round(switcherRect.bottom),
+          listTop: Math.round(listRect.top),
+          firstRowTop: firstRowRect ? Math.round(firstRowRect.top) : null,
+          panelOverlapsList: switcherRect.bottom > listRect.top + 0.5,
+          firstRowStartsInsideList: !firstRowRect || firstRowRect.top >= listRect.top - 0.5,
+          listHeight: Math.round(listRect.height),
+          hostHeight: Math.round(listViewport.parentElement.getBoundingClientRect().height),
+          switcherInsideScrollViewport: listViewport.contains(switcher)
+        } : null,
+		label: markerStyle && markerRect ? { width: `${markerRect.width}px`, left: `${markerRect.left - rowRect.left}px`, top: `${markerRect.top - rowRect.top}px`, bottom: `${rowRect.bottom - markerRect.bottom}px`, color: markerStyle.borderTopColor } : null,
+		avatarGeometry: avatarRect && markerRect ? { avatarLeft: avatarRect.left, avatarWidth: avatarRect.width, ringLeft: markerRect.left, ringRight: markerRect.right, ringMatchesAvatar: Math.abs(markerRect.left - avatarRect.left) < .1 && Math.abs(markerRect.right - avatarRect.right) < .1, ringBorderWidth: Number.parseFloat(markerStyle.borderTopWidth) } : null,
+		directRowPadding: directRow ? Number.parseFloat(getComputedStyle(directRow).paddingLeft) : null,
+        content: content ? { paddingLeft: getComputedStyle(content).paddingLeft, className: content.className } : null
+		,nativeRowClicks: [...window.nativeRowClicks]
+		,eyedropperActive: document.documentElement.classList.contains('pena-dialog-color-eyedropper')
+		,storedColors: Object.fromEntries(storedItems.filter(item => item.type !== 'folder').map(item => [String(item.id), item.color || '']))
+		,storedColorModes: Object.fromEntries(storedItems.filter(item => item.type !== 'folder').map(item => [String(item.id), item.colorMode || '']))
+		,selectedColors: selectedColorButtons.map(button => ({
+		  label: button.getAttribute('aria-label') || '',
+		  pressed: button.getAttribute('aria-pressed'),
+		  afterContent: getComputedStyle(button, '::after').content
+		}))
+      });
+    }, 5);
+  </script>
+</body>
+</html>

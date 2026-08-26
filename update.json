@@ -1,7 +1,35 @@
 {
-    "version":  "7.1.46",
-    "release_date":  "2026-06-06",
-    "release_url":  "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.1.46",
-    "injected_js_url":  "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/extension/injected.js",
-    "changelog":  "v7.1.46: make drag-and-drop ordering more predictable by moving folders together with their dialogs"
+  "schema_version": 2,
+  "version": "7.5.37",
+  "release_date": "2026-08-26",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.37",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.37",
+  "extension_files": [
+    "background.js",
+    "content.js",
+    "native-catalog.js",
+    "native-interaction-state.js",
+    "native-time-control.js",
+    "native-lifecycle.js",
+    "dialog-repository.js",
+    "injected.js",
+    "injected.css",
+    "manifest.json",
+    "popup.html",
+    "popup.js",
+    "icons/icon16.png",
+    "icons/icon48.png",
+    "icons/icon128.png",
+    "icons/logo.png"
+  ],
+  "windows_files": [
+    "installers/windows/updater.ps1",
+    "installers/windows/pena_host.ps1",
+    "installers/windows/pena_host.bat"
+  ],
+  "macos_files": [
+    "installers/macos/updater.sh"
+  ],
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.37/extension/injected.js",
+  "changelog": "v7.5.37: turns time control into a daily workspace with a persistent task timer, today activity suggestions, tracked-task details, and safe retry when Bitrix cannot save an elapsed-time entry"
 }

@@ -1,0 +1,714 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>PENA recent sync regression</title>
+  <link rel="stylesheet" href="../extension/injected.css">
+  <style>
+    html, body { margin: 0; width: 420px; height: 760px; overflow: hidden; font: 13px Arial, sans-serif; }
+    .test-host { width: 380px; height: 720px; display: flex; flex-direction: column; }
+    .bx-im-list-container-recent__header_container { height: 44px; flex: 0 0 44px; padding: 6px; box-sizing: border-box; }
+    .bx-im-list-container-recent__header_container input { width: 100%; height: 30px; }
+    .bx-im-list-container-recent__container { width: 380px; min-height: 0; flex: 1 1 auto; }
+    .bx-im-list-container-recent__scroll-container { width: 380px; height: 100%; overflow-y: auto; }
+    .bx-im-list-container-recent__elements { width: 380px; min-height: 100%; }
+    .bx-im-list-recent-item__wrap { width: 360px; height: 56px; box-sizing: border-box; }
+    .bx-im-list-recent-item__container { display: flex; align-items: center; height: 56px; padding: 0 8px; box-sizing: border-box; }
+    .test-avatar { width: 34px; height: 34px; flex: 0 0 34px; margin-right: 8px; border-radius: 50%; background: #dbe4ee; }
+	.bx-im-list-recent-item__counter_number { display: inline-flex; }
+  </style>
+</head>
+<body>
+  <div class="test-host">
+    <div class="bx-im-list-container-recent__header_container">
+      <input id="bitrix-search" type="search" placeholder="Найти чат">
+    </div>
+    <div class="bx-im-list-container-recent__container">
+      <div class="bx-im-list-container-recent__scroll-container">
+        <div id="recent-list" class="bx-im-list-container-recent__elements"></div>
+      </div>
+    </div>
+  </div>
+  <script>
+	window.__PENA_TEST_MANAGED_CATALOG__ = true;
+    (() => {
+	  // This harness exercises the legacy REST repository path explicitly.
+	  // Production defaults to the native silent-scroll catalog.
+	  window.__PENA_FORCE_REST_CATALOG__ = true;
+      const nativeSetTimeout = window.setTimeout.bind(window);
+      window.setTimeout = (handler, delay, ...args) => nativeSetTimeout(handler, Number(delay) === 12000 ? 1000 : delay, ...args);
+
+	  const repositoryKey = scope => `__pena_test_repository__:${String(scope?.portalHost || '')}:${String(scope?.userId || '')}`;
+	  document.documentElement.dataset.penaDialogRepositoryBridge = '1';
+	  document.addEventListener('pena-dialog-repository-request', event => {
+		let request = null;
+		try { request = JSON.parse(String(event.detail || '')); } catch {}
+		if (!request?.requestId) return;
+		const key = repositoryKey(request.scope);
+		let result = null;
+		let snapshot = null;
+		try { snapshot = JSON.parse(localStorage.getItem(key) || 'null'); } catch {}
+		if (request.command === 'catalog.get') {
+		  result = snapshot || { records: [], manifest: null, recovered: false };
+		} else if (request.command === 'catalog.commit') {
+		  const now = Date.now();
+		  const meta = request.payload?.meta || {};
+		  const sourceRecords = Array.isArray(request.payload?.records) ? request.payload.records : [];
+		  const storedRecords = sourceRecords.length > 1000
+			? sourceRecords.map(({ state, ...record }) => record)
+			: sourceRecords;
+		  snapshot = {
+			records: storedRecords,
+			manifest: {
+			  schema: 1, generation: String(now), chunkCount: Math.ceil(sourceRecords.length / 250),
+			  count: sourceRecords.length, savedAt: now,
+			  lastSuccessAt: meta.lastSuccessAt || now, lastFullAt: meta.lastFullAt || now,
+			  cursorAt: meta.cursorAt || meta.lastSuccessAt || now, windowCount: meta.windowCount || sourceRecords.length,
+			  truncated: !!meta.truncated, patches: []
+			}
+		  };
+		  localStorage.setItem(key, JSON.stringify(snapshot));
+		  result = { manifest: snapshot.manifest, count: snapshot.records.length };
+		} else if (request.command === 'catalog.patch') {
+		  const byId = new Map((snapshot?.records || []).map(record => [record.id, record]));
+		  (request.payload?.deletedIds || []).forEach(id => byId.delete(id));
+		  (request.payload?.records || []).forEach(record => byId.set(record.id, record));
+		  snapshot = snapshot || { records: [], manifest: { schema: 1, generation: String(Date.now()), patches: [] } };
+		  snapshot.records = Array.from(byId.values());
+		  snapshot.manifest = { ...snapshot.manifest, savedAt: Date.now(), count: snapshot.records.length };
+		  localStorage.setItem(key, JSON.stringify(snapshot));
+		  result = { manifest: snapshot.manifest, count: snapshot.records.length, patched: request.payload?.records?.length || 0 };
+		} else if (request.command === 'sync.acquire') {
+		  result = { acquired: true, expiresAt: Date.now() + 30000, retryAfterMs: 0 };
+		}
+		nativeSetTimeout(() => document.dispatchEvent(new CustomEvent('pena-dialog-repository-response', {
+		  detail: JSON.stringify({ requestId: request.requestId, ok: true, result })
+		})), 0);
+	  });
+
+      const isoAt = index => new Date(Date.UTC(2026, 0, 1, 12, 0, 0) + index * 60000).toISOString();
+      const makeEntry = (id, title, index = id, counter = 0) => ({
+        id: `chat${id}`,
+        dialog_id: `chat${id}`,
+        chat_id: id,
+        type: 'chat',
+        title,
+        avatar: { url: `https://cdn.example.test/avatar-${id}.png`, color: '#dbeafe' },
+        counter,
+        unread: false,
+        message: { id: 100000 + Number(id), text: `Сообщение ${title}`, date: isoAt(index) }
+      });
+      const makeDataset = (start, count, prefix = 'Диалог', needleAt = -1) => Array.from({ length: count }, (_, index) => {
+        const id = start + index;
+        const title = index === needleAt ? `${prefix} Искомый` : `${prefix} ${String(index + 1).padStart(2, '0')}`;
+        return makeEntry(id, title, index, index % 9 === 0 ? 1 : 0);
+      });
+      const splitThree = entries => [entries.slice(0, 200), entries.slice(200, 400), entries.slice(400)];
+      const plans = [];
+      let activePlan = null;
+      let gatedRequest = null;
+	  const gatedDetailRequests = [];
+      let latestComplete = [];
+      const calls = [];
+	  const nativeOpens = [];
+	  const apiOpens = [];
+	  const sidePanelOpens = [];
+      let counterSnapshot = null;
+	  let counterErrorEnabled = false;
+	  const dialogDetails = new Map();
+	  const userDetails = new Map();
+	  const dialogMessages = new Map();
+	  const dialogDetailErrors = new Map();
+
+      const countersFromEntries = entries => ({
+        CHAT: Object.fromEntries((Array.isArray(entries) ? entries : [])
+		  .filter(entry => entry.type !== 'user' && Number(entry.counter) > 0)
+          .map(entry => [String(entry.chat_id), Number(entry.counter)])),
+        CHAT_MUTED: {},
+        LINES: {},
+		DIALOG: Object.fromEntries((Array.isArray(entries) ? entries : [])
+		  .filter(entry => entry.type === 'user' && Number(entry.counter) > 0)
+		  .map(entry => [String(entry.user_id ?? entry.id), Number(entry.counter)])),
+        CHAT_UNREAD: (Array.isArray(entries) ? entries : [])
+		  .filter(entry => entry.type !== 'user' && (entry.unread === true || entry.unread === 'Y'))
+          .map(entry => Number(entry.chat_id)),
+		DIALOG_UNREAD: (Array.isArray(entries) ? entries : [])
+		  .filter(entry => entry.type === 'user' && (entry.unread === true || entry.unread === 'Y'))
+		  .map(entry => Number(entry.user_id ?? entry.id))
+      });
+
+	  const rememberDetails = entries => {
+		(Array.isArray(entries) ? entries : []).forEach(entry => {
+		  const dialogId = String(entry.dialog_id ?? entry.id ?? '');
+		  if (dialogId) dialogMessages.set(dialogId, {
+			messages: entry.message ? [entry.message] : [],
+			users: entry.user ? [entry.user] : []
+		  });
+		  if (entry.type === 'user') {
+			const userId = String(entry.user_id ?? entry.id ?? entry.dialog_id);
+			userDetails.set(userId, {
+			  id: Number(userId),
+			  name: entry.title,
+			  first_name: String(entry.title || '').split(/\s+/)[0] || '',
+			  last_name: String(entry.title || '').split(/\s+/).slice(1).join(' '),
+			  avatar: entry.avatar?.url || entry.avatar || ''
+			});
+			return;
+		  }
+          dialogDetails.set(String(entry.dialog_id), {
+            id: Number(entry.chat_id),
+            name: entry.title,
+            title: entry.title,
+            avatar: Object.prototype.hasOwnProperty.call(entry.chat || {}, 'avatar') ? entry.chat.avatar : entry.avatar,
+            counter: entry.counter,
+            unread: entry.unread,
+            last_message_id: entry.message?.id,
+            date_last_activity: entry.message?.date
+          });
+        });
+      };
+
+      const normalizePlan = spec => {
+        const pages = Array.isArray(spec?.pages) ? spec.pages.map(page => Array.isArray(page) ? page : []) : [[]];
+        const pageSize = Math.max(1, Number(spec?.pageSize) || 200);
+        const suppliedOffsets = Array.isArray(spec?.offsets) ? spec.offsets : [];
+        const offsets = pages.map((_, index) => {
+          const supplied = Number(suppliedOffsets[index]);
+          return Number.isFinite(supplied) && supplied >= 0 ? supplied : index * pageSize;
+        });
+        return {
+          name: String(spec?.name || `plan-${plans.length + 1}`),
+          pages,
+          offsets,
+          pageSize,
+          errorAtPage: Number.isInteger(spec?.errorAtPage) ? spec.errorAtPage : -1,
+          timeoutAtPage: Number.isInteger(spec?.timeoutAtPage) ? spec.timeoutAtPage : -1,
+          gateAtPage: Number.isInteger(spec?.gateAtPage) ? spec.gateAtPage : -1,
+          delayMs: Math.max(0, Number(spec?.delayMs) || 0),
+		  errorMessage: String(spec?.errorMessage || 'REST harness error'),
+		  paginationMetadata: spec?.paginationMetadata !== false
+        };
+      };
+      const enqueuePlan = spec => plans.push(normalizePlan(spec));
+      const completePlan = plan => {
+        latestComplete = plan.pages.flat();
+        activePlan = null;
+      };
+      const respond = (callback, plan, pageIndex, method = 'im.recent.list') => {
+        if (pageIndex === plan.errorAtPage) {
+          activePlan = null;
+          callback({
+            error: () => 'HARNESS_ERROR',
+            error_description: () => plan.errorMessage,
+            data: () => ({ items: [] })
+          });
+          return;
+        }
+        if (pageIndex === plan.timeoutAtPage) {
+          activePlan = null;
+          return;
+        }
+		const delta = method === 'im.recent.get';
+		const entries = delta ? plan.pages.flat() : (plan.pages[pageIndex] || []);
+		const hasNext = pageIndex < plan.pages.length - 1;
+		const response = delta ? {
+		  error: () => null,
+		  data: () => entries
+		} : plan.paginationMetadata ? {
+		  error: () => null,
+		  data: () => ({ items: entries, hasMore: hasNext }),
+		  next: () => hasNext ? plan.offsets[pageIndex + 1] : false,
+		  total: () => plan.pages.reduce((sum, current) => sum + current.length, 0)
+		} : {
+		  error: () => null,
+		  data: () => ({ items: entries })
+		};
+		callback(response);
+		if (delta || !hasNext) completePlan(plan);
+      };
+
+	  const queryParams = new URLSearchParams(location.search);
+	  let persistentRecentError = queryParams.get('alwaysrecenterror') === '1';
+	  counterErrorEnabled = queryParams.get('countererror') === '1';
+      const taskSeed = queryParams.get('taskseed') === '1' || queryParams.get('taskview') === '1';
+      let initialEntries = taskSeed
+        ? [makeEntry(9001, 'Чат задачи без REST-признака', 0, 1), ...makeDataset(1, 400, 'Начальный', 7)]
+        : makeDataset(1, 401, 'Начальный', 7);
+	  if (queryParams.get('taskview') === '1') {
+		const task = makeEntry(9001, 'Чат задачи', 0, 4);
+		task.type = 'chat';
+		task.chat = { id: 9001, type: 'tasksTask', entity_type: 'TASKS_TASK', entity_id: '7001', avatar: task.avatar, entity_link: { type: 'TASKS', url: '/company/personal/user/101/tasks/task/view/7001/' } };
+		task.entity_type = 'TASKS_TASK';
+		initialEntries[0] = task;
+		const ordinary = makeEntry(9002, 'Обычный чат со ссылкой на задачу', 1, 0);
+		ordinary.entity_link = { type: 'LINK', url: '/company/personal/user/101/tasks/task/view/7002/' };
+		initialEntries[1] = ordinary;
+		document.querySelector('.bx-im-list-container-recent__elements')?.classList.replace('bx-im-list-container-recent__elements', 'bx-im-list-container-task__elements');
+		document.querySelector('.bx-im-list-container-recent__scroll-container')?.classList.replace('bx-im-list-container-recent__scroll-container', 'bx-im-list-container-task__scroll-container');
+	  }
+	  if (queryParams.get('systemauthor') === '1') {
+		initialEntries = initialEntries.slice();
+		initialEntries[8] = { ...initialEntries[8], message: { ...initialEntries[8].message, author_id: 0, text: 'Системное изменение чата' } };
+	  }
+      if (queryParams.get('usercase') === '1') {
+        initialEntries = initialEntries.slice();
+        initialEntries[8] = {
+          id: '42',
+          dialog_id: '42',
+          type: 'user',
+          title: 'Личный диалог',
+          avatar: { url: 'https://cdn.example.test/user-42.png', color: '#e9d5ff' },
+          counter: 99,
+          unread: false,
+          message: { id: 200042, text: 'Личное сообщение', date: isoAt(8) }
+        };
+      }
+	  if (queryParams.get('leadershipcase') === '1') {
+		initialEntries = initialEntries.slice();
+		initialEntries[0] = {
+		  id: '42', dialog_id: '42', user_id: 42, type: 'user', title: 'Марина Ваймер',
+		  avatar: { url: 'https://cdn.example.test/marina-42.png', color: '#e0f2fe' }, counter: 2, unread: false,
+		  message: { id: 210042, text: 'Сообщение Марины', date: isoAt(0) }
+		};
+		initialEntries[1] = {
+		  id: '43', dialog_id: '43', user_id: 43, type: 'user', title: 'Максим Лукиченко',
+		  avatar: { url: 'https://cdn.example.test/maxim-43.png', color: '#dcfce7' }, counter: 3, unread: false,
+		  message: { id: 210043, text: 'Сообщение Максима', date: isoAt(1) }
+		};
+	  }
+      if (queryParams.get('groupauthoravatar') === '1' || queryParams.get('groupnoavatar') === '1') {
+        const group = initialEntries[8];
+		const withoutGroupAvatar = queryParams.get('groupnoavatar') === '1';
+        initialEntries[8] = {
+          ...group,
+          avatar: { url: 'https://cdn.example.test/last-author-77.png', color: '#fee2e2' },
+          chat: {
+            id: group.chat_id,
+            type: 'chat',
+            name: group.title,
+			avatar: withoutGroupAvatar ? null : { url: 'https://cdn.example.test/group-chat-9.png', color: '#dbeafe' }
+          },
+          user: { id: 77, avatar: 'https://cdn.example.test/last-author-77.png' },
+          message: { ...group.message, author_id: 77 }
+        };
+      }
+	  if (queryParams.get('groupauthoravatarshort') === '1') {
+		const group = initialEntries[8];
+		initialEntries[8] = {
+		  ...group,
+		  avatar: { url: 'https://cdn.example.test/short-author-77.png', color: '#fee2e2' },
+		  user: { id: 77 },
+		  message: { ...group.message, author_id: 77 }
+		};
+	  }
+	  const recentAvatarDetail = queryParams.get('recentnoavatar') === '1'
+		? { ...initialEntries[8], avatar: { url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z1xkAAAAASUVORK5CYII=', color: '#dbeafe' } }
+		: null;
+	  if (recentAvatarDetail) initialEntries[8] = { ...initialEntries[8], avatar: null };
+	  if (queryParams.get('allnoavatar') === '1') {
+		initialEntries = initialEntries.map(entry => ({ ...entry, avatar: null }));
+	  }
+	  if (queryParams.get('longtitlecounter') === '1') {
+		initialEntries[8] = {
+		  ...initialEntries[8],
+		  title: 'Очень длинное название задачи, которое обязано завершаться до счётчика уведомлений',
+		  counter: 142
+		};
+	  }
+	  if (queryParams.get('invalidavatar') === '1') {
+		initialEntries[8] = { ...initialEntries[8], avatar: { url: 'МВ', color: '#dbeafe' } };
+	  }
+	  if (queryParams.get('messagepreviewcase') === '1') {
+		const group = initialEntries[8];
+		initialEntries[8] = {
+		  ...group,
+		  avatar: { url: 'https://cdn.example.test/group-preview-9.png', color: '#dbeafe' },
+		  chat: { id: group.chat_id, type: 'chat', name: group.title, avatar: 'https://cdn.example.test/group-preview-9.png' },
+		  message: { ...group.message, text: 'Точная последняя реплика спикера', author_id: 77, status: 'received' }
+		};
+		userDetails.set('77', { id: 77, name: 'Последний спикер', avatar: 'https://cdn.example.test/author-preview-77.png' });
+		initialEntries[9] = {
+		  ...initialEntries[9],
+		  message: { ...initialEntries[9].message, text: '', file: true, author_id: 77 }
+		};
+	  }
+	  if (queryParams.get('authormergecase') === '1') {
+		const group = initialEntries[8];
+		initialEntries[8] = {
+		  ...group,
+		  chat: { id: group.chat_id, type: 'chat', name: group.title, avatar: group.avatar },
+		  user: { id: 77, name: 'Полный автор', avatar: 'https://cdn.example.test/full-author-77.png' },
+		  message: { ...group.message, author_id: 77 }
+		};
+	  }
+	  if (queryParams.get('ownmessagecase') === '1') {
+		initialEntries[8] = {
+		  ...initialEntries[8],
+		  message: { ...initialEntries[8].message, text: 'Моё последнее сообщение', author_id: 99, status: 'delivered' }
+		};
+	  }
+	  rememberDetails(initialEntries);
+	  if (queryParams.get('invalidavatar') === '1') {
+		dialogDetails.set('chat9', {
+		  ...dialogDetails.get('chat9'),
+		  avatar: { url: 'https://cdn.example.test/recovered-avatar-9.png', color: '#dbeafe' }
+		});
+	  }
+	  if (queryParams.get('groupauthoravatarshort') === '1') {
+		dialogDetails.set('chat9', {
+		  id: 9,
+		  name: initialEntries[8].title,
+		  avatar: { url: 'https://cdn.example.test/short-group-chat-9.png', color: '#dbeafe' },
+		  counter: initialEntries[8].counter,
+		  unread: initialEntries[8].unread,
+		  last_message_id: initialEntries[8].message?.id,
+		  date_last_activity: initialEntries[8].message?.date
+		});
+	  }
+	  if (recentAvatarDetail) {
+		dialogDetails.set('chat9', {
+		  id: 9,
+		  name: recentAvatarDetail.title,
+		  avatar: recentAvatarDetail.avatar,
+		  counter: recentAvatarDetail.counter,
+		  unread: recentAvatarDetail.unread,
+		  last_message_id: recentAvatarDetail.message?.id,
+		  date_last_activity: recentAvatarDetail.message?.date
+		});
+	  }
+      counterSnapshot = countersFromEntries(initialEntries);
+      if (queryParams.get('countercase') === '1') {
+        counterSnapshot = { CHAT: { 1: 7, 9: 7 }, CHAT_MUTED: { 11: 5 }, LINES: { 12: 6 }, DIALOG: {}, CHAT_UNREAD: [2, 10], DIALOG_UNREAD: [] };
+      }
+      if (queryParams.get('usercase') === '1') {
+        counterSnapshot = { CHAT: {}, DIALOG: { 42: 3 }, CHAT_UNREAD: [], DIALOG_UNREAD: [] };
+      }
+	  const initialPages = splitThree(initialEntries);
+	  if (queryParams.get('duplicatepreview') === '1') {
+		initialPages[1].unshift({
+		  ...initialEntries[8],
+		  message: { ...initialEntries[8].message, text: '' }
+		});
+	  }
+	  if (queryParams.get('authormergecase') === '1') {
+		initialPages[1].unshift({ ...initialEntries[8], user: { id: 77 } });
+	  }
+	  enqueuePlan({
+		name: 'initial-three-pages',
+		pages: initialPages,
+        gateAtPage: queryParams.get('initialgate') === '1' ? 1 : -1,
+        errorAtPage: queryParams.get('initialerror') === '1' ? 0 : -1,
+        delayMs: Math.max(0, Number(queryParams.get('initialdelay')) || 8)
+      });
+      const list = document.getElementById('recent-list');
+      initialEntries.slice(0, 8).forEach(entry => {
+        const row = document.createElement('div');
+        row.className = 'bx-im-list-recent-item__wrap';
+        row.dataset.id = entry.dialog_id;
+        row.innerHTML = queryParams.get('nativeavatarcase') === '1' && Number(entry.chat_id) === 3
+          ? `<div class="bx-im-list-recent-item__container"><span class="bx-im-list-recent-item__message_text"><img class="bx-im-list-recent-item__author-avatar" src="https://cdn.example.test/native-author-77.png"></span><span class="bx-im-list-recent-item__avatar"><span class="bx-im-avatar__container"><img src="https://cdn.example.test/native-chat-3.png"></span></span><span class="bx-im-chat-title__text"></span></div>`
+          : `<div class="bx-im-list-recent-item__container"><span class="test-avatar"></span><span class="bx-im-chat-title__text"></span></div>`;
+        row.querySelector('.bx-im-chat-title__text').textContent = entry.title;
+		row.addEventListener('click', () => nativeOpens.push(String(entry.dialog_id)));
+        list.appendChild(row);
+      });
+      const nativeRows = Array.from(list.children);
+      const searchInput = document.getElementById('bitrix-search');
+      searchInput.addEventListener('input', () => {
+        const query = String(searchInput.value || '').trim().toLowerCase();
+        nativeRows.forEach(row => {
+          const title = String(row.querySelector('.bx-im-chat-title__text')?.textContent || '').toLowerCase();
+          row.style.display = !query || title.includes(query) ? '' : 'none';
+        });
+      });
+
+      const customizedSeed = queryParams.get('custom') === '1'
+        ? [
+            { id: 'folder:keep', type: 'folder', title: 'Сохранить' },
+            { id: 'chat1', title: 'Начальный 01', recentManaged: true, folderId: 'folder:keep', color: '#a855f7' }
+          ]
+        : [];
+      if (queryParams.get('oldcontrol') === '1') {
+        customizedSeed.push(
+          { id: 'folder:old', type: 'folder', title: 'Старый контроль' },
+          { id: 'chat9000', dialogId: 'chat9000', title: 'Старый контролируемый', recentManaged: true, folderId: 'folder:old' }
+        );
+		dialogDetails.set('chat9000', {
+          id: 9000,
+          name: 'Старый контролируемый',
+          avatar: queryParams.get('noavatar') === '1' ? null : { url: 'https://cdn.example.test/avatar-9000.png', color: '#fecaca' },
+          counter: 4,
+          unread: false,
+		  last_message_id: queryParams.get('noavatar') === '1' && queryParams.get('oldcontrolmessage') !== '1' ? 0 : 190000,
+		  date_last_activity: isoAt(-100)
+		});
+		if (queryParams.get('oldcontrolmessage') === '1') {
+		  dialogMessages.set('chat9000', {
+			messages: [{ id: 190000, text: 'Последняя реплика контролируемого диалога', author_id: 77, date: isoAt(-100) }],
+			users: [{ id: 77, name: 'Контролируемый спикер', avatar: 'https://cdn.example.test/controlled-author-77.png' }]
+		  });
+		}
+        counterSnapshot.CHAT['9000'] = 4;
+		if (queryParams.get('detailaccess') === '1') {
+		  dialogDetailErrors.set('chat9000', {
+			code: 'ACCESS_ERROR',
+			description: 'Вы не добавлены в этот чат или чат уже удален'
+		  });
+		}
+		if (queryParams.get('detailtransient') === '1') {
+		  dialogDetailErrors.set('chat9000', {
+			code: 'QUERY_LIMIT_EXCEEDED',
+			description: 'Temporary REST overload'
+		  });
+		}
+      }
+	  if (queryParams.get('leadershipcase') === '1') {
+		customizedSeed.push(
+		  { id: 'folder:leaders', type: 'folder', title: 'Руководители' },
+		  { id: 'chat42', dialogId: 'chat42', title: 'Марина Ваймер', recentManaged: true, folderId: 'folder:leaders' },
+		  { id: 'chat43', dialogId: 'chat43', title: 'Максим Лукиченко', recentManaged: true, folderId: 'folder:leaders' }
+		);
+	  }
+	  if (queryParams.get('limitmandatory') === '1') {
+		customizedSeed.push(
+		  { id: 'folder:page-tail', type: 'folder', title: 'Хвост страницы' },
+		  { id: 'chat150', dialogId: 'chat150', title: 'Начальный 150', recentManaged: true, folderId: 'folder:page-tail' }
+		);
+		if (queryParams.get('tailaccess') === '1') {
+		  dialogDetailErrors.set('chat150', {
+			code: 'ACCESS_ERROR',
+			description: 'Вы не добавлены в этот чат или чат уже удален'
+		  });
+		}
+		localStorage.setItem('pena.dialogRecentLoadLimit.v1', '100');
+		localStorage.setItem('pena.dialogRecentLoadLimit.defaultAll.v1', '1');
+	  }
+	  if (queryParams.has('savedlimit')) {
+		localStorage.setItem('pena.dialogRecentLoadLimit.v1', String(queryParams.get('savedlimit')));
+		if (queryParams.get('limitmigrated') === '1') localStorage.setItem('pena.dialogRecentLoadLimit.defaultAll.v1', '1');
+	  }
+	  if (queryParams.get('legacycache') === '1') {
+		const now = Date.now();
+		localStorage.setItem('pena.dialogRecentCache.v2', JSON.stringify({
+		  schema: 5,
+		  portalHost: location.host,
+		  userId: queryParams.get('userid') || '101',
+		  savedAt: now,
+		  lastSuccessAt: now,
+		  lastFullAt: now,
+		  windowCount: 2,
+		  truncated: false,
+		  entries: initialEntries.slice(0, 2).map(entry => ({
+			id: entry.dialog_id,
+			restDialogId: entry.dialog_id,
+			displayTitle: entry.title,
+			avatarUrl: entry.avatar?.url || '',
+			avatarColor: entry.avatar?.color || '',
+			avatarResolved: true,
+			displayLastText: entry.message?.text || '',
+			lastMessageId: entry.message?.id || 0,
+			lastMessageTs: Date.parse(entry.message?.date || '') || 0,
+			messagePreviewResolved: true,
+			unreadCount: entry.counter || 0,
+			counterFetchedAt: now,
+			fetchedAt: now
+		  }))
+		}));
+	  }
+      localStorage.setItem('pena.dialogControl.v1.chats', JSON.stringify(customizedSeed));
+      localStorage.setItem('pena.dialogControl.v1.tasks', JSON.stringify(taskSeed
+        ? [{ id: 'chat9001', title: 'Чат задачи без REST-признака', recentManaged: true }]
+        : []));
+      localStorage.setItem('pena.dialogControlNative.v1.chats', '1');
+	  localStorage.setItem('pena.dialogControlNative.v1.tasks', '1');
+	  localStorage.setItem('pena.dialogControlView.chats', JSON.stringify({
+		sortMode: 'date',
+		sortDirection: 'desc',
+		unreadOnly: false,
+		loadLimit: queryParams.get('limitmandatory') === '1' ? 100 : 500
+	  }));
+      localStorage.setItem('pena.filters.chats', JSON.stringify({ query: '' }));
+
+      window.__recentHarness = {
+        makeDataset,
+        splitThree,
+        enqueuePlan,
+		resetPlans() {
+		  plans.length = 0;
+		  activePlan = null;
+		},
+		setCounters(value) {
+		  counterSnapshot = value && typeof value === 'object' ? value : { CHAT: {}, DIALOG: {}, CHAT_UNREAD: [], DIALOG_UNREAD: [] };
+		},
+		setPersistentRecentError(value) {
+		  persistentRecentError = !!value;
+		},
+        seedDialogDetail(dialogId, value) {
+          dialogDetails.set(String(dialogId), value);
+        },
+		setDialogDetailError(dialogId, value) {
+		  const id = String(dialogId);
+		  if (value) dialogDetailErrors.set(id, value);
+		  else dialogDetailErrors.delete(id);
+		},
+        releaseGate() {
+          const release = gatedRequest;
+          gatedRequest = null;
+          release?.();
+        },
+		releaseDetailGate() {
+		  gatedDetailRequests.splice(0).forEach(release => release());
+		},
+        calls: () => calls.slice(),
+		nativeOpens: () => nativeOpens.slice(),
+		apiOpens: () => apiOpens.slice(),
+		sidePanelOpens: () => sidePanelOpens.slice(),
+		setCounterError(value) { counterErrorEnabled = !!value; },
+        latestComplete: () => latestComplete.slice(),
+		repositoryCache: (userId = queryParams.get('userid') || '101') => JSON.parse(localStorage.getItem(repositoryKey({ portalHost: location.host, userId })) || 'null'),
+		setRepositoryCache: (value, userId = queryParams.get('userid') || '101') => localStorage.setItem(repositoryKey({ portalHost: location.host, userId }), JSON.stringify(value)),
+        cache: () => JSON.parse(localStorage.getItem('pena.dialogRecentCache.v2') || 'null'),
+        nativeState() {
+          const currentRows = Array.from(list.children);
+          return {
+            ids: currentRows.map(row => String(row.dataset.id || '')),
+            visibleIds: currentRows.filter(row => getComputedStyle(row).display !== 'none').map(row => String(row.dataset.id || '')),
+            sameReferences: currentRows.length === nativeRows.length && currentRows.every((row, index) => row === nativeRows[index]),
+            managedViewports: document.querySelectorAll('.pena-native-managed-viewport').length
+          };
+        },
+        managedItems(mode = 'chats') {
+          return JSON.parse(localStorage.getItem(`pena.dialogControl.v1.${mode === 'tasks' ? 'tasks' : 'chats'}`) || '[]')
+            .filter(item => item.type !== 'folder');
+        }
+      };
+
+      window.BX = {
+		message(key) {
+		  if (key === 'USER_ID') return queryParams.get('userid') || '101';
+		  return '';
+		},
+		rest: { callMethod(method, params, callback) {
+        if (method === 'im.counters.get') {
+          calls.push({ name: 'counters', method, at: performance.now() });
+          if (counterErrorEnabled) {
+            nativeSetTimeout(() => callback({ error: () => 'HARNESS_COUNTER_ERROR', error_description: () => 'planned counter failure', data: () => ({}) }), 0);
+            return;
+          }
+          nativeSetTimeout(() => callback({ error: () => null, data: () => ({ ...(counterSnapshot || {}) }) }), 0);
+          return;
+        }
+        if (method === 'im.dialog.get') {
+          const dialogId = String(params?.DIALOG_ID || '');
+          calls.push({ name: 'dialog-detail', method, dialogId, at: performance.now() });
+		  const detailError = dialogDetailErrors.get(dialogId);
+		  if (detailError) {
+			nativeSetTimeout(() => callback({
+			  error: () => detailError.code || 'HARNESS_DETAIL_ERROR',
+			  error_description: () => detailError.description || '',
+			  data: () => ({})
+			}), 0);
+			return;
+		  }
+		  if (queryParams.get('detailinvalid') === '1' && dialogId === 'chat9000') {
+			nativeSetTimeout(() => callback({ error: () => null, data: () => ({}) }), 0);
+			return;
+		  }
+          const chat = dialogDetails.get(dialogId) || {
+            id: Number(dialogId.replace(/^chat/i, '')) || 0,
+            name: `Детали ${dialogId}`,
+            avatar: { url: `https://cdn.example.test/avatar-${dialogId.replace(/^chat/i, '')}.png`, color: '#dbeafe' }
+          };
+		  const respondDetail = () => nativeSetTimeout(() => callback({ error: () => null, data: () => ({ chat }) }), 0);
+		  const isGenerationRace = queryParams.get('detailgenerationrace') === '1' &&
+			dialogId === 'chat9000' &&
+			calls.filter(call => call.method === 'im.dialog.get' && call.dialogId === dialogId).length === 1;
+		  if ((queryParams.get('detailgate') === '1' && ['chat9000', 'chat150'].includes(dialogId)) || queryParams.get('detailgateall') === '1') gatedDetailRequests.push(respondDetail);
+		  else if (isGenerationRace) nativeSetTimeout(respondDetail, 250);
+		  else respondDetail();
+          return;
+        }
+		if (method === 'im.user.get') {
+          const userId = String(params?.ID || '');
+          calls.push({ name: 'user-detail', method, userId, at: performance.now() });
+		  const user = userDetails.get(userId) || { id: Number(userId) || 0, name: `Пользователь ${userId}`, avatar: `https://cdn.example.test/user-${userId}.png` };
+          nativeSetTimeout(() => callback({
+            error: () => null,
+			data: () => user
+          }), 0);
+          return;
+        }
+		if (method === 'im.user.list.get') {
+		  const ids = (Array.isArray(params?.ID) ? params.ID : []).map(value => String(value));
+		  calls.push({ name: 'user-list', method, ids, at: performance.now() });
+		  const users = ids.map(id => userDetails.get(id)).filter(Boolean);
+		  nativeSetTimeout(() => callback({ error: () => null, data: () => users }), 0);
+		  return;
+		}
+		if (method === 'im.dialog.messages.get') {
+		  const dialogId = String(params?.DIALOG_ID || '');
+		  calls.push({ name: 'dialog-message', method, dialogId, limit: Number(params?.LIMIT) || 0, at: performance.now() });
+		  const result = dialogMessages.get(dialogId) || { messages: [], users: [] };
+		  nativeSetTimeout(() => callback({ error: () => null, data: () => result }), 0);
+		  return;
+		}
+		if (method !== 'im.recent.list' && method !== 'im.recent.get') {
+		  calls.push({ name: 'unknown', method, at: performance.now() });
+		  nativeSetTimeout(() => callback({ error: () => null, data: () => ({}) }), 0);
+		  return;
+		}
+		if (persistentRecentError) {
+		  calls.push({ name: 'always-recent-error', method, offset: Number(params?.OFFSET) || 0, at: performance.now() });
+		  nativeSetTimeout(() => callback({
+			error: () => 'HARNESS_ERROR',
+			error_description: () => 'planned persistent recent failure',
+			data: () => ({ items: [] })
+		  }), 0);
+		  return;
+		}
+        if (!activePlan) {
+          activePlan = plans.shift() || normalizePlan({ name: 'latest-snapshot', pages: [latestComplete] });
+        }
+        const plan = activePlan;
+		const offset = Number(params?.OFFSET) || 0;
+		const exactPageIndex = plan.offsets.indexOf(offset);
+		const pageIndex = method === 'im.recent.get' ? 0 : (exactPageIndex >= 0 ? exactPageIndex : Math.max(0, Math.floor(offset / plan.pageSize)));
+        calls.push({
+          name: plan.name,
+          method,
+          pageIndex,
+          offset,
+          limit: Number(params?.LIMIT) || 0,
+		  skipOpenlines: String(params?.SKIP_OPENLINES || ''),
+		  parseText: String(params?.PARSE_TEXT || ''),
+		  getOriginalText: String(params?.GET_ORIGINAL_TEXT || ''),
+		  unreadOnly: String(params?.UNREAD_ONLY || ''),
+		  lastSyncDate: String(params?.LAST_SYNC_DATE || ''),
+		  pages: plan.pages.length,
+          at: performance.now()
+        });
+		const run = () => nativeSetTimeout(() => respond(callback, plan, pageIndex, method), plan.delayMs);
+        if (pageIndex === plan.gateAtPage) gatedRequest = run;
+        else run();
+      } } };
+	  if (queryParams.get('apicase') === '1') {
+		window.BX.Messenger = {
+		  Public: {
+			openChat(dialogId) {
+			  apiOpens.push(String(dialogId));
+			  return Promise.resolve(true);
+			}
+		  }
+		};
+	  }
+	  window.BX.SidePanel = { Instance: { open(url) { sidePanelOpens.push(String(url)); return true; } } };
+    })();
+  </script>
+  <script src="../extension/native-catalog.js"></script>
+  <script src="../extension/native-interaction-state.js"></script>
+  <script src="../extension/native-time-control.js"></script>
+  <script src="../extension/native-lifecycle.js"></script>
+  <script src="../extension/dialog-repository.js"></script>
+  <script src="../extension/injected.js"></script>
+</body>
+</html>

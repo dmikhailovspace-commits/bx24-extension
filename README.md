@@ -1,79 +1,64 @@
-# Сортировщик чатов BX24 — для PENA Agency
+# Сортировщик чатов BX24
 
-Расширение для Битрикс24 (настольное приложение): добавляет **панель фильтров** над списком чатов.
+Расширение PENA Agency для настольного Bitrix24. Добавляет папки, цветовые маркеры, поиск, фильтрацию и сортировку диалогов, сохраняя нативную ленту чатов.
 
----
-
-## Возможности
-
-- Быстрые фильтры: непрочитанные и «посмотреть позже»
-- Поиск по названию чата и последнему сообщению
-- Фильтрация по типу (категории): диалоги, группы, телефон и др.
-- Управление категориями — скрыть/показать встроенные, добавить собственные
-- Теги-метки — фильтрация по ключевым словам
-- **Пресеты фильтров** — сохранение и мгновенное переключение наборов фильтров
-- Прозрачность панели, ресайз по боковым граням, перетаскивание
-- Горячая клавиша: `Ctrl + Alt + F` (macOS: `⌘ + ⌥ + F`)
-
----
+Текущая версия: **7.5.37**.
 
 ## Установка
 
-### Windows
-Запустите `installers/windows/install.bat`.
+- Windows: запустите актуальный `PENA_Agency_Windows_v*.exe` из `dist/`.
+- macOS Intel / Apple Silicon: откройте актуальный `PENA_Agency_macOS_Universal_v*.dmg` из `dist/`, затем запустите `PENA BX24 Installer.app`. Terminal не открывается.
+- Chromium-браузер: включите режим разработчика и загрузите папку `extension/` как распакованное расширение.
 
-Скрипт установит расширение, создаст ярлык «Bitrix24 + Chat Filter» на рабочем столе и в меню Пуск.
+Подробная пользовательская инструкция находится в `guide.html`.
 
-### macOS
-Откройте **Терминал**, введите `bash ` с пробелом в конце, затем перетащите файл `installers/macos/install.command` в окно Терминала и нажмите Enter.
+## Разработка
 
-Если Terminal подставил путь в кавычках или добавил обратные слэши перед пробелами, оставьте строку как есть. Это нужно, чтобы macOS корректно прочитала путь к файлу.
+```text
+extension/          runtime расширения
+installers/windows/ Windows builder, installer и updater
+installers/macos/   macOS DMG builder, installer и updater
+tests/              14 регрессионных наборов и harness-файлы
+tools/              служебные скрипты проекта
+dist/               только текущие установочные артефакты
+```
 
-Команда должна получиться примерно такой:
+Полный технический контекст, архитектурные ограничения и релизный порядок: `PROJECT_CONTEXT.md`.
+
+## Проверка
+
+```powershell
+pnpm install
+pnpm test
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/update-project-context.ps1 -Check
+```
+
+Требуется Node.js 20+.
+
+## Сборка
+
+Windows:
+
+```powershell
+installers\windows\build.bat
+```
+
+Нужен Inno Setup 6. Скрипт ищет `ISCC.exe` в `PATH` и стандартных каталогах установки.
+
+macOS Universal:
+
 ```bash
-bash /полный/путь/к/install.command
+bash installers/macos/build.sh
 ```
 
-### Браузер (Chrome, Edge, Яндекс, Brave)
-Откройте `guide.html`, выберите «Браузер» и вкладку нужного браузера.
+DMG собирается штатным `hdiutil` на macOS и содержит один GUI-инсталлер `.app`. Нативный launcher собирается сразу для Intel и Apple Silicon и объединяется в Universal Mach-O через `lipo`; Terminal при установке и запуске Bitrix24 не используется.
 
-Короткая схема для Chromium-браузеров: открыть страницу расширений, включить режим разработчика, нажать «Загрузить распакованное» / `Load unpacked` и выбрать папку `extension/`, где лежит `manifest.json`. После обновления файлов расширения нажмите «Обновить» / `Reload` на странице расширений и перезагрузите вкладку Bitrix24.
+После изменения версии, состава runtime-файлов или структуры проекта обновите контекст:
 
----
-
-## Структура проекта
-
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/update-project-context.ps1
 ```
-extension/          — файлы Chrome-расширения (manifest.json, injected.js и др.)
-installers/
-  windows/          — install.bat, install.ps1, updater.ps1
-  macos/            — install.command, install_bundle.command
-  build/            — setup.iss (Inno Setup), build.bat
-guide.html          — документация
-update.json         — манифест текущей версии
-```
-
----
-
-## Выпуск обновления
-
-1. Обновите код в `extension/`
-2. Поднимите версию в `extension/manifest.json` и `update.json`
-3. Обновите версию в установщиках (`installers/build/setup.iss`, `install.ps1`, `install.command`)
-4. Закоммитьте и запушьте:
-   ```
-   git add .
-   git commit -m "feat: vX.Y.Z — описание"
-   git push origin main
-   ```
-5. Создайте [GitHub Release](https://github.com/dmikhailovspace-commits/bx24-extension/releases) и прикрепите готовые файлы
-
----
 
 ## Приватность
 
-Расширение работает локально. Никакие данные чатов не передаются.
-
----
-
-> Сортировщик чатов BX24 для PENA Agency · [GitHub](https://github.com/dmikhailovspace-commits/bx24-extension)
+Данные диалогов хранятся локально в `chrome.storage.local` и разделяются по порталу и пользователю. Репозиторий каталога проверяет соответствие портала origin страницы.

@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>PENA native preservation contract</title>
+  <link rel="stylesheet" href="../extension/injected.css">
+  <style>
+    html, body { width: 440px; height: 760px; margin: 0; overflow: hidden; }
+    body { font: 14px/1.35 Arial, sans-serif; background: #fff; color: #1f2937; }
+    .test-host { display: flex; flex-direction: column; width: 380px; height: 720px; }
+    .native-header { flex: 0 0 44px; height: 44px; padding: 6px 10px; box-sizing: border-box; }
+    .native-header input { width: 100%; height: 32px; box-sizing: border-box; }
+    .bx-im-list-container-recent__container,
+    .bx-im-list-container-task__container { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; width: 380px; }
+    .bx-im-list-container-recent__scroll-container,
+	.bx-im-list-container-task__scroll-container,
+    .bx-im-list-container-recent__elements_container,
+	.bx-im-list-container-task__elements_container { flex: 1 1 auto; min-height: 0; width: 380px; overflow-x: hidden; overflow-y: auto; }
+    .bx-im-list-container-recent__elements,
+    .bx-im-list-container-task__elements { position: relative; width: 380px; min-height: 100%; background: #fff; }
+    .bx-im-list-recent-item__wrap,
+    .bx-im-list-item { position: relative; width: 380px; height: 58px; box-sizing: border-box; background: #fff; }
+    .bx-im-list-recent-item__container,
+    .bx-im-list-item__container { display: flex; align-items: center; width: 100%; height: 58px; padding: 7px 12px; border-bottom: 1px solid #e7edf3; box-sizing: border-box; }
+    .bx-im-list-recent-item__wrap.is-selected > .bx-im-list-recent-item__container,
+    .bx-im-list-item.is-selected > .bx-im-list-item__container { background: #e7f7fc; }
+    .bx-im-list-recent-item__wrap.is-selected > .test-selection-shell > .bx-im-list-recent-item__container,
+    .bx-im-list-item.is-selected > .test-selection-shell > .bx-im-list-item__container { padding-left: 1px !important; }
+    .test-avatar { display: block; flex: 0 0 40px; width: 40px; height: 40px; margin-right: 10px; border-radius: 50%; background: #94a3b8; }
+    .bx-im-chat-title__text { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .menu-popup { position: fixed; left: 250px; top: 180px; z-index: 9000; width: 220px; padding: 5px; border: 1px solid #cbd5e1; background: #fff; }
+    .menu-popup-item { display: flex; align-items: center; min-height: 32px; padding: 0 8px; cursor: pointer; }
+    #anit-filters, #anit-dialog-control-dock { display: none !important; }
+  </style>
+</head>
+<body>
+  <div id="native-host" class="test-host"></div>
+  <script>
+	window.__PENA_TEST_MANAGED_CATALOG__ = true;
+    (() => {
+	  window.__PENA_FORCE_REST_CATALOG__ = true;
+      const params = new URLSearchParams(location.search);
+      const mode = params.get('mode') === 'tasks' ? 'tasks' : 'chats';
+      const offline = params.get('rest') === 'offline';
+      const transformed = params.get('transform') === '1';
+      const liveViewport = params.get('liveViewport') === '1';
+	  const restDelay = Math.max(0, Number(params.get('restDelay')) || 80);
+      const taskMode = mode === 'tasks';
+      const host = document.getElementById('native-host');
+      const headerClass = taskMode ? 'bx-im-list-container-task__header_container' : 'bx-im-list-container-recent__header_container';
+      const shellClass = taskMode ? 'bx-im-list-container-task__container' : 'bx-im-list-container-recent__container';
+      const viewportClass = liveViewport
+        ? (taskMode ? 'bx-im-list-container-task__elements_container' : 'bx-im-list-container-recent__elements_container')
+        : (taskMode ? 'bx-im-list-container-task__scroll-container' : 'bx-im-list-container-recent__scroll-container');
+      const listClass = taskMode ? 'bx-im-list-container-task__elements' : 'bx-im-list-container-recent__elements';
+      const rowClass = taskMode ? 'bx-im-list-item bx-im-list-recent-item__wrap' : 'bx-im-list-recent-item__wrap';
+      const contentClass = taskMode ? 'bx-im-list-item__container' : 'bx-im-list-recent-item__container';
+      const searchPlaceholder = taskMode ? 'Find task' : 'Find chat';
+
+      host.innerHTML = `
+        <div class="native-header ${headerClass}"><input type="search" placeholder="${searchPlaceholder}"></div>
+        <div class="${shellClass}">
+          <div id="native-viewport" class="${viewportClass}">
+            <div id="native-list" class="${listClass}"></div>
+          </div>
+        </div>`;
+
+      const viewport = document.getElementById('native-viewport');
+      const list = document.getElementById('native-list');
+      const now = Date.now();
+      const records = Array.from({ length: 36 }, (_, index) => ({
+        id: `chat${index + 1}`,
+        title: `${taskMode ? 'Task chat' : 'Chat'} ${String(index + 1).padStart(2, '0')}`,
+        color: index === 0 ? '#ef4444' : '',
+		folderId: index === 0 ? 'folder:marker' : '',
+        addedAt: now - index * 60000
+      }));
+	  const controlItems = [
+		{ id: 'folder:marker', type: 'folder', title: 'Marker', icon: 'folder', addedAt: now + 1 },
+		...records
+	  ];
+      records.forEach((record, index) => {
+        const row = document.createElement('div');
+        row.className = rowClass;
+        row.dataset.id = record.id;
+        row.dataset.nativeIndex = String(index);
+        row.innerHTML = `<div class="${contentClass}"><span class="test-avatar"></span><span class="bx-im-chat-title__text">${record.title}</span></div>`;
+        list.appendChild(row);
+      });
+
+      const sourceRows = Array.from(list.children);
+      const sourceIds = sourceRows.map(row => row.dataset.id);
+      const firstRow = sourceRows[0];
+      const px = value => Number.parseFloat(value) || 0;
+      const geometry = () => {
+        const firstContent = firstRow.querySelector(`.${contentClass}`) || firstRow.firstElementChild;
+        const firstAvatar = firstContent.querySelector('.test-avatar');
+        const firstTitle = firstContent.querySelector('.bx-im-chat-title__text');
+        const rowRect = firstRow.getBoundingClientRect();
+        const contentRect = firstContent.getBoundingClientRect();
+        const avatarRect = firstAvatar.getBoundingClientRect();
+        const titleRect = firstTitle.getBoundingClientRect();
+        const rowStyle = getComputedStyle(firstRow);
+        const contentStyle = getComputedStyle(firstContent);
+		const marker = firstRow.querySelector('.pena-native-avatar-ring');
+		const markerRect = marker?.getBoundingClientRect();
+		const markerLeft = markerRect ? markerRect.left - rowRect.left : 0;
+		const markerWidth = markerRect?.width || 0;
+        const avatarLeft = avatarRect.left - rowRect.left;
+        const titleLeft = titleRect.left - rowRect.left;
+        return {
+          rowLeft: rowRect.left,
+          rowWidth: rowRect.width,
+          rowPaddingLeft: px(rowStyle.paddingLeft),
+          rowPaddingRight: px(rowStyle.paddingRight),
+          contentLeft: contentRect.left - rowRect.left,
+          contentWidth: contentRect.width,
+          contentPaddingLeft: px(contentStyle.paddingLeft),
+          contentPaddingRight: px(contentStyle.paddingRight),
+          markerLeft,
+          markerWidth,
+		  markerTop: markerRect ? markerRect.top - rowRect.top : 0,
+		  markerBottom: markerRect ? rowRect.bottom - markerRect.bottom : 0,
+          ringMatchesAvatar: !!(markerRect && Math.abs(markerRect.left - avatarRect.left) < .1 && Math.abs(markerRect.right - avatarRect.right) < .1),
+          avatarLeft,
+          avatarTop: avatarRect.top - rowRect.top,
+          avatarWidth: avatarRect.width,
+          avatarHeight: avatarRect.height,
+          titleLeft,
+          titleTop: titleRect.top - rowRect.top,
+          avatarTitleGap: titleLeft - avatarLeft - avatarRect.width
+        };
+      };
+
+      const baselineGeometry = geometry();
+      const mutationLog = { removedRows: 0, movedRows: 0, syntheticAdds: 0 };
+      const observer = new MutationObserver(mutations => {
+        mutations.forEach(mutation => {
+          if (mutation.type !== 'childList') return;
+          mutation.removedNodes.forEach(node => {
+            if (sourceRows.includes(node)) mutationLog.removedRows += 1;
+          });
+          mutation.addedNodes.forEach(node => {
+            if (sourceRows.includes(node) && node.parentElement !== list) mutationLog.movedRows += 1;
+            if (node.nodeType === 1 && (node.matches?.('.pena-native-managed-list,.pena-native-managed-row,.pena-native-remote-row') || node.querySelector?.('.pena-native-managed-list,.pena-native-managed-row,.pena-native-remote-row'))) {
+              mutationLog.syntheticAdds += 1;
+            }
+          });
+        });
+      });
+      observer.observe(host, { childList: true, subtree: true });
+
+      const eventLog = { nativeClicks: 0, nativeClickIds: [], apiOpens: [], clickPrevented: [], wheelEvents: 0, wheelPrevented: [], nativeContextMenus: 0, contextPreventedBeforeNative: [] };
+      list.addEventListener('click', event => {
+        const row = event.target.closest?.('[data-native-index]');
+        if (!row) return;
+        eventLog.nativeClicks += 1;
+        eventLog.nativeClickIds.push(String(row.dataset.id || ''));
+        const nextSelected = !row.classList.contains('is-selected');
+        sourceRows.forEach(candidate => candidate.classList.toggle('is-selected', candidate === row && nextSelected));
+        if (row === firstRow) {
+          const shell = row.querySelector(':scope > .test-selection-shell');
+          if (nextSelected && !shell) {
+            const content = row.querySelector(`:scope > .${contentClass}`);
+            if (content) {
+              const wrapper = document.createElement('div');
+              wrapper.className = 'test-selection-shell';
+              row.appendChild(wrapper);
+              wrapper.appendChild(content);
+            }
+          } else if (!nextSelected && shell) {
+            const content = shell.querySelector(`.${contentClass}`);
+            if (content) row.insertBefore(content, shell);
+            shell.remove();
+          }
+        }
+        queueMicrotask(() => eventLog.clickPrevented.push(event.defaultPrevented));
+      });
+      viewport.addEventListener('wheel', event => {
+        eventLog.wheelEvents += 1;
+        queueMicrotask(() => eventLog.wheelPrevented.push(event.defaultPrevented));
+      }, { capture: true, passive: true });
+      list.addEventListener('contextmenu', event => {
+        const row = event.target.closest?.('[data-native-index]');
+        if (!row) return;
+        eventLog.nativeContextMenus += 1;
+        eventLog.contextPreventedBeforeNative.push(event.defaultPrevented);
+        event.preventDefault();
+        document.getElementById('bitrix-native-menu')?.remove();
+        const menu = document.createElement('div');
+        menu.id = 'bitrix-native-menu';
+        menu.className = 'menu-popup';
+        menu.setAttribute('role', 'menu');
+        menu.innerHTML = '<div class="menu-popup-item" role="menuitem"><span class="menu-popup-item-text">Отключить звук</span></div>';
+        document.body.appendChild(menu);
+      });
+
+      localStorage.setItem('pena.extension.enabled', '1');
+      localStorage.setItem(`pena.dialogControl.v1.${mode}`, JSON.stringify(controlItems));
+      localStorage.setItem(`pena.dialogControlNative.v1.${mode}`, '1');
+      localStorage.setItem(`pena.dialogControlView.${mode}`, JSON.stringify({ sortMode: 'date', sortDirection: transformed ? 'asc' : 'desc', unreadOnly: false }));
+      const recentEntries = records.map((record, index) => ({
+        dialog_id: record.id,
+		chat_id: Number(record.id.replace(/^chat/, '')),
+		type: 'chat',
+        title: record.title,
+		avatar: { url: `https://cdn.example.test/native-${record.id}.png`, color: '#dbeafe' },
+        counter: index % 7 === 0 ? 1 : 0,
+        message: { id: 1000 - index, text: `Message ${index + 1}`, date: new Date(record.addedAt).toISOString() }
+      }));
+      window.BX = {
+        rest: {
+          callMethod(method, requestParams, callback) {
+            setTimeout(() => {
+              if (offline) {
+                callback({ error: () => 'OFFLINE_TEST', error_description: () => 'REST intentionally disabled' });
+                return;
+              }
+			  if (method === 'im.counters.get') {
+				callback({
+				  error: () => null,
+				  data: () => ({
+					CHAT: Object.fromEntries(recentEntries.filter(entry => entry.counter > 0).map(entry => [String(entry.chat_id), entry.counter])),
+					DIALOG: {}, CHAT_UNREAD: [], DIALOG_UNREAD: []
+				  })
+				});
+				return;
+			  }
+			  if (method === 'im.dialog.get') {
+				const dialogId = String(requestParams?.DIALOG_ID || '');
+				const record = records.find(item => item.id === dialogId);
+				callback({ error: () => null, data: () => ({ chat: {
+				  id: Number(dialogId.replace(/^chat/, '')),
+				  dialog_id: dialogId,
+				  name: record?.title || dialogId,
+				  avatar: { url: `https://cdn.example.test/native-${dialogId}.png`, color: '#dbeafe' }
+				} }) });
+				return;
+			  }
+              callback({
+                error: () => null,
+                data: () => ({ items: recentEntries, hasMore: false, hasMorePages: false }),
+                next: () => null,
+                total: () => recentEntries.length
+              });
+			}, restDelay);
+          }
+        },
+        Messenger: { Public: { openChat: dialogId => {
+		  eventLog.apiOpens.push(String(dialogId));
+		  return Promise.resolve(true);
+		} } }
+      };
+
+      const visible = element => {
+		if (!element) return false;
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return element.isConnected && !element.hidden && element.getAttribute('aria-hidden') !== 'true' && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) > 0.99 && rect.width > 1 && rect.height > 1;
+      };
+      const timeline = {
+        samples: 0,
+        listHiddenFrames: 0,
+        viewportHiddenFrames: 0,
+        pointerBlockedFrames: 0,
+		blankPresentationFrames: 0,
+        maxManagedViewports: 0,
+        maxSyntheticRows: 0
+      };
+      const sampleTimeline = () => {
+		const managedViewport = host.querySelector('.pena-native-managed-viewport');
+        timeline.samples += 1;
+        if (!visible(list)) timeline.listHiddenFrames += 1;
+        if (!visible(viewport)) timeline.viewportHiddenFrames += 1;
+        if (getComputedStyle(list).pointerEvents === 'none' || getComputedStyle(viewport).pointerEvents === 'none') timeline.pointerBlockedFrames += 1;
+		if (!visible(viewport) && !visible(managedViewport)) timeline.blankPresentationFrames += 1;
+        timeline.maxManagedViewports = Math.max(timeline.maxManagedViewports, host.querySelectorAll('.pena-native-managed-viewport').length);
+        timeline.maxSyntheticRows = Math.max(timeline.maxSyntheticRows, host.querySelectorAll('.pena-native-managed-row,.pena-native-remote-row').length);
+        if (timeline.samples < 240) requestAnimationFrame(sampleTimeline);
+      };
+      requestAnimationFrame(sampleTimeline);
+      const snapshot = () => {
+        const currentRows = Array.from(list.children);
+        const panel = document.querySelector('.pena-native-folder-switcher');
+		const managedViewport = host.querySelector('.pena-native-managed-viewport');
+		const managedRoot = host.querySelector('.pena-native-managed-list');
+        const panelRect = panel?.getBoundingClientRect();
+        const viewportRect = viewport.getBoundingClientRect();
+        const listRect = list.getBoundingClientRect();
+        const listStyle = getComputedStyle(list);
+        const viewportStyle = getComputedStyle(viewport);
+        return {
+          mode,
+          geometry: geometry(),
+          selected: firstRow.classList.contains('is-selected'),
+          source: {
+            sameListReference: document.getElementById('native-list') === list,
+            sameViewportReference: document.getElementById('native-viewport') === viewport,
+            sameParent: list.parentElement === viewport,
+            sameChildren: currentRows.length === sourceRows.length && currentRows.every((row, index) => row === sourceRows[index]),
+            sameOrder: currentRows.map(row => row.dataset.id).join('|') === sourceIds.join('|'),
+            listVisible: visible(list),
+            viewportVisible: visible(viewport),
+            listAriaHidden: list.getAttribute('aria-hidden'),
+            listPointerEvents: listStyle.pointerEvents,
+            viewportPointerEvents: viewportStyle.pointerEvents,
+            viewportOpacity: Number(viewportStyle.opacity),
+            listWidth: listRect.width,
+            listHeight: listRect.height,
+            sourceHiddenClass: list.classList.contains('pena-native-source-list-hidden'),
+			sourceViewportHiddenClass: viewport.classList.contains('pena-native-source-viewport-hidden'),
+            managedViewports: host.querySelectorAll('.pena-native-managed-viewport').length,
+            managedRoots: host.querySelectorAll('.pena-native-managed-list').length,
+			syntheticRows: host.querySelectorAll('.pena-native-managed-row,.pena-native-remote-row').length,
+			managedVisible: visible(managedViewport),
+			managedIsSibling: !!managedViewport && managedViewport.parentElement === viewport.parentElement,
+			managedRootOwned: !!managedRoot && managedRoot.parentElement === managedViewport,
+			sourceContainsManaged: !!managedViewport && viewport.contains(managedViewport)
+          },
+          panel: panel ? {
+            exists: true,
+            visible: visible(panel),
+            parentIsViewportParent: panel.parentElement === viewport.parentElement,
+            immediatelyBeforeViewport: panel.nextElementSibling === viewport,
+            insideViewport: viewport.contains(panel),
+            top: panelRect.top,
+            bottom: panelRect.bottom,
+            viewportTop: viewportRect.top
+          } : { exists: false },
+          scroll: {
+            top: viewport.scrollTop,
+            height: viewport.scrollHeight,
+            clientHeight: viewport.clientHeight,
+            listTop: listRect.top
+          },
+          events: {
+            nativeClicks: eventLog.nativeClicks,
+            nativeClickIds: [...eventLog.nativeClickIds],
+			apiOpens: [...eventLog.apiOpens],
+            clickPrevented: [...eventLog.clickPrevented],
+            wheelEvents: eventLog.wheelEvents,
+            wheelPrevented: [...eventLog.wheelPrevented],
+            nativeContextMenus: eventLog.nativeContextMenus,
+            contextPreventedBeforeNative: [...eventLog.contextPreventedBeforeNative]
+          },
+          rowState: {
+            id: String(firstRow.dataset.id || ''),
+            appliedId: String(firstRow.dataset.penaNativeDialogId || ''),
+            colored: firstRow.classList.contains('--native-colored'),
+            color: String(firstRow.dataset.penaNativeColor || '')
+          },
+          menus: {
+            native: document.querySelectorAll('#bitrix-native-menu').length,
+            penaEntries: document.querySelectorAll('.pena-bitrix-native-extension-action').length,
+            extension: document.querySelectorAll('.dialog-control-context-menu').length
+          },
+          nativeModeClass: document.documentElement.classList.contains('pena-dialog-native-mode'),
+          mutations: { ...mutationLog },
+          timeline: { ...timeline }
+        };
+      };
+
+      window.__nativeContract = {
+        mode,
+        viewport,
+        list,
+        sourceRows,
+        baselineGeometry,
+        snapshot,
+        recycleFirstRow(id, title) {
+          firstRow.dataset.id = String(id || '');
+          const titleNode = firstRow.querySelector('.bx-im-chat-title__text')?.firstChild;
+          if (titleNode) titleNode.nodeValue = String(title || '');
+        },
+        setRouteVisible(visibleState) {
+          host.style.display = visibleState ? '' : 'none';
+        },
+		startGeometryDip(duration = 180) {
+		  const target = host.querySelector('.pena-native-managed-viewport') || viewport;
+		  const panel = host.querySelector('.pena-native-folder-switcher');
+		  if (!target || !panel) return false;
+		  const originalRect = target.getBoundingClientRect.bind(target);
+		  this.geometryDipRefs = { target, panel };
+		  target.getBoundingClientRect = () => {
+			const rect = originalRect();
+			return DOMRect.fromRect({ x: rect.x, y: rect.y, width: 0, height: 0 });
+		  };
+		  host.classList.add('test-geometry-dip');
+		  setTimeout(() => {
+			target.getBoundingClientRect = originalRect;
+			host.classList.remove('test-geometry-dip');
+		  }, Math.max(50, Number(duration) || 180));
+		  return true;
+		},
+		geometryDipIdentity() {
+		  const refs = this.geometryDipRefs || {};
+		  return {
+			panelStable: !!refs.panel && refs.panel === host.querySelector('.pena-native-folder-switcher'),
+			viewportStable: !!refs.target && refs.target === (host.querySelector('.pena-native-managed-viewport') || viewport),
+			panels: host.querySelectorAll('.pena-native-folder-switcher').length,
+			managedViewports: host.querySelectorAll('.pena-native-managed-viewport').length
+		  };
+		},
+        extensionLoadedAt: 0,
+        firstFrameAt: 0,
+        firstFrame: null
+      };
+    })();
+  </script>
+  <script src="./dialog-repository-harness.js"></script>
+  <script src="../extension/dialog-repository.js"></script>
+  <script src="../extension/native-catalog.js"></script>
+  <script src="../extension/native-interaction-state.js"></script>
+  <script src="../extension/native-time-control.js"></script>
+  <script src="../extension/native-lifecycle.js"></script>
+  <script src="../extension/injected.js"></script>
+  <script>
+    window.__nativeContract.extensionLoadedAt = performance.now();
+    requestAnimationFrame(timestamp => {
+      window.__nativeContract.firstFrameAt = timestamp;
+      window.__nativeContract.firstFrame = window.__nativeContract.snapshot();
+    });
+  </script>
+</body>
+</html>

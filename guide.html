@@ -342,8 +342,8 @@
           <li>
             <div class="snum">1</div>
             <div class="sbody">
-              Откройте папку <code>installers\windows\</code> в проекте и дважды кликните
-              <strong>install.bat</strong>.
+              Откройте папку <code>dist\</code> и запустите актуальный
+              <strong>PENA_Agency_Windows_v*.exe</strong>.
             </div>
           </li>
           <li>
@@ -387,36 +387,32 @@
         <ol class="steps">
           <li>
             <div class="snum">1</div>
-            <div class="sbody">Откройте <strong>Терминал</strong>: <span class="hotkey">⌘+Пробел</span> → введите <strong>Terminal</strong> → Enter.</div>
+            <div class="sbody">Откройте актуальный файл <strong>PENA_Agency_macOS_Universal_v*.dmg</strong>.</div>
           </li>
           <li>
             <div class="snum">2</div>
             <div class="sbody">
-              В окне Терминала напишите <code>bash </code> с пробелом в конце.
-              <small class="inline-note">Enter пока не нажимайте.</small>
+			  Дважды нажмите <strong>PENA BX24 Installer.app</strong>. Если macOS показывает предупреждение, нажмите правой кнопкой по приложению → <strong>Открыть</strong>.
+			  <small class="inline-note">Установщик работает через системные окна macOS и не открывает Terminal.</small>
             </div>
           </li>
           <li>
             <div class="snum">3</div>
             <div class="sbody">
-              Найдите файл <strong>install.command</strong> в папке <code>installers/macos/</code> и перетащите его прямо в окно Терминала после слова <code>bash </code>.
-              <small class="inline-note">Terminal подставит полный путь к файлу. Если в пути появились кавычки или обратные слэши перед пробелами — не удаляйте их.</small>
+			  Нажмите <strong>Установить</strong>. Если Bitrix24 не найден автоматически, выберите приложение <strong>Bitrix24.app</strong> в открывшемся системном окне.
             </div>
           </li>
           <li>
             <div class="snum">4</div>
             <div class="sbody">
-              Проверьте, что строка начинается с <code>bash </code>, а затем идёт путь к <code>install.command</code>. Нажмите <strong>Enter</strong>.
-              <div class="pre-row"><pre><code>bash /полный/путь/к/install.command</code></pre></div>
-              Следуйте инструкциям установщика; если Bitrix24 не найден автоматически, перетащите файл <code>Bitrix24</code> в Терминал так же, как установщик.
-              <small class="inline-note">Обычно это <code>/Applications/Bitrix24.app/Contents/MacOS/Bitrix24</code>.</small>
+			  После сообщения об успешной установке нажмите <strong>Запустить Bitrix24</strong> или закройте установщик.
             </div>
           </li>
           <li>
             <div class="snum">5</div>
             <div class="sbody">
-              По завершении на рабочем столе появится <strong>«Bitrix24 + Фильтр чатов.app»</strong>.
-              Всегда запускайте Bitrix24 через него — только оно передаёт расширение.
+			  В папке <strong>Программы</strong> появится <strong>«Bitrix24 + Фильтр чатов.app»</strong>.
+			  Всегда запускайте Bitrix24 через него — только это приложение подключает расширение.
             </div>
           </li>
         </ol>
@@ -768,16 +764,15 @@ function setupDonePage() {
           <strong>«Bitrix24 + Фильтр чатов»</strong>, а не стандартный — только он передаёт расширение.</li>
       <li><strong>SmartScreen заблокировал установщик:</strong> нажмите «Подробнее» → «Выполнить в любом случае».</li>
       <li><strong>Расширение перестало работать после обновления Bitrix24:</strong>
-          запустите <code>installers\windows\install.bat</code> повторно — установщик обновит ярлыки с актуальными параметрами.</li>
+          запустите актуальный <code>PENA_Agency_Windows_v*.exe</code> повторно — установщик восстановит файлы и ярлыки.</li>
       <li><strong>Панель исчезла:</strong> нажмите <span class="hotkey">Ctrl+Alt+F</span> — горячая клавиша показывает/скрывает панель.</li>
     </ul>`,
     mac: `<ul>
       <li><strong>Панель не появляется:</strong> убедитесь, что Bitrix24 запущен через приложение
           <strong>«Bitrix24 + Фильтр чатов»</strong> с рабочего стола или из «Программ», а не стандартный.</li>
-      <li><strong>Установщик не запускается:</strong> используйте только Терминал: введите <code>bash </code>, перетащите
-          <code>installers/macos/install.command</code> в окно Терминала и нажмите Enter. Кавычки и обратные слэши в подставленном пути оставьте как есть.</li>
+      <li><strong>Установщик не запускается:</strong> нажмите правой кнопкой по <strong>PENA BX24 Installer.app</strong> → <strong>Открыть</strong> → ещё раз <strong>Открыть</strong>.</li>
       <li><strong>Расширение перестало работать после обновления Bitrix24:</strong>
-          повторите установку через Терминал тем же способом: <code>bash </code> + перетащить <code>install.command</code> + Enter.</li>
+		  снова откройте актуальный DMG и запустите <strong>PENA BX24 Installer.app</strong>.</li>
       <li><strong>Панель исчезла:</strong> нажмите <span class="hotkey">⌘+⌥+F</span>.</li>
     </ul>`,
     br: `<ul>

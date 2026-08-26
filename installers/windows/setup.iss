@@ -8,16 +8,17 @@
 ;   - Создаёт деинсталлятор (Панель управления → Приложения)
 ;
 ; Как скомпилировать:
-;   Запустите build_setup.bat  (или дважды щёлкните по нему)
+;   Запустите build.bat
 ;
-; Результат: ..\..\dist\PENA_Agency_Setup_v<AppVersion>.exe
+; Результат: ..\..\dist\PENA_Agency_Windows_v<AppVersion>.exe
 ; ================================================================
 
 #define AppName      "BX24 Chat Sorter"
-#define AppVersion   "7.1.46"
+#define AppVersion   "7.5.37"
 #define AppPublisher "PENA Agency"
 #define AppURL       "https://github.com/dmikhailovspace-commits/bx24-extension"
 #define TaskName     "PENAAgencyUpdater"
+#define StageDir     "{localappdata}\PENA Agency\Extension.staged-installer"
 
 [Setup]
 ; ВАЖНО: не менять AppId между версиями — иначе сломается обновление
@@ -31,13 +32,14 @@ AppSupportURL={#AppURL}/issues
 AppUpdatesURL={#AppURL}/releases
 ; Устанавливаем в %LOCALAPPDATA% — права администратора НЕ требуются
 DefaultDirName={localappdata}\PENA Agency\Extension
+UninstallFilesDir={localappdata}\PENA Agency\Uninstall
 DisableDirPage=yes
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 WizardStyle=modern
 ShowLanguageDialog=no
 OutputDir=..\..\dist
-OutputBaseFilename=PENA_Agency_Setup_v{#AppVersion}
+OutputBaseFilename=PENA_Agency_Windows_v{#AppVersion}
 Compression=lzma2/max
 SolidCompression=yes
 UninstallDisplayName={#AppName} v{#AppVersion}
@@ -59,19 +61,32 @@ english.FinishedHeadingLabel=Installation complete
 english.FinishedLabel=BX24 Chat Sorter is installed.%nLaunch Bitrix24 via "Bitrix24 (PENA Agency)" in the Start Menu.
 
 [Files]
-; Файлы расширения Chrome
-Source: "..\..\extension\background.js"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\..\extension\content.js";    DestDir: "{app}"; Flags: ignoreversion
-Source: "..\..\extension\injected.js";   DestDir: "{app}"; Flags: ignoreversion
-Source: "..\..\extension\manifest.json"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\..\extension\popup.html";    DestDir: "{app}"; Flags: ignoreversion
-Source: "..\..\extension\popup.js";      DestDir: "{app}"; Flags: ignoreversion
-Source: "..\..\extension\icons\*";       DestDir: "{app}\icons"; Flags: ignoreversion
-; Скрипт автообновления
-Source: "..\windows\updater.ps1";                   DestDir: "{app}"; Flags: ignoreversion
+; Полный release сначала распаковывается в staging-каталог. updater.ps1
+; проверяет его и публикует одним переключением каталогов.
+Source: "..\..\extension\background.js";                DestDir: "{#StageDir}"; Flags: ignoreversion
+Source: "..\..\extension\content.js";                   DestDir: "{#StageDir}"; Flags: ignoreversion
+Source: "..\..\extension\native-catalog.js";            DestDir: "{#StageDir}"; Flags: ignoreversion
+Source: "..\..\extension\native-interaction-state.js";  DestDir: "{#StageDir}"; Flags: ignoreversion
+Source: "..\..\extension\native-time-control.js";        DestDir: "{#StageDir}"; Flags: ignoreversion
+Source: "..\..\extension\native-lifecycle.js";          DestDir: "{#StageDir}"; Flags: ignoreversion
+Source: "..\..\extension\dialog-repository.js";         DestDir: "{#StageDir}"; Flags: ignoreversion
+Source: "..\..\extension\injected.js";                  DestDir: "{#StageDir}"; Flags: ignoreversion
+Source: "..\..\extension\injected.css";                 DestDir: "{#StageDir}"; Flags: ignoreversion
+Source: "..\..\extension\manifest.json";                DestDir: "{#StageDir}"; Flags: ignoreversion
+Source: "..\..\extension\popup.html";                   DestDir: "{#StageDir}"; Flags: ignoreversion
+Source: "..\..\extension\popup.js";                     DestDir: "{#StageDir}"; Flags: ignoreversion
+Source: "..\..\extension\icons\*";                      DestDir: "{#StageDir}\icons"; Flags: ignoreversion
+Source: "updater.ps1";                                  DestDir: "{#StageDir}"; Flags: ignoreversion
+Source: "pena_host.ps1";                                DestDir: "{#StageDir}"; Flags: ignoreversion
+Source: "pena_host.bat";                                DestDir: "{#StageDir}"; Flags: ignoreversion
+
+[InstallDelete]
+Type: filesandordirs; Name: "{#StageDir}"
 
 [Run]
-; Шаг 1: Ищет Bitrix24, создаёт ярлык меню Пуск, регистрирует Task Scheduler
+; Сначала атомарно публикуем проверенный staging-каталог.
+Filename: "powershell.exe"; Parameters: "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{#StageDir}\updater.ps1"" -InstallFrom ""{#StageDir}"""; StatusMsg: "Установка файлов расширения..."; Flags: waituntilterminated runhidden
+; Затем настраиваем ярлыки и автообновление уже из опубликованной версии.
 Filename: "powershell.exe"; Parameters: "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\updater.ps1"" -Setup"; WorkingDir: "{app}"; StatusMsg: "Настройка ярлыков и автообновления..."; Flags: waituntilterminated runhidden
 ; Postinstall-чекбоксы (показываются на финальном экране установщика):
 Filename: "powershell.exe"; Parameters: "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\updater.ps1"" -CreateDesktopShortcut"; Description: "Создать ярлык «Bitrix24 (PENA Agency)» на рабочем столе"; Flags: postinstall skipifsilent runhidden
@@ -79,7 +94,7 @@ Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Win
 
 [UninstallRun]
 ; Снимаем задачу Планировщика при удалении
-Filename: "powershell.exe"; Parameters: "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command ""Unregister-ScheduledTask -TaskName '{#TaskName}' -Confirm:$false -ErrorAction SilentlyContinue"""; Flags: runhidden waituntilterminated
+Filename: "powershell.exe"; Parameters: "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command ""Unregister-ScheduledTask -TaskName '{#TaskName}' -Confirm:$false -ErrorAction SilentlyContinue"""; Flags: runhidden waituntilterminated; RunOnceId: "RemovePENAAgencyUpdaterTask"
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"

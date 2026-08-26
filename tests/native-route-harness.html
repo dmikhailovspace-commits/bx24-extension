@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>PENA native route harness</title>
+  <link rel="stylesheet" href="../extension/injected.css">
+	<style>
+	  .bx-im-list-container-recent__container { width:360px;height:680px;display:flex;flex-direction:column }
+	  .bx-im-list-container-recent__scroll-container { width:360px;min-height:0;flex:1 1 auto;overflow-y:auto }
+	  .bx-im-list-container-recent__elements { width: 360px; min-height: 600px; }
+	  .bx-im-list-recent-item__wrap { width: 340px; height: 64px; }
+	  .bx-im-list-recent-item__container { display: flex; align-items: center; height: 64px; }
+	</style>
+</head>
+<body>
+  <script>
+    localStorage.setItem('pena.dialogControl.v1.chats', JSON.stringify([
+      { id: 'chat1', title: 'Диалог 1', color: '#22c55e', addedAt: Date.now() }
+    ]));
+    localStorage.setItem('pena.dialogControlNative.v1.chats', '1');
+    window.BX = { rest: { callMethod(method, params, callback) {
+      callback({ error: () => null, data: () => ({ items: [] }) });
+    } } };
+  </script>
+  <script src="../extension/native-catalog.js"></script>
+  <script src="../extension/native-interaction-state.js"></script>
+  <script src="../extension/native-time-control.js"></script>
+  <script src="../extension/native-lifecycle.js"></script>
+  <script src="../extension/injected.js"></script>
+  <script>
+	setTimeout(() => {
+	  const host = document.createElement('div');
+	  host.className = 'test-host';
+	  host.style.cssText = 'width:360px;height:680px;display:flex;flex-direction:column';
+	  const shell = document.createElement('div');
+	  shell.className = 'bx-im-list-container-recent__container';
+	  const viewport = document.createElement('div');
+	  viewport.className = 'bx-im-list-container-recent__scroll-container';
+	  const container = document.createElement('div');
+	  container.className = 'bx-im-list-container-recent__elements';
+	  container.innerHTML = '<div class="bx-im-list-recent-item__wrap" data-id="chat1"><div class="bx-im-list-recent-item__container"><span class="bx-im-chat-title__text">Диалог 1</span></div></div>';
+	  viewport.appendChild(container);
+	  shell.appendChild(viewport);
+	  host.appendChild(shell);
+	  document.body.appendChild(host);
+    }, 300);
+  </script>
+  <output id="test-output" hidden></output>
+  <script>
+    setInterval(() => {
+      document.getElementById('test-output').textContent = JSON.stringify({
+        version: window.__ANITREC_RUNNING__ || '',
+        switchers: document.querySelectorAll('.pena-native-folder-switcher').length,
+        legacyFloatingPanels: document.querySelectorAll('#anit-filters').length,
+        legacyDockPanels: document.querySelectorAll('#anit-dialog-control-dock').length
+      });
+    }, 100);
+  </script>
+</body>
+</html>

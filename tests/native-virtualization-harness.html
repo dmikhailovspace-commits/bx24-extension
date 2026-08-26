@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>PENA native virtualized list</title>
+  <link rel="stylesheet" href="../extension/injected.css">
+  <style>
+    html, body { margin: 0; width: 420px; height: 760px; overflow: hidden; }
+    .test-host { width: 380px; height: 720px; display: flex; flex-direction: column; }
+    .bx-im-list-container-recent__header_container { height: 44px; flex: 0 0 44px; padding: 6px; box-sizing: border-box; }
+    .bx-im-list-container-recent__header_container input { width: 100%; height: 30px; }
+    .bx-im-list-container-recent__container { width: 380px; min-height: 0; flex: 1 1 auto; }
+    .bx-im-list-container-recent__scroll-container { width: 380px; height: 100%; overflow-y: auto; }
+    .bx-im-list-container-recent__elements { position: relative; width: 380px; }
+    .virtual-row { position: absolute; left: 0; top: 0; width: 360px; height: 64px; box-sizing: border-box; background: #fff; }
+    .bx-im-list-recent-item__container { display: flex; align-items: center; height: 64px; padding: 0 8px; box-sizing: border-box; border-bottom: 1px solid #edf1f5; }
+    .test-avatar { width: 36px; height: 36px; flex: 0 0 36px; margin-right: 8px; border-radius: 50%; background: #dbe4ee; }
+  </style>
+</head>
+<body>
+  <div class="test-host">
+    <div class="bx-im-list-container-recent__header_container"><input type="search" placeholder="Найти чат"></div>
+    <div class="bx-im-list-container-recent__container">
+      <div id="virtual-viewport" class="bx-im-list-container-recent__scroll-container">
+        <div id="virtual-list" class="bx-im-list-container-recent__elements"></div>
+      </div>
+    </div>
+  </div>
+  <script>
+	window.__PENA_TEST_MANAGED_CATALOG__ = true;
+	window.__PENA_TEST_NATIVE_SCROLL__ = true;
+    (() => {
+      const TOTAL = 500;
+      const POOL_SIZE = 24;
+      const ROW_HEIGHT = 64;
+      const viewport = document.getElementById('virtual-viewport');
+      const list = document.getElementById('virtual-list');
+      let swallowedWheels = 0;
+	  let restRecentCalls = 0;
+      if (new URLSearchParams(location.search).get('swallowFirstWheel') === '1') {
+        document.addEventListener('wheel', event => {
+		  const activeViewport = event.target?.closest?.('.pena-native-managed-viewport') || viewport;
+          if (swallowedWheels || !activeViewport.contains(event.target)) return;
+          swallowedWheels += 1;
+          event.preventDefault();
+        }, { capture: true, passive: false });
+      }
+      const records = Array.from({ length: TOTAL }, (_, index) => ({
+        id: `chat${index + 1}`,
+        title: `Виртуальный диалог ${String(index + 1).padStart(3, '0')}`
+      }));
+      list.style.height = `${TOTAL * ROW_HEIGHT}px`;
+      const pool = Array.from({ length: POOL_SIZE }, (_, slot) => {
+        const row = document.createElement('div');
+        row.className = 'virtual-row bx-im-list-recent-item__wrap';
+        row.dataset.poolSlot = String(slot);
+        row.innerHTML = '<div class="bx-im-list-recent-item__container"><span class="test-avatar"></span><span class="bx-im-chat-title__text"></span></div>';
+        list.appendChild(row);
+        return row;
+      });
+      let startIndex = -1;
+      let renderPasses = 0;
+      let reusePasses = 0;
+      let scheduled = false;
+      const render = () => {
+        scheduled = false;
+        const nextStart = Math.max(0, Math.min(TOTAL - POOL_SIZE, Math.floor(viewport.scrollTop / ROW_HEIGHT) - 3));
+        if (nextStart === startIndex && renderPasses > 0) return;
+        if (startIndex >= 0 && nextStart !== startIndex) reusePasses += 1;
+        startIndex = nextStart;
+        pool.forEach((row, slot) => {
+          const logicalIndex = startIndex + slot;
+          const record = records[logicalIndex];
+          row.dataset.id = record.id;
+          row.dataset.logicalIndex = String(logicalIndex);
+          row.style.transform = `translateY(${logicalIndex * ROW_HEIGHT}px)`;
+          row.querySelector('.bx-im-chat-title__text').textContent = record.title;
+        });
+        renderPasses += 1;
+      };
+      viewport.addEventListener('scroll', () => {
+        if (scheduled) return;
+        scheduled = true;
+        requestAnimationFrame(render);
+      }, { passive: true });
+      render();
+
+      localStorage.setItem('pena.dialogControl.v1.chats', '[]');
+      localStorage.setItem('pena.dialogControlNative.v1.chats', '1');
+      localStorage.setItem('pena.dialogControlView.chats', JSON.stringify({ sortMode: 'date', sortDirection: 'desc', unreadOnly: false }));
+	  const recentEntries = records.map((record, index) => ({
+		id: record.id,
+		dialog_id: record.id,
+		chat_id: index + 1,
+		type: 'chat',
+		title: record.title,
+		avatar: { url: `https://cdn.example.test/${record.id}.png`, color: '#dbeafe' },
+		counter: index % 13 === 0 ? 1 : 0,
+		message: { id: 50000 - index, text: record.title, date: new Date(Date.now() - index * 60000).toISOString() }
+	  }));
+      window.BX = { rest: { callMethod(method, params, callback) {
+		if (method === 'im.counters.get') {
+		  callback({ error: () => null, data: () => ({
+			CHAT: Object.fromEntries(recentEntries.filter(entry => entry.counter > 0).map(entry => [String(entry.chat_id), entry.counter])),
+			DIALOG: {}, CHAT_UNREAD: [], DIALOG_UNREAD: []
+		  }) });
+		  return;
+		}
+		if (method === 'im.recent.list' || method === 'im.recent.get') restRecentCalls += 1;
+		const offset = Math.max(0, Number(params?.OFFSET) || 0);
+		const limit = Math.max(1, Number(params?.LIMIT) || 200);
+		const page = recentEntries.slice(offset, offset + limit);
+		callback({
+		  error: () => null,
+		  data: () => ({ items: page, hasMore: offset + page.length < recentEntries.length }),
+		  next: () => offset + page.length < recentEntries.length ? offset + page.length : null,
+		  total: () => recentEntries.length
+		});
+      } } };
+      window.__virtualHarness = {
+        state() {
+          const panel = document.querySelector('.pena-native-folder-switcher');
+          const panelRect = panel?.getBoundingClientRect();
+		  const managedViewport = document.querySelector('.pena-native-managed-viewport');
+		  const managedRoot = document.querySelector('.pena-native-managed-list');
+		  const activeViewport = managedViewport || viewport;
+		  const viewportRect = activeViewport.getBoundingClientRect();
+		  const loadGuard = managedViewport?.querySelector('.pena-native-load-guard:not([hidden])');
+		  const loadGuardRect = loadGuard?.getBoundingClientRect();
+		  const loadCardRect = loadGuard?.querySelector('.pena-native-load-card')?.getBoundingClientRect();
+          const indices = pool.map(row => Number(row.dataset.logicalIndex));
+		  const managedRows = Array.from(managedRoot?.querySelectorAll('.pena-native-managed-row') || []);
+		  const managedIndices = managedRows.map(row => Number(row.dataset.penaManagedIndex));
+          return {
+            total: TOTAL,
+            poolSize: pool.length,
+			scrollTop: activeViewport.scrollTop,
+			scrollHeight: activeViewport.scrollHeight,
+			clientHeight: activeViewport.clientHeight,
+            firstIndex: Math.min(...indices),
+            lastIndex: Math.max(...indices),
+            renderPasses,
+            reusePasses,
+            swallowedWheels,
+            connectedPool: pool.filter(row => row.isConnected && row.parentElement === list).length,
+            uniquePoolSlots: new Set(pool.map(row => row.dataset.poolSlot)).size,
+			managedViewCount: managedRoot?._penaManagedState?.view?.length || 0,
+			managedRows: managedRows.length,
+			managedFirstIndex: managedIndices.length ? Math.min(...managedIndices) : -1,
+			managedLastIndex: managedIndices.length ? Math.max(...managedIndices) : -1,
+			managedFirstId: managedRows[0]?.dataset.id || '',
+			managedLastId: managedRows.at(-1)?.dataset.id || '',
+			legacyRemoteRows: document.querySelectorAll('.pena-native-remote-row:not(.pena-native-managed-row)').length,
+            panelTop: panelRect?.top ?? null,
+            panelBottom: panelRect?.bottom ?? null,
+            viewportTop: viewportRect.top,
+			panelInsideViewport: !!panel && activeViewport.contains(panel),
+			sourceViewportHidden: viewport.classList.contains('pena-native-source-viewport-hidden'),
+			sourceScrollTop: viewport.scrollTop,
+			pageScrollTop: window.scrollY,
+			restRecentCalls,
+			loaderVisible: !!loadGuard,
+			loaderTopOffset: loadGuardRect && loadCardRect
+			  ? loadCardRect.top - loadGuardRect.top
+			  : null
+          };
+        }
+      };
+    })();
+  </script>
+  <script src="./dialog-repository-harness.js"></script>
+  <script src="../extension/dialog-repository.js"></script>
+  <script src="../extension/native-catalog.js"></script>
+  <script src="../extension/native-interaction-state.js"></script>
+  <script src="../extension/native-time-control.js"></script>
+  <script src="../extension/native-lifecycle.js"></script>
+  <script src="../extension/injected.js"></script>
+</body>
+</html>

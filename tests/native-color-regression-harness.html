@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>PENA native color regression</title>
+  <link rel="stylesheet" href="../extension/injected.css">
+  <style>
+    html, body { margin: 0; width: 380px; height: 680px; overflow: hidden; }
+    .bx-im-list-container-recent__container { width: 360px; height: 680px; }
+    .bx-im-list-container-recent__scroll-container { width: 360px; height: 600px; overflow-y: auto; }
+    .bx-im-list-container-recent__elements { width: 360px; min-height: 600px; }
+    .bx-im-list-recent-item__wrap { width: 340px; height: 64px; }
+    .bx-im-list-recent-item__container { display: flex; align-items: center; height: 64px; }
+	.test-avatar { width: 40px; height: 40px; flex: 0 0 40px; margin-right: 8px; border-radius: 50%; background: #94a3b8; }
+    #anit-filters, #anit-dialog-control-dock { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="bx-im-list-container-recent__container">
+    <div class="bx-im-list-container-recent__scroll-container">
+      <div class="bx-im-list-container-recent__elements">
+		<div class="bx-im-list-recent-item__wrap" data-id="chat225"><div class="bx-im-list-recent-item__container"><span class="test-avatar"></span><span class="bx-im-chat-title__text">Target</span></div></div>
+		<div class="bx-im-list-recent-item__wrap" data-id="chat5"><div class="bx-im-list-recent-item__container"><span class="test-avatar"></span><span class="bx-im-chat-title__text">Color source</span></div></div>
+		<div class="bx-im-list-recent-item__wrap" data-id="chat999"><div class="bx-im-list-recent-item__container"><span class="test-avatar"></span><span class="bx-im-chat-title__text">No color source</span></div></div>
+		<div class="bx-im-list-recent-item__wrap" data-id="chat300"><div class="bx-im-list-recent-item__container"><span class="test-avatar"></span><span class="bx-im-chat-title__text">Plain target</span></div></div>
+      </div>
+    </div>
+  </div>
+  <script>
+	window.__PENA_TEST_MANAGED_CATALOG__ = true;
+	window.__PENA_TEST_NATIVE_SCROLL__ = true;
+    const seededItems = [
+      { id: 'folder:test', type: 'folder', title: 'Folder', color: '#f59e0b', icon: 'folder', addedAt: Date.now() },
+	  { id: 'chat225', title: 'Target', colorMode: 'none', folderId: 'folder:test', addedAt: Date.now() },
+      { id: 'chat5', title: 'Color source', color: '#3b82f6', folderId: 'folder:test', addedAt: Date.now() },
+	  { id: 'chat300', title: 'Plain target', folderId: 'folder:test', addedAt: Date.now() }
+    ];
+    localStorage.setItem('pena.dialogControl.v1.chats', JSON.stringify(seededItems));
+    localStorage.setItem('pena.dialogControlNative.v1.chats', '1');
+    localStorage.setItem('pena.dialogControlView.chats', JSON.stringify({ sortMode: 'date', sortDirection: 'desc', unreadOnly: false }));
+    window.nativeRowClicks = [];
+	window.nativeRowGestures = [];
+	['mousedown', 'pointerup', 'mouseup'].forEach(type => document.addEventListener(type, event => {
+	  const row = event.target.closest?.('[data-id]');
+	  if (row) window.nativeRowGestures.push(`${type}:${String(row.dataset.id || '')}`);
+	}));
+    document.addEventListener('click', event => {
+      const row = event.target.closest?.('[data-id]');
+	  if (row) {
+		window.nativeRowClicks.push(String(row.dataset.id || ''));
+		window.nativeRowGestures.push(`click:${String(row.dataset.id || '')}`);
+	  }
+    });
+	const recentEntries = [
+	  ...seededItems.filter(item => item.type !== 'folder'),
+	  { id: 'chat999', title: 'No color source', addedAt: Date.now() }
+	].map((item, index) => ({
+	  id: item.id,
+	  dialog_id: item.id,
+	  chat_id: Number(item.id.replace(/^chat/, '')),
+	  type: 'chat',
+	  title: item.title,
+	  avatar: { url: `https://cdn.example.test/${item.id}.png`, color: '#dbeafe' },
+	  counter: 0,
+	  message: { id: 1000 - index, text: item.title, date: new Date(Date.now() - index * 60000).toISOString() }
+	}));
+    window.BX = { rest: { callMethod(method, params, callback) {
+	  if (method === 'im.counters.get') {
+		callback({ error: () => null, data: () => ({ CHAT: {}, DIALOG: {}, CHAT_UNREAD: [], DIALOG_UNREAD: [] }) });
+		return;
+	  }
+	  if (method === 'im.dialog.get') {
+		const dialogId = String(params?.DIALOG_ID || '');
+		const entry = recentEntries.find(item => item.dialog_id === dialogId);
+		callback({ error: () => null, data: () => ({ chat: {
+		  id: Number(dialogId.replace(/^chat/, '')),
+		  dialog_id: dialogId,
+		  name: entry?.title || dialogId,
+		  avatar: entry?.avatar || null
+		} }) });
+		return;
+	  }
+	  callback({
+		error: () => null,
+		data: () => ({ items: recentEntries, hasMore: false, hasMorePages: false }),
+		next: () => null,
+		total: () => recentEntries.length
+	  });
+	} } };
+  </script>
+  <script src="../extension/native-catalog.js"></script>
+  <script src="../extension/native-interaction-state.js"></script>
+  <script src="../extension/native-time-control.js"></script>
+  <script src="../extension/native-lifecycle.js"></script>
+  <script src="../extension/injected.js"></script>
+  <output id="test-output"></output>
+  <script>
+    const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+    const assert = (condition, message) => {
+      if (!condition) throw new Error(message);
+    };
+	const row = id => document.querySelector(`.pena-native-managed-row[data-id="${id}"]`) || document.querySelector(`[data-id="${id}"]`);
+    const openMenu = async id => {
+	  const target = row(id);
+	  target.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 2, buttons: 2, clientX: 120, clientY: 120 }));
+	  target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 2, buttons: 2, clientX: 120, clientY: 120 }));
+	  target.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2, buttons: 2, clientX: 120, clientY: 120 }));
+      await wait(30);
+      assert(document.querySelector('.dialog-control-context-menu'), `Context menu did not open for ${id}`);
+    };
+    const chooseSource = async id => {
+      const source = row(id);
+      source.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, cancelable: true }));
+      source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }));
+      source.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, button: 0 }));
+      source.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+      await wait(120);
+    };
+    const storedItem = id => JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats') || '[]').find(item => item.id === id);
+
+	if (new URLSearchParams(location.search).get('autorun') === '1') (async () => {
+      const checks = [];
+	  while (!window.__PENA_RECENT_SYNC__?.gateReady || !document.querySelector('.pena-native-managed-row')) await wait(25);
+
+      row('chat225').dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+        buttons: 2,
+        clientX: 120,
+        clientY: 120
+      }));
+      await wait(1050);
+      assert(document.querySelector('.dialog-control-context-menu'), 'Plain right click had no PENA fallback when the Bitrix menu was absent');
+      document.querySelector('.dialog-control-context-menu')?.remove();
+      checks.push('plain-context-menu-fallback');
+
+      await openMenu('chat225');
+	  document.querySelector('.dialog-control-context-color-marker').click();
+	  await wait(40);
+	  const palette = document.querySelector('.dialog-control-palette.--open');
+	  assert(palette?.querySelector('.dialog-control-mini-picker'), 'Full dialog color picker did not open');
+	  assert(palette?.querySelector('.dialog-control-hue-strip'), 'Dialog hue control is missing');
+	  palette.querySelector('.dialog-control-swatch[data-color="#4d9dff"]').click();
+	  await wait(120);
+	  assert(storedItem('chat225').color === '#4d9dff', 'Dialog swatch did not apply the marker color');
+      checks.push('folder-parity-color-tools');
+
+      await openMenu('chat225');
+	  document.querySelector('.dialog-control-context-color-marker').click();
+	  await wait(40);
+      document.querySelector('.dialog-control-palette.--open .dialog-control-swatch.--clear').click();
+      await wait(120);
+      assert(storedItem('chat225').colorMode === 'none', 'No-fill override was not persisted');
+      assert(!row('chat225').dataset.penaNativeColor, 'Folder color leaked through an explicit no-fill override');
+      assert(!row('chat225').querySelector('.pena-native-avatar-ring'), 'Avatar ring remained after explicit no-fill');
+      checks.push('explicit-no-fill-overrides-folder');
+
+      await openMenu('chat225');
+	  document.querySelector('.dialog-control-context-color-marker').click();
+	  await wait(40);
+      const selected = Array.from(document.querySelectorAll('.dialog-control-palette.--open .dialog-control-swatch.--active'));
+      assert(selected.length === 1, `Expected one selected color option, got ${selected.length}`);
+      assert(selected[0].classList.contains('--clear'), 'No-fill tool is not the selected option');
+      assert(selected[0].getAttribute('aria-pressed') === 'true', 'Selected no-fill option is not exposed through aria-pressed');
+      assert(getComputedStyle(selected[0], '::after').content === 'none', 'A check mark is still drawn over the no-fill cross');
+      checks.push('single-selection-without-checkmark');
+
+	  assert(document.querySelector('.dialog-control-palette.--open .dialog-control-swatch.--add svg'), 'Add-color icon is missing');
+	  checks.push('folder-parity-without-extra-tools');
+
+      document.documentElement.dataset.testStatus = 'passed';
+      window.__TEST_RESULT__ = { passed: true, checks };
+      document.getElementById('test-output').textContent = JSON.stringify(window.__TEST_RESULT__);
+    })().catch(error => {
+      document.documentElement.dataset.testStatus = 'failed';
+      window.__TEST_RESULT__ = { passed: false, error: String(error?.message || error) };
+      document.getElementById('test-output').textContent = JSON.stringify(window.__TEST_RESULT__);
+    });
+  </script>
+</body>
+</html>

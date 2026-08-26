@@ -1,0 +1,89 @@
+name: Build macOS Universal installer
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-macos:
+    name: Build and verify DMG
+    runs-on: macos-15
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(/usr/bin/python3 -c 'import json; print(json.load(open("extension/manifest.json", encoding="utf-8"))["version"])')"
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build Universal DMG
+        shell: bash
+        run: bash installers/macos/build.sh
+
+      - name: Verify application and disk image
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          dmg="$GITHUB_WORKSPACE/dist/PENA_Agency_macOS_Universal_v${VERSION}.dmg"
+          mount_dir="$(mktemp -d "$RUNNER_TEMP/pena-bx24-mount.XXXXXX")"
+          cleanup() {
+            hdiutil detach "$mount_dir" -quiet 2>/dev/null || true
+            rmdir "$mount_dir" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          test -s "$dmg"
+          hdiutil verify "$dmg"
+          hdiutil attach "$dmg" -readonly -nobrowse -noautoopen -mountpoint "$mount_dir"
+
+          app="$mount_dir/PENA BX24 Installer.app"
+          executable="$app/Contents/MacOS/PENA BX24 Installer"
+          test -d "$app"
+          test -x "$executable"
+          plutil -lint "$app/Contents/Info.plist"
+
+          archs="$(lipo -archs "$executable")"
+          [[ " $archs " == *" x86_64 "* ]]
+          [[ " $archs " == *" arm64 "* ]]
+
+          visible_count="$(find "$mount_dir" -mindepth 1 -maxdepth 1 ! -name '.*' | wc -l | tr -d ' ')"
+          test "$visible_count" = "1"
+          test -d "$app/Contents/Resources/extension"
+          test -x "$app/Contents/Resources/install-gui.sh"
+          test -x "$app/Contents/Resources/pena-updater.sh"
+          test -x "$app/Contents/Resources/pena-launcher"
+
+          if find "$app/Contents/Resources" -type f \( -name '*.sh' -o -name '*.plist' \) -print0 \
+            | xargs -0 grep -Il $'\r'; then
+            echo 'CRLF found in macOS runtime files' >&2
+            exit 1
+          fi
+
+          shasum -a 256 "$dmg" > "$dmg.sha256"
+
+      - name: Upload verified installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: PENA_Agency_macOS_Universal_v${{ steps.version.outputs.version }}
+          path: |
+            dist/PENA_Agency_macOS_Universal_v${{ steps.version.outputs.version }}.dmg
+            dist/PENA_Agency_macOS_Universal_v${{ steps.version.outputs.version }}.dmg.sha256
+          if-no-files-found: error
+          retention-days: 14

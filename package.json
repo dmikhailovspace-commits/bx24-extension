@@ -1,0 +1,12 @@
+{
+  "name": "pena-bx24-extension",
+  "private": true,
+  "scripts": {
+    "test": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/run-tests.ps1",
+    "context:update": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/update-project-context.ps1",
+    "context:check": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/update-project-context.ps1 -Check"
+  },
+  "devDependencies": {
+    "playwright": "^1.58.0"
+  }
+}
