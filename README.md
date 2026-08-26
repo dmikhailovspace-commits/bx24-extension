@@ -15,6 +15,7 @@
 ## Разработка
 
 ```text
+.github/workflows/  GitHub Actions для нативной сборки macOS
 extension/          runtime расширения
 installers/windows/ Windows builder, installer и updater
 installers/macos/   macOS DMG builder, installer и updater
@@ -45,13 +46,14 @@ installers\windows\build.bat
 
 Нужен Inno Setup 6. Скрипт ищет `ISCC.exe` в `PATH` и стандартных каталогах установки.
 
-macOS Universal:
+macOS Universal собирается только на GitHub-hosted macOS runner:
 
-```bash
-bash installers/macos/build.sh
+```powershell
+gh workflow run build-macos.yml --repo dmikhailovspace-commits/bx24-extension --ref main
+gh run list --repo dmikhailovspace-commits/bx24-extension --workflow build-macos.yml --limit 1
 ```
 
-DMG собирается штатным `hdiutil` на macOS и содержит один GUI-инсталлер `.app`. Нативный launcher собирается сразу для Intel и Apple Silicon и объединяется в Universal Mach-O через `lipo`; Terminal при установке и запуске Bitrix24 не используется.
+Workflow вызывает `installers/macos/build.sh`, собирает DMG штатным `hdiutil`, проверяет образ, структуру `.app`, права исполнения и срезы Intel/Apple Silicon, после чего публикует DMG и SHA-256 как artifact. Локальная Windows-кросс-сборка не используется. Terminal при установке и запуске Bitrix24 не открывается.
 
 После изменения версии, состава runtime-файлов или структуры проекта обновите контекст:
 

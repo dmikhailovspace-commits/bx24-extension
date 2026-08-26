@@ -10,7 +10,7 @@
 - Runtime files: **16**
 - Regression suites: **14**
 - Windows artifact: `dist/PENA_Agency_Windows_v7.5.37.exe` - SHA-256: `1063692172E39EC40528B69311AA0328461F2DE2485A44C74468C7E17649D122`
-- macOS artifact: `dist/PENA_Agency_macOS_Universal_v7.5.37.dmg` - SHA-256: `A8FAD52385B622B43BC1C72E1E0442640710EAE88B5806DFB0A06F3C2209D86D`
+- macOS artifact: `dist/PENA_Agency_macOS_Universal_v7.5.37.dmg` - SHA-256: `76AA1F84F95B8F98CC6BFFA65AF9C4156ECDF2973508FFDD4AE78D4E411D89D2`
 <!-- AUTO:END -->
 
 ## Назначение
@@ -24,6 +24,7 @@
 - `extension/native-*.js` содержат изолированные модели каталога, состояния взаимодействия, времени и жизненного цикла.
 - `extension/dialog-repository.js` — клиентский мост к хранилищу.
 - `extension/background.js` — service worker с каталогом диалогов в `chrome.storage.local`.
+- `.github/workflows/build-macos.yml` — единственный удалённый путь выпуска macOS DMG: сборка и проверка выполняются на GitHub-hosted `macos-15`.
 - Область каталога: `portalHost~userId`. Запрос страницы принимается только при совпадении `portalHost` с origin.
 - Каталог публикуется поколениями и патчами; запись сериализована lease-механизмом, предыдущая генерация используется для восстановления.
 
@@ -48,6 +49,7 @@
 ## Структура
 
 ```text
+.github/workflows/  нативная сборка macOS через GitHub Actions
 extension/          единственный источник runtime-файлов расширения
   icons/            иконки расширения
 installers/
@@ -79,9 +81,10 @@ update.json         состав и адрес неизменяемого рел
 1. Запустить `pnpm test`; успешный результат — 14/14.
 2. Запустить `tools/update-project-context.ps1 -Check`.
 3. Собрать Windows через `installers/windows/build.bat`.
-4. Собрать macOS Universal на Mac через `bash installers/macos/build.sh`.
-5. Проверить SHA-256 обоих артефактов и убедиться, что в `dist/` осталась только текущая версия.
-6. macOS DMG — UDZO/HFS+ образ с одним видимым `PENA BX24 Installer.app`. Установщик и создаваемое им приложение запускаются через Universal Mach-O launcher с двумя срезами `x86_64` и `arm64`; shell-скрипты лежат только в Resources и никогда не являются entry point приложения. Установка и выбор Bitrix24 идут через системные GUI-диалоги без Terminal. Живой запуск следует подтверждать на реальном Mac; образ не подписан и не notarized.
+4. Отправить проверенный source commit в `dmikhailovspace-commits/bx24-extension` и запустить `build-macos.yml` через GitHub Actions. Локальная кросс-сборка DMG на Windows не является релизным артефактом.
+5. Workflow вызывает `installers/macos/build.sh` на `macos-15`, затем проверяет `hdiutil verify`, `plutil`, два среза `lipo`, executable modes, единственный видимый `.app` и отсутствие CRLF. В `dist/` принимается только DMG из зелёного workflow с совпавшим SHA-256 sidecar.
+6. Проверить SHA-256 обоих артефактов и убедиться, что в `dist/` осталась только текущая версия.
+7. macOS DMG — UDZO/HFS+ образ с одним видимым `PENA BX24 Installer.app`. Установщик и создаваемое им приложение запускаются через Universal Mach-O launcher с двумя срезами `x86_64` и `arm64`; shell-скрипты лежат только в Resources и никогда не являются entry point приложения. Установка и выбор Bitrix24 идут через системные GUI-диалоги без Terminal. Workflow доказывает нативную сборку и статическую проверку на macOS, но живой GUI-запуск следует подтверждать отдельно; образ не подписан и не notarized.
 
 ## Правило обновления контекста
 
