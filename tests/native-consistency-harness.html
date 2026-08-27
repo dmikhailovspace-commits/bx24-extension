@@ -92,6 +92,7 @@
 	const detailDelay = Math.max(0, Number(new URLSearchParams(location.search).get('detailDelay')) || 0);
 	const restDelay = Math.max(0, Number(new URLSearchParams(location.search).get('restDelay')) || 0);
 	const restIncompleteZero = new URLSearchParams(location.search).get('restIncompleteZero') === '1';
+	const restUnknownTotal = new URLSearchParams(location.search).get('restUnknownTotal') === '1';
 	let recentListFailuresRemaining = Math.max(0, Number(new URLSearchParams(location.search).get('restFailCount')) || 0);
 	const generatedManaged = new URLSearchParams(location.search).get('generatedManaged') === '1';
 	const wideParent = new URLSearchParams(location.search).get('wide') === '1';
@@ -255,6 +256,7 @@
 	window.timeListFailures = 0;
 	window.nativeRestCalls = [];
 	window.nativeBatchCalls = 0;
+	window.nativeBatchSizes = [];
 	const recentPageResult = params => {
 	  const offset = Math.max(0, Number(params?.OFFSET) || 0);
 	  const limit = Math.max(1, Number(params?.LIMIT) || 50);
@@ -274,8 +276,8 @@
 	  return {
 		error: () => null,
 		data: () => ({ items: pageItems, hasMore: next != null, hasMorePages: next != null }),
-		total: () => restIncompleteZero ? 0 : availableEntries.length,
-		next: () => next
+		total: () => restUnknownTotal ? -1 : (restIncompleteZero ? 0 : availableEntries.length),
+		next: () => restUnknownTotal ? false : next
 	  };
 	};
 	window.nativeCustomEventHandlers = new Map();
@@ -386,6 +388,7 @@
 	window.BX24 = {
 	  callBatch(calls, callback) {
 		window.nativeBatchCalls += 1;
+		window.nativeBatchSizes.push(Object.keys(calls || {}).length);
 		const respond = () => callback(Object.fromEntries(Object.entries(calls).map(([key, call]) => [
 		  key,
 		  call?.method === 'im.recent.list'

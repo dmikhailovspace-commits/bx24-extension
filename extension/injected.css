@@ -394,9 +394,6 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .pena-native-sort-direction-options button svg{width:13px;height:13px;display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .pena-native-unread-filter{display:flex;align-items:center;gap:7px;color:#475569;font:700 11px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial;cursor:pointer}
 .pena-native-unread-filter input{position:absolute;opacity:0;pointer-events:none}
-.pena-native-load-limit{display:flex;align-items:center;gap:7px;color:#475569;font:700 11px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial}
-.pena-native-load-limit-select{height:26px;min-width:104px;padding:0 24px 0 8px;border:1px solid rgba(100,116,139,.28);border-radius:5px;background:#fff;color:#334155;font:600 11px/1 system-ui,-apple-system,Segoe UI,Roboto,Arial;cursor:pointer;outline:none}
-.pena-native-load-limit-select:hover{border-color:rgba(37,99,235,.45);background:#f8fbff}.pena-native-load-limit-select:focus{border-color:#3b82f6;box-shadow:0 0 0 2px rgba(59,130,246,.12)}.pena-native-load-limit-select:disabled{cursor:wait;opacity:.65}
 .pena-native-toggle-track{position:relative;width:28px;height:16px;border-radius:999px;background:#cbd5e1;transition:background-color .12s ease}
 .pena-native-toggle-track::after{content:"";position:absolute;left:2px;top:2px;width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(15,23,42,.22);transition:transform .12s ease}
 .pena-native-unread-filter input:checked+.pena-native-toggle-track{background:#3b82f6}

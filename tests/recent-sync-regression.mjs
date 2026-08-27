@@ -288,13 +288,13 @@ const runMandatoryPageTailScenario = async () => {
 	await page.locator('.pena-native-folder-switcher').waitFor({ state: 'visible', timeout: 5000 });
 	await page.waitForFunction(() => {
 	  const sync = window.__PENA_RECENT_SYNC__;
-	  return sync && !sync.inFlight && sync.phase === 'ready' && sync.windowCount === 100;
+	  return sync && !sync.inFlight && sync.phase === 'ready' && sync.windowCount === 401;
 	}, null, { timeout: 10000 });
 	const ids = await managedIds(page);
-	assert.equal(ids.length, 101);
-	assert.ok(ids.includes('chat150'), 'Controlled dialog in the unselected half of an already fetched REST page was dropped');
+	assert.equal(ids.length, 401);
+	assert.ok(ids.includes('chat150'), 'Controlled dialog was dropped after the legacy 100-dialog cap was removed');
 	const calls = await page.evaluate(() => window.__recentHarness.calls());
-	assert.equal(calls.filter(call => call.method === 'im.recent.list').length, 1, JSON.stringify(calls.filter(call => call.method === 'im.recent.list')));
+	assert.deepEqual(calls.filter(call => call.method === 'im.recent.list').map(call => call.offset), [0, 200, 400]);
 	assert.equal(calls.filter(call => call.method === 'im.dialog.get' && call.dialogId === 'chat150').length, 1, 'Controlled dialog from im.recent.list was not validated through im.dialog.get');
 	assert.deepEqual(pageErrors, []);
 	console.log('PASS recent sync: controlled page-tail dialog is retained and access-checked');
@@ -387,7 +387,7 @@ try {
 	  const calls = await page.evaluate(() => window.__recentHarness.calls());
 	  assert.equal(calls.filter(call => call.method === 'im.dialog.get' && call.dialogId === 'chat150').length, 1);
 	  assert.ok(!(await managedViewIds(page)).includes('chat150'), 'Inaccessible controlled chat remained clickable in the managed view');
-	}, '?limitmandatory=1&tailaccess=1', 100);
+	}, '?limitmandatory=1&tailaccess=1', 401);
 	await runScenario('quarantined recent dialog stays disabled until revalidation succeeds', async page => {
 	  await page.waitForFunction(() => window.__PENA_RECENT_SYNC__?.unavailableCount === 1 && !window.__PENA_RECENT_SYNC__?.detailsInFlight);
 	  await page.evaluate(() => {
@@ -406,7 +406,7 @@ try {
 	  await page.evaluate(() => window.__recentHarness.releaseDetailGate());
 	  await page.waitForFunction(() => !window.__PENA_RECENT_SYNC__?.detailsInFlight && window.__PENA_RECENT_SYNC__?.unavailableCount === 0);
 	  await page.waitForFunction(() => !document.querySelector('.pena-native-remote-row[data-id="chat150"]')?.hasAttribute('aria-disabled'));
-	}, '?limitmandatory=1&tailaccess=1&detailgate=1', 100);
+	}, '?limitmandatory=1&tailaccess=1&detailgate=1', 401);
   await runScenario('three-page initial load', async page => {
     await page.waitForTimeout(250);
     const calls = await page.evaluate(() => window.__recentHarness.calls());
@@ -464,14 +464,15 @@ try {
 	assert.equal(await page.evaluate(() => localStorage.getItem('pena.dialogRecentLoadLimit.defaultAll.v3')), '1');
   }, '?savedlimit=300');
 
-  await runScenario('explicit finite setting survives after the default migration', async page => {
+	await runScenario('legacy finite setting is always removed', async page => {
 	const sync = await syncState(page);
-	assert.equal(sync.loadLimit, 300);
-	assert.equal(sync.windowCount, 300);
-	assert.equal((await managedIds(page)).length, 300);
-  }, '?savedlimit=300&limitmigrated=1', 300);
+	assert.equal(sync.loadLimit, 0);
+	assert.equal(sync.windowCount, 401);
+	assert.equal((await managedIds(page)).length, 401);
+	assert.equal(await page.evaluate(() => localStorage.getItem('pena.dialogRecentLoadLimit.v1')), '0');
+	}, '?savedlimit=300&limitmigrated=1');
 
-	await runScenario('finite limit refreshes only the recent head', async page => {
+	await runScenario('background freshness refreshes only the recent head', async page => {
 		await page.evaluate(() => {
 			window.__recentHarness.resetPlans();
 			const entries = window.__recentHarness.makeDataset(1, 401, 'Head');
@@ -486,11 +487,11 @@ try {
 		await page.waitForFunction(() => window.__recentHarness.calls().some(call => call.name === 'finite-head-refresh'));
 		await page.waitForFunction(() => !window.__PENA_RECENT_SYNC__?.inFlight);
 		const calls = await page.evaluate(() => window.__recentHarness.calls().filter(call => call.name === 'finite-head-refresh'));
-		assert.equal(calls.length, 1, `Finite limit restarted a full backfill: ${JSON.stringify(calls)}`);
+		assert.equal(calls.length, 1, `Freshness refresh restarted a full backfill: ${JSON.stringify(calls)}`);
 		assert.equal(calls[0].pageIndex, 0);
 		assert.equal(calls[0].method, 'im.recent.get');
 		assert.match(calls[0].lastSyncDate, /^\d{4}-\d{2}-\d{2}T/);
-	}, '?savedlimit=300&limitmigrated=1', 300);
+	}, '?savedlimit=300&limitmigrated=1');
 
   await runScenario('object avatars render in script-loaded rows', async page => {
     await activateAscending(page);
@@ -775,31 +776,32 @@ try {
 		assert.deepEqual(await page.evaluate(() => window.__recentHarness.nativeOpens()), []);
 	}, '?leadershipcase=1&apicase=1');
 
-  await runScenario('configured load limit caps only ordinary recent chats', async page => {
+	await runScenario('filter panel cannot cap the dialog catalog', async page => {
     await page.evaluate(() => {
       const entries = window.__recentHarness.makeDataset(10001, 800, 'Лимит');
       window.__recentHarness.enqueuePlan({
-        name: 'limit-300',
+		name: 'forced-all-dialogs',
         pages: [entries.slice(0, 200), entries.slice(200, 400), entries.slice(400, 600), entries.slice(600)],
         delayMs: 5
       });
       window.__recentHarness.setCounters({ CHAT: {}, DIALOG: {}, CHAT_UNREAD: [], DIALOG_UNREAD: [] });
     });
-    const panel = await openFilters(page);
-    await page.evaluate(() => { window.__recentHarnessLimitPanel = document.querySelector('.pena-native-filter-panel'); });
-    await panel.locator('.pena-native-load-limit-select').selectOption('300');
-    await page.waitForFunction(() => {
-      const sync = window.__PENA_RECENT_SYNC__;
-      return sync && !sync.inFlight && sync.windowCount === 300 && sync.loadLimit === 300 && !sync.error;
-    }, null, { timeout: 10000 });
-    const calls = await page.evaluate(() => window.__recentHarness.calls().filter(call => call.name === 'limit-300'));
-    assert.deepEqual(calls.map(call => call.offset), [0, 200], 'Limit did not stop pagination after the configured window');
-    const sync = await syncState(page);
-    assert.equal(sync.count, 300);
-    assert.equal(sync.truncated, true);
-    assert.equal(await page.evaluate(() => window.__recentHarnessLimitPanel === document.querySelector('.pena-native-filter-panel')), true, 'Changing the load limit replaced and flashed the filter panel');
-    assertExactIds(await managedIds(page), expectedIds(10001, 300), 'Configured recent window mismatch');
-  });
+	const panel = await openFilters(page);
+	await page.evaluate(() => { window.__recentHarnessLimitPanel = document.querySelector('.pena-native-filter-panel'); });
+	assert.equal(await panel.locator('.pena-native-load-limit-select').count(), 0, 'A finite catalog selector is still exposed');
+	await startRefresh(page);
+	await page.waitForFunction(() => {
+	  const sync = window.__PENA_RECENT_SYNC__;
+	  return sync && !sync.inFlight && sync.windowCount === 800 && sync.loadLimit === 0 && !sync.error;
+	}, null, { timeout: 10000 });
+	const calls = await page.evaluate(() => window.__recentHarness.calls().filter(call => call.name === 'forced-all-dialogs'));
+	assert.deepEqual(calls.map(call => call.offset), [0, 200, 400, 600], 'Full traversal stopped before the last page');
+	const sync = await syncState(page);
+	assert.equal(sync.count, 800);
+	assert.equal(sync.truncated, false);
+	assert.equal(await page.evaluate(() => window.__recentHarnessLimitPanel === document.querySelector('.pena-native-filter-panel')), true, 'Full refresh replaced and flashed the filter panel');
+	assertExactIds(await managedIds(page), expectedIds(10001, 800), 'Full catalog traversal mismatch');
+	});
 
   await runScenario('all available option loads beyond the old maximum', async page => {
 	await page.evaluate(() => {
@@ -809,8 +811,7 @@ try {
 	  window.__recentHarness.enqueuePlan({ name: 'all-available', pages, delayMs: 2 });
 	  window.__recentHarness.setCounters({ CHAT: {}, DIALOG: {}, CHAT_UNREAD: [], DIALOG_UNREAD: [] });
 	});
-	const panel = await openFilters(page);
-	await panel.locator('.pena-native-load-limit-select').selectOption('0');
+	await startRefresh(page);
 	await page.waitForFunction(() => {
 	  const sync = window.__PENA_RECENT_SYNC__;
 	  return sync && !sync.inFlight && sync.windowCount === 1201 && sync.loadLimit === 0 && !sync.error;
@@ -830,8 +831,7 @@ try {
 	  window.__recentHarness.enqueuePlan({ name: 'all-cache-bound', pages, delayMs: 1 });
 	  window.__recentHarness.setCounters({ CHAT: {}, DIALOG: {}, CHAT_UNREAD: [], DIALOG_UNREAD: [] });
 	});
-	const panel = await openFilters(page);
-	await panel.locator('.pena-native-load-limit-select').selectOption('0');
+	await startRefresh(page);
 	await page.waitForFunction(() => {
 	  const sync = window.__PENA_RECENT_SYNC__;
 	  return sync && !sync.inFlight && sync.windowCount === 5201 && sync.loadLimit === 0 && !sync.error;

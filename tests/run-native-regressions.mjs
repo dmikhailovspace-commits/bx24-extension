@@ -146,7 +146,7 @@ try {
     assert.equal(await page.locator('.test-host:not([hidden]) .pena-native-managed-viewport').count(), 1, `Default ${mode} mode did not expose the complete REST catalog`);
     let output = await readOutput(page);
     assert.equal(output.switcherCount, 1);
-	assert.equal(output.version, '7.5.43');
+	assert.equal(output.version, '7.5.44');
 	assert.equal(output.controlButtonCount, 0);
 	assert.equal(output.filterButtonCount, 1);
 	assert.equal(output.timeButtonCount, 1);
@@ -970,7 +970,7 @@ try {
 	assert.doesNotMatch(resolvedNativeStatus.className, /--warning/, `Native mandatory-dialog loading stayed unresolved: ${JSON.stringify(resolvedNativeStatus)}`);
 	assert.match(resolvedNativeStatus.className, /--ready/, `Resolved native list was not marked ready: ${JSON.stringify(resolvedNativeStatus)}`);
 
-	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&lazy=1&catalogRows=620&restDelay=80`);
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&lazy=1&catalogRows=1820&restDelay=80&restUnknownTotal=1`);
 	try {
 		await page.waitForFunction(() => {
 			const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
@@ -993,12 +993,14 @@ try {
 			count: window.__PENA_NATIVE_PREFETCH__?.status?.().modeCounts?.chats || 0,
 			pages: Number(sync.pagesLoaded) || 0,
 			batchCalls: window.nativeBatchCalls || 0,
+			batchSizes: window.nativeBatchSizes || [],
 			truncated: !!sync.truncated,
 			sourceTop: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0
 		};
 	});
-	assert.ok(nativeLoadPerformance.count >= 620, `Startup did not load the complete dynamic catalog: ${JSON.stringify(nativeLoadPerformance)}`);
-	assert.ok(nativeLoadPerformance.pages >= 4 && nativeLoadPerformance.batchCalls >= 1, `Startup did not use REST batch pagination: ${JSON.stringify(nativeLoadPerformance)}`);
+	assert.ok(nativeLoadPerformance.count >= 1820, `Startup did not load the complete dynamic catalog: ${JSON.stringify(nativeLoadPerformance)}`);
+	assert.ok(nativeLoadPerformance.pages >= 10 && nativeLoadPerformance.batchCalls >= 2, `Unknown-total startup did not continue adaptive REST batch pagination: ${JSON.stringify(nativeLoadPerformance)}`);
+	assert.ok(nativeLoadPerformance.batchSizes.every(size => size > 0 && size <= 8), `Adaptive batches exceeded the safe wave size: ${JSON.stringify(nativeLoadPerformance)}`);
 	assert.equal(nativeLoadPerformance.truncated, false, `Complete REST catalog was reported as partial: ${JSON.stringify(nativeLoadPerformance)}`);
 	assert.equal(nativeLoadPerformance.sourceTop, 0, `REST catalog loading moved the native viewport: ${JSON.stringify(nativeLoadPerformance)}`);
 	assert.ok(nativeLoadPerformance.duration >= 0 && nativeLoadPerformance.duration < 10000, `Complete catalog missed the startup performance target: ${JSON.stringify(nativeLoadPerformance)}`);

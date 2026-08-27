@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.43';
+	window.__ANITREC_RUNNING__ = '7.5.44';
 
-	const VER = '7.5.43';
+	const VER = '7.5.44';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -3270,7 +3270,7 @@
 	async function _syncDialogRecentData(options = {}) {
 		if (IS_OL_FRAME || !isInternalChatsDOM()) return { count: _dialogRecentMeta.size, skipped: true };
 		if (!_dialogRecentRepositoryReady) await _bootstrapDialogRecentRepository();
-		if (!_isDialogControlNativePassThrough() && ['manual', 'limit-change', 'gate-retry'].includes(String(options.reason || '')) && !_countDialogRecentMeta()) {
+		if (!_isDialogControlNativePassThrough() && ['manual', 'gate-retry'].includes(String(options.reason || '')) && !_countDialogRecentMeta()) {
 			_beginDialogRecentInteractionGate(options.reason);
 		}
 		if (!(await _claimDialogRecentSyncOwnership())) {
@@ -3348,8 +3348,10 @@
 				const deltaCursor = Math.max(0, Number(_dialogRecentLastSuccessAt) || Number(_dialogRecentCacheSavedAt) || now);
 				while (pages < (full ? _DIALOG_RECENT_MAX_PAGES : 1)) {
 					let page;
+					let pageWasPrefetched = false;
 					if (full && fastPages.length) {
 						page = fastPages.shift();
+						pageWasPrefetched = true;
 					} else if (full) {
 						page = await _callBxRestPageWithTimeout('im.recent.list', {
 							OFFSET: offset,
@@ -3416,26 +3418,6 @@
 					// A cold catalog is published only after every page and mandatory dialog
 					// has been prepared. Partial publication made rows disappear mid-click.
 					_publishDialogRecentSyncState();
-					if (full && options.fastBatch === true && pages === 1 && expectedTotal != null && expectedTotal > _DIALOG_RECENT_PAGE_SIZE) {
-						const targetTotal = loadLimit > 0 ? Math.min(loadLimit, expectedTotal) : expectedTotal;
-						const offsets = [];
-						for (let nextOffset = _DIALOG_RECENT_PAGE_SIZE; nextOffset < targetTotal; nextOffset += _DIALOG_RECENT_PAGE_SIZE) {
-							offsets.push(nextOffset);
-						}
-						fastPages = await _callBxRestPagesFast(offsets.map(nextOffset => ({
-							method: 'im.recent.list',
-							params: {
-								OFFSET: nextOffset,
-								LIMIT: _DIALOG_RECENT_PAGE_SIZE,
-								SKIP_OPENLINES: 'N',
-								SKIP_DIALOG: 'N',
-								SKIP_CHAT: 'N',
-								UNREAD_ONLY: 'N',
-								PARSE_TEXT: 'Y',
-								GET_ORIGINAL_TEXT: 'N'
-							}
-						})));
-					}
 					if (!full) {
 						fullPassComplete = true;
 						break;
@@ -3450,6 +3432,7 @@
 						? metadataFreeStagnantPages + 1
 						: 0;
 					const nextOffset = explicitNext ?? fallbackNext;
+					if (pageWasPrefetched && explicitNext != null && explicitNext !== fallbackNext) fastPages = [];
 					if (loadLimit > 0 && currentWindowIds.size >= loadLimit) {
 						truncated = expectedTotal != null ? expectedTotal > loadLimit : !!(explicitNext || hasMore || entries.length >= _DIALOG_RECENT_PAGE_SIZE);
 						fullPassComplete = true;
@@ -3474,6 +3457,36 @@
 						truncated = true;
 						fullPassComplete = true;
 						break;
+					}
+					const canBatchLinearOffsets = explicitNext == null || explicitNext === fallbackNext;
+					const morePagesExpected = hasMore || explicitNext != null ||
+						(expectedTotal != null && nextOffset < expectedTotal) ||
+						(!hasPaginationMetadata && entries.length > 0);
+					if (options.fastBatch === true && !fastPages.length && canBatchLinearOffsets && morePagesExpected) {
+						const targetTotal = expectedTotal != null
+							? (loadLimit > 0 ? Math.min(loadLimit, expectedTotal) : expectedTotal)
+							: Number.POSITIVE_INFINITY;
+						const offsets = [];
+						for (
+							let batchOffset = nextOffset;
+							batchOffset < targetTotal && offsets.length < _DIALOG_RECENT_BATCH_WINDOW_PAGES;
+							batchOffset += _DIALOG_RECENT_PAGE_SIZE
+						) offsets.push(batchOffset);
+						if (offsets.length) {
+							fastPages = await _callBxRestPagesFast(offsets.map(batchOffset => ({
+								method: 'im.recent.list',
+								params: {
+									OFFSET: batchOffset,
+									LIMIT: _DIALOG_RECENT_PAGE_SIZE,
+									SKIP_OPENLINES: 'N',
+									SKIP_DIALOG: 'N',
+									SKIP_CHAT: 'N',
+									UNREAD_ONLY: 'N',
+									PARSE_TEXT: 'Y',
+									GET_ORIGINAL_TEXT: 'N'
+								}
+							})));
+						}
 					}
 					offset = nextOffset;
 					await new Promise(resolve => setTimeout(resolve, _DIALOG_RECENT_PAGE_DELAY_MS));
@@ -4892,6 +4905,7 @@ let _dialogControlTitleSyncTimer = null;
 let _dialogControlTitleSyncInFlight = false;
 let _dialogControlTitleLastSyncAt = 0;
 	const _DIALOG_RECENT_PAGE_SIZE = 200;
+	const _DIALOG_RECENT_BATCH_WINDOW_PAGES = 8;
 	const _DIALOG_RECENT_MAX_PAGES = 500;
 	const _DIALOG_RECENT_METADATA_FREE_STAGNANT_MAX = 10;
 	const _DIALOG_RECENT_PAGE_DELAY_MS = 24;
@@ -4904,8 +4918,6 @@ let _dialogControlTitleLastSyncAt = 0;
 	const _DIALOG_RECENT_DELTA_MAX_AGE_MS = 6 * 24 * 60 * 60 * 1000;
 	const _DIALOG_RECENT_MIN_MS = 5000;
 	const _DIALOG_RECENT_DEFAULT_LIMIT = 0;
-	const _DIALOG_RECENT_LOAD_LIMITS = [0, 100, 300, 500, 1000];
-	const _DIALOG_RECENT_CACHE_MAX_LATEST = 5000;
 	const _DIALOG_RECENT_CACHE_STATUS_MAX_AGE_MS = 60000;
 	const _DIALOG_RECENT_CACHE_REFRESH_MS = 5 * 60 * 1000;
 	const _DIALOG_RECENT_DETAIL_TTL_MS = 30 * 60 * 1000;
@@ -5966,35 +5978,24 @@ if (_presetChannel) {
 	}
 
 	function _normalizeDialogRecentLoadLimit(value) {
-		const limit = Number(value);
-		return _DIALOG_RECENT_LOAD_LIMITS.includes(limit) ? limit : _DIALOG_RECENT_DEFAULT_LIMIT;
+		return _DIALOG_RECENT_DEFAULT_LIMIT;
 	}
 
 	function _getDialogRecentLoadLimit() {
 		try {
-			if (localStorage.getItem(_LS_DIALOG_RECENT_DEFAULT_DYNAMIC) !== '1') {
+			if (
+				localStorage.getItem(_LS_DIALOG_RECENT_DEFAULT_DYNAMIC) !== '1' ||
+				localStorage.getItem(_LS_DIALOG_RECENT_LOAD_LIMIT) !== '0'
+			) {
 				localStorage.setItem(_LS_DIALOG_RECENT_LOAD_LIMIT, '0');
 				localStorage.setItem(_LS_DIALOG_RECENT_DEFAULT_ALL, '1');
 				localStorage.setItem(_LS_DIALOG_RECENT_DEFAULT_500, '1');
 				localStorage.setItem(_LS_DIALOG_RECENT_DEFAULT_DYNAMIC, '1');
-				return 0;
 			}
-			const saved = localStorage.getItem(_LS_DIALOG_RECENT_LOAD_LIMIT);
-			return saved == null || saved === '' ? _DIALOG_RECENT_DEFAULT_LIMIT : _normalizeDialogRecentLoadLimit(saved);
+			return _DIALOG_RECENT_DEFAULT_LIMIT;
 		} catch {
 			return _DIALOG_RECENT_DEFAULT_LIMIT;
 		}
-	}
-
-	function _setDialogRecentLoadLimit(value) {
-		const limit = _normalizeDialogRecentLoadLimit(value);
-		try {
-			localStorage.setItem(_LS_DIALOG_RECENT_LOAD_LIMIT, String(limit));
-			localStorage.setItem(_LS_DIALOG_RECENT_DEFAULT_ALL, '1');
-			localStorage.setItem(_LS_DIALOG_RECENT_DEFAULT_500, '1');
-			localStorage.setItem(_LS_DIALOG_RECENT_DEFAULT_DYNAMIC, '1');
-		} catch {}
-		return limit;
 	}
 
 	function _getDialogControlViewPrefs(mode = _pMode()) {
@@ -6004,9 +6005,9 @@ if (_presetChannel) {
 			const sortDirection = ['asc', 'desc'].includes(saved?.sortDirection)
 				? saved.sortDirection
 				: (sortMode === 'color' ? 'asc' : 'desc');
-			return { sortMode, sortDirection, unreadOnly: !!saved?.unreadOnly, loadLimit: _getDialogRecentLoadLimit() };
+			return { sortMode, sortDirection, unreadOnly: !!saved?.unreadOnly };
 		} catch {
-			return { sortMode: 'date', sortDirection: 'desc', unreadOnly: false, loadLimit: _getDialogRecentLoadLimit() };
+			return { sortMode: 'date', sortDirection: 'desc', unreadOnly: false };
 		}
 	}
 
@@ -6015,9 +6016,6 @@ if (_presetChannel) {
 		if (!['color', 'date'].includes(next.sortMode)) next.sortMode = 'date';
 		if (!['asc', 'desc'].includes(next.sortDirection)) next.sortDirection = next.sortMode === 'color' ? 'asc' : 'desc';
 		next.unreadOnly = !!next.unreadOnly;
-		next.loadLimit = Object.prototype.hasOwnProperty.call(patch, 'loadLimit')
-			? _setDialogRecentLoadLimit(patch.loadLimit)
-			: _getDialogRecentLoadLimit();
 		try { localStorage.setItem(_dialogControlViewKey(mode), JSON.stringify(next)); } catch {}
 		_dialogControlLastSig = '';
 		_dialogControlNativeViewSig = '';
@@ -8220,8 +8218,6 @@ if (_presetChannel) {
 		});
 		const unreadInput = switcher.querySelector('.pena-native-unread-filter input');
 		if (unreadInput) unreadInput.checked = !!prefs.unreadOnly;
-		const loadSelect = switcher.querySelector('.pena-native-load-limit-select');
-		if (loadSelect) loadSelect.value = String(prefs.loadLimit);
 	}
 
 	function _syncDialogRecentStatusControl(switcher) {
@@ -9523,39 +9519,6 @@ if (_presetChannel) {
 				applyViewPreference({ unreadOnly: unreadInput.checked }, true);
 			});
 			unreadLabel.append(unreadInput, unreadToggle, unreadText);
-			const loadLimitLabel = document.createElement('label');
-			loadLimitLabel.className = 'pena-native-load-limit';
-			const loadLimitText = document.createElement('span');
-			loadLimitText.textContent = 'Загружать последние';
-			const loadLimitSelect = document.createElement('select');
-			loadLimitSelect.className = 'pena-native-load-limit-select';
-			loadLimitSelect.setAttribute('aria-label', 'Сколько последних чатов загружать');
-			[
-				[100, '100 чатов'],
-				[300, '300 чатов'],
-				[500, '500 чатов'],
-				[1000, '1000 чатов'],
-				[0, 'Все доступные']
-			].forEach(([value, label]) => {
-				const option = document.createElement('option');
-				option.value = String(value);
-				option.textContent = label;
-				loadLimitSelect.appendChild(option);
-			});
-			loadLimitSelect.value = String(viewPrefs.loadLimit);
-			loadLimitSelect.addEventListener('change', async () => {
-				const next = _setDialogControlViewPrefs({ loadLimit: Number(loadLimitSelect.value) });
-				loadLimitSelect.value = String(next.loadLimit);
-				loadLimitSelect.disabled = true;
-				try {
-					await _refreshDialogRecentCatalog({ force: true, full: true, reason: 'limit-change' });
-				} catch {}
-				finally {
-					loadLimitSelect.disabled = false;
-					_syncDialogRecentStatusControl(switcher);
-				}
-			});
-			loadLimitLabel.append(loadLimitText, loadLimitSelect);
 			const syncStatus = document.createElement('div');
 			syncStatus.className = 'pena-native-sync-status';
 			const syncStatusText = document.createElement('span');
@@ -9582,7 +9545,7 @@ if (_presetChannel) {
 				}
 			});
 			syncStatus.append(syncStatusText, syncButton);
-			filterPanel.append(sortGroup, unreadLabel, loadLimitLabel, syncStatus);
+			filterPanel.append(sortGroup, unreadLabel, syncStatus);
 			workspaceTabs.appendChild(filterPanel);
 		}
 		if (_dialogControlNativeWorkspaceTab === 'time' && _PENA_TIME_CONTROL) {
@@ -18539,9 +18502,6 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .pena-native-sort-direction-options button svg{width:13px;height:13px;display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .pena-native-unread-filter{display:flex;align-items:center;gap:7px;color:#475569;font:700 11px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial;cursor:pointer}
 .pena-native-unread-filter input{position:absolute;opacity:0;pointer-events:none}
-.pena-native-load-limit{display:flex;align-items:center;gap:7px;color:#475569;font:700 11px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial}
-.pena-native-load-limit-select{height:26px;min-width:104px;padding:0 24px 0 8px;border:1px solid rgba(100,116,139,.28);border-radius:5px;background:#fff;color:#334155;font:600 11px/1 system-ui,-apple-system,Segoe UI,Roboto,Arial;cursor:pointer;outline:none}
-.pena-native-load-limit-select:hover{border-color:rgba(37,99,235,.45);background:#f8fbff}.pena-native-load-limit-select:focus{border-color:#3b82f6;box-shadow:0 0 0 2px rgba(59,130,246,.12)}.pena-native-load-limit-select:disabled{cursor:wait;opacity:.65}
 .pena-native-toggle-track{position:relative;width:28px;height:16px;border-radius:999px;background:#cbd5e1;transition:background-color .12s ease}
 .pena-native-toggle-track::after{content:"";position:absolute;left:2px;top:2px;width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(15,23,42,.22);transition:transform .12s ease}
 .pena-native-unread-filter input:checked+.pena-native-toggle-track{background:#3b82f6}
