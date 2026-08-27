@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.39';
+	window.__ANITREC_RUNNING__ = '7.5.40';
 
-	const VER = '7.5.39';
+	const VER = '7.5.40';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -5040,6 +5040,7 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogTimeManualError = '';
 	let _dialogTimeTrackedExpanded = false;
 	let _dialogTimeVisitTrackingArmed = false;
+	const _dialogTimeSidePanelEventNamespaces = new WeakSet();
 	let _dialogControlColorEyedropper = null;
 	let _dialogControlEyedropperClickToken = null;
 	let _dialogControlNativeRowUidSeq = 1;
@@ -8377,22 +8378,33 @@ if (_presetChannel) {
 		} catch { return []; }
 	}
 
-	function _rememberDialogTimeTaskVisit(taskId, title = '', dialogId = '') {
-		const id = String(taskId || '').trim();
-		if (!/^\d+$/.test(id) || !_PENA_TIME_CONTROL) return false;
+	function _rememberDialogTimeActivity(activity = {}) {
+		if (!_PENA_TIME_CONTROL) return false;
+		const rawTaskId = String(activity.taskId || '').trim();
+		const taskId = /^\d+$/.test(rawTaskId) ? rawTaskId : '';
+		const dialogId = normId(activity.dialogId || '');
+		if (!taskId && !dialogId) return false;
 		const dateKey = _getDialogTimeTodayKey();
-		const normalizedTitle = String(title || '').replace(/\s+/g, ' ').trim();
+		const normalizedTitle = String(activity.title || '').replace(/\s+/g, ' ').trim();
 		const current = _readDialogTimeVisits(dateKey);
 		const next = _PENA_TIME_CONTROL.mergeVisitedTasks(current, {
-			taskId: id,
+			taskId,
 			title: normalizedTitle,
-			dialogId: String(dialogId || ''),
+			dialogId,
 			visitedAt: Date.now()
 		});
 		try { localStorage.setItem(_getDialogTimeScopedStorageKey(_PENA_TIME_VISITS_KEY, dateKey), JSON.stringify(next)); } catch {}
-		if (normalizedTitle) _dialogTimeTaskTitles.set(id, normalizedTitle);
+		if (taskId && normalizedTitle) _dialogTimeTaskTitles.set(taskId, normalizedTitle);
 		_queueDialogTimeUiSync();
 		return true;
+	}
+
+	function _rememberDialogTimeTaskVisit(taskId, title = '', dialogId = '') {
+		return _rememberDialogTimeActivity({ taskId, title, dialogId });
+	}
+
+	function _rememberDialogTimeDialogVisit(dialogId, title = '', taskId = '') {
+		return _rememberDialogTimeActivity({ taskId, title, dialogId });
 	}
 
 	function _readDialogTimeTracker() {
@@ -8493,7 +8505,7 @@ if (_presetChannel) {
 
 	function _getDialogTimeTaskCandidates(data, visits) {
 		const map = new Map();
-		visits.forEach(visit => map.set(String(visit.taskId), {
+		visits.filter(visit => /^\d+$/.test(String(visit.taskId || ''))).forEach(visit => map.set(String(visit.taskId), {
 			taskId: String(visit.taskId), title: _getDialogTimeTaskTitle(visit.taskId, visit.title), dialogId: visit.dialogId || '', visitedAt: visit.visitedAt || 0
 		}));
 		(data?.tasks || []).forEach(task => {
@@ -8609,10 +8621,36 @@ if (_presetChannel) {
 		return _openBitrixUrl(_buildTaskUrl(id));
 	}
 
-	function _captureActiveDialogTimeTask() {
+	async function _openDialogTimeActivity(activity = {}) {
+		if (/^\d+$/.test(String(activity.taskId || ''))) {
+			return _openDialogTimeTask(activity.taskId, activity.title);
+		}
+		const dialogId = normId(activity.dialogId || '');
+		if (!dialogId) return false;
+		const item = ['chats', 'tasks']
+			.flatMap(mode => _getDialogControlItemsForMode(mode))
+			.find(candidate => !_isDialogControlFolder(candidate) && normId(candidate.id) === dialogId);
+		if (item) return _openDialogControlRemoteRow(item);
+		const nativeRow = _findFreshBitrixChatElementById(dialogId);
+		const opened = !!nativeRow && openChatElement(nativeRow, dialogId);
+		if (opened) _rememberDialogTimeDialogVisit(dialogId, activity.title || '');
+		return opened;
+	}
+
+	function _captureActiveDialogTimeActivity() {
 		if (IS_OL_FRAME || !_PENA_TIME_CONTROL) return;
 		const snapshot = _getActiveDialogControlScreenSnapshot(true);
-		if (snapshot?.taskId) _rememberDialogTimeTaskVisit(snapshot.taskId, _getActiveDialogTitleFromScreen());
+		if (snapshot?.taskId) {
+			_rememberDialogTimeTaskVisit(snapshot.taskId, _getActiveDialogTitleFromScreen());
+			return;
+		}
+		const dialogId = normId(_readDialogControlOpenedId());
+		if (!dialogId) return;
+		const item = ['chats', 'tasks']
+			.flatMap(mode => _getDialogControlItemsForMode(mode))
+			.find(candidate => !_isDialogControlFolder(candidate) && normId(candidate.id) === dialogId);
+		const title = item?.title || _getActiveDialogTitleFromScreen() || _getDialogRecentMeta(dialogId)?.title || dialogId;
+		_rememberDialogTimeDialogVisit(dialogId, title, item?.taskId || '');
 	}
 
 	function _armDialogTimeVisitTracking() {
@@ -8631,12 +8669,41 @@ if (_presetChannel) {
 			if (!row) return;
 			const title = getChatTitleFromElement(row);
 			const meta = _extractTaskMetaFromElement(row, title);
-			if (meta?.taskId) _rememberDialogTimeTaskVisit(meta.taskId, title);
+			_rememberDialogTimeDialogVisit(getChatIdFromElement(row), title, meta?.taskId || '');
 		}, true);
-		const captureAfterRoute = () => setTimeout(_captureActiveDialogTimeTask, 250);
+		const captureAfterRoute = () => {
+			setTimeout(_captureActiveDialogTimeActivity, 120);
+			setTimeout(_captureActiveDialogTimeActivity, 600);
+		};
 		window.addEventListener('popstate', captureAfterRoute, true);
 		window.addEventListener('hashchange', captureAfterRoute, true);
-		setTimeout(_captureActiveDialogTimeTask, 500);
+		let sidePanelArmAttempts = 0;
+		const armSidePanelEvents = () => {
+			let ready = false;
+			const topWin = _getSafeTopWindow();
+			new Set([window, topWin].filter(Boolean)).forEach(root => {
+				const BXNS = root.BX;
+				if (typeof BXNS?.addCustomEvent !== 'function') return;
+				ready = true;
+				if (_dialogTimeSidePanelEventNamespaces.has(BXNS)) return;
+				_dialogTimeSidePanelEventNamespaces.add(BXNS);
+				const captureSlider = event => {
+					let url = '';
+					try { url = String(event?.getSlider?.()?.getUrl?.() || ''); } catch {}
+					const taskId = _extractTaskIdFromTaskUrl(url);
+					if (taskId) _rememberDialogTimeTaskVisit(taskId, '');
+					captureAfterRoute();
+				};
+				BXNS.addCustomEvent('SidePanel.Slider:onOpenComplete', captureSlider);
+				BXNS.addCustomEvent('SidePanel.Slider:onLoad', captureSlider);
+			});
+			if (!ready && sidePanelArmAttempts < 20) {
+				sidePanelArmAttempts += 1;
+				setTimeout(armSidePanelEvents, 500);
+			}
+		};
+		armSidePanelEvents();
+		setTimeout(_captureActiveDialogTimeActivity, 500);
 	}
 
 	function _queueDialogTimeUiSync() {
@@ -8788,24 +8855,30 @@ if (_presetChannel) {
 		}
 
 		const createTaskRow = (task, options = {}) => {
+			const isTask = /^\d+$/.test(String(task.taskId || ''));
 			const row = document.createElement('div');
 			row.className = 'pena-native-time-task-row';
+			row.classList.toggle('--dialog', !isTask);
 			const body = document.createElement('button');
 			body.type = 'button';
 			body.className = 'pena-native-time-task-main';
-			body.title = 'Открыть задачу';
+			body.title = isTask ? 'Открыть задачу' : 'Открыть диалог';
 			const title = document.createElement('span');
 			title.className = 'pena-native-time-task-title';
-			title.textContent = _getDialogTimeTaskTitle(task.taskId, task.title);
+			title.textContent = isTask
+				? _getDialogTimeTaskTitle(task.taskId, task.title)
+				: (String(task.title || '').trim() || String(task.dialogId || 'Диалог'));
 			const detail = document.createElement('span');
 			detail.className = 'pena-native-time-task-detail';
-			detail.textContent = options.detail || `Задача #${task.taskId}`;
+			detail.textContent = options.detail || (isTask ? `Задача #${task.taskId}` : 'Диалог');
 			body.append(title, detail);
 			body.addEventListener('click', event => {
 				event.preventDefault();
 				event.stopPropagation();
-				_openDialogTimeTask(task.taskId, task.title);
+				_openDialogTimeActivity(task);
 			});
+			row.appendChild(body);
+			if (!isTask) return row;
 			const action = document.createElement('button');
 			action.type = 'button';
 			action.className = 'pena-native-time-task-play';
@@ -8818,7 +8891,7 @@ if (_presetChannel) {
 				event.stopPropagation();
 				_startDialogTimeTracker(task);
 			});
-			row.append(body, action);
+			row.appendChild(action);
 			return row;
 		};
 
@@ -8827,11 +8900,11 @@ if (_presetChannel) {
 		const suggestionsSection = panel.querySelector('.pena-native-time-suggestions');
 		if (suggestionsSection) suggestionsSection.hidden = false;
 		if (suggestionsList) {
-			const suggestionsKey = `${tracker ? 'locked' : 'ready'}:${suggestions.map(task => `${task.taskId}:${task.title}:${task.visits}`).join('|')}`;
+			const suggestionsKey = `${tracker ? 'locked' : 'ready'}:${suggestions.map(task => `${task.activityId || task.taskId}:${task.taskId ? _getDialogTimeTaskTitle(task.taskId, task.title) : task.title}:${task.visits}`).join('|')}`;
 			if (suggestionsList.dataset.penaRenderKey !== suggestionsKey) {
 				suggestionsList.replaceChildren(...(suggestions.length
 					? suggestions.map(task => createTaskRow(task, {
-						detail: task.visits > 1 ? `Открывали сегодня ${task.visits} раза` : 'Открывали сегодня'
+						detail: task.visits > 1 ? `Работали сегодня · ${task.visits}` : 'Работали сегодня'
 					}))
 					: [Object.assign(document.createElement('div'), {
 						className: 'pena-native-time-empty',
@@ -8911,7 +8984,7 @@ if (_presetChannel) {
 	}
 
 	function _createDialogTimePanel() {
-		_captureActiveDialogTimeTask();
+		_captureActiveDialogTimeActivity();
 		const panel = document.createElement('div');
 		panel.className = 'pena-native-time-panel pena-native-command-popover';
 
@@ -8933,7 +9006,7 @@ if (_presetChannel) {
 		refresh.className = 'pena-native-time-refresh';
 		refresh.title = 'Обновить данные за сегодня';
 		refresh.setAttribute('aria-label', 'Обновить данные за сегодня');
-		refresh.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M6.1 9a7 7 0 0 1 11.7-2.6L20 9M4 15l2.2 2.6A7 7 0 0 0 17.9 15"/></svg>';
+		refresh.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66"/><path d="M20 4v7h-7"/></svg>';
 		refresh.addEventListener('click', event => {
 			event.preventDefault();
 			event.stopPropagation();
@@ -8948,9 +9021,6 @@ if (_presetChannel) {
 
 		const tracker = document.createElement('section');
 		tracker.className = 'pena-native-time-tracker';
-		const trackerHeader = document.createElement('div');
-		trackerHeader.className = 'pena-native-time-section-head';
-		trackerHeader.innerHTML = '<span>Трекинг сейчас</span><i aria-hidden="true"></i>';
 		const trackerInfo = document.createElement('div');
 		trackerInfo.className = 'pena-native-time-tracker-info';
 		const trackerTitle = document.createElement('strong');
@@ -8991,13 +9061,13 @@ if (_presetChannel) {
 			_stopDialogTimeTracker();
 		});
 		trackerControls.append(taskSelect, start, stop);
-		tracker.append(trackerHeader, trackerInfo, trackerHint, trackerControls);
+		tracker.append(trackerInfo, trackerHint, trackerControls);
 
 		const manual = document.createElement('section');
 		manual.className = 'pena-native-time-manual';
 		const manualHeader = document.createElement('div');
 		manualHeader.className = 'pena-native-time-section-copy';
-		manualHeader.innerHTML = '<strong>Добавить время</strong><span>Без запуска таймера</span>';
+		manualHeader.innerHTML = '<strong>Добавить время</strong>';
 		const manualTask = document.createElement('select');
 		manualTask.className = 'pena-native-time-task-select pena-native-time-manual-task';
 		manualTask.setAttribute('aria-label', 'Задача для ручного учёта времени');
@@ -9008,11 +9078,10 @@ if (_presetChannel) {
 			const field = document.createElement('label');
 			field.className = 'pena-native-time-duration-field';
 			const input = document.createElement('input');
-			input.type = 'number';
+			input.type = 'text';
 			input.inputMode = 'numeric';
-			input.min = '0';
-			input.max = String(max);
-			input.step = '1';
+			input.pattern = '[0-9]*';
+			input.dataset.max = String(max);
 			input.placeholder = '0';
 			input.value = value;
 			input.className = className;
@@ -9055,7 +9124,7 @@ if (_presetChannel) {
 		suggestions.className = 'pena-native-time-suggestions';
 		const suggestionsHeader = document.createElement('div');
 		suggestionsHeader.className = 'pena-native-time-section-copy';
-		suggestionsHeader.innerHTML = '<strong>Возможно, сегодня вы работали</strong><span>Открывали задачу, но ещё не добавляли время</span>';
+		suggestionsHeader.innerHTML = '<strong>Возможно, сегодня вы работали</strong><span>Активность в задачах и диалогах без учтённого времени</span>';
 		const suggestionsList = document.createElement('div');
 		suggestionsList.className = 'pena-native-time-suggestions-list';
 		suggestions.append(suggestionsHeader, suggestionsList);
@@ -9180,6 +9249,9 @@ if (_presetChannel) {
 		}
 		_dialogControlNativeSwitcherSig = switcherSig;
 		switcher.dataset.penaNativeSig = switcherSig;
+		const preservedTimePanel = _dialogControlNativeWorkspaceTab === 'time'
+			? switcher.querySelector('.pena-native-time-panel')
+			: null;
 
 		// Build the next tab layout off-screen and swap it in one operation. Clearing
 		// the live switcher first makes the sticky block briefly collapse and jump.
@@ -9367,7 +9439,7 @@ if (_presetChannel) {
 			workspaceTabs.appendChild(filterPanel);
 		}
 		if (_dialogControlNativeWorkspaceTab === 'time' && _PENA_TIME_CONTROL) {
-			workspaceTabs.appendChild(_createDialogTimePanel());
+			workspaceTabs.appendChild(preservedTimePanel || _createDialogTimePanel());
 		}
 		const groupRow = document.createElement('div');
 		groupRow.className = 'pena-native-group-tabs';
@@ -9890,12 +9962,12 @@ if (_presetChannel) {
 		const meta = _getDialogRecentMeta(item.id);
 		if (meta && !_isDialogRecentPublishable(meta)) return false;
 		if (await _openDialogControlViaBitrixApi(item)) {
-			if (item.taskId) _rememberDialogTimeTaskVisit(item.taskId, item.title || '', item.id || '');
+			_rememberDialogTimeDialogVisit(item.id || '', item.title || '', item.taskId || '');
 			return true;
 		}
 		const nativeRow = _findFreshBitrixChatElementById(item.id);
 		const opened = !!nativeRow && openChatElement(nativeRow, item.id);
-		if (opened && item.taskId) _rememberDialogTimeTaskVisit(item.taskId, item.title || '', item.id || '');
+		if (opened) _rememberDialogTimeDialogVisit(item.id || '', item.title || '', item.taskId || '');
 		return opened;
 	}
 

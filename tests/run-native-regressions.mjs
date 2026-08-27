@@ -146,7 +146,7 @@ try {
     assert.equal(await page.locator('.test-host:not([hidden]) .pena-native-managed-viewport').count(), 1, `Default ${mode} mode did not expose the complete REST catalog`);
     let output = await readOutput(page);
     assert.equal(output.switcherCount, 1);
-	assert.equal(output.version, '7.5.39');
+	assert.equal(output.version, '7.5.40');
 	assert.equal(output.controlButtonCount, 0);
 	assert.equal(output.filterButtonCount, 1);
 	assert.equal(output.timeButtonCount, 1);
@@ -263,8 +263,23 @@ try {
 	const timePanel = page.locator('.pena-native-time-panel');
 	await timePanel.waitFor({ state: 'visible' });
 	await page.waitForFunction(() => document.querySelector('.pena-native-time-total-value')?.textContent === '1 ч 30 мин');
+	await page.evaluate(() => { window.__penaTimePanelReference = document.querySelector('.pena-native-time-panel'); });
 	assert.match(await timePanel.locator('.pena-native-time-meta').textContent(), /2 задачи · 2 записи/);
 	assert.equal(await timePanel.locator('input[type="date"]').count(), 0);
+	assert.equal(await timePanel.getByText('Трекинг сейчас', { exact: true }).count(), 0);
+	assert.equal(await timePanel.getByText('Без запуска таймера', { exact: true }).count(), 0);
+	assert.equal(await timePanel.locator('.pena-native-time-manual-hours').getAttribute('type'), 'text');
+	assert.equal(await timePanel.locator('.pena-native-time-manual-minutes').getAttribute('type'), 'text');
+	const compactTimePanel = await timePanel.evaluate(panel => ({
+		width: panel.getBoundingClientRect().width,
+		gap: getComputedStyle(panel).gap,
+		refreshPaths: panel.querySelectorAll('.pena-native-time-refresh svg path').length,
+		refreshBorder: getComputedStyle(panel.querySelector('.pena-native-time-refresh')).borderTopWidth
+	}));
+	assert.ok(compactTimePanel.width <= 360, `Time panel stayed oversized in ${mode}: ${JSON.stringify(compactTimePanel)}`);
+	assert.equal(compactTimePanel.gap, '8px');
+	assert.equal(compactTimePanel.refreshPaths, 2, `Refresh icon was not replaced in ${mode}`);
+	assert.equal(compactTimePanel.refreshBorder, '0px', `Refresh control kept the old boxed appearance in ${mode}`);
 	const timeFonts = await timePanel.evaluate(panel => ({
 		ui: getComputedStyle(panel).fontFamily,
 		accent: getComputedStyle(panel.querySelector('.pena-native-time-total-value')).fontFamily,
@@ -284,6 +299,27 @@ try {
 	await timePanel.locator('.pena-native-time-manual-submit').click();
 	await page.waitForFunction(() => document.querySelector('.pena-native-time-total-value')?.textContent === '2 ч 45 мин');
 	assert.equal(await page.evaluate(() => Number(window.timeAddCalls[0]?.ARFIELDS?.SECONDS || 0)), 4500, `Manual duration was not saved in ${mode}`);
+	await page.evaluate(() => window.dispatchNativeSidePanelTask('404'));
+	try {
+		await page.waitForFunction(() => Array.from(document.querySelectorAll('.pena-native-time-suggestions-list .pena-native-time-task-title')).some(node => node.textContent === 'Задача 404'), null, { timeout: 5000 });
+	} catch (error) {
+		const diagnostic = await page.evaluate(() => ({
+			events: Object.fromEntries(Array.from(window.nativeCustomEventHandlers || [], ([name, handlers]) => [name, handlers.length])),
+			storage: Object.fromEntries(Object.entries(localStorage).filter(([key]) => key.startsWith('pena.time'))),
+			suggestions: Array.from(document.querySelectorAll('.pena-native-time-suggestions-list .pena-native-time-task-title'), node => node.textContent),
+			restCalls: window.nativeRestCalls || []
+		}));
+		throw new Error(`SidePanel task did not enter daily activity in ${mode}: ${JSON.stringify(diagnostic)}; ${error.message}`);
+	}
+	await page.evaluate(() => document.querySelector('.test-host:not([hidden]) [data-id="chat5"]')?.click());
+	await page.waitForFunction(() => Array.from(document.querySelectorAll('.pena-native-time-suggestions-list .pena-native-time-task-title')).some(node => node.textContent === 'Чат 5'));
+	const dialogActivity = timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Чат 5' });
+	assert.equal(await dialogActivity.locator('.pena-native-time-task-play').count(), 0, `A plain dialog incorrectly exposed task time controls in ${mode}`);
+	assert.match(await dialogActivity.locator('.pena-native-time-task-detail').textContent(), /Работали сегодня/);
+	await page.evaluate(() => document.querySelector('.pena-native-group-tab')?.click());
+	await page.waitForTimeout(100);
+	assert.equal(await timePanel.isVisible(), true, `Time panel closed during a native switcher refresh in ${mode}`);
+	assert.equal(await page.evaluate(() => window.__penaTimePanelReference === document.querySelector('.pena-native-time-panel')), true, `Time panel DOM was replaced and could flicker in ${mode}`);
 	await page.evaluate(() => {
 		const link = document.createElement('a');
 		link.href = '/company/personal/user/7/tasks/task/view/303/';

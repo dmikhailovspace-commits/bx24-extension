@@ -83,6 +83,10 @@ function testDailyTaskVisits() {
 	]);
 	assert.deepEqual(time.selectUntrackedVisits(merged, [{ taskId: '10' }]).map(task => task.taskId), ['11']);
 	assert.equal(time.normalizeVisitedTask({ taskId: 'not-a-task' }), null);
+	const withDialog = time.mergeVisitedTasks(merged, { dialogId: 'chat77', title: 'Клиентский диалог', visitedAt: 4000 });
+	assert.deepEqual(withDialog.map(item => item.activityId), ['dialog:chat77', 'task:10', 'task:11']);
+	assert.equal(withDialog[0].kind, 'dialog');
+	assert.equal(time.selectUntrackedVisits(withDialog, [{ taskId: '10' }]).some(item => item.dialogId === 'chat77'), true);
 }
 
 function testManualDuration() {

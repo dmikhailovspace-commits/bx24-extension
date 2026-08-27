@@ -144,44 +144,48 @@
 	}
 
 	function normalizeVisitedTask(task = {}) {
-		const taskId = String(task.taskId ?? task.id ?? '').trim();
-		if (!/^\d+$/.test(taskId)) return null;
+		const rawTaskId = String(task.taskId ?? task.id ?? '').trim();
+		const taskId = /^\d+$/.test(rawTaskId) ? rawTaskId : '';
+		const dialogId = String(task.dialogId || '').trim();
+		if (!taskId && !dialogId) return null;
 		const visitedAt = Math.max(0, Number(task.visitedAt) || 0);
 		return {
 			taskId,
+			activityId: taskId ? `task:${taskId}` : `dialog:${dialogId}`,
+			kind: taskId ? 'task' : 'dialog',
 			title: String(task.title || '').replace(/\s+/g, ' ').trim(),
-			dialogId: String(task.dialogId || '').trim(),
+			dialogId,
 			visitedAt,
 			visits: Math.max(1, Number(task.visits) || 1)
 		};
 	}
 
 	function mergeVisitedTasks(items = [], next = null, limit = 40) {
-		const byTask = new Map();
+		const byActivity = new Map();
 		for (const raw of [...(Array.isArray(items) ? items : []), ...(next ? [next] : [])]) {
 			const task = normalizeVisitedTask(raw);
 			if (!task) continue;
-			const previous = byTask.get(task.taskId);
+			const previous = byActivity.get(task.activityId);
 			if (!previous) {
-				byTask.set(task.taskId, task);
+				byActivity.set(task.activityId, task);
 				continue;
 			}
 			const newest = task.visitedAt >= previous.visitedAt ? task : previous;
-			byTask.set(task.taskId, {
+			byActivity.set(task.activityId, {
 				...newest,
 				title: newest.title || previous.title || task.title,
 				dialogId: newest.dialogId || previous.dialogId || task.dialogId,
 				visits: Math.max(1, previous.visits + (raw === next ? 1 : 0))
 			});
 		}
-		return Array.from(byTask.values())
-			.sort((a, b) => b.visitedAt - a.visitedAt || a.taskId.localeCompare(b.taskId))
+		return Array.from(byActivity.values())
+			.sort((a, b) => b.visitedAt - a.visitedAt || a.activityId.localeCompare(b.activityId))
 			.slice(0, Math.max(1, Number(limit) || 40));
 	}
 
 	function selectUntrackedVisits(visits = [], trackedTasks = []) {
 		const trackedIds = new Set((Array.isArray(trackedTasks) ? trackedTasks : []).map(task => String(task?.taskId || '')).filter(Boolean));
-		return mergeVisitedTasks(visits).filter(task => !trackedIds.has(task.taskId));
+		return mergeVisitedTasks(visits).filter(task => !task.taskId || !trackedIds.has(task.taskId));
 	}
 
 	function formatDurationCompact(seconds) {

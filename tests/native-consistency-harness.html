@@ -274,8 +274,21 @@
 		next: () => next
 	  };
 	};
+	window.nativeCustomEventHandlers = new Map();
+	window.dispatchNativeSidePanelTask = taskId => {
+	  const url = `/company/personal/user/7/tasks/task/view/${taskId}/`;
+	  const event = { getSlider: () => ({ getUrl: () => url }) };
+	  for (const name of ['SidePanel.Slider:onOpenComplete', 'SidePanel.Slider:onLoad']) {
+		(window.nativeCustomEventHandlers.get(name) || []).forEach(handler => handler(event));
+	  }
+	};
 	window.BX = {
 	  message(key) { return key === 'USER_ID' ? '7' : ''; },
+	  addCustomEvent(name, handler) {
+		const handlers = window.nativeCustomEventHandlers.get(name) || [];
+		handlers.push(handler);
+		window.nativeCustomEventHandlers.set(name, handlers);
+	  },
 	  rest: { callMethod(method, params, callback) {
 		window.nativeRestCalls.push({ method, dialogId: String(params?.DIALOG_ID || params?.ID || '') });
 		if (method === 'im.counters.get') {
