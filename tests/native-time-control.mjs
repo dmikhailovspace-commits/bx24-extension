@@ -89,6 +89,31 @@ function testDailyTaskVisits() {
 	assert.equal(time.selectUntrackedVisits(withDialog, [{ taskId: '10' }]).some(item => item.dialogId === 'chat77'), true);
 }
 
+function testActivityEstimation() {
+	const start = Date.parse('2026-08-27T09:00:00+03:00');
+	let activities = time.recordActivityTouch([], { taskId: '10', title: 'Задача 10', visitedAt: start });
+	activities = time.recordActivityTouch(activities, { taskId: '10', title: 'Задача 10', visitedAt: start + 500 });
+	assert.equal(activities[0].visits, 1, 'duplicate SidePanel events must count as one touch');
+	activities = time.recordActivityTouch(activities, { taskId: '10', title: 'Задача 10', visitedAt: start + 20000 });
+	assert.equal(activities[0].visits, 2);
+	activities = time.recordActivityTouch(activities, { taskId: '11', title: 'Задача 11', visitedAt: start + 120000 });
+	const task10 = activities.find(item => item.taskId === '10');
+	assert.equal(task10.activeSeconds, 120, 'active dwell before switching tasks was not accumulated');
+	activities = time.closeActivitySession(activities, start + 30 * 60000);
+	assert.equal(activities.find(item => item.taskId === '11').activeSeconds, 900, 'idle dwell must be capped');
+	assert.equal(time.estimateActivitySeconds({ taskId: '20', visits: 4, visitedAt: start }), 600);
+	assert.equal(time.estimateActivitySeconds(task10), 300);
+
+	const accounted = time.markActivityAccounted(activities, 'task:10', start + 121000);
+	assert.equal(time.selectUntrackedVisits(accounted, []).some(item => item.taskId === '10'), false);
+	const reopened = time.recordActivityTouch(accounted, { taskId: '10', visitedAt: start + 180000 });
+	assert.equal(time.selectUntrackedVisits(reopened, []).some(item => item.taskId === '10'), true, 'a new touch after accounting must be suggested again');
+
+	const visit = [{ taskId: '30', visitedAt: Date.parse('2026-08-27T12:00:00+03:00') }];
+	assert.equal(time.selectUntrackedVisits(visit, [{ taskId: '30', lastTrackedAt: '2026-08-27T11:00:00+03:00' }]).length, 1);
+	assert.equal(time.selectUntrackedVisits(visit, [{ taskId: '30', lastTrackedAt: '2026-08-27T13:00:00+03:00' }]).length, 0);
+}
+
 function testManualDuration() {
 	assert.deepEqual(time.normalizeManualDuration('2', '15'), { hours: 2, minutes: 15, seconds: 8100 });
 	assert.deepEqual(time.normalizeManualDuration('', '30'), { hours: 0, minutes: 30, seconds: 1800 });
@@ -158,6 +183,7 @@ testRanges();
 testOrderedRequestParams();
 testAggregation();
 testDailyTaskVisits();
+testActivityEstimation();
 testManualDuration();
 await testPaginationAndDedupe();
 console.log('native time control: all checks passed');

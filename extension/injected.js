@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.41';
+	window.__ANITREC_RUNNING__ = '7.5.42';
 
-	const VER = '7.5.41';
+	const VER = '7.5.42';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -5033,11 +5033,13 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogTimePortalDatePromise = null;
 	let _dialogTimeDraftRange = null;
 	const _dialogTimeTaskTitles = new Map();
-	const _dialogTimeTaskTitleAttempted = new Set();
+	const _dialogTimeTaskTitleAttempted = new Map();
 	let _dialogTimeTitleLoadPromise = null;
 	let _dialogTimeTrackerTick = null;
 	let _dialogTimeActionInFlight = false;
+	let _dialogTimeSavingActivityId = '';
 	let _dialogTimeManualError = '';
+	let _dialogTimeManualExpanded = false;
 	let _dialogTimeTrackedExpanded = false;
 	let _dialogTimeVisitTrackingArmed = false;
 	const _dialogTimeSidePanelEventNamespaces = new WeakSet();
@@ -8380,7 +8382,14 @@ if (_presetChannel) {
 		} catch { return []; }
 	}
 
-	function _rememberDialogTimeActivity(activity = {}) {
+	function _writeDialogTimeVisits(visits, dateKey = _getDialogTimeTodayKey()) {
+		try {
+			localStorage.setItem(_getDialogTimeScopedStorageKey(_PENA_TIME_VISITS_KEY, dateKey), JSON.stringify(visits || []));
+			return true;
+		} catch { return false; }
+	}
+
+	function _rememberDialogTimeActivity(activity = {}, options = {}) {
 		if (!_PENA_TIME_CONTROL) return false;
 		const rawTaskId = String(activity.taskId || '').trim();
 		const taskId = /^\d+$/.test(rawTaskId) ? rawTaskId : '';
@@ -8388,17 +8397,51 @@ if (_presetChannel) {
 		if (!taskId && !dialogId) return false;
 		const dateKey = _getDialogTimeTodayKey();
 		const normalizedTitle = String(activity.title || '').replace(/\s+/g, ' ').trim();
-		const current = _readDialogTimeVisits(dateKey);
-		const next = _PENA_TIME_CONTROL.mergeVisitedTasks(current, {
+		let current = _readDialogTimeVisits(dateKey);
+		if (options.passive && _PENA_TIME_CONTROL.closeActivitySession) {
+			current = _PENA_TIME_CONTROL.closeActivitySession(current);
+			const activityId = taskId ? `task:${taskId}` : `dialog:${dialogId}`;
+			const existing = current.find(item => item.activityId === activityId);
+			if (existing) {
+				existing.title = normalizedTitle || existing.title;
+				existing.dialogId = dialogId || existing.dialogId;
+				_writeDialogTimeVisits(current, dateKey);
+				_queueDialogTimeUiSync();
+				return true;
+			}
+		}
+		const next = _PENA_TIME_CONTROL.recordActivityTouch(current, {
 			taskId,
 			title: normalizedTitle,
 			dialogId,
 			visitedAt: Date.now()
 		});
-		try { localStorage.setItem(_getDialogTimeScopedStorageKey(_PENA_TIME_VISITS_KEY, dateKey), JSON.stringify(next)); } catch {}
+		_writeDialogTimeVisits(next, dateKey);
 		if (taskId && normalizedTitle) _dialogTimeTaskTitles.set(taskId, normalizedTitle);
 		_queueDialogTimeUiSync();
 		return true;
+	}
+
+	function _closeDialogTimeActivitySession() {
+		if (!_PENA_TIME_CONTROL?.closeActivitySession) return;
+		const dateKey = _getDialogTimeTodayKey();
+		const current = _readDialogTimeVisits(dateKey);
+		if (!current.length) return;
+		_writeDialogTimeVisits(_PENA_TIME_CONTROL.closeActivitySession(current), dateKey);
+		_queueDialogTimeUiSync();
+	}
+
+	function _markDialogTimeActivityAccounted(activityId, accountedAt = Date.now()) {
+		if (!_PENA_TIME_CONTROL?.markActivityAccounted || !activityId) return;
+		const dateKey = _getDialogTimeTodayKey();
+		const current = _readDialogTimeVisits(dateKey);
+		_writeDialogTimeVisits(_PENA_TIME_CONTROL.markActivityAccounted(current, activityId, accountedAt), dateKey);
+	}
+
+	function _markDialogTimeTaskAccounted(taskId, accountedAt = Date.now()) {
+		const id = String(taskId || '');
+		if (!/^\d+$/.test(id)) return;
+		_markDialogTimeActivityAccounted(`task:${id}`, accountedAt);
 	}
 
 	function _rememberDialogTimeTaskVisit(taskId, title = '', dialogId = '') {
@@ -8436,8 +8479,8 @@ if (_presetChannel) {
 
 	function _getDialogTimeTrackerSeconds(tracker = _readDialogTimeTracker()) {
 		if (!tracker) return 0;
-		if (tracker.pendingSeconds > 0) return tracker.pendingSeconds;
-		return Math.max(1, Math.round((Date.now() - tracker.startedAt) / 1000));
+		if (tracker.pendingSeconds > 0) return Math.min(24 * 3600, tracker.pendingSeconds);
+		return Math.min(24 * 3600, Math.max(1, Math.round((Date.now() - tracker.startedAt) / 1000)));
 	}
 
 	function _ensureDialogTimeTrackerTick() {
@@ -8487,9 +8530,10 @@ if (_presetChannel) {
 			const localTitle = fallbackById.get(id) || _findDialogTimeTaskItem(id)?.title || '';
 			if (localTitle && !_dialogTimeTaskTitles.has(id)) _dialogTimeTaskTitles.set(id, localTitle);
 		});
-		const missing = taskIds.filter(id => !_dialogTimeTaskTitles.has(id) && !_dialogTimeTaskTitleAttempted.has(id)).slice(0, 50);
+		const now = Date.now();
+		const missing = taskIds.filter(id => !_dialogTimeTaskTitles.has(id) && now - (_dialogTimeTaskTitleAttempted.get(id) || 0) >= 60000).slice(0, 50);
 		if (!missing.length) return null;
-		missing.forEach(id => _dialogTimeTaskTitleAttempted.add(id));
+		missing.forEach(id => _dialogTimeTaskTitleAttempted.set(id, now));
 		_dialogTimeTitleLoadPromise = _callBxRestPagesFast(missing.map(taskId => ({
 			method: 'tasks.task.get',
 			params: { taskId, select: ['ID', 'TITLE'] }
@@ -8535,6 +8579,23 @@ if (_presetChannel) {
 		} catch {}
 	}
 
+	function _applyDialogTimeOptimisticEntry(taskId, seconds) {
+		if (!_PENA_TIME_CONTROL?.aggregateElapsedItems) return;
+		const today = _getDialogTimeRange('today');
+		const key = _getDialogTimeCacheKey(today);
+		const record = _dialogTimeCache.get(key);
+		const previous = record?.data || null;
+		const createdAt = new Date().toISOString();
+		const next = _PENA_TIME_CONTROL.aggregateElapsedItems([
+			...(previous?.items || []),
+			{ id: `pena-local-${Date.now()}`, taskId: String(taskId), userId: _getCurrentBitrixUserId(), seconds, createdAt }
+		]);
+		next.range = previous?.range || today;
+		next.pages = previous?.pages || 1;
+		next.totalAvailable = Math.max(Number(previous?.totalAvailable) || 0, next.entryCount);
+		_setDialogTimeCacheRecord(key, { status: 'ready', data: next, error: '', updatedAt: Date.now() });
+	}
+
 	async function _addDialogTimeManualEntry(task, hours, minutes) {
 		if (_dialogTimeActionInFlight || !_PENA_TIME_CONTROL) return;
 		const taskId = String(task?.taskId || '').trim();
@@ -8554,18 +8615,23 @@ if (_presetChannel) {
 		_dialogTimeActionInFlight = true;
 		_dialogTimeManualError = '';
 		_queueDialogTimeUiSync();
+		let saved = false;
 		try {
 			await _callBxRestMethod('task.elapseditem.add', {
 				TASKID: Number(taskId),
 				ARFIELDS: { SECONDS: duration.seconds }
 			});
-			_writeDialogTimeManualDraft(null);
-			const panel = _dialogControlNativeSwitcherNode?.querySelector('.pena-native-time-panel');
-			const hoursInput = panel?.querySelector('.pena-native-time-manual-hours');
-			const minutesInput = panel?.querySelector('.pena-native-time-manual-minutes');
-			if (hoursInput) hoursInput.value = '';
-			if (minutesInput) minutesInput.value = '';
-			await _loadDialogTimeRange(_getDialogTimeRange('today'), { force: true });
+			saved = true;
+			try {
+				_writeDialogTimeManualDraft(null);
+				_markDialogTimeTaskAccounted(taskId);
+				_applyDialogTimeOptimisticEntry(taskId, duration.seconds);
+				const panel = _dialogControlNativeSwitcherNode?.querySelector('.pena-native-time-panel');
+				const hoursInput = panel?.querySelector('.pena-native-time-manual-hours');
+				const minutesInput = panel?.querySelector('.pena-native-time-manual-minutes');
+				if (hoursInput) hoursInput.value = '';
+				if (minutesInput) minutesInput.value = '';
+			} catch {}
 			_showDialogDockToast(`Добавлено: ${_PENA_TIME_CONTROL.formatDuration(duration.seconds)}`, 'ok');
 		} catch (error) {
 			_dialogTimeManualError = _getDialogTimeFriendlyError(error);
@@ -8574,6 +8640,39 @@ if (_presetChannel) {
 			_dialogTimeActionInFlight = false;
 			_queueDialogTimeUiSync();
 		}
+		if (saved) _loadDialogTimeRange(_getDialogTimeRange('today'), { force: true }).catch(() => {});
+	}
+
+	async function _addDialogTimeEstimatedEntry(activity) {
+		if (_dialogTimeActionInFlight || !_PENA_TIME_CONTROL?.estimateActivitySeconds) return;
+		const taskId = String(activity?.taskId || '');
+		if (!/^\d+$/.test(taskId)) return;
+		const seconds = _PENA_TIME_CONTROL.estimateActivitySeconds(activity);
+		if (seconds < 60) return;
+		const accountedThrough = Math.max(0, Number(activity.visitedAt) || Date.now());
+		_dialogTimeActionInFlight = true;
+		_dialogTimeSavingActivityId = String(activity.activityId || `task:${taskId}`);
+		_queueDialogTimeUiSync();
+		let saved = false;
+		try {
+			await _callBxRestMethod('task.elapseditem.add', {
+				TASKID: Number(taskId),
+				ARFIELDS: { SECONDS: seconds }
+			});
+			saved = true;
+			try {
+				_markDialogTimeActivityAccounted(_dialogTimeSavingActivityId, accountedThrough);
+				_applyDialogTimeOptimisticEntry(taskId, seconds);
+			} catch {}
+			_showDialogDockToast(`Учтено: ${_PENA_TIME_CONTROL.formatDuration(seconds)}`, 'ok');
+		} catch (error) {
+			_showDialogDockToast(`${_getDialogTimeTaskTitle(taskId, activity.title)}: время не сохранено`, 'danger');
+		} finally {
+			_dialogTimeActionInFlight = false;
+			_dialogTimeSavingActivityId = '';
+			_queueDialogTimeUiSync();
+		}
+		if (saved) _loadDialogTimeRange(_getDialogTimeRange('today'), { force: true }).catch(() => {});
 	}
 
 	function _startDialogTimeTracker(task) {
@@ -8596,16 +8695,21 @@ if (_presetChannel) {
 		const tracker = _readDialogTimeTracker();
 		if (!tracker || _dialogTimeActionInFlight) return;
 		_dialogTimeActionInFlight = true;
-		const pending = { ...tracker, pendingSeconds: _getDialogTimeTrackerSeconds(tracker), error: '' };
+		const pending = { ...tracker, pendingSeconds: Math.max(60, _getDialogTimeTrackerSeconds(tracker)), error: '' };
 		_writeDialogTimeTracker(pending);
+		let saved = false;
 		try {
 			await _callBxRestMethod('task.elapseditem.add', {
 				TASKID: Number(pending.taskId),
 				ARFIELDS: { SECONDS: pending.pendingSeconds }
 			});
-			_writeDialogTimeTracker(null);
-			_ensureDialogTimeTrackerTick();
-			await _loadDialogTimeRange(_getDialogTimeRange('today'), { force: true });
+			saved = true;
+			try {
+				_writeDialogTimeTracker(null);
+				_markDialogTimeTaskAccounted(pending.taskId);
+				_applyDialogTimeOptimisticEntry(pending.taskId, pending.pendingSeconds);
+				_ensureDialogTimeTrackerTick();
+			} catch {}
 			_showDialogDockToast('Время сохранено в задачу', 'ok');
 		} catch (error) {
 			_writeDialogTimeTracker({ ...pending, error: _getDialogTimeFriendlyError(error) });
@@ -8614,6 +8718,7 @@ if (_presetChannel) {
 			_dialogTimeActionInFlight = false;
 			_queueDialogTimeUiSync();
 		}
+		if (saved) _loadDialogTimeRange(_getDialogTimeRange('today'), { force: true }).catch(() => {});
 	}
 
 	function _openDialogTimeTask(taskId, title = '') {
@@ -8639,11 +8744,11 @@ if (_presetChannel) {
 		return opened;
 	}
 
-	function _captureActiveDialogTimeActivity() {
+	function _captureActiveDialogTimeActivity(options = {}) {
 		if (IS_OL_FRAME || !_PENA_TIME_CONTROL) return;
 		const snapshot = _getActiveDialogControlScreenSnapshot(true);
 		if (snapshot?.taskId) {
-			_rememberDialogTimeTaskVisit(snapshot.taskId, _getActiveDialogTitleFromScreen());
+			_rememberDialogTimeActivity({ taskId: snapshot.taskId, title: _getActiveDialogTitleFromScreen() }, options);
 			return;
 		}
 		const dialogId = normId(_readDialogControlOpenedId());
@@ -8652,7 +8757,7 @@ if (_presetChannel) {
 			.flatMap(mode => _getDialogControlItemsForMode(mode))
 			.find(candidate => !_isDialogControlFolder(candidate) && normId(candidate.id) === dialogId);
 		const title = item?.title || _getActiveDialogTitleFromScreen() || _getDialogRecentMeta(dialogId)?.title || dialogId;
-		_rememberDialogTimeDialogVisit(dialogId, title, item?.taskId || '');
+		_rememberDialogTimeActivity({ dialogId, title, taskId: item?.taskId || '' }, options);
 	}
 
 	function _armDialogTimeVisitTracking() {
@@ -8661,6 +8766,8 @@ if (_presetChannel) {
 		document.addEventListener('click', event => {
 			const target = event.target instanceof Element ? event.target : null;
 			if (!target || target.closest?.('.pena-native-time-panel')) return;
+			if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+			if (target.closest?.('button,input,select,textarea,[contenteditable="true"],.pena-native-folder-switcher')) return;
 			const link = target.closest?.('a[href*="/tasks/task/view/"]');
 			if (link) {
 				const taskId = _extractTaskIdFromTaskUrl(link.getAttribute('href') || '');
@@ -8679,6 +8786,11 @@ if (_presetChannel) {
 		};
 		window.addEventListener('popstate', captureAfterRoute, true);
 		window.addEventListener('hashchange', captureAfterRoute, true);
+		document.addEventListener('visibilitychange', () => {
+			if (document.visibilityState === 'hidden') _closeDialogTimeActivitySession();
+			else captureAfterRoute();
+		}, true);
+		window.addEventListener('pagehide', _closeDialogTimeActivitySession, true);
 		let sidePanelArmAttempts = 0;
 		const armSidePanelEvents = () => {
 			let ready = false;
@@ -8747,13 +8859,13 @@ if (_presetChannel) {
 		panel.classList.toggle('--loading', record?.status === 'loading');
 		const total = panel.querySelector('.pena-native-time-total-value');
 		if (total) total.textContent = data ? _PENA_TIME_CONTROL.formatDuration(data.totalSeconds) : '—';
+		const plural = (count, one, few, many) => {
+			const value = Math.abs(Number(count) || 0) % 100;
+			const last = value % 10;
+			return value > 10 && value < 20 ? many : (last === 1 ? one : (last >= 2 && last <= 4 ? few : many));
+		};
 		const meta = panel.querySelector('.pena-native-time-meta');
 		if (meta) {
-			const plural = (count, one, few, many) => {
-				const value = Math.abs(Number(count) || 0) % 100;
-				const last = value % 10;
-				return value > 10 && value < 20 ? many : (last === 1 ? one : (last >= 2 && last <= 4 ? few : many));
-			};
 			meta.textContent = data
 				? `${data.taskCount} ${plural(data.taskCount, 'задача', 'задачи', 'задач')} · ${data.entryCount} ${plural(data.entryCount, 'запись', 'записи', 'записей')}`
 				: (record?.status === 'loading' ? 'Собираем данные за сегодня…' : 'Сегодня записей пока нет');
@@ -8775,15 +8887,18 @@ if (_presetChannel) {
 		const trackerTitle = panel.querySelector('.pena-native-time-tracker-title');
 		const trackerDuration = panel.querySelector('.pena-native-time-tracker-duration');
 		const trackerHint = panel.querySelector('.pena-native-time-tracker-hint');
+		const trackerInfo = panel.querySelector('.pena-native-time-tracker-info');
 		const trackerSelect = panel.querySelector('.pena-native-time-task-select');
 		const start = panel.querySelector('.pena-native-time-start');
 		const stop = panel.querySelector('.pena-native-time-stop');
-		if (trackerTitle) trackerTitle.textContent = tracker ? _getDialogTimeTaskTitle(tracker.taskId, tracker.title) : 'Таймер не запущен';
+		if (trackerInfo) trackerInfo.hidden = !tracker;
+		if (trackerTitle) trackerTitle.textContent = tracker ? _getDialogTimeTaskTitle(tracker.taskId, tracker.title) : '';
 		if (trackerDuration) trackerDuration.textContent = tracker ? _PENA_TIME_CONTROL.formatDurationCompact(_getDialogTimeTrackerSeconds(tracker)) : '0:00';
 		if (trackerHint) {
 			trackerHint.textContent = tracker?.error
 				? tracker.error
-				: (tracker?.pendingSeconds > 0 ? 'Время остановлено и ждёт повторного сохранения' : (tracker ? 'Время сохранится в задачу после остановки' : 'Выберите задачу и запустите трекинг'));
+				: (tracker?.pendingSeconds > 0 ? 'Остановлено — повторите сохранение' : (tracker ? 'Сохранится после остановки' : ''));
+			trackerHint.hidden = !tracker;
 			trackerHint.classList.toggle('--error', !!tracker?.error);
 		}
 		panel.querySelector('.pena-native-time-tracker')?.classList.toggle('--active', !!tracker && tracker.pendingSeconds <= 0);
@@ -8851,6 +8966,10 @@ if (_presetChannel) {
 			manualSubmit.disabled = _dialogTimeActionInFlight || !manualSelect?.value;
 			manualSubmit.textContent = _dialogTimeActionInFlight ? 'Сохраняем…' : 'Добавить';
 		}
+		const manual = panel.querySelector('.pena-native-time-manual');
+		const manualToggle = panel.querySelector('.pena-native-time-manual-toggle');
+		if (manual) manual.hidden = !_dialogTimeManualExpanded;
+		if (manualToggle) manualToggle.setAttribute('aria-expanded', _dialogTimeManualExpanded ? 'true' : 'false');
 		if (manualError) {
 			manualError.hidden = !_dialogTimeManualError;
 			manualError.textContent = _dialogTimeManualError;
@@ -8861,6 +8980,7 @@ if (_presetChannel) {
 			const row = document.createElement('div');
 			row.className = 'pena-native-time-task-row';
 			row.classList.toggle('--dialog', !isTask);
+			row.classList.toggle('--single', !options.estimateSeconds);
 			const body = document.createElement('button');
 			body.type = 'button';
 			body.className = 'pena-native-time-task-main';
@@ -8880,58 +9000,68 @@ if (_presetChannel) {
 				_openDialogTimeActivity(task);
 			});
 			row.appendChild(body);
-			if (!isTask) return row;
+			if (!isTask || !options.estimateSeconds) return row;
 			const action = document.createElement('button');
 			action.type = 'button';
-			action.className = 'pena-native-time-task-play';
-			action.title = tracker ? 'Сначала остановите текущий трекинг' : 'Начать трекинг';
-			action.setAttribute('aria-label', `Начать трекинг: ${title.textContent}`);
-			action.disabled = !!tracker || _dialogTimeActionInFlight;
-			action.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 7 8 5-8 5z"/></svg>';
+			action.className = 'pena-native-time-estimate-add';
+			const estimateLabel = _PENA_TIME_CONTROL.formatDuration(options.estimateSeconds);
+			action.title = `Учесть оценку: ${estimateLabel}`;
+			action.setAttribute('aria-label', `Учесть ${estimateLabel}: ${title.textContent}`);
+			action.disabled = _dialogTimeActionInFlight;
+			action.textContent = _dialogTimeSavingActivityId === task.activityId ? '…' : `Учесть ${estimateLabel}`;
 			action.addEventListener('click', event => {
 				event.preventDefault();
 				event.stopPropagation();
-				_startDialogTimeTracker(task);
+				_addDialogTimeEstimatedEntry(task);
 			});
 			row.appendChild(action);
 			return row;
 		};
 
-		const suggestions = _PENA_TIME_CONTROL.selectUntrackedVisits(visits, data?.tasks || []).slice(0, 5);
+		const suggestions = _PENA_TIME_CONTROL.selectUntrackedVisits(visits, data?.tasks || []).slice(0, 4);
 		const suggestionsList = panel.querySelector('.pena-native-time-suggestions-list');
 		const suggestionsSection = panel.querySelector('.pena-native-time-suggestions');
 		if (suggestionsSection) suggestionsSection.hidden = false;
 		if (suggestionsList) {
-			const suggestionsKey = `${tracker ? 'locked' : 'ready'}:${suggestions.map(task => `${task.activityId || task.taskId}:${task.taskId ? _getDialogTimeTaskTitle(task.taskId, task.title) : task.title}:${task.visits}`).join('|')}`;
+			const suggestionsKey = `${_dialogTimeActionInFlight ? _dialogTimeSavingActivityId || 'busy' : 'ready'}:${suggestions.map(task => `${task.activityId || task.taskId}:${task.taskId ? _getDialogTimeTaskTitle(task.taskId, task.title) : task.title}:${task.visits}:${task.activeSeconds}:${task.accountedAt}`).join('|')}`;
 			if (suggestionsList.dataset.penaRenderKey !== suggestionsKey) {
 				suggestionsList.replaceChildren(...(suggestions.length
-					? suggestions.map(task => createTaskRow(task, {
-						detail: task.visits > 1 ? `Работали сегодня · ${task.visits}` : 'Работали сегодня'
-					}))
+					? suggestions.map(task => {
+						const estimateSeconds = _PENA_TIME_CONTROL.estimateActivitySeconds(task);
+						return createTaskRow(task, {
+							estimateSeconds: task.taskId ? estimateSeconds : 0,
+							detail: `${task.visits} ${plural(task.visits, 'касание', 'касания', 'касаний')} · ≈ ${_PENA_TIME_CONTROL.formatDuration(estimateSeconds)}`
+						});
+					})
 					: [Object.assign(document.createElement('div'), {
 						className: 'pena-native-time-empty',
-						textContent: 'Здесь появятся задачи, которые вы открывали сегодня'
+						textContent: 'Откройте задачу или диалог'
 					})]));
 				suggestionsList.dataset.penaRenderKey = suggestionsKey;
 			}
 		}
 
 		const tracked = (data?.tasks || []).filter(task => task.taskId && task.taskId !== 'unknown');
+		const activityByTask = new Map(visits.filter(visit => visit.taskId).map(visit => [String(visit.taskId), visit]));
 		const trackedToggle = panel.querySelector('.pena-native-time-tracked-toggle');
 		const trackedList = panel.querySelector('.pena-native-time-tracked-list');
 		if (trackedToggle) {
 			trackedToggle.setAttribute('aria-expanded', _dialogTimeTrackedExpanded ? 'true' : 'false');
-			trackedToggle.querySelector('.pena-native-time-tracked-label').textContent = `Уже оттрекано · ${tracked.length}`;
+			trackedToggle.querySelector('.pena-native-time-tracked-label').textContent = `Учтено · ${tracked.length}`;
 			trackedToggle.querySelector('.pena-native-time-tracked-total').textContent = _PENA_TIME_CONTROL.formatDuration(data?.totalSeconds || 0);
 		}
 		if (trackedList) {
 			trackedList.hidden = !_dialogTimeTrackedExpanded;
-			const trackedKey = `${tracker ? 'locked' : 'ready'}:${tracked.map(task => `${task.taskId}:${_getDialogTimeTaskTitle(task.taskId)}:${task.seconds}:${task.entries}`).join('|')}`;
+			const trackedKey = `${tracker ? 'locked' : 'ready'}:${tracked.map(task => `${task.taskId}:${_getDialogTimeTaskTitle(task.taskId)}:${task.seconds}:${task.entries}:${activityByTask.get(String(task.taskId))?.visits || 0}`).join('|')}`;
 			if (trackedList.dataset.penaRenderKey !== trackedKey) {
 				trackedList.replaceChildren(...(tracked.length
-					? tracked.map(task => createTaskRow(task, {
-						detail: `${_PENA_TIME_CONTROL.formatDuration(task.seconds)} · ${task.entries} ${task.entries === 1 ? 'запись' : 'записи'}`
-					}))
+					? tracked.map(task => {
+						const activity = activityByTask.get(String(task.taskId));
+						const touchCopy = activity ? ` · ${activity.visits} ${plural(activity.visits, 'касание', 'касания', 'касаний')}` : '';
+						return createTaskRow(task, {
+							detail: `${_PENA_TIME_CONTROL.formatDuration(task.seconds)} · ${task.entries} ${task.entries === 1 ? 'запись' : 'записи'}${touchCopy}`
+						});
+					})
 					: [Object.assign(document.createElement('div'), { className: 'pena-native-time-empty', textContent: 'Сегодня ещё ничего не оттрекано' })]));
 				trackedList.dataset.penaRenderKey = trackedKey;
 			}
@@ -8986,7 +9116,9 @@ if (_presetChannel) {
 	}
 
 	function _createDialogTimePanel() {
-		_captureActiveDialogTimeActivity();
+		_dialogTimeManualExpanded = false;
+		_dialogTimeTrackedExpanded = false;
+		_captureActiveDialogTimeActivity({ passive: true });
 		const panel = document.createElement('div');
 		panel.className = 'pena-native-time-panel pena-native-command-popover';
 
@@ -9025,16 +9157,18 @@ if (_presetChannel) {
 		tracker.className = 'pena-native-time-tracker';
 		const trackerInfo = document.createElement('div');
 		trackerInfo.className = 'pena-native-time-tracker-info';
+		trackerInfo.hidden = true;
 		const trackerTitle = document.createElement('strong');
 		trackerTitle.className = 'pena-native-time-tracker-title';
-		trackerTitle.textContent = 'Таймер не запущен';
+		trackerTitle.textContent = '';
 		const trackerDuration = document.createElement('b');
 		trackerDuration.className = 'pena-native-time-tracker-duration';
 		trackerDuration.textContent = '0:00';
 		trackerInfo.append(trackerTitle, trackerDuration);
 		const trackerHint = document.createElement('span');
 		trackerHint.className = 'pena-native-time-tracker-hint';
-		trackerHint.textContent = 'Выберите задачу и запустите трекинг';
+		trackerHint.textContent = '';
+		trackerHint.hidden = true;
 		const trackerControls = document.createElement('div');
 		trackerControls.className = 'pena-native-time-tracker-controls';
 		const taskSelect = document.createElement('select');
@@ -9065,11 +9199,21 @@ if (_presetChannel) {
 		trackerControls.append(taskSelect, start, stop);
 		tracker.append(trackerInfo, trackerHint, trackerControls);
 
+		const manualToggle = document.createElement('button');
+		manualToggle.type = 'button';
+		manualToggle.className = 'pena-native-time-manual-toggle';
+		manualToggle.setAttribute('aria-expanded', 'false');
+		manualToggle.innerHTML = '<span>Добавить вручную</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>';
+		manualToggle.addEventListener('click', event => {
+			event.preventDefault();
+			event.stopPropagation();
+			_dialogTimeManualExpanded = !_dialogTimeManualExpanded;
+			_syncDialogTimeUi(_dialogControlNativeSwitcherNode || panel.closest('.pena-native-folder-switcher'));
+		});
+
 		const manual = document.createElement('section');
 		manual.className = 'pena-native-time-manual';
-		const manualHeader = document.createElement('div');
-		manualHeader.className = 'pena-native-time-section-copy';
-		manualHeader.innerHTML = '<strong>Добавить время</strong>';
+		manual.hidden = true;
 		const manualTask = document.createElement('select');
 		manualTask.className = 'pena-native-time-task-select pena-native-time-manual-task';
 		manualTask.setAttribute('aria-label', 'Задача для ручного учёта времени');
@@ -9120,13 +9264,14 @@ if (_presetChannel) {
 		const manualError = document.createElement('span');
 		manualError.className = 'pena-native-time-manual-error';
 		manualError.hidden = true;
-		manual.append(manualHeader, manualTask, manualFields, manualError);
+		manual.append(manualTask, manualFields, manualError);
 
 		const suggestions = document.createElement('section');
 		suggestions.className = 'pena-native-time-suggestions';
 		const suggestionsHeader = document.createElement('div');
 		suggestionsHeader.className = 'pena-native-time-section-copy';
-		suggestionsHeader.innerHTML = '<strong>Возможно, сегодня вы работали</strong><span>Активность в задачах и диалогах без учтённого времени</span>';
+		suggestionsHeader.innerHTML = '<strong>Активность</strong>';
+		suggestionsHeader.title = 'Оценка учитывает активное время и касания, затем округляется до 5 минут';
 		const suggestionsList = document.createElement('div');
 		suggestionsList.className = 'pena-native-time-suggestions-list';
 		suggestions.append(suggestionsHeader, suggestionsList);
@@ -9137,7 +9282,7 @@ if (_presetChannel) {
 		trackedToggle.type = 'button';
 		trackedToggle.className = 'pena-native-time-tracked-toggle';
 		trackedToggle.setAttribute('aria-expanded', 'false');
-		trackedToggle.innerHTML = '<span class="pena-native-time-tracked-label">Уже оттрекано · 0</span><span class="pena-native-time-tracked-total">0:00</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>';
+		trackedToggle.innerHTML = '<span class="pena-native-time-tracked-label">Учтено · 0</span><span class="pena-native-time-tracked-total">0:00</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>';
 		trackedToggle.addEventListener('click', event => {
 			event.preventDefault();
 			event.stopPropagation();
@@ -9158,7 +9303,7 @@ if (_presetChannel) {
 		fullReport.textContent = 'Полный отчёт';
 		fullReport.innerHTML += '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M10 14l9-9M19 14v5H5V5h5"/></svg>';
 		footer.appendChild(fullReport);
-		panel.append(summary, error, tracker, manual, suggestions, tracked, footer);
+		panel.append(summary, error, suggestions, tracker, manualToggle, manual, tracked, footer);
 		return panel;
 	}
 

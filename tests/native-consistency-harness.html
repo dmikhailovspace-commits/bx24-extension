@@ -252,6 +252,7 @@
 	window.timeAddCalls = [];
 	window.timeAddedItems = [];
 	window.timeAddFailures = 0;
+	window.timeListFailures = 0;
 	window.nativeRestCalls = [];
 	window.nativeBatchCalls = 0;
 	const recentPageResult = params => {
@@ -322,6 +323,11 @@
 		}
 		if (method === 'task.elapseditem.getlist') {
 		  window.timeRestCalls.push(params);
+		  if (window.timeListFailures > 0) {
+			window.timeListFailures -= 1;
+			callback({ error: () => 'TEMPORARY_ERROR', error_description: () => 'temporary elapsed-list failure' });
+			return;
+		  }
 		  const now = new Date();
 		  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 		  const elapsedItems = [

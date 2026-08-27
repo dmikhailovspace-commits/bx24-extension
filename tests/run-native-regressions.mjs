@@ -146,7 +146,7 @@ try {
     assert.equal(await page.locator('.test-host:not([hidden]) .pena-native-managed-viewport').count(), 1, `Default ${mode} mode did not expose the complete REST catalog`);
     let output = await readOutput(page);
     assert.equal(output.switcherCount, 1);
-	assert.equal(output.version, '7.5.41');
+	assert.equal(output.version, '7.5.42');
 	assert.equal(output.controlButtonCount, 0);
 	assert.equal(output.filterButtonCount, 1);
 	assert.equal(output.timeButtonCount, 1);
@@ -276,8 +276,8 @@ try {
 		refreshPaths: panel.querySelectorAll('.pena-native-time-refresh svg path').length,
 		refreshBorder: getComputedStyle(panel.querySelector('.pena-native-time-refresh')).borderTopWidth
 	}));
-	assert.ok(compactTimePanel.width <= 360, `Time panel stayed oversized in ${mode}: ${JSON.stringify(compactTimePanel)}`);
-	assert.equal(compactTimePanel.gap, '8px');
+	assert.ok(compactTimePanel.width <= 340, `Time panel stayed oversized in ${mode}: ${JSON.stringify(compactTimePanel)}`);
+	assert.equal(compactTimePanel.gap, '6px');
 	assert.equal(compactTimePanel.refreshPaths, 2, `Refresh icon was not replaced in ${mode}`);
 	assert.equal(compactTimePanel.refreshBorder, '0px', `Refresh control kept the old boxed appearance in ${mode}`);
 	const timeFonts = await timePanel.evaluate(panel => ({
@@ -289,10 +289,14 @@ try {
 	assert.match(timeFonts.accent, /Unbounded Variable/);
 	assert.match(timeFonts.tech, /Consolas/);
 	const trackedToggle = timePanel.locator('.pena-native-time-tracked-toggle');
-	assert.match(await trackedToggle.textContent(), /Уже оттрекано · 2/);
+	assert.match(await trackedToggle.textContent(), /Учтено · 2/);
 	await trackedToggle.click();
 	await page.waitForFunction(() => document.querySelectorAll('.pena-native-time-tracked-list .pena-native-time-task-row').length === 2);
 	assert.deepEqual(await timePanel.locator('.pena-native-time-tracked-list .pena-native-time-task-title').allTextContents(), ['Задача 101', 'Задача 102']);
+	const manualToggle = timePanel.locator('.pena-native-time-manual-toggle');
+	assert.equal(await timePanel.locator('.pena-native-time-manual').isHidden(), true, `Manual controls were expanded by default in ${mode}`);
+	await manualToggle.click();
+	assert.equal(await manualToggle.getAttribute('aria-expanded'), 'true');
 	await timePanel.locator('.pena-native-time-manual-task').selectOption('101');
 	await timePanel.locator('.pena-native-time-manual-hours').fill('1');
 	await timePanel.locator('.pena-native-time-manual-minutes').fill('15');
@@ -311,11 +315,42 @@ try {
 		}));
 		throw new Error(`SidePanel task did not enter daily activity in ${mode}: ${JSON.stringify(diagnostic)}; ${error.message}`);
 	}
+	const sidePanelTouch = await page.evaluate(() => {
+		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
+		return JSON.parse(localStorage.getItem(key) || '[]').find(item => item.taskId === '404') || null;
+	});
+	assert.equal(sidePanelTouch?.visits, 1, `SidePanel lifecycle duplicates inflated touch count in ${mode}: ${JSON.stringify(sidePanelTouch)}`);
+	await page.evaluate(() => {
+		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
+		const activities = JSON.parse(localStorage.getItem(key) || '[]');
+		const task = activities.find(item => item.taskId === '404');
+		task.visits = 4;
+		task.activeSeconds = 0;
+		localStorage.setItem(key, JSON.stringify(activities));
+		window.timeListFailures = 1;
+		window.dispatchNativeSidePanelTask('404');
+	});
+	const estimated = timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Задача 404' });
+	await page.waitForFunction(() => document.querySelector('.pena-native-time-suggestions-list .pena-native-time-task-detail')?.textContent.includes('4 касания'));
+	assert.match(await estimated.locator('.pena-native-time-task-detail').textContent(), /4 касания · ≈ 10 мин/);
+	await estimated.locator('.pena-native-time-estimate-add').click();
+	await page.waitForFunction(() => !Array.from(document.querySelectorAll('.pena-native-time-suggestions-list .pena-native-time-task-title')).some(node => node.textContent === 'Задача 404'));
+	assert.equal(await page.evaluate(() => Number(window.timeAddCalls.at(-1)?.ARFIELDS?.SECONDS || 0)), 600, `Automatic estimate was not recorded in ${mode}`);
 	await page.evaluate(() => document.querySelector('.test-host:not([hidden]) [data-id="chat5"]')?.click());
 	await page.waitForFunction(() => Array.from(document.querySelectorAll('.pena-native-time-suggestions-list .pena-native-time-task-title')).some(node => node.textContent === 'Чат 5'));
 	const dialogActivity = timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Чат 5' });
-	assert.equal(await dialogActivity.locator('.pena-native-time-task-play').count(), 0, `A plain dialog incorrectly exposed task time controls in ${mode}`);
-	assert.match(await dialogActivity.locator('.pena-native-time-task-detail').textContent(), /Работали сегодня/);
+	assert.equal(await dialogActivity.locator('.pena-native-time-estimate-add').count(), 0, `A plain dialog incorrectly exposed task time controls in ${mode}`);
+	assert.match(await dialogActivity.locator('.pena-native-time-task-detail').textContent(), /касание · ≈ 5 мин/);
+	const touchesBeforeMultiSelect = await page.evaluate(() => {
+		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
+		return JSON.parse(localStorage.getItem(key) || '[]').find(item => item.dialogId === 'chat5')?.visits || 0;
+	});
+	await page.locator('.test-host:not([hidden]) .pena-native-managed-row[data-id="chat5"]').dispatchEvent('click', { ctrlKey: true, button: 0 });
+	await page.waitForTimeout(100);
+	assert.equal(await page.evaluate(() => {
+		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
+		return JSON.parse(localStorage.getItem(key) || '[]').find(item => item.dialogId === 'chat5')?.visits || 0;
+	}), touchesBeforeMultiSelect, `Multi-select click was counted as work in ${mode}`);
 	await page.evaluate(() => document.querySelector('.pena-native-group-tab')?.click());
 	await page.waitForTimeout(100);
 	assert.equal(await timePanel.isVisible(), true, `Time panel closed during a native switcher refresh in ${mode}`);
@@ -330,8 +365,8 @@ try {
 		link.remove();
 	});
 	await page.waitForFunction(() => document.querySelector('.pena-native-time-suggestions-list .pena-native-time-task-title')?.textContent === 'Задача 303');
-	const suggestion = timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Задача 303' });
-	await suggestion.locator('.pena-native-time-task-play').click();
+	await timePanel.locator('.pena-native-time-task-select').first().selectOption('303');
+	await timePanel.locator('.pena-native-time-start').click();
 	await page.waitForFunction(() => document.querySelector('.pena-native-time-tracker')?.classList.contains('--active'));
 	await page.evaluate(() => {
 		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeActiveTracker.v1.'));
@@ -343,12 +378,12 @@ try {
 	await page.waitForTimeout(1100);
 	await timePanel.locator('.pena-native-time-stop').click();
 	await page.waitForFunction(() => document.querySelector('.pena-native-time-stop')?.textContent === 'Повторить сохранение');
-	assert.equal(await page.evaluate(() => window.timeAddCalls.length), 2, `Failed elapsed-item write was not attempted in ${mode}`);
+	assert.equal(await page.evaluate(() => window.timeAddCalls.length), 3, `Failed elapsed-item write was not attempted in ${mode}`);
 	assert.ok(await page.evaluate(() => !!Object.keys(localStorage).find(key => key.startsWith('pena.timeActiveTracker.v1.'))), `Failed timer was lost in ${mode}`);
 	await timePanel.locator('.pena-native-time-stop').click();
 	await page.waitForFunction(() => !Object.keys(localStorage).some(key => key.startsWith('pena.timeActiveTracker.v1.')) && document.querySelector('.pena-native-time-tracked-label')?.textContent.includes('3'));
 	const addState = await page.evaluate(() => ({ calls: window.timeAddCalls.length, seconds: Number(window.timeAddCalls.at(-1)?.ARFIELDS?.SECONDS || 0) }));
-	assert.equal(addState.calls, 3, `Elapsed-item retry did not complete in ${mode}`);
+	assert.equal(addState.calls, 4, `Elapsed-item retry did not complete in ${mode}`);
 	assert.ok(addState.seconds >= 60, `Elapsed-item duration was truncated in ${mode}: ${JSON.stringify(addState)}`);
 	const duringTimePanel = await readOutput(page);
 	assert.ok(Math.abs(duringTimePanel.avatarGeometry.avatarLeft - beforeTimePanel.avatarGeometry.avatarLeft) < 0.5, `Time popover shifted avatars in ${mode}`);
