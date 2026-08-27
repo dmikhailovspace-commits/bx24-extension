@@ -146,7 +146,7 @@ try {
     assert.equal(await page.locator('.test-host:not([hidden]) .pena-native-managed-viewport').count(), 1, `Default ${mode} mode did not expose the complete REST catalog`);
     let output = await readOutput(page);
     assert.equal(output.switcherCount, 1);
-	assert.equal(output.version, '7.5.40');
+	assert.equal(output.version, '7.5.41');
 	assert.equal(output.controlButtonCount, 0);
 	assert.equal(output.filterButtonCount, 1);
 	assert.equal(output.timeButtonCount, 1);
@@ -556,12 +556,19 @@ try {
 		localStorage.removeItem('pena.nativeSearchQuery.v1.chats');
 		localStorage.removeItem('pena.nativeSearchQuery.v1.tasks');
 	});
-	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&lazy=1&initialTop=32&restDelay=300&autofocus=1`);
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&lazy=1&initialTop=32&restDelay=300&autofocus=1&nativeQuery=${encodeURIComponent('Старый запрос Bitrix')}`);
 	await page.locator('.recent-host .pena-native-chat-row[data-id="chat225"]').waitFor({ state: 'visible', timeout: 3000 });
 	assert.equal(
 		await page.locator('.recent-host input[type="search"]').evaluate(input => document.activeElement === input),
 		false,
 		'Bitrix search kept startup autofocus after PENA mounted'
+	);
+	assert.equal(await page.evaluate(() => window.nativeSearchRuns), 0, 'PENA dispatched into native Bitrix search during startup');
+	assert.equal(await page.locator('.recent-host input[type="search"]').inputValue(), '', 'PENA adopted a stale native Bitrix query on startup');
+	assert.equal(
+		await page.locator('.recent-host').evaluate(host => host.classList.contains('native-search-active')),
+		false,
+		'Bitrix stayed in visual search mode after PENA removed startup autofocus'
 	);
 	await page.waitForFunction(() => window.__PENA_NATIVE_PREFETCH__?.status?.().originalActive === true, null, { timeout: 3000 });
 	const originalLoader = await page.locator('.recent-host .pena-native-original-load-guard').evaluate(guard => {

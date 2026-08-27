@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.40';
+	window.__ANITREC_RUNNING__ = '7.5.41';
 
-	const VER = '7.5.40';
+	const VER = '7.5.41';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -5396,7 +5396,9 @@ if (_presetChannel) {
 		if (!input) return null;
 		const mode = _pMode();
 		if (!_penaSearchQueriesByMode.has(mode)) {
-			const remembered = _readStoredBitrixSearchQuery(mode) || String(input.value || '');
+			// The native Bitrix input can restore its own stale query before PENA
+			// mounts. Never promote that value into the isolated PENA search flow.
+			const remembered = _readStoredBitrixSearchQuery(mode);
 			_penaSearchQueriesByMode.set(mode, remembered);
 			filters.query = remembered;
 		}
@@ -5406,14 +5408,9 @@ if (_presetChannel) {
 			input.setAttribute('autocomplete', 'off');
 			input.setAttribute('autocapitalize', 'off');
 			input.setAttribute('spellcheck', 'false');
-			// Release any old Bitrix search state once, then keep the visible value
-			// entirely inside PENA. This is the only event allowed to reach Bitrix.
-			_penaSearchResetInput = input;
-			try {
-				_setInputValueNative(input, '', false);
-				try { input.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'deleteContentBackward', data: null })); }
-				catch { input.dispatchEvent(new Event('input', { bubbles: true, composed: true })); }
-			} finally { _penaSearchResetInput = null; }
+			// Never dispatch into the native Bitrix search during startup. Even an
+			// empty input event switches some messenger builds into search mode.
+			_setInputValueNative(input, '', false);
 			const container = findContainer();
 			_getCurrentFilterRows(container).forEach(row => {
 				delete row.dataset.penaNativeOriginalDisplay;
@@ -5425,7 +5422,12 @@ if (_presetChannel) {
 		// steal the user's keyboard on startup, but preserve a real pointer focus.
 		if (document.activeElement === input && !_penaSearchUserActivatedInputs.has(input)) {
 			requestAnimationFrame(() => {
-				if (document.activeElement === input && !_penaSearchUserActivatedInputs.has(input)) input.blur();
+				if (document.activeElement !== input || _penaSearchUserActivatedInputs.has(input)) return;
+				// Let Bitrix receive this one blur so its visual search state closes.
+				// All user search events remain isolated by the PENA flow below.
+				_penaSearchResetInput = input;
+				try { input.blur(); }
+				finally { _penaSearchResetInput = null; }
 			});
 		}
 		return input;

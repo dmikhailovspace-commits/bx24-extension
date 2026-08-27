@@ -1,9 +1,9 @@
 {
   "schema_version": 2,
-  "version": "7.5.40",
+  "version": "7.5.41",
   "release_date": "2026-08-27",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.40",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.40",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.41",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.41",
   "extension_files": [
     "background.js",
     "content.js",
@@ -32,6 +32,6 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.40/extension/injected.js",
-  "changelog": "v7.5.40: records task SidePanel and dialog activity in the daily workspace, preserves the open time panel across native rerenders, removes redundant labels and numeric spinners, and ships a denser tracking layout"
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.41/extension/injected.js",
+  "changelog": "v7.5.41: prevents startup autofocus from activating the native Bitrix search state while preserving the isolated PENA query flow after real user input"
 }

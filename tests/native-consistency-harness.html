@@ -189,8 +189,11 @@
     });
 	window.nativeSearchRuns = 0;
 	document.querySelectorAll('.recent-host input[type="search"],.task-host input[type="search"]').forEach(input => {
+	  input.addEventListener('focus', () => input.closest('.test-host')?.classList.add('native-search-active'));
+	  input.addEventListener('blur', () => input.closest('.test-host')?.classList.remove('native-search-active'));
 	  input.addEventListener('input', () => {
 		window.nativeSearchRuns += 1;
+		input.closest('.test-host')?.classList.add('native-search-active');
 		const query = String(input.value || '').trim().toLowerCase();
 		const list = input.closest('.test-host')?.querySelector('.bx-im-list-container-recent__elements,.bx-im-list-container-task__elements');
 		Array.from(list?.children || []).forEach(row => {
@@ -389,6 +392,10 @@
 		else respond();
 	  }
 	};
+	const startupNativeQuery = new URLSearchParams(location.search).get('nativeQuery');
+	if (startupNativeQuery !== null) {
+		document.querySelector('.test-host:not([hidden]) input[type="search"]')?.setAttribute('value', startupNativeQuery);
+	}
 	if (new URLSearchParams(location.search).get('autofocus') === '1') {
 		document.querySelector('.test-host:not([hidden]) input[type="search"]')?.focus();
 	}
