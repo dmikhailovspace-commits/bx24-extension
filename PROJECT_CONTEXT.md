@@ -10,7 +10,7 @@
 - Runtime files: **18**
 - Regression suites: **14**
 - Windows artifact: `dist/PENA_Agency_Windows_v7.5.44.exe` - SHA-256: `F9A0586004DF238ED73FBC7002110444736388FD60D57929D96501B5745E4A80`
-- macOS artifact: _not built_
+- macOS artifact: `dist/PENA_Agency_macOS_Universal_v7.5.44.dmg` - SHA-256: `AA96069B3A06E8384F4E186C85CFA1C310C6941B4BA0CBCFDB77DCD935F3D43F`
 <!-- AUTO:END -->
 
 ## Назначение
