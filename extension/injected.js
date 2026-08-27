@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.42';
+	window.__ANITREC_RUNNING__ = '7.5.43';
 
-	const VER = '7.5.42';
+	const VER = '7.5.43';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -8394,13 +8394,13 @@ if (_presetChannel) {
 		const rawTaskId = String(activity.taskId || '').trim();
 		const taskId = /^\d+$/.test(rawTaskId) ? rawTaskId : '';
 		const dialogId = normId(activity.dialogId || '');
-		if (!taskId && !dialogId) return false;
+		if (!taskId) return false;
 		const dateKey = _getDialogTimeTodayKey();
 		const normalizedTitle = String(activity.title || '').replace(/\s+/g, ' ').trim();
 		let current = _readDialogTimeVisits(dateKey);
 		if (options.passive && _PENA_TIME_CONTROL.closeActivitySession) {
 			current = _PENA_TIME_CONTROL.closeActivitySession(current);
-			const activityId = taskId ? `task:${taskId}` : `dialog:${dialogId}`;
+			const activityId = `task:${taskId}`;
 			const existing = current.find(item => item.activityId === activityId);
 			if (existing) {
 				existing.title = normalizedTitle || existing.title;
@@ -8448,8 +8448,19 @@ if (_presetChannel) {
 		return _rememberDialogTimeActivity({ taskId, title, dialogId });
 	}
 
-	function _rememberDialogTimeDialogVisit(dialogId, title = '', taskId = '') {
-		return _rememberDialogTimeActivity({ taskId, title, dialogId });
+	function _rememberTaskChatDialogVisit(dialogId, title = '', taskId = '', options = {}) {
+		const id = normId(dialogId || '');
+		const knownTaskId = String(taskId || '').trim();
+		if (/^\d+$/.test(knownTaskId)) {
+			return _rememberDialogTimeActivity({ taskId: knownTaskId, title, dialogId: id }, options);
+		}
+		if (!id) return false;
+		_resolveTaskMetaForDialog(id).then(meta => {
+			if (/^\d+$/.test(String(meta?.taskId || ''))) {
+				_rememberDialogTimeActivity({ taskId: String(meta.taskId), title, dialogId: id }, options);
+			}
+		}).catch(() => {});
+		return false;
 	}
 
 	function _readDialogTimeTracker() {
@@ -8729,19 +8740,8 @@ if (_presetChannel) {
 	}
 
 	async function _openDialogTimeActivity(activity = {}) {
-		if (/^\d+$/.test(String(activity.taskId || ''))) {
-			return _openDialogTimeTask(activity.taskId, activity.title);
-		}
-		const dialogId = normId(activity.dialogId || '');
-		if (!dialogId) return false;
-		const item = ['chats', 'tasks']
-			.flatMap(mode => _getDialogControlItemsForMode(mode))
-			.find(candidate => !_isDialogControlFolder(candidate) && normId(candidate.id) === dialogId);
-		if (item) return _openDialogControlRemoteRow(item);
-		const nativeRow = _findFreshBitrixChatElementById(dialogId);
-		const opened = !!nativeRow && openChatElement(nativeRow, dialogId);
-		if (opened) _rememberDialogTimeDialogVisit(dialogId, activity.title || '');
-		return opened;
+		if (!/^\d+$/.test(String(activity.taskId || ''))) return false;
+		return _openDialogTimeTask(activity.taskId, activity.title);
 	}
 
 	function _captureActiveDialogTimeActivity(options = {}) {
@@ -8753,11 +8753,11 @@ if (_presetChannel) {
 		}
 		const dialogId = normId(_readDialogControlOpenedId());
 		if (!dialogId) return;
-		const item = ['chats', 'tasks']
-			.flatMap(mode => _getDialogControlItemsForMode(mode))
+		const item = _getDialogControlItemsForMode('tasks')
 			.find(candidate => !_isDialogControlFolder(candidate) && normId(candidate.id) === dialogId);
-		const title = item?.title || _getActiveDialogTitleFromScreen() || _getDialogRecentMeta(dialogId)?.title || dialogId;
-		_rememberDialogTimeActivity({ dialogId, title, taskId: item?.taskId || '' }, options);
+		if (!item) return;
+		const title = item.title || _getActiveDialogTitleFromScreen() || _getDialogRecentMeta(dialogId)?.title || '';
+		_rememberTaskChatDialogVisit(dialogId, title, item.taskId || '', options);
 	}
 
 	function _armDialogTimeVisitTracking() {
@@ -8776,9 +8776,13 @@ if (_presetChannel) {
 			}
 			const row = getChatItemElement(target);
 			if (!row) return;
+			if (!isTasksChatsModeNow()) return;
 			const title = getChatTitleFromElement(row);
 			const meta = _extractTaskMetaFromElement(row, title);
-			_rememberDialogTimeDialogVisit(getChatIdFromElement(row), title, meta?.taskId || '');
+			const dialogId = getChatIdFromElement(row);
+			const item = _getDialogControlItemsForMode('tasks')
+				.find(candidate => !_isDialogControlFolder(candidate) && normId(candidate.id) === normId(dialogId));
+			_rememberTaskChatDialogVisit(dialogId, title, meta?.taskId || item?.taskId || '');
 		}, true);
 		const captureAfterRoute = () => {
 			setTimeout(_captureActiveDialogTimeActivity, 120);
@@ -8976,23 +8980,19 @@ if (_presetChannel) {
 		}
 
 		const createTaskRow = (task, options = {}) => {
-			const isTask = /^\d+$/.test(String(task.taskId || ''));
 			const row = document.createElement('div');
 			row.className = 'pena-native-time-task-row';
-			row.classList.toggle('--dialog', !isTask);
 			row.classList.toggle('--single', !options.estimateSeconds);
 			const body = document.createElement('button');
 			body.type = 'button';
 			body.className = 'pena-native-time-task-main';
-			body.title = isTask ? 'Открыть задачу' : 'Открыть диалог';
+			body.title = 'Открыть задачу';
 			const title = document.createElement('span');
 			title.className = 'pena-native-time-task-title';
-			title.textContent = isTask
-				? _getDialogTimeTaskTitle(task.taskId, task.title)
-				: (String(task.title || '').trim() || String(task.dialogId || 'Диалог'));
+			title.textContent = _getDialogTimeTaskTitle(task.taskId, task.title);
 			const detail = document.createElement('span');
 			detail.className = 'pena-native-time-task-detail';
-			detail.textContent = options.detail || (isTask ? `Задача #${task.taskId}` : 'Диалог');
+			detail.textContent = options.detail || `Задача #${task.taskId}`;
 			body.append(title, detail);
 			body.addEventListener('click', event => {
 				event.preventDefault();
@@ -9000,7 +9000,7 @@ if (_presetChannel) {
 				_openDialogTimeActivity(task);
 			});
 			row.appendChild(body);
-			if (!isTask || !options.estimateSeconds) return row;
+			if (!options.estimateSeconds) return row;
 			const action = document.createElement('button');
 			action.type = 'button';
 			action.className = 'pena-native-time-estimate-add';
@@ -9029,13 +9029,13 @@ if (_presetChannel) {
 					? suggestions.map(task => {
 						const estimateSeconds = _PENA_TIME_CONTROL.estimateActivitySeconds(task);
 						return createTaskRow(task, {
-							estimateSeconds: task.taskId ? estimateSeconds : 0,
+							estimateSeconds,
 							detail: `${task.visits} ${plural(task.visits, 'касание', 'касания', 'касаний')} · ≈ ${_PENA_TIME_CONTROL.formatDuration(estimateSeconds)}`
 						});
 					})
 					: [Object.assign(document.createElement('div'), {
 						className: 'pena-native-time-empty',
-						textContent: 'Откройте задачу или диалог'
+						textContent: 'Откройте чат задачи'
 					})]));
 				suggestionsList.dataset.penaRenderKey = suggestionsKey;
 			}
@@ -10104,17 +10104,17 @@ if (_presetChannel) {
 		return false;
 	}
 
-	async function _openDialogControlRemoteRow(item) {
+	async function _openDialogControlRemoteRow(item, mode = _pMode()) {
 		if (!item || _isDialogRecentInteractionBlocked()) return false;
 		const meta = _getDialogRecentMeta(item.id);
 		if (meta && !_isDialogRecentPublishable(meta)) return false;
 		if (await _openDialogControlViaBitrixApi(item)) {
-			_rememberDialogTimeDialogVisit(item.id || '', item.title || '', item.taskId || '');
+			if (mode === 'tasks') _rememberTaskChatDialogVisit(item.id || '', item.title || '', item.taskId || '');
 			return true;
 		}
 		const nativeRow = _findFreshBitrixChatElementById(item.id);
 		const opened = !!nativeRow && openChatElement(nativeRow, item.id);
-		if (opened) _rememberDialogTimeDialogVisit(item.id || '', item.title || '', item.taskId || '');
+		if (opened && mode === 'tasks') _rememberTaskChatDialogVisit(item.id || '', item.title || '', item.taskId || '');
 		return opened;
 	}
 

@@ -151,13 +151,15 @@
 		const rawTaskId = String(task.taskId ?? task.id ?? '').trim();
 		const taskId = /^\d+$/.test(rawTaskId) ? rawTaskId : '';
 		const dialogId = String(task.dialogId || '').trim();
-		if (!taskId && !dialogId) return null;
+		// Time can only be written to a Bitrix task. Legacy dialog-only activity
+		// is discarded here so ordinary chats never enter estimates or history.
+		if (!taskId) return null;
 		const visitedAt = Math.max(0, Number(task.visitedAt) || 0);
 		const firstVisitedAt = Math.max(0, Number(task.firstVisitedAt) || visitedAt);
 		return {
 			taskId,
-			activityId: taskId ? `task:${taskId}` : `dialog:${dialogId}`,
-			kind: taskId ? 'task' : 'dialog',
+			activityId: `task:${taskId}`,
+			kind: 'task',
 			title: String(task.title || '').replace(/\s+/g, ' ').trim(),
 			dialogId,
 			visitedAt,

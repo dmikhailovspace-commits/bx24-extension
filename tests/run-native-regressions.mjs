@@ -146,7 +146,7 @@ try {
     assert.equal(await page.locator('.test-host:not([hidden]) .pena-native-managed-viewport').count(), 1, `Default ${mode} mode did not expose the complete REST catalog`);
     let output = await readOutput(page);
     assert.equal(output.switcherCount, 1);
-	assert.equal(output.version, '7.5.42');
+	assert.equal(output.version, '7.5.43');
 	assert.equal(output.controlButtonCount, 0);
 	assert.equal(output.filterButtonCount, 1);
 	assert.equal(output.timeButtonCount, 1);
@@ -337,19 +337,28 @@ try {
 	await page.waitForFunction(() => !Array.from(document.querySelectorAll('.pena-native-time-suggestions-list .pena-native-time-task-title')).some(node => node.textContent === 'Задача 404'));
 	assert.equal(await page.evaluate(() => Number(window.timeAddCalls.at(-1)?.ARFIELDS?.SECONDS || 0)), 600, `Automatic estimate was not recorded in ${mode}`);
 	await page.evaluate(() => document.querySelector('.test-host:not([hidden]) [data-id="chat5"]')?.click());
-	await page.waitForFunction(() => Array.from(document.querySelectorAll('.pena-native-time-suggestions-list .pena-native-time-task-title')).some(node => node.textContent === 'Чат 5'));
-	const dialogActivity = timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Чат 5' });
-	assert.equal(await dialogActivity.locator('.pena-native-time-estimate-add').count(), 0, `A plain dialog incorrectly exposed task time controls in ${mode}`);
-	assert.match(await dialogActivity.locator('.pena-native-time-task-detail').textContent(), /касание · ≈ 5 мин/);
+	if (mode === 'tasks') {
+		await page.waitForFunction(() => Array.from(document.querySelectorAll('.pena-native-time-suggestions-list .pena-native-time-task-title')).some(node => node.textContent === 'Чат 5'));
+		const taskChatActivity = timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Чат 5' });
+		assert.equal(await taskChatActivity.locator('.pena-native-time-estimate-add').count(), 1, 'A task chat did not expose one-click time accounting');
+		assert.match(await taskChatActivity.locator('.pena-native-time-task-detail').textContent(), /касание · ≈ 5 мин/);
+	} else {
+		await page.waitForTimeout(250);
+		assert.equal(await timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Чат 5' }).count(), 0, 'An ordinary chat entered time activity');
+		assert.equal(await page.evaluate(() => {
+			const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
+			return JSON.parse(localStorage.getItem(key) || '[]').some(item => item.dialogId === 'chat5' || !item.taskId);
+		}), false, 'An ordinary chat was persisted as time activity');
+	}
 	const touchesBeforeMultiSelect = await page.evaluate(() => {
 		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
-		return JSON.parse(localStorage.getItem(key) || '[]').find(item => item.dialogId === 'chat5')?.visits || 0;
+		return JSON.parse(localStorage.getItem(key) || '[]').find(item => item.dialogId === 'chat5' && item.taskId)?.visits || 0;
 	});
 	await page.locator('.test-host:not([hidden]) .pena-native-managed-row[data-id="chat5"]').dispatchEvent('click', { ctrlKey: true, button: 0 });
 	await page.waitForTimeout(100);
 	assert.equal(await page.evaluate(() => {
 		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
-		return JSON.parse(localStorage.getItem(key) || '[]').find(item => item.dialogId === 'chat5')?.visits || 0;
+		return JSON.parse(localStorage.getItem(key) || '[]').find(item => item.dialogId === 'chat5' && item.taskId)?.visits || 0;
 	}), touchesBeforeMultiSelect, `Multi-select click was counted as work in ${mode}`);
 	await page.evaluate(() => document.querySelector('.pena-native-group-tab')?.click());
 	await page.waitForTimeout(100);

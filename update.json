@@ -1,9 +1,9 @@
 {
   "schema_version": 2,
-  "version": "7.5.42",
+  "version": "7.5.43",
   "release_date": "2026-08-27",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.42",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.42",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.43",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.43",
   "extension_files": [
     "background.js",
     "content.js",
@@ -32,6 +32,6 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.42/extension/injected.js",
-  "changelog": "v7.5.42: adds touch-and-dwell time estimates with one-click accounting, deduplicates task activity, prevents duplicate elapsed entries after refresh failures, and ships a smaller tracking panel"
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.43/extension/injected.js",
+  "changelog": "v7.5.43: limits chat-based time activity to task chats and removes legacy ordinary-chat estimates"
 }
