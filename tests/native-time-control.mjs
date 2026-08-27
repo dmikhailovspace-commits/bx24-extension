@@ -101,8 +101,14 @@ function testActivityEstimation() {
 	assert.equal(task10.activeSeconds, 120, 'active dwell before switching tasks was not accumulated');
 	activities = time.closeActivitySession(activities, start + 30 * 60000);
 	assert.equal(activities.find(item => item.taskId === '11').activeSeconds, 900, 'idle dwell must be capped');
-	assert.equal(time.estimateActivitySeconds({ taskId: '20', visits: 4, visitedAt: start }), 600);
+	assert.equal(time.estimateActivitySeconds({ taskId: '20', visits: 4, visitedAt: start }), 300, 'touches must not invent elapsed time');
 	assert.equal(time.estimateActivitySeconds(task10), 300);
+	const closedAgain = time.closeActivitySession(activities, start + 31 * 60000);
+	assert.equal(closedAgain.find(item => item.taskId === '11').activeSeconds, 900, 'closing an inactive session twice must not add time');
+	let live = time.recordActivityTouch([], { taskId: '21', visitedAt: start });
+	live = time.syncActivitySession(live, 'task:21', start + 125000);
+	assert.equal(live[0].activeSeconds, 125, 'live task dwell must be accumulated without extra touches');
+	assert.equal(live[0].visits, 1);
 
 	const accounted = time.markActivityAccounted(activities, 'task:10', start + 121000);
 	assert.equal(time.selectUntrackedVisits(accounted, []).some(item => item.taskId === '10'), false);

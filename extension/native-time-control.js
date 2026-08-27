@@ -12,7 +12,9 @@
 	const DEFAULT_MAX_PAGES = 100;
 	const DEFAULT_TOUCH_DEDUPE_MS = 15000;
 	const DEFAULT_IDLE_CAP_SECONDS = 15 * 60;
-	const DEFAULT_TOUCH_WEIGHT_SECONDS = 90;
+	// Touches explain the estimate, but do not add invented time. The estimate is
+	// based on the active session only.
+	const DEFAULT_TOUCH_WEIGHT_SECONDS = 0;
 	const DEFAULT_ESTIMATE_STEP_SECONDS = 5 * 60;
 
 	function pad2(value) {
@@ -166,6 +168,7 @@
 			firstVisitedAt,
 			lastAccountedAt: Math.max(0, Number(task.lastAccountedAt) || visitedAt),
 			activeSeconds: Math.max(0, Math.round(Number(task.activeSeconds) || 0)),
+			sessionActive: task.sessionActive === true,
 			accountedAt: Math.max(0, Number(task.accountedAt) || 0),
 			visits: Math.max(1, Number(task.visits) || 1)
 		};
@@ -189,6 +192,7 @@
 				firstVisitedAt: Math.min(previous.firstVisitedAt || previous.visitedAt, task.firstVisitedAt || task.visitedAt),
 				lastAccountedAt: Math.max(previous.lastAccountedAt || 0, task.lastAccountedAt || 0),
 				activeSeconds: Math.max(previous.activeSeconds || 0, task.activeSeconds || 0),
+				sessionActive: newest.sessionActive === true,
 				accountedAt: Math.max(previous.accountedAt || 0, task.accountedAt || 0),
 				visits: raw === next ? previous.visits + 1 : Math.max(previous.visits, task.visits)
 			});
@@ -198,14 +202,17 @@
 			.slice(0, Math.max(1, Number(limit) || 40));
 	}
 
-	function accountLatestActivity(items, now, idleCapSeconds = DEFAULT_IDLE_CAP_SECONDS) {
-		const latest = items.reduce((best, item) => !best || item.visitedAt > best.visitedAt ? item : best, null);
-		if (!latest) return;
-		const from = Math.max(latest.visitedAt || 0, latest.lastAccountedAt || 0);
+	function accountActiveActivity(items, now, idleCapSeconds = DEFAULT_IDLE_CAP_SECONDS, activityId = '') {
+		const active = activityId
+			? items.find(item => item.activityId === activityId && item.sessionActive)
+			: items.find(item => item.sessionActive);
+		if (!active) return;
+		const from = Math.max(active.visitedAt || 0, active.lastAccountedAt || 0);
 		const elapsed = Math.max(0, (now - from) / 1000);
-		if (elapsed > 0) latest.activeSeconds += Math.min(elapsed, Math.max(1, Number(idleCapSeconds) || DEFAULT_IDLE_CAP_SECONDS));
-		latest.activeSeconds = Math.max(0, Math.round(latest.activeSeconds));
-		latest.lastAccountedAt = Math.max(latest.lastAccountedAt || 0, now);
+		if (elapsed > 0) active.activeSeconds += Math.min(elapsed, Math.max(1, Number(idleCapSeconds) || DEFAULT_IDLE_CAP_SECONDS));
+		active.activeSeconds = Math.max(0, Math.round(active.activeSeconds));
+		active.lastAccountedAt = Math.max(active.lastAccountedAt || 0, now);
+		active.visitedAt = Math.max(active.visitedAt || 0, now);
 	}
 
 	function recordActivityTouch(items = [], next = null, options = {}) {
@@ -221,10 +228,13 @@
 			return merged.map(item => item.activityId === activity.activityId ? {
 				...item,
 				title: activity.title || item.title,
-				dialogId: activity.dialogId || item.dialogId
-			} : item);
+				dialogId: activity.dialogId || item.dialogId,
+				sessionActive: true,
+				lastAccountedAt: Math.max(item.lastAccountedAt || 0, now)
+			} : { ...item, sessionActive: false });
 		}
-		accountLatestActivity(merged, now, options.idleCapSeconds);
+		accountActiveActivity(merged, now, options.idleCapSeconds);
+		merged.forEach(item => { item.sessionActive = false; });
 		previous = merged.find(item => item.activityId === activity.activityId) || null;
 		const updated = previous ? {
 			...previous,
@@ -236,8 +246,9 @@
 			activeSeconds: Math.max(0, Number(previous.activeSeconds) || 0),
 			accountedAt: Math.max(previous.accountedAt || 0, activity.accountedAt || 0),
 			visitedAt: Math.max(previous.visitedAt || 0, now),
+			sessionActive: true,
 			visits: previous.visits + 1
-		} : { ...activity, visitedAt: now, firstVisitedAt: now, lastAccountedAt: now };
+		} : { ...activity, visitedAt: now, firstVisitedAt: now, lastAccountedAt: now, sessionActive: true };
 		const result = previous
 			? merged.map(item => item.activityId === updated.activityId ? updated : item)
 			: [...merged, updated];
@@ -248,14 +259,24 @@
 
 	function closeActivitySession(items = [], now = Date.now(), options = {}) {
 		const merged = mergeVisitedTasks(items, null, options.limit);
-		accountLatestActivity(merged, Math.max(0, Number(now) || Date.now()), options.idleCapSeconds);
+		accountActiveActivity(merged, Math.max(0, Number(now) || Date.now()), options.idleCapSeconds);
+		merged.forEach(item => { item.sessionActive = false; });
+		return merged.sort((a, b) => b.visitedAt - a.visitedAt || a.activityId.localeCompare(b.activityId));
+	}
+
+	function syncActivitySession(items = [], activityId = '', now = Date.now(), options = {}) {
+		const id = String(activityId || '');
+		const merged = mergeVisitedTasks(items, null, options.limit);
+		accountActiveActivity(merged, Math.max(0, Number(now) || Date.now()), options.idleCapSeconds, id);
 		return merged.sort((a, b) => b.visitedAt - a.visitedAt || a.activityId.localeCompare(b.activityId));
 	}
 
 	function estimateActivitySeconds(activity = {}, options = {}) {
 		const normalized = normalizeVisitedTask(activity);
 		if (!normalized) return 0;
-		const touchWeight = Math.max(0, Number(options.touchWeightSeconds) || DEFAULT_TOUCH_WEIGHT_SECONDS);
+		const touchWeight = options.touchWeightSeconds == null
+			? DEFAULT_TOUCH_WEIGHT_SECONDS
+			: Math.max(0, Number(options.touchWeightSeconds) || 0);
 		const step = Math.max(60, Number(options.stepSeconds) || DEFAULT_ESTIMATE_STEP_SECONDS);
 		const maximum = Math.max(step, Number(options.maxSeconds) || 8 * 3600);
 		const raw = normalized.activeSeconds + normalized.visits * touchWeight;
@@ -364,6 +385,7 @@
 		normalizeVisitedTask,
 		mergeVisitedTasks,
 		recordActivityTouch,
+		syncActivitySession,
 		closeActivitySession,
 		estimateActivitySeconds,
 		markActivityAccounted,

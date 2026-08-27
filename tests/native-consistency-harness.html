@@ -249,9 +249,18 @@
 		date: new Date(item.addedAt).toISOString()
 	  }
 	}));
+	const taskRecentGeneric = new URLSearchParams(location.search).get('taskRecentGeneric') === '1';
+	const taskCatalogEntries = recentEntries.map(entry => ({
+		ID: String(entry.chat_id),
+		TITLE: entry.title,
+		CHAT_ID: String(entry.chat_id),
+		ALLOW_TIME_TRACKING: String(entry.chat_id) === '405' ? 'N' : 'Y'
+	}));
 	window.timeRestCalls = [];
 	window.timeAddCalls = [];
 	window.timeAddedItems = [];
+	window.timeDeletedItems = [];
+	window.timeSeedItems = null;
 	window.timeAddFailures = 0;
 	window.timeListFailures = 0;
 	window.nativeRestCalls = [];
@@ -262,7 +271,7 @@
 	  const limit = Math.max(1, Number(params?.LIMIT) || 50);
 	  const taskMode = !document.querySelector('.task-host')?.hidden;
 	  const availableEntries = restIncompleteZero ? recentEntries.slice(0, 164) : recentEntries;
-	  const pageItems = availableEntries.slice(offset, offset + limit).map(entry => taskMode ? {
+	  const pageItems = availableEntries.slice(offset, offset + limit).map(entry => taskMode && !taskRecentGeneric ? {
 		...entry,
 		chat: {
 		  ...(entry.chat || {}),
@@ -332,11 +341,11 @@
 		  }
 		  const now = new Date();
 		  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-		  const elapsedItems = [
+		  if (!window.timeSeedItems) window.timeSeedItems = [
 			{ ID: 'time-1', TASK_ID: '101', USER_ID: '7', SECONDS: '3600', CREATED_DATE: `${today}T10:00:00+03:00` },
-			{ ID: 'time-2', TASK_ID: '102', USER_ID: '7', SECONDS: '1800', CREATED_DATE: `${today}T12:00:00+03:00` },
-			...window.timeAddedItems
+			{ ID: 'time-2', TASK_ID: '102', USER_ID: '7', SECONDS: '1800', CREATED_DATE: `${today}T12:00:00+03:00` }
 		  ];
+		  const elapsedItems = [...window.timeSeedItems, ...window.timeAddedItems];
 		  callback({
 			error: () => null,
 			data: () => elapsedItems,
@@ -364,9 +373,23 @@
 		  callback({ error: () => null, data: () => item.ID });
 		  return;
 		}
+		if (method === 'task.elapseditem.delete') {
+		  const itemId = String(params?.ITEMID || '');
+		  window.timeDeletedItems.push({ TASKID: params?.TASKID, ITEMID: params?.ITEMID });
+		  window.timeSeedItems = (window.timeSeedItems || []).filter(item => String(item.ID) !== itemId);
+		  window.timeAddedItems = window.timeAddedItems.filter(item => String(item.ID) !== itemId);
+		  callback({ error: () => null, data: () => true });
+		  return;
+		}
 		if (method === 'tasks.task.get') {
 		  const taskId = String(params?.taskId || params?.id || '');
-		  callback({ error: () => null, data: () => ({ task: { id: taskId, title: `Задача ${taskId}` } }) });
+		  callback({ error: () => null, data: () => ({ task: { id: taskId, title: `Задача ${taskId}`, chatId: taskId, allowTimeTracking: taskId === '405' ? 'N' : 'Y' } }) });
+		  return;
+		}
+		if (method === 'tasks.task.list') {
+		  const start = Math.max(0, Number(params?.start) || 0);
+		  const page = taskCatalogEntries.slice(start, start + 50);
+		  callback({ error: () => null, data: () => ({ tasks: page }), total: () => taskCatalogEntries.length, next: () => start + 50 < taskCatalogEntries.length ? start + 50 : null });
 		  return;
 		}
 		if (method === 'im.recent.list') {
@@ -394,7 +417,11 @@
 		  call?.method === 'im.recent.list'
 			? recentPageResult(call.params || {})
 			: call?.method === 'tasks.task.get'
-			  ? { error: () => null, data: () => ({ task: { id: String(call.params?.taskId || ''), title: `Задача ${call.params?.taskId || ''}` } }) }
+			  ? { error: () => null, data: () => ({ task: { id: String(call.params?.taskId || ''), title: `Задача ${call.params?.taskId || ''}`, chatId: String(call.params?.taskId || ''), allowTimeTracking: String(call.params?.taskId || '') === '405' ? 'N' : 'Y' } }) }
+			  : call?.method === 'tasks.task.list'
+				? (() => { const start = Math.max(0, Number(call.params?.start) || 0); const page = taskCatalogEntries.slice(start, start + 50); return { error: () => null, data: () => ({ tasks: page }), total: () => taskCatalogEntries.length, next: () => start + 50 < taskCatalogEntries.length ? start + 50 : null }; })()
+				: call?.method === 'task.elapseditem.delete'
+				  ? (() => { const itemId = String(call.params?.ITEMID || ''); window.timeDeletedItems.push({ TASKID: call.params?.TASKID, ITEMID: call.params?.ITEMID }); window.timeSeedItems = (window.timeSeedItems || []).filter(item => String(item.ID) !== itemId); window.timeAddedItems = window.timeAddedItems.filter(item => String(item.ID) !== itemId); return { error: () => null, data: () => true }; })()
 			  : { error: () => null, data: () => ({}) }
 		])));
 		if (restDelay > 0) setTimeout(respond, restDelay);
