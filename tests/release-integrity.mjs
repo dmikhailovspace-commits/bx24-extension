@@ -33,6 +33,8 @@ const requiredRuntime = [
   'manifest.json',
   'popup.html',
   'popup.js',
+  'fonts/Onest-Variable.ttf',
+  'fonts/Unbounded-Variable.ttf',
   'icons/icon16.png',
   'icons/icon48.png',
   'icons/icon128.png',
@@ -45,6 +47,7 @@ assert.equal(update.schema_version, 2);
 assert.equal(update.version, manifest.version);
 assert.equal(setupVersion, manifest.version);
 assert.equal(injectedVersion, manifest.version);
+assert.match(setup, /extension\\fonts\\\*";\s+DestDir:\s+"\{#StageDir\}\\fonts"/i, 'Windows installer omits bundled fonts');
 const nativeRowCssBlock = source => {
   const start = source.indexOf('.bx-im-list-recent-item__wrap.pena-native-chat-row');
   const endRule = '.pena-native-chat-row.--native-multi-selected .pena-native-chat-row-paint';

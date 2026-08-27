@@ -197,6 +197,21 @@
 		return minutes ? `${hours} ч ${minutes} мин` : `${hours} ч`;
 	}
 
+	function normalizeManualDuration(hours, minutes) {
+		const rawHours = String(hours ?? '').trim();
+		const rawMinutes = String(minutes ?? '').trim();
+		if (!/^\d+$/.test(rawHours || '0') || !/^\d+$/.test(rawMinutes || '0')) {
+			throw new RangeError('Укажите часы и минуты целыми числами');
+		}
+		const normalizedHours = Number(rawHours || 0);
+		const normalizedMinutes = Number(rawMinutes || 0);
+		if (normalizedMinutes > 59) throw new RangeError('Минуты должны быть от 0 до 59');
+		const seconds = normalizedHours * 3600 + normalizedMinutes * 60;
+		if (seconds < 60) throw new RangeError('Укажите хотя бы одну минуту');
+		if (seconds > 24 * 3600) throw new RangeError('За один раз можно добавить не больше 24 часов');
+		return { hours: normalizedHours, minutes: normalizedMinutes, seconds };
+	}
+
 	async function loadElapsedItems({ callPage, from, to, userId, pageSize = DEFAULT_PAGE_SIZE, maxPages = DEFAULT_MAX_PAGES, maxRangeDays = 366 } = {}) {
 		if (typeof callPage !== 'function') throw new TypeError('callPage is required');
 		const range = normalizeRange(from, to);
@@ -249,6 +264,7 @@
 		selectUntrackedVisits,
 		formatDurationCompact,
 		formatDuration,
+		normalizeManualDuration,
 		loadElapsedItems
 	});
 });

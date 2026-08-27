@@ -91,6 +91,7 @@
 	const lazyDelay = Math.max(0, Number(new URLSearchParams(location.search).get('lazyDelay')) || 0);
 	const detailDelay = Math.max(0, Number(new URLSearchParams(location.search).get('detailDelay')) || 0);
 	const restDelay = Math.max(0, Number(new URLSearchParams(location.search).get('restDelay')) || 0);
+	const restIncompleteZero = new URLSearchParams(location.search).get('restIncompleteZero') === '1';
 	let recentListFailuresRemaining = Math.max(0, Number(new URLSearchParams(location.search).get('restFailCount')) || 0);
 	const generatedManaged = new URLSearchParams(location.search).get('generatedManaged') === '1';
 	const wideParent = new URLSearchParams(location.search).get('wide') === '1';
@@ -254,7 +255,8 @@
 	  const offset = Math.max(0, Number(params?.OFFSET) || 0);
 	  const limit = Math.max(1, Number(params?.LIMIT) || 50);
 	  const taskMode = !document.querySelector('.task-host')?.hidden;
-	  const pageItems = recentEntries.slice(offset, offset + limit).map(entry => taskMode ? {
+	  const availableEntries = restIncompleteZero ? recentEntries.slice(0, 164) : recentEntries;
+	  const pageItems = availableEntries.slice(offset, offset + limit).map(entry => taskMode ? {
 		...entry,
 		chat: {
 		  ...(entry.chat || {}),
@@ -264,11 +266,11 @@
 		},
 		entity_link: { type: 'TASKS', id: String(entry.chat_id) }
 	  } : entry);
-	  const next = offset + limit < recentEntries.length ? offset + limit : null;
+	  const next = offset + limit < availableEntries.length ? offset + limit : null;
 	  return {
 		error: () => null,
 		data: () => ({ items: pageItems, hasMore: next != null, hasMorePages: next != null }),
-		total: () => recentEntries.length,
+		total: () => restIncompleteZero ? 0 : availableEntries.length,
 		next: () => next
 	  };
 	};
@@ -374,6 +376,9 @@
 		else respond();
 	  }
 	};
+	if (new URLSearchParams(location.search).get('autofocus') === '1') {
+		document.querySelector('.test-host:not([hidden]) input[type="search"]')?.focus();
+	}
   </script>
 	<script src="../extension/native-catalog.js"></script>
 	<script src="../extension/native-interaction-state.js"></script>

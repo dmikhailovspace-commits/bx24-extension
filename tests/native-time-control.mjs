@@ -85,6 +85,14 @@ function testDailyTaskVisits() {
 	assert.equal(time.normalizeVisitedTask({ taskId: 'not-a-task' }), null);
 }
 
+function testManualDuration() {
+	assert.deepEqual(time.normalizeManualDuration('2', '15'), { hours: 2, minutes: 15, seconds: 8100 });
+	assert.deepEqual(time.normalizeManualDuration('', '30'), { hours: 0, minutes: 30, seconds: 1800 });
+	assert.throws(() => time.normalizeManualDuration('0', '0'), /хотя бы одну минуту/i);
+	assert.throws(() => time.normalizeManualDuration('1', '60'), /от 0 до 59/i);
+	assert.throws(() => time.normalizeManualDuration('24', '1'), /не больше 24 часов/i);
+}
+
 async function testPaginationAndDedupe() {
 	const all = Array.from({ length: 120 }, (_, index) => makeItem(index + 1, index < 60 ? '2026-08-23' : '2026-08-22', 60, (index % 4) + 1));
 	const pages = [];
@@ -146,5 +154,6 @@ testRanges();
 testOrderedRequestParams();
 testAggregation();
 testDailyTaskVisits();
+testManualDuration();
 await testPaginationAndDedupe();
 console.log('native time control: all checks passed');

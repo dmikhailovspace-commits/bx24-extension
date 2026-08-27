@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.37';
+	window.__ANITREC_RUNNING__ = '7.5.39';
 
-	const VER = '7.5.37';
+	const VER = '7.5.39';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -18,6 +18,7 @@
 	const _PENA_TIME_CACHE_TTL_MS = 120000;
 	const _PENA_TIME_VISITS_KEY = 'pena.timeVisitedTasks.v1';
 	const _PENA_TIME_TRACKER_KEY = 'pena.timeActiveTracker.v1';
+	const _PENA_TIME_MANUAL_DRAFT_KEY = 'pena.timeManualDraft.v1';
 	function _isPenaExtensionEnabled() {
 		const shared = document.documentElement?.dataset?.penaExtensionEnabled;
 		if (shared === '0') return false;
@@ -1887,7 +1888,9 @@
 			return total > 0 ? Math.min(99, 85 + Math.round((completed / total) * 14)) : 95;
 		}
 		if (Number.isFinite(catalogPercent)) return Math.max(0, Math.min(85, Math.round(Number(catalogPercent) * .85)));
-		return null;
+		const pages = Math.max(0, Number(_dialogRecentProgress.pagesLoaded) || 0);
+		const loaded = Math.max(0, Number(_dialogRecentProgress.loadedCount) || 0);
+		return loaded > 0 ? Math.min(82, 28 + pages * 9) : 6;
 	}
 
 	function _queueDialogRecentStatusUi() {
@@ -3319,6 +3322,8 @@
 			let pages = 0;
 			let fullPassComplete = !full;
 			let truncated = false;
+			let catalogCompletionTrusted = !full;
+			let totalMetadataInconsistent = false;
 			let metadataFreeStagnantPages = 0;
 			let fastPages = [];
 			const countersPromise = _fetchDialogCounterSnapshotWithRetry().catch(error => {
@@ -3391,9 +3396,16 @@
 					const uniqueAdded = currentWindowIds.size - uniqueBefore;
 					pages += 1;
 					const resultRoot = page.data?.result || page.data || {};
-					const expectedTotal = [page.total, resultRoot.total, resultRoot.totalCount, resultRoot.total_count]
+					const reportedTotals = [page.total, resultRoot.total, resultRoot.totalCount, resultRoot.total_count]
+						.filter(value => value != null && value !== false && value !== '')
 						.map(value => Number(value))
-						.find(value => Number.isFinite(value) && value >= 0);
+						.filter(value => Number.isFinite(value) && value >= 0);
+					if (entries.length > 0 && reportedTotals.some(value => value < currentWindowIds.size)) {
+						totalMetadataInconsistent = true;
+					}
+					const expectedTotal = reportedTotals.find(value =>
+						value >= currentWindowIds.size && (value > 0 || entries.length === 0)
+					);
 					_dialogRecentProgress.loadedCount = currentWindowIds.size;
 					_dialogRecentProgress.pagesLoaded = pages;
 					if (expectedTotal != null) {
@@ -3444,14 +3456,17 @@
 						break;
 					}
 					if (noMore) {
+						catalogCompletionTrusted = !totalMetadataInconsistent;
 						fullPassComplete = true;
 						break;
 					}
-					if (page.total != null && nextOffset >= page.total) {
+					if (expectedTotal != null && nextOffset >= expectedTotal) {
+						catalogCompletionTrusted = !totalMetadataInconsistent;
 						fullPassComplete = true;
 						break;
 					}
 					if (!entries.length) {
+						catalogCompletionTrusted = !totalMetadataInconsistent;
 						fullPassComplete = true;
 						break;
 					}
@@ -3468,6 +3483,7 @@
 					fullPassComplete = true;
 					warn(`im.recent.list: каталог ограничен защитным пределом ${_DIALOG_RECENT_MAX_PAGES * _DIALOG_RECENT_PAGE_SIZE}`);
 				}
+				if (full && (!catalogCompletionTrusted || totalMetadataInconsistent)) truncated = true;
 				if (currentWindowIds.size > 0) _dialogRecentEmptyFullPasses = 0;
 				if (full && hadPreviousCatalog && currentWindowIds.size === 0) {
 					_dialogRecentEmptyFullPasses += 1;
@@ -3507,13 +3523,17 @@
 					_dialogRecentDataRevision += 1;
 					_notifyDialogRecentDataChanged();
 				}
+				const gateWasBlocked = _isDialogRecentInteractionBlocked();
+				// The complete catalog is already committed atomically. Folder access and
+				// avatar checks continue silently and must not create a second blocking load.
+				if (gateWasBlocked) _completeDialogRecentInteractionGate();
 				let detailResult;
 				_dialogRecentDetailUiSilent = true;
 				try {
 					detailResult = await _runDialogRecentDetailPass(new Set(), {
 						mandatory: _getDialogRecentMandatoryItems(),
 						resetProgress: true,
-						forceAccessRetry: _isDialogRecentInteractionBlocked() || options.reason === 'manual'
+						forceAccessRetry: gateWasBlocked || options.reason === 'manual'
 					});
 				} finally {
 					_dialogRecentDetailUiSilent = false;
@@ -3532,9 +3552,6 @@
 					phase: 'ready',
 					completedAt: Date.now()
 				});
-				if (!verificationError) _completeDialogRecentInteractionGate();
-				else if (verificationError && !hadPreviousCatalog) _failDialogRecentInteractionGate(verificationError);
-				else if (_countDialogRecentMeta()) _completeDialogRecentInteractionGate();
 				if (full) _dialogRecentRepositoryNeedsFullCommit = true;
 				if (dataChanged || detailResult?.updated || detailResult?.unavailable || Date.now() - _dialogRecentCacheSavedAt >= _DIALOG_RECENT_CACHE_REFRESH_MS) {
 					_scheduleDialogRecentCacheWrite();
@@ -3550,6 +3567,8 @@
 					controlledCount: currentMandatory.size,
 					verificationPending: unresolvedMandatory.length,
 					truncated,
+					catalogComplete: !full || (!truncated && catalogCompletionTrusted && !totalMetadataInconsistent),
+					totalMetadataInconsistent,
 					expectedTotal: Number.isFinite(_dialogRecentProgress.expectedTotal)
 						? Number(_dialogRecentProgress.expectedTotal)
 						: null
@@ -3648,13 +3667,13 @@
 					Number(_dialogRecentWindowCount) || 0
 				);
 				const apiExpectedTotal = Number(result?.expectedTotal);
-				const countProvesComplete = Number.isFinite(apiExpectedTotal) && apiExpectedTotal >= 0 && apiLoadedCount >= apiExpectedTotal;
-				const apiComplete = result?.truncated !== true || countProvesComplete;
+				const apiComplete = result?.catalogComplete === true;
 				_dialogRecentLastApiResult = {
 					count: Number(result?.count) || 0,
 					received: Number(result?.received) || 0,
 					expectedTotal: Number.isFinite(apiExpectedTotal) ? apiExpectedTotal : null,
 					truncated: result?.truncated === true,
+					totalMetadataInconsistent: result?.totalMetadataInconsistent === true,
 					complete: apiComplete
 				};
 				_dialogRecentWindowCount = Math.max(_dialogRecentWindowCount, apiLoadedCount);
@@ -4222,7 +4241,24 @@
 		}
 		if (options.full !== false) {
 			try {
-				return await _runDialogRecentApiCatalogLoad(options);
+				const apiResult = await _runDialogRecentApiCatalogLoad(options);
+				if (apiResult?.complete !== false) return apiResult;
+				warn('Каталог Bitrix сообщил неполный или противоречивый итог, включена скрытая догрузка старых диалогов');
+				if (_dialogRecentApiRetryTimer) clearTimeout(_dialogRecentApiRetryTimer);
+				_dialogRecentApiRetryTimer = null;
+				_dialogNativeBackgroundPendingModes.add(_pMode());
+				const fallbackOptions = {
+					...options,
+					force: true,
+					reason: 'api-incomplete-native-backfill'
+				};
+				const nativeResult = _isDialogControlNativePassThrough()
+					? await _runDialogNativeOriginalScrollLoad(fallbackOptions)
+					: await _runDialogNativeSilentPrefetch(fallbackOptions);
+				if (!nativeResult?.native || nativeResult?.unavailable) {
+					_scheduleDialogRecentApiCompletionRetry('api-incomplete-recheck');
+				}
+				return { ...nativeResult, apiIncomplete: true, apiResult };
 			} catch (error) {
 				warn('Быстрый каталог Bitrix недоступен, включён аварийный native-scroll fallback', error?.message || error);
 				_dialogNativeBackgroundPendingModes.add(_pMode());
@@ -4819,6 +4855,7 @@ let _debugModeActive = false;
 	const _LS_DIALOG_RECENT_LOAD_LIMIT = 'pena.dialogRecentLoadLimit.v1';
 	const _LS_DIALOG_RECENT_DEFAULT_ALL = 'pena.dialogRecentLoadLimit.defaultAll.v1';
 	const _LS_DIALOG_RECENT_DEFAULT_500 = 'pena.dialogRecentLoadLimit.default500.v2';
+	const _LS_DIALOG_RECENT_DEFAULT_DYNAMIC = 'pena.dialogRecentLoadLimit.defaultAll.v3';
 	const _DIALOG_REPOSITORY_REQUEST_EVENT = 'pena-dialog-repository-request';
 	const _DIALOG_REPOSITORY_RESPONSE_EVENT = 'pena-dialog-repository-response';
 	const _DIALOG_CONTROL_ALL_SEGMENT_ID = '__all__';
@@ -4866,7 +4903,7 @@ let _dialogControlTitleLastSyncAt = 0;
 	const _DIALOG_RECENT_FULL_MS = 24 * 60 * 60 * 1000;
 	const _DIALOG_RECENT_DELTA_MAX_AGE_MS = 6 * 24 * 60 * 60 * 1000;
 	const _DIALOG_RECENT_MIN_MS = 5000;
-	const _DIALOG_RECENT_DEFAULT_LIMIT = 500;
+	const _DIALOG_RECENT_DEFAULT_LIMIT = 0;
 	const _DIALOG_RECENT_LOAD_LIMITS = [0, 100, 300, 500, 1000];
 	const _DIALOG_RECENT_CACHE_MAX_LATEST = 5000;
 	const _DIALOG_RECENT_CACHE_STATUS_MAX_AGE_MS = 60000;
@@ -5000,6 +5037,7 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogTimeTitleLoadPromise = null;
 	let _dialogTimeTrackerTick = null;
 	let _dialogTimeActionInFlight = false;
+	let _dialogTimeManualError = '';
 	let _dialogTimeTrackedExpanded = false;
 	let _dialogTimeVisitTrackingArmed = false;
 	let _dialogControlColorEyedropper = null;
@@ -5138,6 +5176,7 @@ if (_presetChannel) {
 	let _penaSearchResetInput = null;
 	let _penaSearchReconcileTimer = null;
 	const _penaSearchPreparedInputs = new WeakSet();
+	const _penaSearchUserActivatedInputs = new WeakSet();
 	const _penaSearchQueriesByMode = new Map();
 	const _BITRIX_SEARCH_QUERY_KEY = 'pena.nativeSearchQuery.v1';
 	function _readStoredBitrixSearchQuery(mode = _pMode()) {
@@ -5381,6 +5420,13 @@ if (_presetChannel) {
 			});
 		}
 		_restorePenaSearchInput(input, mode);
+		// Bitrix can focus its search field while mounting the messenger. Do not
+		// steal the user's keyboard on startup, but preserve a real pointer focus.
+		if (document.activeElement === input && !_penaSearchUserActivatedInputs.has(input)) {
+			requestAnimationFrame(() => {
+				if (document.activeElement === input && !_penaSearchUserActivatedInputs.has(input)) input.blur();
+			});
+		}
 		return input;
 	}
 
@@ -5413,6 +5459,7 @@ if (_presetChannel) {
 			};
 			const isolateEvent = event => {
 				if (!isOwnedSearchEvent(event) || event.target === _penaSearchResetInput) return;
+				if (event.type === 'pointerdown' && event.isTrusted) _penaSearchUserActivatedInputs.add(event.target);
 				if ((event.type === 'keydown' || event.type === 'keyup') && event.key === 'Escape') return;
 				event.stopImmediatePropagation();
 			};
@@ -5920,15 +5967,12 @@ if (_presetChannel) {
 
 	function _getDialogRecentLoadLimit() {
 		try {
-			if (localStorage.getItem(_LS_DIALOG_RECENT_DEFAULT_500) !== '1') {
-				const oldMigrationComplete = localStorage.getItem(_LS_DIALOG_RECENT_DEFAULT_ALL) === '1';
-				const saved = localStorage.getItem(_LS_DIALOG_RECENT_LOAD_LIMIT);
-				const normalized = saved == null || saved === '' ? _DIALOG_RECENT_DEFAULT_LIMIT : _normalizeDialogRecentLoadLimit(saved);
-				const nextLimit = oldMigrationComplete && normalized > 0 ? normalized : _DIALOG_RECENT_DEFAULT_LIMIT;
-				localStorage.setItem(_LS_DIALOG_RECENT_LOAD_LIMIT, String(nextLimit));
+			if (localStorage.getItem(_LS_DIALOG_RECENT_DEFAULT_DYNAMIC) !== '1') {
+				localStorage.setItem(_LS_DIALOG_RECENT_LOAD_LIMIT, '0');
 				localStorage.setItem(_LS_DIALOG_RECENT_DEFAULT_ALL, '1');
 				localStorage.setItem(_LS_DIALOG_RECENT_DEFAULT_500, '1');
-				return nextLimit;
+				localStorage.setItem(_LS_DIALOG_RECENT_DEFAULT_DYNAMIC, '1');
+				return 0;
 			}
 			const saved = localStorage.getItem(_LS_DIALOG_RECENT_LOAD_LIMIT);
 			return saved == null || saved === '' ? _DIALOG_RECENT_DEFAULT_LIMIT : _normalizeDialogRecentLoadLimit(saved);
@@ -5943,6 +5987,7 @@ if (_presetChannel) {
 			localStorage.setItem(_LS_DIALOG_RECENT_LOAD_LIMIT, String(limit));
 			localStorage.setItem(_LS_DIALOG_RECENT_DEFAULT_ALL, '1');
 			localStorage.setItem(_LS_DIALOG_RECENT_DEFAULT_500, '1');
+			localStorage.setItem(_LS_DIALOG_RECENT_DEFAULT_DYNAMIC, '1');
 		} catch {}
 		return limit;
 	}
@@ -8201,26 +8246,30 @@ if (_presetChannel) {
 		).length;
 		statuses.forEach(status => {
 			const compact = status.classList.contains('pena-native-sync-chip');
+			const compactVisible = gateLocked || !!gateError || !!sync.error || (controlledPending > 0 && !sync.inFlight) ||
+				(!!sync.inFlight && sync.phase !== 'verifying' && !sync.detailsSilent);
+			if (compact) status.hidden = !compactVisible;
+			else status.hidden = false;
 			if (gateLocked) {
 				status.textContent = gateError
-					? (compact ? 'Ошибка загрузки' : 'Список заблокирован: требуется повторная загрузка')
+					? (compact ? 'Ошибка' : 'Список заблокирован: требуется повторная загрузка')
 					: (compact
-						? `Загружено ${loaded}${total != null ? `/${total}` : ''}`
+						? `${Math.round(gatePercent)}%`
 						: `Загрузка и проверка диалогов: ${loaded}${total != null ? ` из ${total}` : ''} · ${gatePercent}%`);
 			} else if (sync.inFlight) {
 				status.textContent = compact
-					? `Загружено ${loaded}${total != null ? `/${total}` : ''}`
+					? `${Math.round(percent ?? gatePercent)}%`
 					: (total != null ? `Загрузка: ${loaded} из ${total} · ${percent ?? 0}%` : `Загрузка: ${loaded} · страниц ${sync.pagesLoaded || 0}`);
 			} else if (detailsVisible && controlledPending > 0) {
 				status.textContent = compact
-					? `Догрузка ${detailsCompleted}/${detailsTotal}`
+					? `${detailsTotal > 0 ? Math.round((detailsCompleted / detailsTotal) * 100) : 0}%`
 					: `Догружаем сохранённые диалоги: ${detailsCompleted} из ${detailsTotal} · доступно ${inList}`;
 			} else if (controlledPending > 0) {
 				status.textContent = compact
-					? `Не загружено ${controlledPending}`
+					? `Проверить ${controlledPending}`
 					: `Не загружено диалогов: ${controlledPending} · доступно ${inList}`;
 			} else if (sync.error) {
-				status.textContent = compact ? `Ошибка · ${received}` : `Ошибка загрузки · доступно ${inList}`;
+				status.textContent = compact ? 'Повторить' : `Ошибка загрузки · доступно ${inList}`;
 			} else if (sync.cached) {
 				status.textContent = compact ? `Кеш ${received}` : `Из кеша: ${received} · проверка статусов`;
 			} else if (sync.ready) {
@@ -8236,7 +8285,7 @@ if (_presetChannel) {
 			}
 			status.classList.toggle('--loading', gateLocked && !gateError || !!sync.inFlight || (detailsVisible && controlledPending > 0));
 			status.classList.toggle('--error', !!gateError || (!!sync.error && !sync.inFlight && controlledPending <= 0));
-			status.classList.toggle('--warning', !gateLocked && !sync.inFlight && !sync.error && controlledPending > 0 && !sync.detailsInFlight);
+			status.classList.toggle('--warning', !gateLocked && !sync.inFlight && controlledPending > 0 && !sync.detailsInFlight);
 			status.classList.toggle('--ready', !gateLocked && !!sync.ready && !sync.inFlight && !sync.error && controlledPending <= 0);
 			const detailTitle = detailsTotal > 0
 				? `; детали: ${detailsCompleted} из ${detailsTotal}${transientDetailFailures ? `, временные ошибки: ${transientDetailFailures}` : ''}`
@@ -8455,6 +8504,64 @@ if (_presetChannel) {
 		return Array.from(map.values()).sort((a, b) => (b.visitedAt || 0) - (a.visitedAt || 0) || (b.trackedSeconds || 0) - (a.trackedSeconds || 0));
 	}
 
+	function _readDialogTimeManualDraft() {
+		try {
+			const value = JSON.parse(localStorage.getItem(_getDialogTimeScopedStorageKey(_PENA_TIME_MANUAL_DRAFT_KEY)) || 'null');
+			return value && typeof value === 'object'
+				? { taskId: String(value.taskId || ''), hours: String(value.hours || ''), minutes: String(value.minutes || '') }
+				: { taskId: '', hours: '', minutes: '' };
+		} catch { return { taskId: '', hours: '', minutes: '' }; }
+	}
+
+	function _writeDialogTimeManualDraft(draft = null) {
+		try {
+			const key = _getDialogTimeScopedStorageKey(_PENA_TIME_MANUAL_DRAFT_KEY);
+			if (draft) localStorage.setItem(key, JSON.stringify(draft));
+			else localStorage.removeItem(key);
+		} catch {}
+	}
+
+	async function _addDialogTimeManualEntry(task, hours, minutes) {
+		if (_dialogTimeActionInFlight || !_PENA_TIME_CONTROL) return;
+		const taskId = String(task?.taskId || '').trim();
+		if (!/^\d+$/.test(taskId)) {
+			_dialogTimeManualError = 'Выберите задачу';
+			_queueDialogTimeUiSync();
+			return;
+		}
+		let duration;
+		try {
+			duration = _PENA_TIME_CONTROL.normalizeManualDuration(hours, minutes);
+		} catch (error) {
+			_dialogTimeManualError = String(error?.message || 'Проверьте введённое время');
+			_queueDialogTimeUiSync();
+			return;
+		}
+		_dialogTimeActionInFlight = true;
+		_dialogTimeManualError = '';
+		_queueDialogTimeUiSync();
+		try {
+			await _callBxRestMethod('task.elapseditem.add', {
+				TASKID: Number(taskId),
+				ARFIELDS: { SECONDS: duration.seconds }
+			});
+			_writeDialogTimeManualDraft(null);
+			const panel = _dialogControlNativeSwitcherNode?.querySelector('.pena-native-time-panel');
+			const hoursInput = panel?.querySelector('.pena-native-time-manual-hours');
+			const minutesInput = panel?.querySelector('.pena-native-time-manual-minutes');
+			if (hoursInput) hoursInput.value = '';
+			if (minutesInput) minutesInput.value = '';
+			await _loadDialogTimeRange(_getDialogTimeRange('today'), { force: true });
+			_showDialogDockToast(`Добавлено: ${_PENA_TIME_CONTROL.formatDuration(duration.seconds)}`, 'ok');
+		} catch (error) {
+			_dialogTimeManualError = _getDialogTimeFriendlyError(error);
+			_showDialogDockToast('Время не сохранено — данные остались в форме', 'danger');
+		} finally {
+			_dialogTimeActionInFlight = false;
+			_queueDialogTimeUiSync();
+		}
+	}
+
 	function _startDialogTimeTracker(task) {
 		if (_dialogTimeActionInFlight) return;
 		if (_readDialogTimeTracker()) {
@@ -8642,6 +8749,43 @@ if (_presetChannel) {
 			stop.disabled = _dialogTimeActionInFlight;
 			stop.textContent = tracker?.pendingSeconds > 0 ? 'Повторить сохранение' : 'Остановить';
 		}
+		const manualSelect = panel.querySelector('.pena-native-time-manual-task');
+		const manualHours = panel.querySelector('.pena-native-time-manual-hours');
+		const manualMinutes = panel.querySelector('.pena-native-time-manual-minutes');
+		const manualSubmit = panel.querySelector('.pena-native-time-manual-submit');
+		const manualError = panel.querySelector('.pena-native-time-manual-error');
+		if (manualSelect) {
+			const optionsKey = candidates.map(task => `${task.taskId}:${task.title}`).join('|');
+			if (manualSelect.dataset.penaOptionsKey !== optionsKey) {
+				const draftTaskId = _readDialogTimeManualDraft().taskId;
+				const previous = manualSelect.value || draftTaskId;
+				const options = document.createDocumentFragment();
+				const placeholder = document.createElement('option');
+				placeholder.value = '';
+				placeholder.textContent = candidates.length ? 'Выберите задачу' : 'Сначала откройте задачу';
+				options.appendChild(placeholder);
+				candidates.forEach(task => {
+					const option = document.createElement('option');
+					option.value = task.taskId;
+					option.textContent = task.title;
+					options.appendChild(option);
+				});
+				manualSelect.replaceChildren(options);
+				manualSelect.value = candidates.some(task => task.taskId === previous) ? previous : (candidates[0]?.taskId || '');
+				manualSelect.dataset.penaOptionsKey = optionsKey;
+			}
+			manualSelect.disabled = _dialogTimeActionInFlight;
+		}
+		if (manualHours) manualHours.disabled = _dialogTimeActionInFlight;
+		if (manualMinutes) manualMinutes.disabled = _dialogTimeActionInFlight;
+		if (manualSubmit) {
+			manualSubmit.disabled = _dialogTimeActionInFlight || !manualSelect?.value;
+			manualSubmit.textContent = _dialogTimeActionInFlight ? 'Сохраняем…' : 'Добавить';
+		}
+		if (manualError) {
+			manualError.hidden = !_dialogTimeManualError;
+			manualError.textContent = _dialogTimeManualError;
+		}
 
 		const createTaskRow = (task, options = {}) => {
 			const row = document.createElement('div');
@@ -8681,13 +8825,18 @@ if (_presetChannel) {
 		const suggestions = _PENA_TIME_CONTROL.selectUntrackedVisits(visits, data?.tasks || []).slice(0, 5);
 		const suggestionsList = panel.querySelector('.pena-native-time-suggestions-list');
 		const suggestionsSection = panel.querySelector('.pena-native-time-suggestions');
-		if (suggestionsSection) suggestionsSection.hidden = suggestions.length === 0;
+		if (suggestionsSection) suggestionsSection.hidden = false;
 		if (suggestionsList) {
 			const suggestionsKey = `${tracker ? 'locked' : 'ready'}:${suggestions.map(task => `${task.taskId}:${task.title}:${task.visits}`).join('|')}`;
 			if (suggestionsList.dataset.penaRenderKey !== suggestionsKey) {
-				suggestionsList.replaceChildren(...suggestions.map(task => createTaskRow(task, {
-					detail: task.visits > 1 ? `Открывали сегодня ${task.visits} раза` : 'Открывали сегодня'
-				})));
+				suggestionsList.replaceChildren(...(suggestions.length
+					? suggestions.map(task => createTaskRow(task, {
+						detail: task.visits > 1 ? `Открывали сегодня ${task.visits} раза` : 'Открывали сегодня'
+					}))
+					: [Object.assign(document.createElement('div'), {
+						className: 'pena-native-time-empty',
+						textContent: 'Здесь появятся задачи, которые вы открывали сегодня'
+					})]));
 				suggestionsList.dataset.penaRenderKey = suggestionsKey;
 			}
 		}
@@ -8762,6 +8911,7 @@ if (_presetChannel) {
 	}
 
 	function _createDialogTimePanel() {
+		_captureActiveDialogTimeTask();
 		const panel = document.createElement('div');
 		panel.className = 'pena-native-time-panel pena-native-command-popover';
 
@@ -8843,11 +8993,69 @@ if (_presetChannel) {
 		trackerControls.append(taskSelect, start, stop);
 		tracker.append(trackerHeader, trackerInfo, trackerHint, trackerControls);
 
+		const manual = document.createElement('section');
+		manual.className = 'pena-native-time-manual';
+		const manualHeader = document.createElement('div');
+		manualHeader.className = 'pena-native-time-section-copy';
+		manualHeader.innerHTML = '<strong>Добавить время</strong><span>Без запуска таймера</span>';
+		const manualTask = document.createElement('select');
+		manualTask.className = 'pena-native-time-task-select pena-native-time-manual-task';
+		manualTask.setAttribute('aria-label', 'Задача для ручного учёта времени');
+		const manualFields = document.createElement('div');
+		manualFields.className = 'pena-native-time-manual-fields';
+		const draft = _readDialogTimeManualDraft();
+		const createDurationField = (className, label, value, max) => {
+			const field = document.createElement('label');
+			field.className = 'pena-native-time-duration-field';
+			const input = document.createElement('input');
+			input.type = 'number';
+			input.inputMode = 'numeric';
+			input.min = '0';
+			input.max = String(max);
+			input.step = '1';
+			input.placeholder = '0';
+			input.value = value;
+			input.className = className;
+			input.setAttribute('aria-label', label);
+			const suffix = document.createElement('span');
+			suffix.textContent = label;
+			field.append(input, suffix);
+			return { field, input };
+		};
+		const hoursField = createDurationField('pena-native-time-manual-hours', 'ч', draft.hours, 24);
+		const minutesField = createDurationField('pena-native-time-manual-minutes', 'мин', draft.minutes, 59);
+		const manualSubmit = document.createElement('button');
+		manualSubmit.type = 'button';
+		manualSubmit.className = 'pena-native-time-manual-submit';
+		manualSubmit.textContent = 'Добавить';
+		const saveDraft = () => _writeDialogTimeManualDraft({
+			taskId: manualTask.value,
+			hours: hoursField.input.value,
+			minutes: minutesField.input.value
+		});
+		manualTask.addEventListener('change', saveDraft);
+		hoursField.input.addEventListener('input', saveDraft);
+		minutesField.input.addEventListener('input', saveDraft);
+		manualSubmit.addEventListener('click', event => {
+			event.preventDefault();
+			event.stopPropagation();
+			saveDraft();
+			const today = _getDialogTimeRange('today');
+			const data = _getDialogTimeRecord(today)?.data || null;
+			const task = _getDialogTimeTaskCandidates(data, _readDialogTimeVisits(today.from)).find(candidate => candidate.taskId === manualTask.value);
+			_addDialogTimeManualEntry(task, hoursField.input.value, minutesField.input.value);
+		});
+		manualFields.append(hoursField.field, minutesField.field, manualSubmit);
+		const manualError = document.createElement('span');
+		manualError.className = 'pena-native-time-manual-error';
+		manualError.hidden = true;
+		manual.append(manualHeader, manualTask, manualFields, manualError);
+
 		const suggestions = document.createElement('section');
 		suggestions.className = 'pena-native-time-suggestions';
 		const suggestionsHeader = document.createElement('div');
 		suggestionsHeader.className = 'pena-native-time-section-copy';
-		suggestionsHeader.innerHTML = '<strong>Возможно, вы работали</strong><span>Открывали сегодня, но ещё не трекали</span>';
+		suggestionsHeader.innerHTML = '<strong>Возможно, сегодня вы работали</strong><span>Открывали задачу, но ещё не добавляли время</span>';
 		const suggestionsList = document.createElement('div');
 		suggestionsList.className = 'pena-native-time-suggestions-list';
 		suggestions.append(suggestionsHeader, suggestionsList);
@@ -8863,7 +9071,7 @@ if (_presetChannel) {
 			event.preventDefault();
 			event.stopPropagation();
 			_dialogTimeTrackedExpanded = !_dialogTimeTrackedExpanded;
-			_syncDialogTimeUi(panel.closest('.pena-native-switcher'));
+			_syncDialogTimeUi(_dialogControlNativeSwitcherNode || panel.closest('.pena-native-folder-switcher'));
 		});
 		const trackedList = document.createElement('div');
 		trackedList.className = 'pena-native-time-tracked-list';
@@ -8879,7 +9087,7 @@ if (_presetChannel) {
 		fullReport.textContent = 'Полный отчёт';
 		fullReport.innerHTML += '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M10 14l9-9M19 14v5H5V5h5"/></svg>';
 		footer.appendChild(fullReport);
-		panel.append(summary, error, tracker, suggestions, tracked, footer);
+		panel.append(summary, error, tracker, manual, suggestions, tracked, footer);
 		return panel;
 	}
 

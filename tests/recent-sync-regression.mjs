@@ -127,7 +127,7 @@ const runInitialProgressScenario = async () => {
 	assert.equal(loading.gateLocked, true);
 	assert.ok(Number(loading.gatePercent) > 0 && Number(loading.gatePercent) < 100);
     assert.equal((await managedIds(page)).length, 0, 'Cold catalog was exposed before its atomic commit');
-	assert.match(await page.locator('.pena-native-sync-chip').innerText(), /^Загружено 200\/401$/);
+	assert.match(await page.locator('.pena-native-sync-chip').innerText(), /^\d+%$/);
 	assert.equal(await page.locator('.pena-native-load-guard').isHidden(), false, 'Cold-start guard disappeared before the full snapshot');
 	assert.equal(await page.evaluate(() => !!document.querySelector('.pena-native-managed-list')?.inert), true, 'Cold catalog accepted interaction before commit');
 	assert.deepEqual(await page.evaluate(() => window.__recentHarness.nativeOpens()), []);
@@ -417,23 +417,51 @@ try {
     const sync = await syncState(page);
     assert.equal(sync.count, 401);
     assert.equal(sync.managedCount, 401);
-	assert.equal(sync.loadLimit, 500, 'The first launch did not default to 500 dialogs');
+	assert.equal(sync.loadLimit, 0, 'The first launch did not default to every available dialog');
     assert.equal(sync.phase, 'ready');
     assert.equal(sync.ready, true);
     assert.equal(sync.percent, 100);
     assert.equal(sync.error, '');
-    assert.match(await page.locator('.pena-native-sync-chip').innerText(), /^Готово 401$/);
+	assert.equal(await page.locator('.pena-native-sync-chip').isHidden(), true, 'Ready catalog kept a redundant status chip visible');
 	await page.waitForFunction(() => document.querySelector('.pena-native-managed-list')?._penaManagedState?.view?.length === 401);
 	assert.equal((await page.evaluate(() => window.__recentHarness.nativeState())).managedViewports, 1, 'Complete REST catalog was not mounted in the default view');
 	assertExactIds((await managedViewIds(page)).sort(), expectedIds(1, 401), 'Default visible view dropped script-loaded dialogs');
   });
 
-  await runScenario('legacy finite setting migrates once to the 500 default', async page => {
+	await runScenario('bogus zero total cannot cut off old dialogs', async page => {
+		await page.evaluate(() => {
+			window.__recentHarness.resetPlans();
+			const entries = window.__recentHarness.makeDataset(41001, 364, 'Ложный total');
+			window.__recentHarness.enqueuePlan({
+				name: 'bogus-zero-total-164',
+				pages: [entries.slice(0, 164), entries.slice(164)],
+				offsets: [0, 164],
+				pageSize: 164,
+				reportedTotal: 0,
+				delayMs: 2
+			});
+			window.__recentHarness.setCounters({ CHAT: {}, DIALOG: {}, CHAT_UNREAD: [], DIALOG_UNREAD: [] });
+		});
+		await startRefresh(page);
+		await page.waitForFunction(() => {
+			const sync = window.__PENA_RECENT_SYNC__;
+			return sync?.phase === 'ready' && !sync.inFlight && sync.windowCount === 364;
+		}, null, { timeout: 10000 });
+		const calls = await page.evaluate(() => window.__recentHarness.calls().filter(call => call.name === 'bogus-zero-total-164'));
+		assert.deepEqual(calls.map(call => call.offset), [0, 164], 'A false total=0 stopped pagination after the first 164 dialogs');
+		assertExactIds(await managedIds(page), expectedIds(41001, 364), 'Dialogs behind the false total=0 were lost');
+		const sync = await syncState(page);
+		assert.equal(sync.expectedTotal, 364, `Progress kept the impossible 164/0 total: ${JSON.stringify(sync)}`);
+		assert.equal(sync.loadedCount, 364, `Progress counter diverged from the loaded catalog: ${JSON.stringify(sync)}`);
+	});
+
+	await runScenario('legacy finite setting migrates once to all available', async page => {
 	const sync = await syncState(page);
-	assert.equal(sync.loadLimit, 500);
+	assert.equal(sync.loadLimit, 0);
 	assert.equal(sync.windowCount, 401);
 	assert.equal(await page.evaluate(() => localStorage.getItem('pena.dialogRecentLoadLimit.defaultAll.v1')), '1');
 	assert.equal(await page.evaluate(() => localStorage.getItem('pena.dialogRecentLoadLimit.default500.v2')), '1');
+	assert.equal(await page.evaluate(() => localStorage.getItem('pena.dialogRecentLoadLimit.defaultAll.v3')), '1');
   }, '?savedlimit=300');
 
   await runScenario('explicit finite setting survives after the default migration', async page => {
@@ -860,9 +888,9 @@ try {
 				throw new Error(`Mandatory detail gate did not start: ${JSON.stringify(diagnostic)}; ${error.message}`);
 			}
 			const verifying = await syncState(page);
-			assert.equal(verifying.gateLocked, true);
+			assert.equal(verifying.gateLocked, false);
 			assert.equal(verifying.controlledPendingCount, 1);
-			assert.equal(await page.locator('.pena-native-load-guard').isHidden(), false);
+			assert.equal(await page.locator('.pena-native-load-guard').isHidden(), true);
 			await page.locator('.pena-native-folder-tab[title="Старый контроль"]').click();
 			const pending = page.locator('.pena-native-remote-row[data-id="chat9000"]');
 			await pending.waitFor({ state: 'visible' });
@@ -1010,7 +1038,8 @@ try {
 	await page.waitForFunction(() => window.__PENA_RECENT_SYNC__?.detailsFailed === 1 && !window.__PENA_RECENT_SYNC__?.detailsInFlight && !window.__PENA_RECENT_SYNC__?.inFlight);
 	assert.equal((await syncState(page)).unavailableCount, 0);
 	const syncChip = page.locator('.pena-native-sync-chip');
-	assert.match(await syncChip.innerText(), /Не загружено 1/);
+	await page.waitForFunction(() => document.querySelector('.pena-native-sync-chip')?.textContent?.includes('Проверить 1'));
+	assert.match(await syncChip.innerText(), /Проверить 1/);
 	assert.match(await syncChip.getAttribute('class'), /--(?:warning|error)/);
 	assert.doesNotMatch(await syncChip.getAttribute('class'), /--ready/);
 	await page.locator('.pena-native-folder-tab[title="Старый контроль"]').click();
@@ -1059,7 +1088,7 @@ try {
     assert.equal(loading.pagesLoaded, 1);
     assert.equal(loading.percent, 50);
 	assert.equal(loading.gatePercent, 100);
-	assert.match(await page.locator('.pena-native-sync-chip').innerText(), /^Загружено 200\/401$/);
+	assert.equal(await page.locator('.pena-native-sync-chip').innerText(), '50%');
     assert.match(await page.locator('.pena-native-sync-status-text').innerText(), /200 из 401/);
     await page.evaluate(() => window.__recentHarness.releaseGate());
     await page.waitForFunction(() => window.__PENA_RECENT_SYNC__?.phase === 'ready' && !window.__PENA_RECENT_SYNC__?.inFlight);
@@ -1172,7 +1201,7 @@ try {
 	assert.deepEqual(calls.map(call => call.offset), [0, 200, 400, 600, 800]);
 	assertExactIds(await managedIds(page), expectedIds(13001, 451), 'Metadata-free overlap catalog lost dialogs');
 	const sync = await syncState(page);
-	assert.equal(sync.truncated, false);
+	assert.equal(sync.truncated, false, JSON.stringify(sync));
 	assert.equal(sync.managedCount, 451);
   });
 
@@ -1193,7 +1222,8 @@ try {
 	const calls = await page.evaluate(() => window.__recentHarness.calls().filter(call => call.name === 'metadata-free-stagnation-recovery'));
 	assert.deepEqual(calls.map(call => call.offset), [0, 200, 400, 600, 800, 1000]);
 	assertExactIds(await managedIds(page), expectedIds(31001, 300), 'Older dialogs after duplicate pages were lost');
-	assert.equal((await syncState(page)).truncated, false);
+	const sync = await syncState(page);
+	assert.equal(sync.truncated, false, JSON.stringify(sync));
   });
 
   await runScenario('transactional full refresh', async page => {

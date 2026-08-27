@@ -14,7 +14,7 @@
 ; ================================================================
 
 #define AppName      "BX24 Chat Sorter"
-#define AppVersion   "7.5.37"
+#define AppVersion   "7.5.39"
 #define AppPublisher "PENA Agency"
 #define AppURL       "https://github.com/dmikhailovspace-commits/bx24-extension"
 #define TaskName     "PENAAgencyUpdater"
@@ -75,6 +75,7 @@ Source: "..\..\extension\injected.css";                 DestDir: "{#StageDir}"; 
 Source: "..\..\extension\manifest.json";                DestDir: "{#StageDir}"; Flags: ignoreversion
 Source: "..\..\extension\popup.html";                   DestDir: "{#StageDir}"; Flags: ignoreversion
 Source: "..\..\extension\popup.js";                     DestDir: "{#StageDir}"; Flags: ignoreversion
+Source: "..\..\extension\fonts\*";                      DestDir: "{#StageDir}\fonts"; Flags: ignoreversion
 Source: "..\..\extension\icons\*";                      DestDir: "{#StageDir}\icons"; Flags: ignoreversion
 Source: "updater.ps1";                                  DestDir: "{#StageDir}"; Flags: ignoreversion
 Source: "pena_host.ps1";                                DestDir: "{#StageDir}"; Flags: ignoreversion

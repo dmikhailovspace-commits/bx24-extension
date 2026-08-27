@@ -186,7 +186,8 @@
           gateAtPage: Number.isInteger(spec?.gateAtPage) ? spec.gateAtPage : -1,
           delayMs: Math.max(0, Number(spec?.delayMs) || 0),
 		  errorMessage: String(spec?.errorMessage || 'REST harness error'),
-		  paginationMetadata: spec?.paginationMetadata !== false
+		  paginationMetadata: spec?.paginationMetadata !== false,
+		  reportedTotal: spec?.reportedTotal == null ? null : Math.max(0, Number(spec.reportedTotal) || 0)
         };
       };
       const enqueuePlan = spec => plans.push(normalizePlan(spec));
@@ -218,7 +219,9 @@
 		  error: () => null,
 		  data: () => ({ items: entries, hasMore: hasNext }),
 		  next: () => hasNext ? plan.offsets[pageIndex + 1] : false,
-		  total: () => plan.pages.reduce((sum, current) => sum + current.length, 0)
+		  total: () => plan.reportedTotal == null
+			? plan.pages.reduce((sum, current) => sum + current.length, 0)
+			: plan.reportedTotal
 		} : {
 		  error: () => null,
 		  data: () => ({ items: entries })
@@ -482,10 +485,14 @@
 		}
 		localStorage.setItem('pena.dialogRecentLoadLimit.v1', '100');
 		localStorage.setItem('pena.dialogRecentLoadLimit.defaultAll.v1', '1');
+		localStorage.setItem('pena.dialogRecentLoadLimit.defaultAll.v3', '1');
 	  }
 	  if (queryParams.has('savedlimit')) {
 		localStorage.setItem('pena.dialogRecentLoadLimit.v1', String(queryParams.get('savedlimit')));
-		if (queryParams.get('limitmigrated') === '1') localStorage.setItem('pena.dialogRecentLoadLimit.defaultAll.v1', '1');
+		if (queryParams.get('limitmigrated') === '1') {
+		  localStorage.setItem('pena.dialogRecentLoadLimit.defaultAll.v1', '1');
+		  localStorage.setItem('pena.dialogRecentLoadLimit.defaultAll.v3', '1');
+		}
 	  }
 	  if (queryParams.get('legacycache') === '1') {
 		const now = Date.now();
@@ -525,7 +532,7 @@
 		sortMode: 'date',
 		sortDirection: 'desc',
 		unreadOnly: false,
-		loadLimit: queryParams.get('limitmandatory') === '1' ? 100 : 500
+		loadLimit: queryParams.get('limitmandatory') === '1' ? 100 : 0
 	  }));
       localStorage.setItem('pena.filters.chats', JSON.stringify({ query: '' }));
 

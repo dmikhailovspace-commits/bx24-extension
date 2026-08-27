@@ -146,7 +146,7 @@ try {
     assert.equal(await page.locator('.test-host:not([hidden]) .pena-native-managed-viewport').count(), 1, `Default ${mode} mode did not expose the complete REST catalog`);
     let output = await readOutput(page);
     assert.equal(output.switcherCount, 1);
-	assert.equal(output.version, '7.5.37');
+	assert.equal(output.version, '7.5.39');
 	assert.equal(output.controlButtonCount, 0);
 	assert.equal(output.filterButtonCount, 1);
 	assert.equal(output.timeButtonCount, 1);
@@ -265,11 +265,25 @@ try {
 	await page.waitForFunction(() => document.querySelector('.pena-native-time-total-value')?.textContent === '1 ч 30 мин');
 	assert.match(await timePanel.locator('.pena-native-time-meta').textContent(), /2 задачи · 2 записи/);
 	assert.equal(await timePanel.locator('input[type="date"]').count(), 0);
+	const timeFonts = await timePanel.evaluate(panel => ({
+		ui: getComputedStyle(panel).fontFamily,
+		accent: getComputedStyle(panel.querySelector('.pena-native-time-total-value')).fontFamily,
+		tech: getComputedStyle(panel.querySelector('.pena-native-time-tracker-duration')).fontFamily
+	}));
+	assert.match(timeFonts.ui, /Onest Variable/);
+	assert.match(timeFonts.accent, /Unbounded Variable/);
+	assert.match(timeFonts.tech, /Consolas/);
 	const trackedToggle = timePanel.locator('.pena-native-time-tracked-toggle');
 	assert.match(await trackedToggle.textContent(), /Уже оттрекано · 2/);
 	await trackedToggle.click();
 	await page.waitForFunction(() => document.querySelectorAll('.pena-native-time-tracked-list .pena-native-time-task-row').length === 2);
 	assert.deepEqual(await timePanel.locator('.pena-native-time-tracked-list .pena-native-time-task-title').allTextContents(), ['Задача 101', 'Задача 102']);
+	await timePanel.locator('.pena-native-time-manual-task').selectOption('101');
+	await timePanel.locator('.pena-native-time-manual-hours').fill('1');
+	await timePanel.locator('.pena-native-time-manual-minutes').fill('15');
+	await timePanel.locator('.pena-native-time-manual-submit').click();
+	await page.waitForFunction(() => document.querySelector('.pena-native-time-total-value')?.textContent === '2 ч 45 мин');
+	assert.equal(await page.evaluate(() => Number(window.timeAddCalls[0]?.ARFIELDS?.SECONDS || 0)), 4500, `Manual duration was not saved in ${mode}`);
 	await page.evaluate(() => {
 		const link = document.createElement('a');
 		link.href = '/company/personal/user/7/tasks/task/view/303/';
@@ -293,12 +307,12 @@ try {
 	await page.waitForTimeout(1100);
 	await timePanel.locator('.pena-native-time-stop').click();
 	await page.waitForFunction(() => document.querySelector('.pena-native-time-stop')?.textContent === 'Повторить сохранение');
-	assert.equal(await page.evaluate(() => window.timeAddCalls.length), 1, `Failed elapsed-item write was not attempted in ${mode}`);
+	assert.equal(await page.evaluate(() => window.timeAddCalls.length), 2, `Failed elapsed-item write was not attempted in ${mode}`);
 	assert.ok(await page.evaluate(() => !!Object.keys(localStorage).find(key => key.startsWith('pena.timeActiveTracker.v1.'))), `Failed timer was lost in ${mode}`);
 	await timePanel.locator('.pena-native-time-stop').click();
 	await page.waitForFunction(() => !Object.keys(localStorage).some(key => key.startsWith('pena.timeActiveTracker.v1.')) && document.querySelector('.pena-native-time-tracked-label')?.textContent.includes('3'));
 	const addState = await page.evaluate(() => ({ calls: window.timeAddCalls.length, seconds: Number(window.timeAddCalls.at(-1)?.ARFIELDS?.SECONDS || 0) }));
-	assert.equal(addState.calls, 2, `Elapsed-item retry did not complete in ${mode}`);
+	assert.equal(addState.calls, 3, `Elapsed-item retry did not complete in ${mode}`);
 	assert.ok(addState.seconds >= 60, `Elapsed-item duration was truncated in ${mode}: ${JSON.stringify(addState)}`);
 	const duringTimePanel = await readOutput(page);
 	assert.ok(Math.abs(duringTimePanel.avatarGeometry.avatarLeft - beforeTimePanel.avatarGeometry.avatarLeft) < 0.5, `Time popover shifted avatars in ${mode}`);
@@ -506,8 +520,13 @@ try {
 		localStorage.removeItem('pena.nativeSearchQuery.v1.chats');
 		localStorage.removeItem('pena.nativeSearchQuery.v1.tasks');
 	});
-	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&lazy=1&initialTop=32&restDelay=300`);
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&lazy=1&initialTop=32&restDelay=300&autofocus=1`);
 	await page.locator('.recent-host .pena-native-chat-row[data-id="chat225"]').waitFor({ state: 'visible', timeout: 3000 });
+	assert.equal(
+		await page.locator('.recent-host input[type="search"]').evaluate(input => document.activeElement === input),
+		false,
+		'Bitrix search kept startup autofocus after PENA mounted'
+	);
 	await page.waitForFunction(() => window.__PENA_NATIVE_PREFETCH__?.status?.().originalActive === true, null, { timeout: 3000 });
 	const originalLoader = await page.locator('.recent-host .pena-native-original-load-guard').evaluate(guard => {
 		const card = guard.querySelector('.pena-native-load-card');
@@ -635,6 +654,30 @@ try {
 	assert.equal(passThrough.contentPaddingLeft, '2px', `Color marker changed Bitrix row layout: ${JSON.stringify(passThrough)}`);
 	const nativeSearch = page.locator('.recent-host input[type="search"]');
 	const nativeSearchRunsBefore = await page.evaluate(() => window.nativeSearchRuns);
+	await nativeSearch.fill('Чат 225');
+	await page.waitForFunction(() => {
+		const visible = Array.from(document.querySelectorAll('.recent-host .pena-native-chat-row')).filter(row => getComputedStyle(row).display !== 'none');
+		return visible.length === 1 && visible[0].dataset.id === 'chat225';
+	}, null, { timeout: 3000 });
+	const searchedMarker = await page.locator('.recent-host .pena-native-chat-row[data-id="chat225"]').evaluate(row => {
+		const avatar = row.querySelector('.test-avatar')?.getBoundingClientRect();
+		const ring = row.querySelector('.pena-native-avatar-ring')?.getBoundingClientRect();
+		return {
+			originalAvatar: !!row.querySelector('.test-avatar'),
+			marker: !!ring,
+			nativeFormatting: row.classList.contains('pena-native-chat-row') && !!row.querySelector('.bx-im-list-recent-item__container'),
+			geometryDelta: avatar && ring ? Math.max(
+				Math.abs(ring.left - avatar.left), Math.abs(ring.right - avatar.right),
+				Math.abs(ring.top - avatar.top), Math.abs(ring.bottom - avatar.bottom)
+			) : Infinity
+		};
+	});
+	assert.deepEqual(searchedMarker, {
+		originalAvatar: true,
+		marker: true,
+		nativeFormatting: true,
+		geometryDelta: 0
+	}, `Search stripped the native row or its color marker: ${JSON.stringify(searchedMarker)}`);
 	await nativeSearch.fill('Чат 5');
 	await page.waitForFunction(() => {
 		const visible = Array.from(document.querySelectorAll('.recent-host .pena-native-chat-row')).filter(row => getComputedStyle(row).display !== 'none');
@@ -872,6 +915,38 @@ try {
 	assert.equal(nativeLoadPerformance.truncated, false, `Complete REST catalog was reported as partial: ${JSON.stringify(nativeLoadPerformance)}`);
 	assert.equal(nativeLoadPerformance.sourceTop, 0, `REST catalog loading moved the native viewport: ${JSON.stringify(nativeLoadPerformance)}`);
 	assert.ok(nativeLoadPerformance.duration >= 0 && nativeLoadPerformance.duration < 10000, `Complete catalog missed the startup performance target: ${JSON.stringify(nativeLoadPerformance)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&lazy=1&catalogRows=620&lazyChunk=25&lazyDelay=20&restDelay=20&restIncompleteZero=1`);
+	try {
+		await page.waitForFunction(() => {
+			const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+			return status?.lastApiResult?.totalMetadataInconsistent === true &&
+				(status.modeCounts?.chats || 0) >= 620 &&
+				status.originalActive === false &&
+				!status.backgroundModes?.includes('chats');
+		}, null, { timeout: 15000 });
+	} catch (error) {
+		const diagnostic = await page.evaluate(() => ({
+			prefetch: window.__PENA_NATIVE_PREFETCH__?.status?.() || null,
+			sync: window.__PENA_RECENT_SYNC__ || null,
+			restCalls: window.nativeRestCalls || [],
+			sourceTop: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0
+		}));
+		throw new Error(`False REST total=0 did not trigger complete native backfill: ${JSON.stringify(diagnostic)}; ${error.message}`);
+	}
+	const zeroTotalRecovery = await page.evaluate(() => ({
+		prefetch: window.__PENA_NATIVE_PREFETCH__?.status?.() || null,
+		sync: window.__PENA_RECENT_SYNC__ || null,
+		overlays: document.querySelectorAll('.pena-native-original-load-guard,.pena-native-load-guard:not([hidden])').length,
+		sourceTop: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0
+	}));
+	assert.equal(zeroTotalRecovery.prefetch.lastApiResult.received, 164, `Regression did not reproduce the 164-dialog API window: ${JSON.stringify(zeroTotalRecovery)}`);
+	assert.notEqual(zeroTotalRecovery.prefetch.lastApiResult.expectedTotal, 0, `Invalid API total leaked into the progress state: ${JSON.stringify(zeroTotalRecovery)}`);
+	assert.ok(zeroTotalRecovery.sync.windowCount >= 620, `Old dialogs were not recovered after 164/0: ${JSON.stringify(zeroTotalRecovery)}`);
+	assert.notEqual(zeroTotalRecovery.sync.expectedTotal, 0, `Status regressed to a zero denominator: ${JSON.stringify(zeroTotalRecovery)}`);
+	assert.equal(zeroTotalRecovery.overlays, 0, `Loader stayed over the list after native backfill: ${JSON.stringify(zeroTotalRecovery)}`);
+	assert.equal(zeroTotalRecovery.sourceTop, 0, `Native backfill moved the visible scroll position: ${JSON.stringify(zeroTotalRecovery)}`);
 
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&lazy=1&catalogRows=620&lazyChunk=25&lazyDelay=100&restDelay=80`);
 	await page.waitForFunction(() => window.__PENA_NATIVE_PREFETCH__?.status?.().originalActive === true, null, { timeout: 3000 });
