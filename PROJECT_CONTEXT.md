@@ -9,8 +9,8 @@
 - Release date: **2026-08-27**
 - Runtime files: **18**
 - Regression suites: **14**
-- Windows artifact: _not built_
-- macOS artifact: _not built_
+- Windows artifact: `dist/PENA_Agency_Windows_v7.5.43.exe` - SHA-256: `3B968344A9EFC0DE3533168D65B36D122DB538E405D5E7C01E50C0BA1F704678`
+- macOS artifact: `dist/PENA_Agency_macOS_Universal_v7.5.43.dmg` - SHA-256: `FE76AD34B157C90005D0914E13BBAC77F139132A7C8BA24871E3BC5FCD0F2553`
 <!-- AUTO:END -->
 
 ## Назначение
