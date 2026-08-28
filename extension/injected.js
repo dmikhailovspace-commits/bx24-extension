@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.48';
+	window.__ANITREC_RUNNING__ = '7.5.49';
 
-	const VER = '7.5.48';
+	const VER = '7.5.49';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -3188,12 +3188,21 @@
 				const nextTitle = title || existing.title;
 				const nextAddedAt = Number(meta?.lastMessageTs) || Number(existing.addedAt) || Date.now();
 				const nextDialogId = _normalizeDialogControlRestDialogId(meta?.restDialogId || existing.dialogId || id);
-				if (existing.title !== nextTitle || Number(existing.addedAt) !== nextAddedAt || existing.dialogId !== nextDialogId || existing.recentMissing) {
+				const nextTaskId = String(meta?.taskId || existing.taskId || '');
+				const nextTaskUrl = String(meta?.taskUrl || existing.taskUrl || '');
+				if (
+					existing.title !== nextTitle ||
+					Number(existing.addedAt) !== nextAddedAt ||
+					existing.dialogId !== nextDialogId ||
+					String(existing.taskId || '') !== nextTaskId ||
+					String(existing.taskUrl || '') !== nextTaskUrl ||
+					existing.recentMissing
+				) {
 					existing.title = nextTitle;
 					existing.addedAt = nextAddedAt;
 					existing.dialogId = nextDialogId;
-					existing.taskId = meta?.taskId || existing.taskId || '';
-					existing.taskUrl = meta?.taskUrl || existing.taskUrl || '';
+					existing.taskId = nextTaskId;
+					existing.taskUrl = nextTaskUrl;
 					delete existing.recentMissing;
 					updated += 1;
 				}
@@ -3548,7 +3557,9 @@
 				const gateWasBlocked = _isDialogRecentInteractionBlocked();
 				// The complete catalog is already committed atomically. Folder access and
 				// avatar checks continue silently and must not create a second blocking load.
-				if (gateWasBlocked) _completeDialogRecentInteractionGate();
+				if (gateWasBlocked && options.deferInteractionGateCompletion !== true) {
+					_completeDialogRecentInteractionGate();
+				}
 				let detailResult;
 				_dialogRecentDetailUiSilent = true;
 				try {
@@ -3686,6 +3697,9 @@
 			const previous = _getDialogRecentMeta(id) || {};
 			const displayTitle = String(task?.TITLE ?? task?.title ?? previous.displayTitle ?? '').replace(/\s+/g, ' ').trim();
 			const timeTrackingEnabled = _readDialogTaskTimeTrackingFlag(task);
+			const taskActivityTs = _parseDialogRecentDate(
+				task?.ACTIVITY ?? task?.activity ?? task?.CHANGED_DATE ?? task?.changedDate ?? ''
+			);
 			const meta = Object.assign({}, previous, {
 				id,
 				entityKind: 'chat',
@@ -3696,6 +3710,7 @@
 				taskUrl: _buildTaskUrl(rawTaskId),
 				restDialogId: _normalizeDialogControlRestDialogId(id),
 				timeTrackingEnabled,
+				lastMessageTs: Math.max(0, Number(previous.lastMessageTs) || taskActivityTs || 0),
 				taskCatalogFetchedAt: fetchedAt,
 				availability: previous.availability === 'unavailable' ? 'unavailable' : 'available',
 				fetchedAt
@@ -3716,7 +3731,7 @@
 		_dialogTaskCatalogSyncPromise = (async () => {
 			const select = ['ID', 'TITLE', 'CHAT_ID', 'ALLOW_TIME_TRACKING', 'ACTIVITY', 'CHANGED_DATE'];
 			const pageSize = 50;
-			const maxPages = 100;
+			const maxPages = _DIALOG_TASK_CATALOG_MAX_PAGES;
 			const first = await _callBxRestPageWithTimeout('tasks.task.list', { select, start: 0 }, 12000);
 			let rows = _extractDialogTaskCatalogRows(first?.data);
 			let pages = 1;
@@ -3748,9 +3763,11 @@
 				const id = String(task?.ID ?? task?.id ?? '').trim();
 				if (id) unique.set(id, task);
 			});
-			const merged = _mergeDialogTaskCatalogRows(Array.from(unique.values()));
+			const uniqueRows = Array.from(unique.values());
+			const merged = options.deferMerge === true ? 0 : _mergeDialogTaskCatalogRows(uniqueRows);
 			_dialogTaskCatalogComplete = complete;
-			return { count: merged, tasks: unique.size, pages, expectedTotal: total, complete };
+			_dialogTaskCatalogFetchedAt = Date.now();
+			return { count: merged, tasks: unique.size, pages, expectedTotal: total, complete, rows: uniqueRows };
 		})().finally(() => { _dialogTaskCatalogSyncPromise = null; });
 		return _dialogTaskCatalogSyncPromise;
 	}
@@ -3760,40 +3777,48 @@
 		const container = findContainer();
 		if (!container) return { count: _countDialogRecentMeta(), skipped: true, unavailable: true };
 		const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
-		if (_dialogRecentApiLoadPromise) {
-			if (_dialogRecentApiLoadMode === mode) return _dialogRecentApiLoadPromise;
-			const activeLoad = _dialogRecentApiLoadPromise;
-			return activeLoad.catch(() => null).then(() => {
-				const liveContainer = findContainer();
-				const liveMode = liveContainer?.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
-				if (!liveContainer || liveMode !== mode) {
-					return { count: _countDialogRecentMeta(), skipped: true, modeChanged: true };
-				}
-				return _runDialogRecentApiCatalogLoad(options);
-			});
-		}
+		if (_dialogRecentApiLoadPromise) return _dialogRecentApiLoadPromise;
 		const showOriginalOverlay = _isDialogControlNativePassThrough() && options.silent !== true;
-		_dialogNativeBackgroundPendingModes.add(mode);
+		_dialogNativeBackgroundPendingModes.add('chats');
+		_dialogNativeBackgroundPendingModes.add('tasks');
 		_dialogRecentApiLoadActive = true;
-		_dialogRecentApiLoadMode = mode;
+		_dialogRecentApiLoadMode = 'all';
 		if (showOriginalOverlay) {
 			_syncDialogNativeOriginalLoadUi(container);
 		}
 		_dialogRecentApiLoadPromise = (async () => {
 			try {
+				// Both catalogs start together. tasks.task.list is kept separate from the
+				// recent-map commit, then merged again after that atomic commit so a fast
+				// task response cannot be overwritten by im.recent.list.
+				const taskCatalogPromise = _syncDialogTaskCatalog({ force: true, deferMerge: true }).then(
+					value => ({ value, error: null }),
+					error => ({ value: null, error })
+				);
 				const result = await _syncDialogRecentData({
 					...options,
 					full: true,
 					force: true,
 					fastBatch: true,
 					completeCatalog: true,
+					deferInteractionGateCompletion: true,
 					reason: String(options.reason || 'startup-fast-catalog')
 				});
-				if (result?.owner === false) return { ...result, api: true };
-				const taskCatalog = mode === 'tasks'
-					? await _syncDialogTaskCatalog({ force: options.force === true })
-					: null;
-				_hydrateDialogControlItemsFromRecent(mode, { pruneMissing: false });
+				const taskCatalogOutcome = await taskCatalogPromise;
+				if (result?.owner === false) {
+					if (_isDialogRecentInteractionBlocked()) _completeDialogRecentInteractionGate();
+					return { ...result, api: true };
+				}
+				if (taskCatalogOutcome.error) throw taskCatalogOutcome.error;
+				const taskCatalog = taskCatalogOutcome.value;
+				const mergedTasks = Array.isArray(taskCatalog?.rows) ? _mergeDialogTaskCatalogRows(taskCatalog.rows) : 0;
+				const hydratedTasks = _hydrateAllDialogControlModesFromRecent({ pruneMissing: false });
+				if (mergedTasks || hydratedTasks) {
+					_dialogRecentDataRevision += 1;
+					_dialogRecentRepositoryNeedsFullCommit = true;
+					_scheduleDialogRecentCacheWrite();
+					_notifyDialogRecentDataChanged();
+				}
 				const apiLoadedCount = Math.max(
 					0,
 					Number(result?.received) || 0,
@@ -3801,10 +3826,11 @@
 					Number(_dialogRecentWindowCount) || 0
 				);
 				const apiExpectedTotal = Number(result?.expectedTotal);
-				const apiComplete = result?.catalogComplete === true && (mode !== 'tasks' || taskCatalog?.complete === true);
-				const modeLoadedCount = _getDialogRecentUniqueMeta().filter(meta =>
-					mode === 'tasks' ? meta.isTask === true : meta.isTask !== true
-				).length;
+				const recentComplete = result?.catalogComplete === true;
+				const taskComplete = taskCatalog?.complete === true;
+				const apiComplete = recentComplete && taskComplete;
+				const chatLoadedCount = _getDialogRecentUniqueMeta().filter(meta => meta.isTask !== true).length;
+				const taskLoadedCount = _getDialogRecentUniqueMeta().filter(meta => meta.isTask === true).length;
 				_dialogRecentLastApiResult = {
 					count: Number(result?.count) || 0,
 					received: Number(result?.received) || 0,
@@ -3814,26 +3840,40 @@
 					complete: apiComplete
 				};
 				_dialogRecentWindowCount = Math.max(_dialogRecentWindowCount, apiLoadedCount);
-				if (apiComplete) _dialogNativePrefetchedModes.add(mode);
-				else _dialogNativePrefetchedModes.delete(mode);
-				_dialogNativeModeCounts.set(mode, Math.max(Number(_dialogNativeModeCounts.get(mode)) || 0, modeLoadedCount));
+				if (recentComplete) _dialogNativePrefetchedModes.add('chats');
+				else _dialogNativePrefetchedModes.delete('chats');
+				if (taskComplete) _dialogNativePrefetchedModes.add('tasks');
+				else _dialogNativePrefetchedModes.delete('tasks');
+				_dialogNativeModeCounts.set('chats', Math.max(Number(_dialogNativeModeCounts.get('chats')) || 0, chatLoadedCount));
+				_dialogNativeModeCounts.set('tasks', Math.max(Number(_dialogNativeModeCounts.get('tasks')) || 0, taskLoadedCount));
 				if (!apiComplete) {
-					_dialogNativeBackgroundPendingModes.add(mode);
+					if (!recentComplete) _dialogNativeBackgroundPendingModes.add('chats');
+					if (!taskComplete) _dialogNativeBackgroundPendingModes.add('tasks');
 					_scheduleDialogRecentApiCompletionRetry('catalog-truncated');
 				} else {
 					_dialogRecentTruncated = false;
-					if (_dialogNativeOriginalScrollActive && _dialogNativeOriginalScrollMode === mode) {
+					if (_dialogNativeOriginalScrollActive) {
 						_dialogNativeOriginalScrollCancel?.();
 					}
-					_dialogNativeBackgroundPendingModes.delete(mode);
+					_dialogNativeBackgroundPendingModes.delete('chats');
+					_dialogNativeBackgroundPendingModes.delete('tasks');
 					_dialogRecentApiRetryAttempt = 0;
 					if (_dialogRecentApiRetryTimer) clearTimeout(_dialogRecentApiRetryTimer);
 					_dialogRecentApiRetryTimer = null;
 				}
+				if (_isDialogRecentInteractionBlocked()) _completeDialogRecentInteractionGate();
 				_publishDialogRecentSyncState();
-				return { ...result, taskCatalog, api: true, complete: apiComplete, modeCount: modeLoadedCount };
+				return {
+					...result,
+					taskCatalog,
+					api: true,
+					complete: apiComplete,
+					modeCount: mode === 'tasks' ? taskLoadedCount : chatLoadedCount,
+					modeCounts: { chats: chatLoadedCount, tasks: taskLoadedCount }
+				};
 			} catch (error) {
 				_dialogRecentLastApiResult = { error: String(error?.message || error || 'unknown') };
+				if (_isDialogRecentInteractionBlocked()) _failDialogRecentInteractionGate(error);
 				throw error;
 			} finally {
 				_dialogRecentApiLoadPromise = null;
@@ -4166,7 +4206,8 @@
 		const host = sourceViewport?.parentElement || null;
 		if (!host || host === document.body || host === document.documentElement) return null;
 		let overlay = host.querySelector(':scope > .pena-native-original-load-guard');
-		const apiCatalogBlocking = _dialogRecentApiLoadActive && _dialogRecentProgress.phase === 'full-sync';
+		const apiCatalogBlocking = (_dialogRecentApiLoadActive && _dialogRecentProgress.phase === 'full-sync') ||
+			!!_dialogTaskCatalogSyncPromise;
 		if (!_dialogNativeOriginalScrollActive && !apiCatalogBlocking) {
 			const completed = overlay && _dialogRecentProgress.phase === 'ready' && !_dialogRecentLastError;
 			const shownAt = Number(overlay?.dataset?.penaShownAt) || 0;
@@ -4196,14 +4237,15 @@
 		['left', 'top', 'width', 'height'].forEach(property => overlay.style.removeProperty(property));
 		overlay.style.setProperty('inset', '0');
 		delete overlay.dataset.penaGeometryReady;
-		const expectedTotal = Number.isFinite(_dialogRecentProgress.expectedTotal)
+		const taskCatalogTail = !!_dialogTaskCatalogSyncPromise && _dialogRecentProgress.phase !== 'full-sync';
+		const expectedTotal = !taskCatalogTail && Number.isFinite(_dialogRecentProgress.expectedTotal)
 			? Math.max(0, Number(_dialogRecentProgress.expectedTotal))
 			: null;
 		_syncDialogRecentLoadOverlay(
 			overlay,
 			Math.max(0, Number(_dialogRecentProgress.loadedCount) || 0),
 			expectedTotal,
-			_dialogRecentProgress.phase === 'full-sync' || _dialogRecentProgress.phase === 'native-scroll'
+			!taskCatalogTail && (_dialogRecentProgress.phase === 'full-sync' || _dialogRecentProgress.phase === 'native-scroll')
 				? window.__PENA_RECENT_SYNC__?.percent
 				: null
 		);
@@ -4454,6 +4496,10 @@
 			originalActive: _dialogNativeOriginalScrollActive || _dialogNativeOriginalScrollFinishing || (_dialogRecentApiLoadActive && _dialogRecentProgress.phase === 'full-sync'),
 			apiActive: _dialogRecentApiLoadActive,
 			apiMode: _dialogRecentApiLoadMode,
+			taskCatalogComplete: _dialogTaskCatalogComplete,
+			taskCatalogFetchedAt: _dialogTaskCatalogFetchedAt,
+			catalogTtlMs: _getDialogCompleteCatalogTtlMs(),
+			freshModes: ['chats', 'tasks'].filter(mode => _isDialogModeCatalogFresh(mode)),
 			mode: _dialogNativePrefetchMode || _pMode(),
 			originalMode: _dialogNativeOriginalScrollMode || '',
 			count: _dialogRecentWindowCount,
@@ -4515,6 +4561,21 @@
 		}, Math.max(0, Number(options.delay) || 0));
 	}
 
+	function _getDialogCompleteCatalogTtlMs() {
+		const testTtl = Number(window.__PENA_TEST_DIALOG_CATALOG_TTL_MS__);
+		return Number.isFinite(testTtl) && testTtl >= 50
+			? testTtl
+			: _DIALOG_RECENT_FULL_REFRESH_MS;
+	}
+
+	function _isDialogModeCatalogFresh(mode, now = Date.now()) {
+		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
+		if (!_dialogNativePrefetchedModes.has(targetMode)) return false;
+		if (targetMode === 'tasks' && !_dialogTaskCatalogComplete) return false;
+		const completedAt = targetMode === 'tasks' ? _dialogTaskCatalogFetchedAt : _dialogRecentLastFullAt;
+		return completedAt > 0 && Math.max(0, Number(now) || Date.now()) - completedAt < _getDialogCompleteCatalogTtlMs();
+	}
+
 	function _scheduleDialogNativeModeLoad(reason = 'mode-enter', delay = 80) {
 		if (IS_OL_FRAME || window.__PENA_FORCE_REST_CATALOG__ === true) return;
 		if (_isDialogControlNativePassThrough()) {
@@ -4524,7 +4585,8 @@
 				const container = findContainer();
 				if (!container || !isInternalChatsDOM()) return;
 				const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
-				if (_dialogNativePrefetchedModes.has(mode)) return;
+				if (_isDialogModeCatalogFresh(mode)) return;
+				_dialogNativePrefetchedModes.delete(mode);
 				if (_dialogRecentRuntimeStarting) {
 					_scheduleDialogNativeModeLoad(reason, 140);
 					return;
@@ -4544,10 +4606,11 @@
 			const container = findContainer();
 			if (!container || !isInternalChatsDOM()) return;
 			const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
-			if (_dialogNativePrefetchedModes.has(mode)) {
+			if (_isDialogModeCatalogFresh(mode)) {
 				if (_isDialogRecentInteractionBlocked()) _completeDialogRecentInteractionGate();
 				return;
 			}
+			_dialogNativePrefetchedModes.delete(mode);
 			if (_dialogRecentRuntimeStarting) {
 				_scheduleDialogNativeModeLoad(reason, 140);
 				return;
@@ -4608,10 +4671,11 @@
 			const scheduleFreshCatalog = reason => {
 				if (document.hidden || !isInternalChatsDOM()) return;
 				const now = Date.now();
-				const stale = !_dialogRecentLastSuccessAt || now - _dialogRecentLastSuccessAt >= _DIALOG_RECENT_REFRESH_STALE_MS;
+				const headStale = !_dialogRecentLastSuccessAt || now - _dialogRecentLastSuccessAt >= _DIALOG_RECENT_REFRESH_STALE_MS;
+				const completeCatalogStale = !_isDialogModeCatalogFresh('chats', now) || !_isDialogModeCatalogFresh('tasks', now);
 				const needsCompletion = _dialogNativeBackgroundPendingModes.size > 0;
-				if (!stale && !needsCompletion) return;
-				const full = needsCompletion || !_dialogRecentLastFullAt || now - _dialogRecentLastFullAt >= _DIALOG_RECENT_FULL_REFRESH_MS;
+				if (!headStale && !completeCatalogStale && !needsCompletion) return;
+				const full = needsCompletion || completeCatalogStale;
 				_scheduleDialogRecentSync({ delay: 120, force: true, full, reason });
 			};
 			_dialogRecentSyncTimer = setInterval(() => scheduleFreshCatalog('periodic-freshness'), _DIALOG_RECENT_REFRESH_STALE_MS);
@@ -5095,6 +5159,7 @@ let _dialogControlTitleLastSyncAt = 0;
 	const _DIALOG_RECENT_FALLBACK_BUDGET_MS = 10000;
 	const _DIALOG_RECENT_REFRESH_STALE_MS = 60 * 1000;
 	const _DIALOG_RECENT_FULL_REFRESH_MS = 15 * 60 * 1000;
+	const _DIALOG_TASK_CATALOG_MAX_PAGES = 500;
 	const _DIALOG_RECENT_DELTA_OVERLAP_MS = 60 * 1000;
 	const _DIALOG_RECENT_FULL_MS = 24 * 60 * 60 * 1000;
 	const _DIALOG_RECENT_DELTA_MAX_AGE_MS = 6 * 24 * 60 * 60 * 1000;
@@ -5179,6 +5244,7 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogRecentLastApiResult = null;
 	let _dialogTaskCatalogSyncPromise = null;
 	let _dialogTaskCatalogComplete = false;
+	let _dialogTaskCatalogFetchedAt = 0;
 	let _dialogRecentLastAttemptAt = 0;
 	let _dialogRecentLastSuccessAt = 0;
 	let _dialogRecentLastFullAt = 0;

@@ -146,7 +146,7 @@ try {
     assert.equal(await page.locator('.test-host:not([hidden]) .pena-native-managed-viewport').count(), 1, `Default ${mode} mode did not expose the complete REST catalog`);
     let output = await readOutput(page);
     assert.equal(output.switcherCount, 1);
-	assert.equal(output.version, '7.5.48');
+	assert.equal(output.version, '7.5.49');
 	assert.equal(output.controlButtonCount, 0);
 	assert.equal(output.filterButtonCount, 1);
 	assert.equal(output.timeButtonCount, 1);
@@ -1312,26 +1312,31 @@ try {
 	}, null, { timeout: 12000 });
 	assert.equal(await page.locator('.recent-host .pena-native-original-load-guard').count(), 0, 'Loader remained after the unified catalog and folder verification cycle');
 
-	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&restDelay=250`);
-	await page.waitForFunction(() => {
-		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
-		return status?.loadedModes?.includes('chats') && status.active === false;
-	}, null, { timeout: 8000 });
-	await switchMode(page);
-	await page.locator('.task-host .pena-native-load-guard:not([hidden])').waitFor({ state: 'visible', timeout: 3000 });
-	const taskLoader = await page.locator('.task-host .pena-native-load-guard:not([hidden])').evaluate(guard => {
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&managedApi=1&restDelay=250`);
+	await page.locator('.recent-host .pena-native-load-guard:not([hidden])').waitFor({ state: 'visible', timeout: 3000 });
+	const startupLoader = await page.locator('.recent-host .pena-native-load-guard:not([hidden])').evaluate(guard => {
 		const card = guard.querySelector('.pena-native-load-card');
 		const outer = guard.getBoundingClientRect();
 		const inner = card.getBoundingClientRect();
 		return inner.top - outer.top;
 	});
-	assert.ok(taskLoader >= 18 && taskLoader <= 30, `Task mode loader is not near the top: ${taskLoader}`);
+	assert.ok(startupLoader >= 18 && startupLoader <= 30, `Catalog loader is not near the top: ${startupLoader}`);
 	await page.waitForFunction(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
-		return status?.loadedModes?.includes('tasks') && status.apiActive === false && window.__PENA_RECENT_SYNC__?.gateReady;
+		const taskCalls = (window.nativeRestCalls || []).filter(call => call.method === 'tasks.task.list').length;
+		return status?.loadedModes?.includes('chats') && status?.loadedModes?.includes('tasks') &&
+			status.active === false && status.apiActive === false && status.taskCatalogComplete === true &&
+			window.__PENA_RECENT_SYNC__?.gateReady && taskCalls > 0;
 	}, null, { timeout: 8000 });
+	const taskCallsBeforeSwitch = await page.evaluate(() => (window.nativeRestCalls || []).filter(call => call.method === 'tasks.task.list').length);
+	await switchMode(page);
+	await page.waitForTimeout(500);
+	assert.equal(await page.locator('.task-host .pena-native-load-guard:not([hidden])').count(), 0,
+		'Switching to an eagerly loaded task catalog restarted the blocking loader');
+	assert.equal(await page.evaluate(() => (window.nativeRestCalls || []).filter(call => call.method === 'tasks.task.list').length), taskCallsBeforeSwitch,
+		'Switching to a fresh task catalog restarted tasks.task.list');
 	const loadedModes = await page.evaluate(() => window.__PENA_NATIVE_PREFETCH__.status().loadedModes.slice().sort());
-	assert.deepEqual(loadedModes, ['chats', 'tasks'], 'Mode switch did not build independent page-lifetime catalogs');
+	assert.deepEqual(loadedModes, ['chats', 'tasks'], 'Startup did not build both page-lifetime catalogs');
 	await switchMode(page);
 	await page.waitForTimeout(500);
 	assert.equal(await page.evaluate(() => window.__PENA_NATIVE_PREFETCH__.status().active), false, 'Returning to an already loaded mode restarted traversal');
@@ -1340,7 +1345,7 @@ try {
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&restDelay=350`);
 	await page.waitForFunction(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
-		return status?.apiActive && status?.apiMode === 'chats';
+		return status?.apiActive && status?.apiMode === 'all';
 	}, null, { timeout: 3000 });
 	const initialLoaderValue = await page.locator('.recent-host .pena-native-original-load-guard .pena-native-load-value').textContent();
 	assert.notEqual(initialLoaderValue, '0%', 'Loader displayed a false zero-percent state before Bitrix returned the total');
@@ -1383,6 +1388,49 @@ try {
 	}));
 	assert.ok(taskCatalogState.modeCount >= 21 && taskCatalogState.stored >= 21 && taskCatalogState.taskListCalls > 0,
 		`Task chats stayed limited to the native viewport: ${JSON.stringify(taskCatalogState)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&taskRecentGeneric=1&nativeCatalog=1&passThrough=1&catalogRows=260&taskCatalogRows=260`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		const stored = JSON.parse(localStorage.getItem('pena.dialogControl.v1.tasks') || '[]');
+		return status?.loadedModes?.includes('tasks') && status.taskCatalogComplete === true &&
+			stored.filter(item => item.type !== 'folder').length >= 265 && !status.apiActive;
+	}, null, { timeout: 12000 });
+	const deepTaskCatalog = await page.evaluate(() => {
+		const tasks = JSON.parse(localStorage.getItem('pena.dialogControl.v1.tasks') || '[]').filter(item => item.type !== 'folder');
+		return {
+			stored: tasks.length,
+			oldTask: tasks.find(item => item.id === 'chat404') || null,
+			taskListCalls: window.nativeRestCalls.filter(call => call.method === 'tasks.task.list').length,
+			batchSizes: window.nativeBatchSizes.slice()
+		};
+	});
+	assert.ok(deepTaskCatalog.stored >= 265 && deepTaskCatalog.taskListCalls > 0 && deepTaskCatalog.batchSizes.some(size => size >= 5),
+		`Multi-page task catalog stopped before all available tasks: ${JSON.stringify(deepTaskCatalog)}`);
+	assert.equal(deepTaskCatalog.oldTask?.addedAt, Date.parse('2024-01-15T09:00:00.000Z'),
+		`Old task lost its real activity date and cannot be sorted chronologically: ${JSON.stringify(deepTaskCatalog.oldTask)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&catalogTtl=120`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.freshModes?.length === 2 && status.taskCatalogComplete === true && !status.apiActive;
+	}, null, { timeout: 8000 });
+	const beforeTtlRefresh = await page.evaluate(() => ({
+		taskCalls: window.nativeRestCalls.filter(call => call.method === 'tasks.task.list').length,
+		recentCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').length,
+		taskFetchedAt: window.__PENA_NATIVE_PREFETCH__.status().taskCatalogFetchedAt
+	}));
+	await page.waitForTimeout(180);
+	await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+	await page.waitForFunction(before => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		const taskCalls = window.nativeRestCalls.filter(call => call.method === 'tasks.task.list').length;
+		const recentCalls = window.nativeRestCalls.filter(call => call.method === 'im.recent.list').length;
+		return !status.apiActive && status.freshModes.length === 2 && status.taskCatalogFetchedAt > before.taskFetchedAt &&
+			taskCalls > before.taskCalls && recentCalls > before.recentCalls;
+	}, beforeTtlRefresh, { timeout: 8000 });
 
   await page.goto(`${base}/tests/native-route-harness.html`);
 	await page.locator('.pena-native-folder-switcher').waitFor({ state: 'visible', timeout: 3000 });

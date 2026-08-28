@@ -74,8 +74,11 @@
 	}
 	window.__PENA_FORCE_REST_CATALOG__ = new URLSearchParams(location.search).get('nativeCatalog') !== '1';
 	window.__PENA_TEST_NATIVE_SCROLL_MAX_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('startupBudget')) || 0);
+	window.__PENA_TEST_DIALOG_CATALOG_TTL_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('catalogTtl')) || 0);
 	window.__PENA_TEST_MANAGED_CATALOG__ = !nativePassThrough;
-	window.__PENA_TEST_NATIVE_SCROLL__ = !nativePassThrough && new URLSearchParams(location.search).get('nativeCatalog') === '1';
+	window.__PENA_TEST_NATIVE_SCROLL__ = !nativePassThrough &&
+		new URLSearchParams(location.search).get('nativeCatalog') === '1' &&
+		new URLSearchParams(location.search).get('managedApi') !== '1';
     const mode = new URLSearchParams(location.search).get('mode') === 'tasks' ? 'tasks' : 'chats';
 	const clonePanel = new URLSearchParams(location.search).get('clone') === '1';
 	const relocatePanel = new URLSearchParams(location.search).get('relocate') === '1';
@@ -250,16 +253,22 @@
 	  }
 	}));
 	const taskRecentGeneric = new URLSearchParams(location.search).get('taskRecentGeneric') === '1';
-	const taskCatalogEntries = recentEntries.map(entry => ({
-		ID: String(entry.chat_id),
-		TITLE: entry.title,
-		CHAT_ID: String(entry.chat_id),
-		ALLOW_TIME_TRACKING: String(entry.chat_id) === '405' ? 'N' : 'Y'
-	})).concat(['101', '102', '303', '404', '405'].map(taskId => ({
+	const taskCatalogRows = Math.max(0, Number(new URLSearchParams(location.search).get('taskCatalogRows')) || 24);
+	const taskCatalogEntries = Array.from({ length: taskCatalogRows }, (_, index) => {
+		const taskId = String(50000 + index);
+		return {
+			ID: taskId,
+			TITLE: `Каталожная задача ${index + 1}`,
+			CHAT_ID: taskId,
+			ALLOW_TIME_TRACKING: 'Y',
+			ACTIVITY: new Date(Date.UTC(2025, 0, 1 + (index % 28), 9, 0, 0)).toISOString()
+		};
+	}).concat(['101', '102', '303', '404', '405'].map(taskId => ({
 		ID: taskId,
 		TITLE: `Задача ${taskId}`,
 		CHAT_ID: taskId,
-		ALLOW_TIME_TRACKING: taskId === '405' ? 'N' : 'Y'
+		ALLOW_TIME_TRACKING: taskId === '405' ? 'N' : 'Y',
+		ACTIVITY: taskId === '404' ? '2024-01-15T09:00:00.000Z' : `2026-01-${String((Number(taskId) % 20) + 1).padStart(2, '0')}T09:00:00.000Z`
 	})));
 	window.timeRestCalls = [];
 	window.timeAddCalls = [];
