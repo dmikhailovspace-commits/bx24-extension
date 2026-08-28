@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.46';
+	window.__ANITREC_RUNNING__ = '7.5.47';
 
-	const VER = '7.5.46';
+	const VER = '7.5.47';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -5203,6 +5203,7 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogTimeSavingActivityId = '';
 	let _dialogTimeEditingActivityId = '';
 	let _dialogTimeDeleteConfirmTaskId = '';
+	let _dialogTimeTrackerCancelConfirmTaskId = '';
 	let _dialogTimeManualError = '';
 	let _dialogTimeManualExpanded = false;
 	let _dialogTimeTrackedExpanded = false;
@@ -8916,6 +8917,7 @@ if (_presetChannel) {
 		const taskId = String(task?.taskId || '').trim();
 		if (!/^\d+$/.test(taskId)) return;
 		const title = _getDialogTimeTaskTitle(taskId, task?.title);
+		_dialogTimeTrackerCancelConfirmTaskId = '';
 		const tracker = { taskId, title, dialogId: String(task?.dialogId || ''), startedAt: Date.now(), dateKey: _getDialogTimeTodayKey(), pendingSeconds: 0, error: '' };
 		_writeDialogTimeTracker(tracker);
 		_rememberDialogTimeTaskVisit(taskId, title, tracker.dialogId);
@@ -8951,6 +8953,26 @@ if (_presetChannel) {
 			_queueDialogTimeUiSync();
 		}
 		if (saved) _loadDialogTimeRange(_getDialogTimeRange('today'), { force: true }).catch(() => {});
+	}
+
+	function _cancelDialogTimeTracker() {
+		const tracker = _readDialogTimeTracker();
+		const taskId = String(tracker?.taskId || '');
+		if (!tracker || tracker.pendingSeconds <= 0 || _dialogTimeActionInFlight) return;
+		if (_dialogTimeTrackerCancelConfirmTaskId !== taskId) {
+			_dialogTimeTrackerCancelConfirmTaskId = taskId;
+			_queueDialogTimeUiSync();
+			setTimeout(() => {
+				if (_dialogTimeTrackerCancelConfirmTaskId !== taskId) return;
+				_dialogTimeTrackerCancelConfirmTaskId = '';
+				_queueDialogTimeUiSync();
+			}, 3500);
+			return;
+		}
+		_dialogTimeTrackerCancelConfirmTaskId = '';
+		_writeDialogTimeTracker(null);
+		_ensureDialogTimeTrackerTick();
+		_showDialogDockToast('Несохранённое время сброшено', 'ok');
 	}
 
 	function _openDialogTimeTask(taskId, title = '') {
@@ -9153,13 +9175,16 @@ if (_presetChannel) {
 		const trackerSelect = panel.querySelector('.pena-native-time-task-select');
 		const start = panel.querySelector('.pena-native-time-start');
 		const stop = panel.querySelector('.pena-native-time-stop');
+		const cancelTracker = panel.querySelector('.pena-native-time-cancel');
 		if (trackerInfo) trackerInfo.hidden = !tracker;
 		if (trackerTitle) trackerTitle.textContent = tracker ? _getDialogTimeTaskTitle(tracker.taskId, tracker.title) : '';
 		if (trackerDuration) trackerDuration.textContent = tracker ? _PENA_TIME_CONTROL.formatDurationCompact(_getDialogTimeTrackerSeconds(tracker)) : '0:00';
 		if (trackerHint) {
-			trackerHint.textContent = tracker?.error
-				? tracker.error
-				: (tracker?.pendingSeconds > 0 ? 'Остановлено — повторите сохранение' : (tracker ? 'Сохранится после остановки' : ''));
+			trackerHint.textContent = _dialogTimeTrackerCancelConfirmTaskId === String(tracker?.taskId || '')
+				? 'Несохранённое время будет удалено'
+				: (tracker?.error
+					? `${tracker.error}. Повторите или отмените`
+					: (tracker?.pendingSeconds > 0 ? 'Остановлено — повторите сохранение' : (tracker ? 'Сохранится после остановки' : '')));
 			trackerHint.hidden = !tracker;
 			trackerHint.classList.toggle('--error', !!tracker?.error);
 		}
@@ -9185,6 +9210,7 @@ if (_presetChannel) {
 				trackerSelect.dataset.penaOptionsKey = optionsKey;
 			}
 			trackerSelect.disabled = !!tracker || _dialogTimeActionInFlight;
+			trackerSelect.hidden = !!tracker;
 		}
 		if (start) {
 			start.hidden = !!tracker;
@@ -9193,7 +9219,13 @@ if (_presetChannel) {
 		if (stop) {
 			stop.hidden = !tracker;
 			stop.disabled = _dialogTimeActionInFlight;
-			stop.textContent = tracker?.pendingSeconds > 0 ? 'Повторить сохранение' : 'Остановить';
+			stop.textContent = tracker?.pendingSeconds > 0 ? 'Повторить' : 'Остановить';
+		}
+		if (cancelTracker) {
+			const pending = !!tracker?.pendingSeconds;
+			cancelTracker.hidden = !pending;
+			cancelTracker.disabled = _dialogTimeActionInFlight;
+			cancelTracker.textContent = _dialogTimeTrackerCancelConfirmTaskId === String(tracker?.taskId || '') ? 'Сбросить?' : 'Отменить';
 		}
 		const manualSelect = panel.querySelector('.pena-native-time-manual-task');
 		const manualHours = panel.querySelector('.pena-native-time-manual-hours');
@@ -9299,7 +9331,19 @@ if (_presetChannel) {
 					_dialogTimeEditingActivityId = '';
 					_addDialogTimeEstimatedEntry(task, minutes * 60);
 				});
-				actions.append(input, save);
+				const cancel = document.createElement('button');
+				cancel.type = 'button';
+				cancel.className = 'pena-native-time-estimate-cancel';
+				cancel.title = 'Отменить корректировку';
+				cancel.setAttribute('aria-label', cancel.title);
+				cancel.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+				cancel.addEventListener('click', event => {
+					event.preventDefault();
+					event.stopPropagation();
+					_dialogTimeEditingActivityId = '';
+					_queueDialogTimeUiSync();
+				});
+				actions.append(input, save, cancel);
 				row.appendChild(actions);
 				return row;
 			}
@@ -9538,7 +9582,17 @@ if (_presetChannel) {
 			event.stopPropagation();
 			_stopDialogTimeTracker();
 		});
-		trackerControls.append(taskSelect, start, stop);
+		const cancelTracker = document.createElement('button');
+		cancelTracker.type = 'button';
+		cancelTracker.className = 'pena-native-time-cancel';
+		cancelTracker.textContent = 'Отменить';
+		cancelTracker.hidden = true;
+		cancelTracker.addEventListener('click', event => {
+			event.preventDefault();
+			event.stopPropagation();
+			_cancelDialogTimeTracker();
+		});
+		trackerControls.append(taskSelect, start, stop, cancelTracker);
 		tracker.append(trackerInfo, trackerHint, trackerControls);
 
 		const manualToggle = document.createElement('button');

@@ -146,7 +146,7 @@ try {
     assert.equal(await page.locator('.test-host:not([hidden]) .pena-native-managed-viewport').count(), 1, `Default ${mode} mode did not expose the complete REST catalog`);
     let output = await readOutput(page);
     assert.equal(output.switcherCount, 1);
-	assert.equal(output.version, '7.5.46');
+	assert.equal(output.version, '7.5.47');
 	assert.equal(output.controlButtonCount, 0);
 	assert.equal(output.filterButtonCount, 1);
 	assert.equal(output.timeButtonCount, 1);
@@ -270,6 +270,19 @@ try {
 	assert.equal(await timePanel.getByText('Без запуска таймера', { exact: true }).count(), 0);
 	assert.equal(await timePanel.locator('.pena-native-time-manual-hours').getAttribute('type'), 'text');
 	assert.equal(await timePanel.locator('.pena-native-time-manual-minutes').getAttribute('type'), 'text');
+	const durationFieldColors = await timePanel.evaluate(panel => {
+		const hours = panel.querySelector('.pena-native-time-manual-hours');
+		const minutes = panel.querySelector('.pena-native-time-manual-minutes');
+		return {
+			hours: getComputedStyle(hours).color,
+			hoursPlaceholder: getComputedStyle(hours, '::placeholder').color,
+			minutes: getComputedStyle(minutes).color,
+			minutesPlaceholder: getComputedStyle(minutes, '::placeholder').color
+		};
+	});
+	assert.equal(durationFieldColors.hours, durationFieldColors.minutes, `Hour and minute values use different colors in ${mode}`);
+	assert.equal(durationFieldColors.hoursPlaceholder, durationFieldColors.hours, `Empty hour field looks different from an entered value in ${mode}`);
+	assert.equal(durationFieldColors.minutesPlaceholder, durationFieldColors.minutes, `Empty minute field looks different from an entered value in ${mode}`);
 	const compactTimePanel = await timePanel.evaluate(panel => ({
 		width: panel.getBoundingClientRect().width,
 		gap: getComputedStyle(panel).gap,
@@ -307,6 +320,8 @@ try {
 	await timePanel.locator('.pena-native-time-manual-submit').click();
 	await page.waitForFunction(() => document.querySelector('.pena-native-time-total-value')?.textContent === '2 ч 45 мин');
 	assert.equal(await page.evaluate(() => Number(window.timeAddCalls[0]?.ARFIELDS?.SECONDS || 0)), 4500, `Manual duration was not saved in ${mode}`);
+	await manualToggle.click();
+	assert.equal(await timePanel.locator('.pena-native-time-manual').isHidden(), true, `Manual entry could not return to its collapsed state in ${mode}`);
 	await page.evaluate(() => window.dispatchNativeSidePanelTask('404'));
 	try {
 		await page.waitForFunction(() => Array.from(document.querySelectorAll('.pena-native-time-suggestions-list .pena-native-time-task-title')).some(node => node.textContent === 'Задача 404'), null, { timeout: 5000 });
@@ -337,6 +352,11 @@ try {
 	const estimated = timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Задача 404' });
 	await page.waitForFunction(() => document.querySelector('.pena-native-time-suggestions-list .pena-native-time-task-detail')?.textContent.includes('4 касания'));
 	assert.match(await estimated.locator('.pena-native-time-task-detail').textContent(), /4 касания · ≈ 10 мин/);
+	await estimated.locator('.pena-native-time-estimate-edit').click();
+	await estimated.locator('.pena-native-time-estimate-minutes').fill('99');
+	await estimated.locator('.pena-native-time-estimate-cancel').click();
+	await page.waitForFunction(() => !document.querySelector('.pena-native-time-estimate-minutes'));
+	assert.equal(await page.evaluate(() => window.timeAddCalls.length), 1, `Cancelling estimate correction wrote time in ${mode}`);
 	await estimated.locator('.pena-native-time-estimate-edit').click();
 	await estimated.locator('.pena-native-time-estimate-minutes').fill('17');
 	await estimated.locator('.pena-native-time-estimate-save').click();
@@ -399,13 +419,32 @@ try {
 	});
 	await page.waitForTimeout(1100);
 	await timePanel.locator('.pena-native-time-stop').click();
-	await page.waitForFunction(() => document.querySelector('.pena-native-time-stop')?.textContent === 'Повторить сохранение');
+	await page.waitForFunction(() => document.querySelector('.pena-native-time-stop')?.textContent === 'Повторить');
 	assert.equal(await page.evaluate(() => window.timeAddCalls.length), 3, `Failed elapsed-item write was not attempted in ${mode}`);
 	assert.ok(await page.evaluate(() => !!Object.keys(localStorage).find(key => key.startsWith('pena.timeActiveTracker.v1.'))), `Failed timer was lost in ${mode}`);
+	const cancelTracker = timePanel.locator('.pena-native-time-cancel');
+	await cancelTracker.click();
+	await page.waitForFunction(() => document.querySelector('.pena-native-time-cancel')?.textContent === 'Сбросить?');
+	assert.equal(await cancelTracker.textContent(), 'Сбросить?', `Timer cancellation has no confirmation in ${mode}`);
+	assert.ok(await page.evaluate(() => !!Object.keys(localStorage).find(key => key.startsWith('pena.timeActiveTracker.v1.'))), `First cancel click discarded unsaved time in ${mode}`);
+	await cancelTracker.click();
+	await page.waitForFunction(() => !Object.keys(localStorage).some(key => key.startsWith('pena.timeActiveTracker.v1.')) && !document.querySelector('.pena-native-time-start')?.hidden);
+	assert.equal(await page.evaluate(() => window.timeAddCalls.length), 3, `Cancelling retry performed another write in ${mode}`);
+	await timePanel.locator('.pena-native-time-task-select').first().selectOption('303');
+	await timePanel.locator('.pena-native-time-start').click();
+	await page.evaluate(() => {
+		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeActiveTracker.v1.'));
+		const tracker = JSON.parse(localStorage.getItem(key) || 'null');
+		tracker.startedAt = Date.now() - 61000;
+		localStorage.setItem(key, JSON.stringify(tracker));
+		window.timeAddFailures = 1;
+	});
+	await timePanel.locator('.pena-native-time-stop').click();
+	await page.waitForFunction(() => document.querySelector('.pena-native-time-stop')?.textContent === 'Повторить');
 	await timePanel.locator('.pena-native-time-stop').click();
 	await page.waitForFunction(() => !Object.keys(localStorage).some(key => key.startsWith('pena.timeActiveTracker.v1.')) && document.querySelector('.pena-native-time-tracked-label')?.textContent.includes('3'));
 	const addState = await page.evaluate(() => ({ calls: window.timeAddCalls.length, seconds: Number(window.timeAddCalls.at(-1)?.ARFIELDS?.SECONDS || 0) }));
-	assert.equal(addState.calls, 4, `Elapsed-item retry did not complete in ${mode}`);
+	assert.equal(addState.calls, 5, `Elapsed-item retry did not complete in ${mode}`);
 	assert.ok(addState.seconds >= 60, `Elapsed-item duration was truncated in ${mode}: ${JSON.stringify(addState)}`);
 	await trackedToggle.click();
 	if (await timePanel.locator('.pena-native-time-tracked-list').isHidden()) await trackedToggle.click();
