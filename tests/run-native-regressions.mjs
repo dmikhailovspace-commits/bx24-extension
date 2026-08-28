@@ -146,7 +146,7 @@ try {
     assert.equal(await page.locator('.test-host:not([hidden]) .pena-native-managed-viewport').count(), 1, `Default ${mode} mode did not expose the complete REST catalog`);
     let output = await readOutput(page);
     assert.equal(output.switcherCount, 1);
-	assert.equal(output.version, '7.5.49');
+	assert.equal(output.version, '7.5.50');
 	assert.equal(output.controlButtonCount, 0);
 	assert.equal(output.filterButtonCount, 1);
 	assert.equal(output.timeButtonCount, 1);
@@ -1126,6 +1126,73 @@ try {
 	const resolvedNativeStatus = await page.locator('.recent-host .pena-native-sync-chip').evaluate(chip => ({ text: chip.textContent, className: chip.className }));
 	assert.doesNotMatch(resolvedNativeStatus.className, /--warning/, `Native mandatory-dialog loading stayed unresolved: ${JSON.stringify(resolvedNativeStatus)}`);
 	assert.match(resolvedNativeStatus.className, /--ready/, `Resolved native list was not marked ready: ${JSON.stringify(resolvedNativeStatus)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=120&lazyChunk=8&lazyDelay=20&initialTop=32`);
+	await page.locator('.recent-host .pena-native-original-load-guard').waitFor({ state: 'visible', timeout: 3000 });
+	const nativeFirstProgressSamples = [];
+	for (let index = 0; index < 3; index += 1) {
+		nativeFirstProgressSamples.push(String(await page.locator('.recent-host .pena-native-original-load-guard .pena-native-load-value').textContent()).trim());
+		await page.waitForTimeout(60);
+	}
+	assert.ok(nativeFirstProgressSamples.every(value => /^\d+%$/.test(value)),
+		`Native loader lost numeric progress: ${JSON.stringify(nativeFirstProgressSamples)}`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.loadedModes?.includes('chats') && !status.originalActive;
+	}, null, { timeout: 8000 });
+	const nativeFirstChats = await page.evaluate(() => ({
+		rows: document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]').length,
+		modeCount: window.__PENA_NATIVE_PREFETCH__.status().modeCounts.chats || 0,
+		sourceTop: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0,
+		imRecentCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').length,
+		taskCalls: window.nativeRestCalls.filter(call => call.method === 'tasks.task.list').length,
+		progress: window.__PENA_RECENT_SYNC__?.percent,
+		duration: Math.max(0, Number(window.__PENA_RECENT_SYNC__?.completedAt) - Number(window.__PENA_RECENT_SYNC__?.startedAt))
+	}));
+	assert.ok(nativeFirstChats.rows >= 120 && nativeFirstChats.modeCount >= 120,
+		`Native-first loading did not materialize old chat rows: ${JSON.stringify(nativeFirstChats)}`);
+	assert.equal(nativeFirstChats.sourceTop, 32, `Native-first loading moved the user's chat scroll position: ${JSON.stringify(nativeFirstChats)}`);
+	assert.equal(nativeFirstChats.imRecentCalls, 0, `Native-first loading waited for the metadata-only recent API: ${JSON.stringify(nativeFirstChats)}`);
+	assert.ok(nativeFirstChats.taskCalls > 0 && nativeFirstChats.duration < 6000,
+		`Native-first loading missed the fast startup path: ${JSON.stringify(nativeFirstChats)}`);
+	await switchMode(page);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		const rows = document.querySelectorAll('.task-host .bx-im-list-container-task__elements > [data-id]').length;
+		return status?.loadedModes?.includes('tasks') && !status.originalActive && rows >= 120;
+	}, null, { timeout: 8000 });
+	const nativeFirstTasks = await page.evaluate(() => ({
+		rows: document.querySelectorAll('.task-host .bx-im-list-container-task__elements > [data-id]').length,
+		sourceTop: document.querySelector('.task-host .bx-im-list-container-task__scroll-container')?.scrollTop || 0,
+		baselineTop: window.nativeScrollbarBaseline?.tasks?.top || 0,
+		imRecentCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').length
+	}));
+	assert.ok(nativeFirstTasks.rows >= 120 && nativeFirstTasks.sourceTop === nativeFirstTasks.baselineTop && nativeFirstTasks.imRecentCalls === 0,
+		`Task-mode switch did not complete the native list without a scroll jump: ${JSON.stringify(nativeFirstTasks)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=30&lazyChunk=10&lazyDelay=10&initialTop=16&catalogTtl=120`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.loadedModes?.includes('chats') && !status.originalActive && Number(status.modeLoadedAt?.chats) > 0;
+	}, null, { timeout: 6000 });
+	const nativeFirstBeforeTtl = await page.evaluate(() => ({
+		loadedAt: window.__PENA_NATIVE_PREFETCH__.status().modeLoadedAt.chats,
+		top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0
+	}));
+	await page.waitForTimeout(180);
+	await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+	await page.waitForFunction(before => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return !status.originalActive && Number(status.modeLoadedAt?.chats) > before.loadedAt;
+	}, nativeFirstBeforeTtl, { timeout: 6000 });
+	const nativeFirstAfterTtl = await page.evaluate(() => ({
+		top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0,
+		imRecentCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').length
+	}));
+	assert.equal(nativeFirstAfterTtl.top, nativeFirstBeforeTtl.top, 'TTL refresh moved the native chat viewport');
+	assert.equal(nativeFirstAfterTtl.imRecentCalls, 0, 'TTL refresh regressed to the slow metadata-only recent catalog');
 
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&lazy=1&catalogRows=1820&restDelay=80&restUnknownTotal=1`);
 	try {

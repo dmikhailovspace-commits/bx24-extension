@@ -1,9 +1,9 @@
 {
   "schema_version": 2,
-  "version": "7.5.49",
+  "version": "7.5.50",
   "release_date": "2026-08-28",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.49",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.49",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.50",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.50",
   "extension_files": [
     "background.js",
     "content.js",
@@ -32,6 +32,6 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.49/extension/injected.js",
-  "changelog": "v7.5.49: eagerly loads complete chat and task catalogs, refreshes both after TTL, and preserves old task activity dates for correct sorting"
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.50/extension/injected.js",
+  "changelog": "v7.5.50: restores fast native-first dialog materialization, keeps progress numeric, and refreshes each visible mode by its own TTL"
 }

@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.49';
+	window.__ANITREC_RUNNING__ = '7.5.50';
 
-	const VER = '7.5.49';
+	const VER = '7.5.50';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -1925,9 +1925,25 @@
 			? Math.max(0, Number(_dialogRecentProgress.expectedTotal))
 			: null;
 		const loading = ['full-sync', 'incremental-sync', 'native-scroll', 'verifying'].includes(_dialogRecentProgress.phase);
-		const percent = loading && expectedTotal != null
-			? Math.max(0, Math.min(99, Math.round((_dialogRecentProgress.loadedCount / Math.max(1, expectedTotal)) * 100)))
-			: (_dialogRecentProgress.phase === 'ready' ? 100 : null);
+		let percent = null;
+		if (loading) {
+			if (_dialogRecentProgress.phase === 'verifying') {
+				percent = 96;
+			} else if (expectedTotal != null && expectedTotal > 0) {
+				percent = Math.max(1, Math.min(99, Math.round((_dialogRecentProgress.loadedCount / expectedTotal) * 100)));
+			} else {
+				const pages = Math.max(0, Number(_dialogRecentProgress.pagesLoaded) || 0);
+				const loaded = Math.max(0, Number(_dialogRecentProgress.loadedCount) || 0);
+				// Bitrix often omits a usable total for im.recent.list. Keep the loader
+				// numeric and monotonic while more pages are still being discovered.
+				percent = loaded > 0 ? Math.min(92, 18 + pages * 9) : 6;
+			}
+			const previousDisplay = Number(_dialogRecentProgress.displayPercent) || 0;
+			percent = Math.max(previousDisplay, percent);
+			_dialogRecentProgress.displayPercent = percent;
+		} else if (_dialogRecentProgress.phase === 'ready') {
+			percent = 100;
+		}
 		const gatePercent = _getDialogRecentInteractionGatePercent(percent);
 		_dialogRecentInteractionGate.percent = gatePercent;
 		window.__PENA_RECENT_SYNC__ = Object.freeze({
@@ -3772,6 +3788,20 @@
 		return _dialogTaskCatalogSyncPromise;
 	}
 
+	function _commitDialogTaskCatalogResult(taskCatalog) {
+		const rows = Array.isArray(taskCatalog?.rows) ? taskCatalog.rows : [];
+		if (!rows.length) return 0;
+		const merged = _mergeDialogTaskCatalogRows(rows);
+		const hydrated = _hydrateAllDialogControlModesFromRecent({ pruneMissing: false });
+		if (merged || hydrated) {
+			_dialogRecentDataRevision += 1;
+			_dialogRecentRepositoryNeedsFullCommit = true;
+			_scheduleDialogRecentCacheWrite();
+			_notifyDialogRecentDataChanged();
+		}
+		return merged + hydrated;
+	}
+
 	async function _runDialogRecentApiCatalogLoad(options = {}) {
 		if (IS_OL_FRAME || !isInternalChatsDOM()) return { count: _countDialogRecentMeta(), skipped: true };
 		const container = findContainer();
@@ -3811,14 +3841,7 @@
 				}
 				if (taskCatalogOutcome.error) throw taskCatalogOutcome.error;
 				const taskCatalog = taskCatalogOutcome.value;
-				const mergedTasks = Array.isArray(taskCatalog?.rows) ? _mergeDialogTaskCatalogRows(taskCatalog.rows) : 0;
-				const hydratedTasks = _hydrateAllDialogControlModesFromRecent({ pruneMissing: false });
-				if (mergedTasks || hydratedTasks) {
-					_dialogRecentDataRevision += 1;
-					_dialogRecentRepositoryNeedsFullCommit = true;
-					_scheduleDialogRecentCacheWrite();
-					_notifyDialogRecentDataChanged();
-				}
+				_commitDialogTaskCatalogResult(taskCatalog);
 				const apiLoadedCount = Math.max(
 					0,
 					Number(result?.received) || 0,
@@ -4206,8 +4229,9 @@
 		const host = sourceViewport?.parentElement || null;
 		if (!host || host === document.body || host === document.documentElement) return null;
 		let overlay = host.querySelector(':scope > .pena-native-original-load-guard');
-		const apiCatalogBlocking = (_dialogRecentApiLoadActive && _dialogRecentProgress.phase === 'full-sync') ||
-			!!_dialogTaskCatalogSyncPromise;
+		const apiCatalogBlocking = _dialogRecentApiLoadActive && (
+			_dialogRecentProgress.phase === 'full-sync' || !!_dialogTaskCatalogSyncPromise
+		);
 		if (!_dialogNativeOriginalScrollActive && !apiCatalogBlocking) {
 			const completed = overlay && _dialogRecentProgress.phase === 'ready' && !_dialogRecentLastError;
 			const shownAt = Number(overlay?.dataset?.penaShownAt) || 0;
@@ -4237,7 +4261,8 @@
 		['left', 'top', 'width', 'height'].forEach(property => overlay.style.removeProperty(property));
 		overlay.style.setProperty('inset', '0');
 		delete overlay.dataset.penaGeometryReady;
-		const taskCatalogTail = !!_dialogTaskCatalogSyncPromise && _dialogRecentProgress.phase !== 'full-sync';
+		const taskCatalogTail = _dialogRecentApiLoadActive && !!_dialogTaskCatalogSyncPromise &&
+			_dialogRecentProgress.phase !== 'full-sync';
 		const expectedTotal = !taskCatalogTail && Number.isFinite(_dialogRecentProgress.expectedTotal)
 			? Math.max(0, Number(_dialogRecentProgress.expectedTotal))
 			: null;
@@ -4245,9 +4270,7 @@
 			overlay,
 			Math.max(0, Number(_dialogRecentProgress.loadedCount) || 0),
 			expectedTotal,
-			!taskCatalogTail && (_dialogRecentProgress.phase === 'full-sync' || _dialogRecentProgress.phase === 'native-scroll')
-				? window.__PENA_RECENT_SYNC__?.percent
-				: null
+			!taskCatalogTail ? window.__PENA_RECENT_SYNC__?.percent : 96
 		);
 		return overlay;
 	}
@@ -4325,8 +4348,8 @@
 				runner = autoScrollWithObserver({
 					scrollEl: sourceViewport,
 					observeEl: container,
-					tick: 72,
-					idleLimit: 3500,
+					tick: 36,
+					idleLimit: 1100,
 					maxTime: startupBudgetMs,
 					getStep: ({ clientHeight }) => {
 						// When Bitrix retains several screens of rows in DOM, crossing them one
@@ -4391,9 +4414,13 @@
 						_publishDialogRecentSyncState();
 					});
 				}
-				if (!cancelled) {
+				if (!cancelled && !backgroundPending) {
 					_dialogNativePrefetchedModes.add(mode);
 					_dialogNativeModeCounts.set(mode, state.seen.size);
+					_dialogNativeModeLoadedAt.set(mode, Date.now());
+				} else {
+					_dialogNativePrefetchedModes.delete(mode);
+					_dialogNativeModeLoadedAt.delete(mode);
 				}
 				_dialogRecentProgress = Object.assign({}, _dialogRecentProgress, {
 					phase: 'ready', loadedCount: state.seen.size, expectedTotal: state.seen.size,
@@ -4441,6 +4468,37 @@
 			return _isDialogControlNativePassThrough()
 				? _runDialogNativeOriginalScrollLoad(options)
 				: _runDialogNativeSilentPrefetch(options);
+		}
+		if (
+			options.full !== false &&
+			_isDialogControlNativePassThrough() &&
+			window.__PENA_TEST_API_CATALOG__ !== true
+		) {
+			// Production keeps Bitrix' own rows and scrollbar. REST metadata alone
+			// cannot make older rows appear in that native list, so the visible result
+			// is driven by the proven hidden-scroll traversal. Task metadata is fetched
+			// in parallel and committed only after traversal to avoid overwriting either map.
+			const refreshTaskCatalog = options.force === true || !_isDialogTaskCatalogMetadataFresh();
+			const taskCatalogOutcomePromise = refreshTaskCatalog
+				? _syncDialogTaskCatalog({ force: true, deferMerge: true }).then(
+					value => ({ value, error: null }),
+					error => ({ value: null, error })
+				)
+				: Promise.resolve({ value: null, error: null });
+			let nativeResult;
+			try {
+				nativeResult = await _runDialogNativeOriginalScrollLoad(options);
+			} finally {
+				taskCatalogOutcomePromise.then(outcome => {
+					if (outcome.error) {
+						warn('Не удалось обновить индекс task-чатов', outcome.error?.message || outcome.error);
+						return;
+					}
+					if (outcome.value) _commitDialogTaskCatalogResult(outcome.value);
+					_publishDialogRecentSyncState();
+				}).catch(() => {});
+			}
+			return { ...nativeResult, nativeFirst: true, taskCatalogBackground: refreshTaskCatalog };
 		}
 		if (options.full !== false) {
 			try {
@@ -4505,6 +4563,7 @@
 			count: _dialogRecentWindowCount,
 			loadedModes: [..._dialogNativePrefetchedModes],
 			modeCounts: Object.fromEntries(_dialogNativeModeCounts),
+			modeLoadedAt: Object.fromEntries(_dialogNativeModeLoadedAt),
 			backgroundModes: [..._dialogNativeBackgroundPendingModes],
 			retryPending: !!_dialogRecentApiRetryTimer,
 			retryAttempt: _dialogRecentApiRetryAttempt,
@@ -4568,9 +4627,20 @@
 			: _DIALOG_RECENT_FULL_REFRESH_MS;
 	}
 
+	function _isDialogTaskCatalogMetadataFresh(now = Date.now()) {
+		return _dialogTaskCatalogComplete && _dialogTaskCatalogFetchedAt > 0 &&
+			Math.max(0, Number(now) || Date.now()) - _dialogTaskCatalogFetchedAt < _getDialogCompleteCatalogTtlMs();
+	}
+
 	function _isDialogModeCatalogFresh(mode, now = Date.now()) {
 		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
 		if (!_dialogNativePrefetchedModes.has(targetMode)) return false;
+		const productionNativeFirst = _isDialogControlNativePassThrough() && window.__PENA_TEST_API_CATALOG__ !== true;
+		if (productionNativeFirst) {
+			if (targetMode === 'tasks' && !_isDialogTaskCatalogMetadataFresh(now)) return false;
+			const materializedAt = Math.max(0, Number(_dialogNativeModeLoadedAt.get(targetMode)) || 0);
+			return materializedAt > 0 && Math.max(0, Number(now) || Date.now()) - materializedAt < _getDialogCompleteCatalogTtlMs();
+		}
 		if (targetMode === 'tasks' && !_dialogTaskCatalogComplete) return false;
 		const completedAt = targetMode === 'tasks' ? _dialogTaskCatalogFetchedAt : _dialogRecentLastFullAt;
 		return completedAt > 0 && Math.max(0, Number(now) || Date.now()) - completedAt < _getDialogCompleteCatalogTtlMs();
@@ -4672,7 +4742,9 @@
 				if (document.hidden || !isInternalChatsDOM()) return;
 				const now = Date.now();
 				const headStale = !_dialogRecentLastSuccessAt || now - _dialogRecentLastSuccessAt >= _DIALOG_RECENT_REFRESH_STALE_MS;
-				const completeCatalogStale = !_isDialogModeCatalogFresh('chats', now) || !_isDialogModeCatalogFresh('tasks', now);
+				const completeCatalogStale = _isDialogControlNativePassThrough()
+					? (!_isDialogModeCatalogFresh(_pMode(), now) || !_isDialogTaskCatalogMetadataFresh(now))
+					: (!_isDialogModeCatalogFresh('chats', now) || !_isDialogModeCatalogFresh('tasks', now));
 				const needsCompletion = _dialogNativeBackgroundPendingModes.size > 0;
 				if (!headStale && !completeCatalogStale && !needsCompletion) return;
 				const full = needsCompletion || completeCatalogStale;
@@ -5234,6 +5306,7 @@ let _dialogControlTitleLastSyncAt = 0;
 	// Every Bitrix page loads each mode once, then the catalog goes idle.
 	const _dialogNativePrefetchedModes = new Set();
 	const _dialogNativeModeCounts = new Map();
+	const _dialogNativeModeLoadedAt = new Map();
 	const _dialogNativeBackgroundPendingModes = new Set();
 	let _dialogRecentApiLoadActive = false;
 	let _dialogRecentApiLoadPromise = null;
