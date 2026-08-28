@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.51';
+	window.__ANITREC_RUNNING__ = '7.5.52';
 
-	const VER = '7.5.51';
+	const VER = '7.5.52';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -7715,11 +7715,13 @@ if (_presetChannel) {
 		if (!_isPenaExtensionEnabled()) return false;
 		try {
 			const key = _dialogControlNativeModeKey();
-			const stored = localStorage.getItem(key);
-			if (stored === '0') return false;
-			if (stored !== '1') localStorage.setItem(key, '1');
-			return true;
+			// The detached catalog was removed. Older releases could leave this flag
+			// at "0", which disabled the only remaining folders/sorting/time panel on
+			// an otherwise enabled extension. Migrate every existing profile to the
+			// native Bitrix list instead of preserving that dead-end state.
+			if (localStorage.getItem(key) !== '1') localStorage.setItem(key, '1');
 		} catch { return true; }
+		return true;
 	}
 
 	function _dialogControlNativeFolderKey(mode = _pMode()) {
@@ -12800,21 +12802,17 @@ if (_presetChannel) {
 	}
 
 	function _setDialogControlNativeMode(enabled) {
-		const active = !!enabled && !IS_OL_FRAME;
+		const active = !IS_OL_FRAME;
 		try {
 			if (active) localStorage.setItem(_dialogControlNativeModeKey(), '1');
-			else localStorage.setItem(_dialogControlNativeModeKey(), '0');
 		} catch {}
 		_syncDialogControlNativeButton();
 		if (active) {
 			_clearDialogControlNativeView(findContainer(), { restoreDisplay: true, forceShow: true });
 			applyFilters();
-			_showDialogDockToast('Нативные папки включены', 'ok');
+			_showDialogDockToast(enabled ? 'Нативные папки включены' : 'Используется нативная лента Битрикс24', 'ok');
 		} else {
-			_setDialogControlNativeActiveFolderId('', { render: false, apply: false });
 			_clearDialogControlNativeView(findContainer(), { restoreDisplay: true, forceShow: true });
-			applyFilters();
-			_showDialogDockToast('Нативные папки выключены', 'ok');
 		}
 	}
 

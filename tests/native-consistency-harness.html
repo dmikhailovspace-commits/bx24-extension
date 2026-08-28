@@ -103,6 +103,7 @@
 	const generatedManaged = new URLSearchParams(location.search).get('generatedManaged') === '1';
 	const wideParent = new URLSearchParams(location.search).get('wide') === '1';
 	const nestedViewport = new URLSearchParams(location.search).get('nestedViewport') === '1';
+	const legacyNativeOff = new URLSearchParams(location.search).get('legacyNativeOff') === '1';
     document.querySelector('.recent-host').hidden = mode === 'tasks';
     document.querySelector('.task-host').hidden = mode !== 'tasks';
 	if (nestedViewport) {
@@ -196,7 +197,7 @@
 	});
     ['chats', 'tasks'].forEach(storageMode => {
       localStorage.setItem(`pena.dialogControl.v1.${storageMode}`, JSON.stringify(items));
-      localStorage.setItem(`pena.dialogControlNative.v1.${storageMode}`, '1');
+	  localStorage.setItem(`pena.dialogControlNative.v1.${storageMode}`, legacyNativeOff ? '0' : '1');
 	  localStorage.setItem(`pena.dialogControlView.${storageMode}`, JSON.stringify({ sortMode: 'date', sortDirection: transformedView ? 'asc' : 'desc', unreadOnly: false }));
 	  localStorage.setItem(`pena.filters.${storageMode}`, JSON.stringify({ query: '' }));
 	  const segmentFixture = new URLSearchParams(location.search).get('segments') === '1'

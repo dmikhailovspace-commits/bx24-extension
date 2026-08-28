@@ -59,7 +59,7 @@ const pageErrors = [];
 page.on('pageerror', error => pageErrors.push(String(error)));
 
 try {
-  await page.goto(`${base}/tests/native-color-regression-harness.html`);
+	await page.goto(`${base}/tests/native-color-regression-harness.html`);
   await page.locator('.pena-native-folder-switcher').waitFor({ state: 'visible' });
   const target = page.locator('.pena-native-managed-row[data-id="chat225"]');
   const source = page.locator('.pena-native-managed-row[data-id="chat5"]');
@@ -139,6 +139,14 @@ try {
 	assert.ok(dialogMarkerTools.rect.left >= 8 && dialogMarkerTools.rect.top >= 8, `Dialog palette escaped the viewport: ${JSON.stringify(dialogMarkerTools.rect)}`);
 	await page.keyboard.press('Escape');
 
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=tasks&legacyNativeOff=1`);
+	await page.locator('.pena-native-folder-switcher').waitFor({ state: 'visible' });
+	assert.equal(
+		await page.evaluate(() => localStorage.getItem('pena.dialogControlNative.v1.tasks')),
+		'1',
+		'Legacy native-mode=0 disabled the only remaining task control panel'
+	);
+
   for (const mode of ['chats', 'tasks']) {
     await page.goto(`${base}/tests/native-consistency-harness.html?mode=${mode}`);
     await page.locator('.pena-native-folder-switcher').waitFor({ state: 'visible' });
@@ -146,7 +154,7 @@ try {
     assert.equal(await page.locator('.test-host:not([hidden]) .pena-native-managed-viewport').count(), 1, `Default ${mode} mode did not expose the complete REST catalog`);
     let output = await readOutput(page);
     assert.equal(output.switcherCount, 1);
-	assert.equal(output.version, '7.5.51');
+	assert.equal(output.version, '7.5.52');
 	assert.equal(output.controlButtonCount, 0);
 	assert.equal(output.filterButtonCount, 1);
 	assert.equal(output.timeButtonCount, 1);
