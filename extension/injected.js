@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.50';
+	window.__ANITREC_RUNNING__ = '7.5.51';
 
-	const VER = '7.5.50';
+	const VER = '7.5.51';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -216,26 +216,33 @@
 					findVisibleInternalContainer('.bx-im-list-container-recent__elements');
 			if (!list) return null;
 
-
+			// Bitrix wraps the task list in an `elements_container` and keeps the real
+			// scroll owner one level higher. Returning the first named ancestor made
+			// programmatic scrolling move a non-scrollable wrapper: the loader ran,
+			// but Bitrix never requested the next page. Prefer the actual native
+			// scroll container and use an elements wrapper only as a measured fallback.
 			let n = list;
-			let structuralFallback = null;
+			let measuredFallback = null;
+			let elementsFallback = null;
 			for (let i = 0; i < 40 && n && n !== document.body && n !== document.documentElement; i++) {
 				if (n.classList && (
 					n.classList.contains('bx-im-list-recent__scroll-container') ||
 					n.classList.contains('bx-im-list-task__scroll-container') ||
 					n.classList.contains('bx-im-list-container-recent__scroll-container') ||
-					n.classList.contains('bx-im-list-container-task__scroll-container') ||
-					n.classList.contains('bx-im-list-container-recent__elements_container') ||
-					n.classList.contains('bx-im-list-container-task__elements_container')
+					n.classList.contains('bx-im-list-container-task__scroll-container')
 				)) return n;
-				if (n !== list && !structuralFallback) {
+				if (n !== list) {
 					const className = String(n.className || '');
 					const style = getComputedStyle(n);
-					if (/scroll|scrollbar/i.test(className) || /(auto|scroll)/i.test(String(style.overflowY || ''))) structuralFallback = n;
+					const isElementsContainer = /(?:^|\s)bx-im-list-container-(?:recent|task)__elements_container(?:\s|$)/.test(className);
+					const canActuallyScroll = Number(n.scrollHeight) > Number(n.clientHeight) + 1 &&
+						/(?:auto|scroll|overlay)/i.test(String(style.overflowY || ''));
+					if (!measuredFallback && canActuallyScroll) measuredFallback = n;
+					if (!elementsFallback && isElementsContainer && canActuallyScroll) elementsFallback = n;
 				}
 				n = n.parentElement;
 			}
-			return structuralFallback;
+			return measuredFallback || elementsFallback;
 		}
 	function waitForBody(timeout = 5000) {
 	return new Promise((resolve, reject) => {
@@ -4015,7 +4022,11 @@
 		// folder appears. Verify only those missing mandatory dialogs in background;
 		// mounted native rows are already resolved and therefore skipped cheaply.
 		let detailsPromise = null;
-		if (!options.initial && Array.from(mandatory.keys()).some(id => _isDialogRecentPending(_getDialogRecentMeta(id)))) {
+		// Do not fan out hundreds of detail requests while the native list itself is
+		// still incomplete. Besides being wasted work, that request storm starved
+		// time-tracking calls in the desktop client. Once the real scroll reaches the
+		// end, only genuinely missing/deleted folder dialogs are verified.
+		if (!options.initial && !options.truncated && Array.from(mandatory.keys()).some(id => _isDialogRecentPending(_getDialogRecentMeta(id)))) {
 			detailsPromise = _scheduleDialogRecentMandatoryDetails(new Set(state.seen), {
 				forceAccessRetry: options.forceAccessRetry === true
 			});
@@ -4205,7 +4216,9 @@
 		const total = Number.isFinite(Number(expectedTotal)) && Number(expectedTotal) > 0
 			? Math.max(current, Number(expectedTotal))
 			: 0;
-		const knownProgress = total > 0 || (explicitPercent != null && Number.isFinite(Number(explicitPercent)));
+		// The loader must always expose a number. A brief indeterminate state used
+		// to render as dots before the first native window was measured.
+		const knownProgress = true;
 		const percent = Math.max(0, Math.min(100, Math.round(
 			explicitPercent != null && Number.isFinite(Number(explicitPercent))
 				? Number(explicitPercent)
@@ -4214,7 +4227,7 @@
 		const value = overlay.querySelector('.pena-native-load-value');
 		const progress = overlay.querySelector('.pena-native-load-progress');
 		const bar = progress?.querySelector('span');
-		const nextText = knownProgress ? `${percent}%` : '…';
+		const nextText = `${percent}%`;
 		if (value && value.textContent !== nextText) value.textContent = nextText;
 		if (progress) {
 			progress.classList.toggle('--indeterminate', !knownProgress);
@@ -5243,7 +5256,7 @@ let _dialogControlTitleLastSyncAt = 0;
 	const _DIALOG_RECENT_DETAIL_RETRY_MS = 30 * 1000;
 	const _DIALOG_RECENT_ACCESS_RETRY_MS = 24 * 60 * 60 * 1000;
 	const _DIALOG_RECENT_AVATAR_RETRY_MS = 5000;
-	const _DIALOG_RECENT_DETAIL_CONCURRENCY = 4;
+	const _DIALOG_RECENT_DETAIL_CONCURRENCY = 2;
 	const _DIALOG_RECENT_AUTHOR_BATCH_SIZE = 100;
 	let _dialogRecentMeta = new Map();
 	let _dialogRecentGeneration = 0;

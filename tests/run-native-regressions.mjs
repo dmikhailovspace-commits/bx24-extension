@@ -146,7 +146,7 @@ try {
     assert.equal(await page.locator('.test-host:not([hidden]) .pena-native-managed-viewport').count(), 1, `Default ${mode} mode did not expose the complete REST catalog`);
     let output = await readOutput(page);
     assert.equal(output.switcherCount, 1);
-	assert.equal(output.version, '7.5.50');
+	assert.equal(output.version, '7.5.51');
 	assert.equal(output.controlButtonCount, 0);
 	assert.equal(output.filterButtonCount, 1);
 	assert.equal(output.timeButtonCount, 1);
@@ -1170,6 +1170,38 @@ try {
 	}));
 	assert.ok(nativeFirstTasks.rows >= 120 && nativeFirstTasks.sourceTop === nativeFirstTasks.baselineTop && nativeFirstTasks.imRecentCalls === 0,
 		`Task-mode switch did not complete the native list without a scroll jump: ${JSON.stringify(nativeFirstTasks)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=tasks&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&nestedViewport=1&catalogRows=160&lazyChunk=10&lazyDelay=20&initialTop=24`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.loadedModes?.includes('tasks') && !status.originalActive && (status.modeCounts?.tasks || 0) >= 160;
+	}, null, { timeout: 10000 });
+	const nestedTaskViewport = await page.evaluate(() => ({
+		count: window.__PENA_NATIVE_PREFETCH__?.status?.().modeCounts?.tasks || 0,
+		top: document.querySelector('.task-host .bx-im-list-container-task__scroll-container')?.scrollTop || 0,
+		baselineTop: window.nativeScrollbarBaseline?.tasks?.top || 0,
+		wrapperTop: document.querySelector('.task-host .bx-im-list-container-task__elements_container')?.scrollTop || 0,
+		loaderText: document.querySelector('.pena-native-load-value')?.textContent || ''
+	}));
+	assert.ok(nestedTaskViewport.count >= 160, `Nested task viewport did not materialize the complete native list: ${JSON.stringify(nestedTaskViewport)}`);
+	assert.equal(nestedTaskViewport.top, nestedTaskViewport.baselineTop, `Nested task loading moved the real native scrollbar: ${JSON.stringify(nestedTaskViewport)}`);
+	assert.equal(nestedTaskViewport.wrapperTop, 0, `Loader scrolled the elements wrapper instead of the native viewport: ${JSON.stringify(nestedTaskViewport)}`);
+	assert.doesNotMatch(nestedTaskViewport.loaderText, /\u2026|\.\.\./, `Native loader exposed an indeterminate dots state: ${JSON.stringify(nestedTaskViewport)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=160&lazyChunk=10&lazyDelay=300&startupBudget=1200&pendingControl=1`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.originalActive === false && status?.backgroundModes?.includes('chats');
+	}, null, { timeout: 6000 });
+	await page.waitForTimeout(500);
+	const partialNativeRequests = await page.evaluate(() => ({
+		detailCalls: (window.nativeRestCalls || []).filter(call => call.method === 'im.dialog.get').length,
+		background: window.__PENA_NATIVE_PREFETCH__?.status?.().backgroundModes?.includes('chats') || false
+	}));
+	assert.equal(partialNativeRequests.detailCalls, 0, `Partial native loading started a per-dialog REST storm: ${JSON.stringify(partialNativeRequests)}`);
+	assert.equal(partialNativeRequests.background, true, `Partial native catalog lost its continuation state: ${JSON.stringify(partialNativeRequests)}`);
 
 	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=30&lazyChunk=10&lazyDelay=10&initialTop=16&catalogTtl=120`);

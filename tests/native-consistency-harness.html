@@ -102,8 +102,20 @@
 	let recentListFailuresRemaining = Math.max(0, Number(new URLSearchParams(location.search).get('restFailCount')) || 0);
 	const generatedManaged = new URLSearchParams(location.search).get('generatedManaged') === '1';
 	const wideParent = new URLSearchParams(location.search).get('wide') === '1';
+	const nestedViewport = new URLSearchParams(location.search).get('nestedViewport') === '1';
     document.querySelector('.recent-host').hidden = mode === 'tasks';
     document.querySelector('.task-host').hidden = mode !== 'tasks';
+	if (nestedViewport) {
+	  document.querySelectorAll('.bx-im-list-container-recent__elements,.bx-im-list-container-task__elements').forEach(list => {
+		const wrapper = document.createElement('div');
+		wrapper.className = list.classList.contains('bx-im-list-container-task__elements')
+		  ? 'bx-im-list-container-task__elements_container'
+		  : 'bx-im-list-container-recent__elements_container';
+		wrapper.style.cssText = 'height:600px;overflow:hidden';
+		list.replaceWith(wrapper);
+		wrapper.appendChild(list);
+	  });
+	}
 	if (duplicateLists && mode === 'chats') {
 	  const stale = document.createElement('div');
 	  stale.className = 'stale-test-host';
@@ -148,7 +160,7 @@
 	if (lazyRows) document.querySelectorAll('.bx-im-list-container-recent__elements,.bx-im-list-container-task__elements').forEach(list => {
 	  const pending = Array.from(list.children).slice(10);
 	  pending.forEach(row => row.remove());
-	  const viewport = list.parentElement;
+	  const viewport = list.closest('.bx-im-list-container-recent__scroll-container,.bx-im-list-container-task__scroll-container');
 	  let loading = false;
 	  viewport.addEventListener('scroll', () => {
 		if (loading || viewport.scrollTop + viewport.clientHeight < viewport.scrollHeight - 2 || !pending.length) return;
