@@ -12,6 +12,7 @@
 	const DEFAULT_MAX_PAGES = 100;
 	const DEFAULT_TOUCH_DEDUPE_MS = 15000;
 	const DEFAULT_IDLE_CAP_SECONDS = 15 * 60;
+	const DEFAULT_QUALIFICATION_SECONDS = 60;
 	// Touches explain the estimate, but do not add invented time. The estimate is
 	// based on the active session only.
 	const DEFAULT_TOUCH_WEIGHT_SECONDS = 0;
@@ -158,6 +159,10 @@
 		if (!taskId) return null;
 		const visitedAt = Math.max(0, Number(task.visitedAt) || 0);
 		const firstVisitedAt = Math.max(0, Number(task.firstVisitedAt) || visitedAt);
+		const activeSeconds = Math.max(0, Math.round(Number(task.activeSeconds) || 0));
+		const explicitVisits = task.visits != null ? Math.max(0, Number(task.visits) || 0) : null;
+		const visits = explicitVisits != null ? explicitVisits : (activeSeconds >= DEFAULT_QUALIFICATION_SECONDS ? 1 : 0);
+		const legacyQualifiedAt = visits > 0 && activeSeconds >= DEFAULT_QUALIFICATION_SECONDS ? visitedAt : 0;
 		return {
 			taskId,
 			activityId: `task:${taskId}`,
@@ -167,11 +172,15 @@
 			visitedAt,
 			firstVisitedAt,
 			lastAccountedAt: Math.max(0, Number(task.lastAccountedAt) || visitedAt),
-			activeSeconds: Math.max(0, Math.round(Number(task.activeSeconds) || 0)),
+			activeSeconds,
 			accountedActiveSeconds: Math.max(0, Math.round(Number(task.accountedActiveSeconds) || 0)),
 			sessionActive: task.sessionActive === true,
+			sessionQualified: task.sessionQualified === true,
+			sessionStartedActiveSeconds: Math.max(0, Math.round(Number(task.sessionStartedActiveSeconds) || 0)),
+			lastQualifiedAt: Math.max(0, Number(task.lastQualifiedAt) || legacyQualifiedAt),
+			lastQualificationReason: String(task.lastQualificationReason || ''),
 			accountedAt: Math.max(0, Number(task.accountedAt) || 0),
-			visits: Math.max(1, Number(task.visits) || 1)
+			visits
 		};
 	}
 
@@ -196,7 +205,11 @@
 				accountedActiveSeconds: Math.max(previous.accountedActiveSeconds || 0, task.accountedActiveSeconds || 0),
 				sessionActive: newest.sessionActive === true,
 				accountedAt: Math.max(previous.accountedAt || 0, task.accountedAt || 0),
-				visits: raw === next ? previous.visits + 1 : Math.max(previous.visits, task.visits)
+				visits: raw === next ? previous.visits + Math.max(1, task.visits) : Math.max(previous.visits, task.visits),
+				lastQualifiedAt: Math.max(previous.lastQualifiedAt || 0, task.lastQualifiedAt || 0),
+				lastQualificationReason: newest.lastQualificationReason || previous.lastQualificationReason || task.lastQualificationReason,
+				sessionQualified: newest.sessionQualified === true,
+				sessionStartedActiveSeconds: Math.max(0, Number(newest.sessionStartedActiveSeconds) || 0)
 			});
 		}
 		return Array.from(byActivity.values())
@@ -217,40 +230,60 @@
 		active.visitedAt = Math.max(active.visitedAt || 0, now);
 	}
 
-	function recordActivityTouch(items = [], next = null, options = {}) {
-		const activity = normalizeVisitedTask(next || {});
+	function qualifyActiveSession(items, now, qualificationSeconds = DEFAULT_QUALIFICATION_SECONDS) {
+		const threshold = Math.max(1, Number(qualificationSeconds) || DEFAULT_QUALIFICATION_SECONDS);
+		items.forEach(item => {
+			if (!item.sessionActive || item.sessionQualified) return;
+			const sessionSeconds = Math.max(0, item.activeSeconds - (item.sessionStartedActiveSeconds || 0));
+			if (sessionSeconds < threshold) return;
+			item.sessionQualified = true;
+			item.visits = Math.max(0, Number(item.visits) || 0) + 1;
+			item.lastQualifiedAt = Math.max(item.lastQualifiedAt || 0, now);
+			item.lastQualificationReason = 'duration';
+		});
+	}
+
+	function beginActivitySession(items = [], next = null, options = {}) {
+		const activity = normalizeVisitedTask({ ...(next || {}), visits: Math.max(0, Number(next?.visits) || 0) });
 		if (!activity) return mergeVisitedTasks(items, null, options.limit);
 		const now = activity.visitedAt || Date.now();
 		const limit = Math.max(1, Number(options.limit) || 40);
 		const merged = mergeVisitedTasks(items, null, limit);
 		let previous = merged.find(item => item.activityId === activity.activityId) || null;
-		const dedupeMs = Math.max(0, Number(options.dedupeMs) || DEFAULT_TOUCH_DEDUPE_MS);
-		const duplicate = !!previous && now >= previous.visitedAt && now - previous.visitedAt < dedupeMs;
+		const duplicate = !!previous && previous.sessionActive && now >= previous.visitedAt &&
+			now - previous.visitedAt < Math.max(0, Number(options.dedupeMs) || DEFAULT_TOUCH_DEDUPE_MS);
 		if (duplicate) {
 			return merged.map(item => item.activityId === activity.activityId ? {
 				...item,
 				title: activity.title || item.title,
 				dialogId: activity.dialogId || item.dialogId,
-				sessionActive: true,
 				lastAccountedAt: Math.max(item.lastAccountedAt || 0, now)
-			} : { ...item, sessionActive: false });
+			} : item);
 		}
 		accountActiveActivity(merged, now, options.idleCapSeconds);
+		qualifyActiveSession(merged, now, options.qualificationSeconds);
 		merged.forEach(item => { item.sessionActive = false; });
 		previous = merged.find(item => item.activityId === activity.activityId) || null;
 		const updated = previous ? {
 			...previous,
-			...activity,
 			title: activity.title || previous.title,
 			dialogId: activity.dialogId || previous.dialogId,
 			firstVisitedAt: Math.min(previous.firstVisitedAt || previous.visitedAt, activity.firstVisitedAt || now),
-			lastAccountedAt: Math.max(previous.lastAccountedAt || 0, now),
-			activeSeconds: Math.max(0, Number(previous.activeSeconds) || 0),
-			accountedAt: Math.max(previous.accountedAt || 0, activity.accountedAt || 0),
 			visitedAt: Math.max(previous.visitedAt || 0, now),
+			lastAccountedAt: now,
 			sessionActive: true,
-			visits: previous.visits + 1
-		} : { ...activity, visitedAt: now, firstVisitedAt: now, lastAccountedAt: now, sessionActive: true };
+			sessionQualified: false,
+			sessionStartedActiveSeconds: Math.max(0, Number(previous.activeSeconds) || 0)
+		} : {
+			...activity,
+			visitedAt: now,
+			firstVisitedAt: now,
+			lastAccountedAt: now,
+			sessionActive: true,
+			sessionQualified: false,
+			sessionStartedActiveSeconds: Math.max(0, Number(activity.activeSeconds) || 0),
+			visits: 0
+		};
 		const result = previous
 			? merged.map(item => item.activityId === updated.activityId ? updated : item)
 			: [...merged, updated];
@@ -259,9 +292,37 @@
 			.slice(0, limit);
 	}
 
+	function qualifyActivityTouch(items = [], next = null, options = {}) {
+		const activity = normalizeVisitedTask({ ...(next || {}), visits: 0 });
+		if (!activity) return mergeVisitedTasks(items, null, options.limit);
+		const now = activity.visitedAt || Date.now();
+		let merged = beginActivitySession(items, activity, options);
+		const dedupeMs = Math.max(0, Number(options.dedupeMs) || DEFAULT_TOUCH_DEDUPE_MS);
+		return merged.map(item => {
+			if (item.activityId !== activity.activityId) return item;
+			if (item.lastQualifiedAt && now >= item.lastQualifiedAt && now - item.lastQualifiedAt < dedupeMs) return item;
+			return {
+				...item,
+				title: activity.title || item.title,
+				dialogId: activity.dialogId || item.dialogId,
+				visitedAt: Math.max(item.visitedAt || 0, now),
+				visits: Math.max(0, Number(item.visits) || 0) + 1,
+				sessionQualified: true,
+				lastQualifiedAt: now,
+				lastQualificationReason: String(options.reason || 'message')
+			};
+		});
+	}
+
+	function recordActivityTouch(items = [], next = null, options = {}) {
+		if (options.qualify === false) return beginActivitySession(items, next, options);
+		return qualifyActivityTouch(items, next, { ...options, reason: options.reason || 'explicit' });
+	}
+
 	function closeActivitySession(items = [], now = Date.now(), options = {}) {
 		const merged = mergeVisitedTasks(items, null, options.limit);
 		accountActiveActivity(merged, Math.max(0, Number(now) || Date.now()), options.idleCapSeconds);
+		qualifyActiveSession(merged, Math.max(0, Number(now) || Date.now()), options.qualificationSeconds);
 		merged.forEach(item => { item.sessionActive = false; });
 		return merged.sort((a, b) => b.visitedAt - a.visitedAt || a.activityId.localeCompare(b.activityId));
 	}
@@ -269,7 +330,9 @@
 	function syncActivitySession(items = [], activityId = '', now = Date.now(), options = {}) {
 		const id = String(activityId || '');
 		const merged = mergeVisitedTasks(items, null, options.limit);
-		accountActiveActivity(merged, Math.max(0, Number(now) || Date.now()), options.idleCapSeconds, id);
+		const at = Math.max(0, Number(now) || Date.now());
+		accountActiveActivity(merged, at, options.idleCapSeconds, id);
+		qualifyActiveSession(merged, at, options.qualificationSeconds);
 		return merged.sort((a, b) => b.visitedAt - a.visitedAt || a.activityId.localeCompare(b.activityId));
 	}
 
@@ -301,6 +364,7 @@
 			.map(task => [String(task?.taskId || ''), task])
 			.filter(([taskId]) => taskId));
 		return mergeVisitedTasks(visits).filter(task => {
+			if (!task.lastQualifiedAt || task.visits <= 0 || task.lastQualifiedAt <= (task.accountedAt || 0)) return false;
 			if ((task.accountedAt || 0) >= task.visitedAt) return false;
 			if (!task.taskId) return true;
 			const tracked = trackedById.get(task.taskId);
@@ -377,6 +441,7 @@
 		DEFAULT_MAX_PAGES,
 		DEFAULT_TOUCH_DEDUPE_MS,
 		DEFAULT_IDLE_CAP_SECONDS,
+		DEFAULT_QUALIFICATION_SECONDS,
 		DEFAULT_TOUCH_WEIGHT_SECONDS,
 		DEFAULT_ESTIMATE_STEP_SECONDS,
 		toDateKey,
@@ -391,6 +456,8 @@
 		aggregateElapsedItems,
 		normalizeVisitedTask,
 		mergeVisitedTasks,
+		beginActivitySession,
+		qualifyActivityTouch,
 		recordActivityTouch,
 		syncActivitySession,
 		closeActivitySession,

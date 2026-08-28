@@ -255,7 +255,12 @@
 		TITLE: entry.title,
 		CHAT_ID: String(entry.chat_id),
 		ALLOW_TIME_TRACKING: String(entry.chat_id) === '405' ? 'N' : 'Y'
-	}));
+	})).concat(['101', '102', '303', '404', '405'].map(taskId => ({
+		ID: taskId,
+		TITLE: `Задача ${taskId}`,
+		CHAT_ID: taskId,
+		ALLOW_TIME_TRACKING: taskId === '405' ? 'N' : 'Y'
+	})));
 	window.timeRestCalls = [];
 	window.timeAddCalls = [];
 	window.timeAddedItems = [];
@@ -295,6 +300,14 @@
 	  const event = { getSlider: () => ({ getUrl: () => url }) };
 	  for (const name of ['SidePanel.Slider:onOpenComplete', 'SidePanel.Slider:onLoad']) {
 		(window.nativeCustomEventHandlers.get(name) || []).forEach(handler => handler(event));
+	  }
+	};
+	window.dispatchNativeTaskMessage = (dialogId, authorId = '7') => {
+	  for (const name of ['onPullEvent-im', 'onPullEvent-im-v2']) {
+		(window.nativeCustomEventHandlers.get(name) || []).forEach(handler => handler('messageChat', {
+		  dialogId,
+		  message: { dialogId, authorId }
+		}));
 	  }
 	};
 	window.BX = {
@@ -388,8 +401,14 @@
 		}
 		if (method === 'tasks.task.list') {
 		  const start = Math.max(0, Number(params?.start) || 0);
-		  const page = taskCatalogEntries.slice(start, start + 50);
-		  callback({ error: () => null, data: () => ({ tasks: page }), total: () => taskCatalogEntries.length, next: () => start + 50 < taskCatalogEntries.length ? start + 50 : null });
+		  const titleQuery = String(params?.filter?.['%TITLE'] || '').toLowerCase();
+		  const trackingOnly = String(params?.filter?.ALLOW_TIME_TRACKING || '').toUpperCase() === 'Y';
+		  const filtered = taskCatalogEntries.filter(task =>
+			(!titleQuery || String(task.title || task.TITLE || '').toLowerCase().includes(titleQuery)) &&
+			(!trackingOnly || String(task.allowTimeTracking || task.ALLOW_TIME_TRACKING || '').toUpperCase() === 'Y')
+		  );
+		  const page = filtered.slice(start, start + 50);
+		  callback({ error: () => null, data: () => ({ tasks: page }), total: () => filtered.length, next: () => start + 50 < filtered.length ? start + 50 : null });
 		  return;
 		}
 		if (method === 'im.recent.list') {

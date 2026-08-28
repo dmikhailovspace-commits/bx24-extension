@@ -74,9 +74,9 @@ function testAggregation() {
 
 function testDailyTaskVisits() {
 	const merged = time.mergeVisitedTasks([
-		{ taskId: '10', title: 'Первая задача', visitedAt: 1000, visits: 2 },
-		{ taskId: '11', title: 'Вторая задача', visitedAt: 2000 }
-	], { taskId: '10', title: 'Первая задача — обновлено', dialogId: 'chat10', visitedAt: 3000 });
+		{ taskId: '10', title: 'Первая задача', visitedAt: 1000, lastQualifiedAt: 1000, visits: 2 },
+		{ taskId: '11', title: 'Вторая задача', visitedAt: 2000, lastQualifiedAt: 2000, visits: 1 }
+	], { taskId: '10', title: 'Первая задача — обновлено', dialogId: 'chat10', visitedAt: 3000, lastQualifiedAt: 3000 });
 	assert.deepEqual(merged.map(task => [task.taskId, task.visits, task.title]), [
 		['10', 3, 'Первая задача — обновлено'],
 		['11', 1, 'Вторая задача']
@@ -91,39 +91,51 @@ function testDailyTaskVisits() {
 
 function testActivityEstimation() {
 	const start = Date.parse('2026-08-27T09:00:00+03:00');
-	let activities = time.recordActivityTouch([], { taskId: '10', title: 'Задача 10', visitedAt: start });
-	activities = time.recordActivityTouch(activities, { taskId: '10', title: 'Задача 10', visitedAt: start + 500 });
-	assert.equal(activities[0].visits, 1, 'duplicate SidePanel events must count as one touch');
-	activities = time.recordActivityTouch(activities, { taskId: '10', title: 'Задача 10', visitedAt: start + 20000 });
-	assert.equal(activities[0].visits, 2);
-	activities = time.recordActivityTouch(activities, { taskId: '11', title: 'Задача 11', visitedAt: start + 120000 });
+	let activities = time.beginActivitySession([], { taskId: '10', title: 'Задача 10', visitedAt: start });
+	assert.equal(activities[0].visits, 0, 'opening a task must not count as work');
+	assert.equal(time.selectUntrackedVisits(activities, []).length, 0, 'a quick open must not enter suggestions');
+	activities = time.beginActivitySession(activities, { taskId: '10', title: 'Задача 10', visitedAt: start + 500 });
+	assert.equal(activities[0].visits, 0, 'duplicate SidePanel events must stay unqualified');
+	activities = time.syncActivitySession(activities, 'task:10', start + 59000);
+	assert.equal(activities[0].visits, 0, 'a sub-minute view must not count as work');
+	activities = time.syncActivitySession(activities, 'task:10', start + 61000);
+	assert.equal(activities[0].visits, 1, 'one active minute must qualify the session');
+	assert.equal(activities[0].lastQualificationReason, 'duration');
+	activities = time.beginActivitySession(activities, { taskId: '11', title: 'Задача 11', visitedAt: start + 120000 });
 	const task10 = activities.find(item => item.taskId === '10');
 	assert.equal(task10.activeSeconds, 120, 'active dwell before switching tasks was not accumulated');
 	activities = time.closeActivitySession(activities, start + 30 * 60000);
 	assert.equal(activities.find(item => item.taskId === '11').activeSeconds, 900, 'idle dwell must be capped');
+	assert.equal(activities.find(item => item.taskId === '11').visits, 1, 'a long active session must qualify once');
 	assert.equal(time.estimateActivitySeconds({ taskId: '20', visits: 4, visitedAt: start }), 300, 'touches must not invent elapsed time');
 	assert.equal(time.estimateActivitySeconds(task10), 300);
 	const closedAgain = time.closeActivitySession(activities, start + 31 * 60000);
 	assert.equal(closedAgain.find(item => item.taskId === '11').activeSeconds, 900, 'closing an inactive session twice must not add time');
-	let live = time.recordActivityTouch([], { taskId: '21', visitedAt: start });
+	let live = time.beginActivitySession([], { taskId: '21', visitedAt: start });
 	live = time.syncActivitySession(live, 'task:21', start + 125000);
 	assert.equal(live[0].activeSeconds, 125, 'live task dwell must be accumulated without extra touches');
 	assert.equal(live[0].visits, 1);
+	let message = time.beginActivitySession([], { taskId: '22', visitedAt: start });
+	message = time.qualifyActivityTouch(message, { taskId: '22', visitedAt: start + 1000 }, { reason: 'message' });
+	assert.equal(message[0].visits, 1, 'an outgoing task message must qualify immediately');
+	assert.equal(message[0].lastQualificationReason, 'message');
 
 	const accounted = time.markActivityAccounted(activities, 'task:10', start + 121000);
 	assert.equal(time.selectUntrackedVisits(accounted, []).some(item => item.taskId === '10'), false);
 	assert.equal(accounted.find(item => item.taskId === '10').accountedActiveSeconds, 120);
-	const reopened = time.recordActivityTouch(accounted, { taskId: '10', visitedAt: start + 31 * 60000 });
-	assert.equal(time.selectUntrackedVisits(reopened, []).some(item => item.taskId === '10'), true, 'a new touch after accounting must be suggested again');
+	const reopened = time.beginActivitySession(accounted, { taskId: '10', visitedAt: start + 31 * 60000 });
+	assert.equal(time.selectUntrackedVisits(reopened, []).some(item => item.taskId === '10'), false, 'reopening after accounting must not suggest work');
 	let continued = time.syncActivitySession(reopened, 'task:10', start + 32 * 60000);
 	const continuedTask = continued.find(item => item.taskId === '10');
+	assert.equal(time.selectUntrackedVisits(continued, []).some(item => item.taskId === '10'), true, 'a qualified minute after accounting must be suggested');
 	assert.equal(continuedTask.activeSeconds, 180);
 	assert.equal(time.estimateActivitySeconds(continuedTask), 300, 'continued work must estimate only time added after the last write');
 	continued = time.markActivityAccounted(continued, 'task:10', start + 32 * 60000);
 	continued = time.syncActivitySession(continued, 'task:10', start + 37 * 60000 + 1000);
 	assert.equal(time.estimateActivitySeconds(continued.find(item => item.taskId === '10')), 600, 'the previous saved interval must not be counted twice');
 
-	const visit = [{ taskId: '30', visitedAt: Date.parse('2026-08-27T12:00:00+03:00') }];
+	const visitAt = Date.parse('2026-08-27T12:00:00+03:00');
+	const visit = [{ taskId: '30', visitedAt: visitAt, lastQualifiedAt: visitAt, visits: 1 }];
 	assert.equal(time.selectUntrackedVisits(visit, [{ taskId: '30', lastTrackedAt: '2026-08-27T11:00:00+03:00' }]).length, 1);
 	assert.equal(time.selectUntrackedVisits(visit, [{ taskId: '30', lastTrackedAt: '2026-08-27T13:00:00+03:00' }]).length, 0);
 }
