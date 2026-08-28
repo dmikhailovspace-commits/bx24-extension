@@ -146,7 +146,7 @@ try {
     assert.equal(await page.locator('.test-host:not([hidden]) .pena-native-managed-viewport').count(), 1, `Default ${mode} mode did not expose the complete REST catalog`);
     let output = await readOutput(page);
     assert.equal(output.switcherCount, 1);
-	assert.equal(output.version, '7.5.45');
+	assert.equal(output.version, '7.5.46');
 	assert.equal(output.controlButtonCount, 0);
 	assert.equal(output.filterButtonCount, 1);
 	assert.equal(output.timeButtonCount, 1);
@@ -984,6 +984,61 @@ try {
 		return !items.find(item => item.id === 'folder:test')?.segmentId &&
 			!items.find(item => item.id === 'chat225')?.segmentId;
 	});
+
+	const openStripContextMenu = async selector => {
+		await page.locator(selector).evaluate(element => {
+			const rect = element.getBoundingClientRect();
+			element.dispatchEvent(new MouseEvent('contextmenu', {
+				bubbles: true,
+				cancelable: true,
+				clientX: Math.max(rect.left + 2, rect.right - 2),
+				clientY: rect.top + Math.max(2, rect.height / 2)
+			}));
+		});
+		await page.locator('.dialog-control-context-menu').waitFor({ state: 'visible', timeout: 2000 });
+	};
+	const submitNativePrompt = async (value, actionLabel) => {
+		const prompt = page.locator('.pena-native-confirm-overlay');
+		await prompt.waitFor({ state: 'visible', timeout: 2000 });
+		await prompt.locator('.pena-native-confirm-input').fill(value);
+		await prompt.getByRole('button', { name: actionLabel, exact: true }).click();
+	};
+
+	await openStripContextMenu('.recent-host .pena-native-group-tabs');
+	await page.locator('.dialog-control-context-menu').getByRole('menuitem', { name: 'Создать группу', exact: true }).click();
+	await submitNativePrompt('Проверочная группа', 'Создать');
+	await page.waitForFunction(() => JSON.parse(localStorage.getItem('pena.dialogControlSegments.v1.chats') || '[]')
+		.some(segment => segment.title === 'Проверочная группа'));
+	let createdGroupTab = page.locator('.recent-host .pena-native-group-tab').filter({ hasText: 'Проверочная группа' });
+	await createdGroupTab.click({ button: 'right' });
+	await page.locator('.dialog-control-context-menu').getByRole('menuitem', { name: 'Переименовать', exact: true }).click();
+	await submitNativePrompt('Группа после проверки', 'Сохранить');
+	await page.waitForFunction(() => JSON.parse(localStorage.getItem('pena.dialogControlSegments.v1.chats') || '[]')
+		.some(segment => segment.title === 'Группа после проверки'));
+	createdGroupTab = page.locator('.recent-host .pena-native-group-tab').filter({ hasText: 'Группа после проверки' });
+	await createdGroupTab.click({ button: 'right' });
+	await page.locator('.dialog-control-context-menu').getByRole('menuitem', { name: 'Удалить группу', exact: true }).click();
+	await page.locator('.pena-native-confirm-overlay').getByRole('button', { name: 'Удалить', exact: true }).click();
+	await page.waitForFunction(() => !JSON.parse(localStorage.getItem('pena.dialogControlSegments.v1.chats') || '[]')
+		.some(segment => segment.title === 'Группа после проверки'));
+
+	await openStripContextMenu('.recent-host .pena-native-folder-tabs');
+	await page.locator('.dialog-control-context-menu').getByRole('menuitem', { name: 'Создать папку', exact: true }).click();
+	await submitNativePrompt('Проверочная папка', 'Создать');
+	await page.waitForFunction(() => JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats') || '[]')
+		.some(item => item.type === 'folder' && item.title === 'Проверочная папка'));
+	let createdFolderTab = page.locator('.recent-host .pena-native-folder-tab').filter({ hasText: 'Проверочная папка' });
+	await createdFolderTab.click({ button: 'right' });
+	await page.locator('.dialog-control-context-menu').getByRole('menuitem', { name: 'Переименовать', exact: true }).click();
+	await submitNativePrompt('Папка после проверки', 'Сохранить');
+	await page.waitForFunction(() => JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats') || '[]')
+		.some(item => item.type === 'folder' && item.title === 'Папка после проверки'));
+	createdFolderTab = page.locator('.recent-host .pena-native-folder-tab').filter({ hasText: 'Папка после проверки' });
+	await createdFolderTab.click({ button: 'right' });
+	await page.locator('.dialog-control-context-menu').getByRole('menuitem', { name: 'Удалить папку', exact: true }).click();
+	await page.locator('.pena-native-confirm-overlay').getByRole('button', { name: 'Удалить', exact: true }).click();
+	await page.waitForFunction(() => !JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats') || '[]')
+		.some(item => item.type === 'folder' && item.title === 'Папка после проверки'));
 
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&passThrough=1&pendingControl=1`);
 	await page.waitForFunction(() => window.nativeRestCalls?.some(call => call.method === 'im.dialog.get' && call.dialogId === 'chat9000'), null, { timeout: 8000 });

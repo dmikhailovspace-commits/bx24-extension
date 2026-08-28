@@ -168,6 +168,7 @@
 			firstVisitedAt,
 			lastAccountedAt: Math.max(0, Number(task.lastAccountedAt) || visitedAt),
 			activeSeconds: Math.max(0, Math.round(Number(task.activeSeconds) || 0)),
+			accountedActiveSeconds: Math.max(0, Math.round(Number(task.accountedActiveSeconds) || 0)),
 			sessionActive: task.sessionActive === true,
 			accountedAt: Math.max(0, Number(task.accountedAt) || 0),
 			visits: Math.max(1, Number(task.visits) || 1)
@@ -192,6 +193,7 @@
 				firstVisitedAt: Math.min(previous.firstVisitedAt || previous.visitedAt, task.firstVisitedAt || task.visitedAt),
 				lastAccountedAt: Math.max(previous.lastAccountedAt || 0, task.lastAccountedAt || 0),
 				activeSeconds: Math.max(previous.activeSeconds || 0, task.activeSeconds || 0),
+				accountedActiveSeconds: Math.max(previous.accountedActiveSeconds || 0, task.accountedActiveSeconds || 0),
 				sessionActive: newest.sessionActive === true,
 				accountedAt: Math.max(previous.accountedAt || 0, task.accountedAt || 0),
 				visits: raw === next ? previous.visits + 1 : Math.max(previous.visits, task.visits)
@@ -279,14 +281,19 @@
 			: Math.max(0, Number(options.touchWeightSeconds) || 0);
 		const step = Math.max(60, Number(options.stepSeconds) || DEFAULT_ESTIMATE_STEP_SECONDS);
 		const maximum = Math.max(step, Number(options.maxSeconds) || 8 * 3600);
-		const raw = normalized.activeSeconds + normalized.visits * touchWeight;
+		const unaccountedActiveSeconds = Math.max(0, normalized.activeSeconds - normalized.accountedActiveSeconds);
+		const raw = unaccountedActiveSeconds + normalized.visits * touchWeight;
 		return Math.min(maximum, Math.max(step, Math.ceil(raw / step) * step));
 	}
 
 	function markActivityAccounted(items = [], activityId = '', accountedAt = Date.now()) {
 		const id = String(activityId || '');
 		const at = Math.max(0, Number(accountedAt) || Date.now());
-		return mergeVisitedTasks(items).map(item => item.activityId === id ? { ...item, accountedAt: Math.max(item.accountedAt || 0, at) } : item);
+		return mergeVisitedTasks(items).map(item => item.activityId === id ? {
+			...item,
+			accountedAt: Math.max(item.accountedAt || 0, at),
+			accountedActiveSeconds: Math.max(item.accountedActiveSeconds || 0, item.activeSeconds || 0)
+		} : item);
 	}
 
 	function selectUntrackedVisits(visits = [], trackedTasks = []) {

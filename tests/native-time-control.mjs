@@ -112,8 +112,16 @@ function testActivityEstimation() {
 
 	const accounted = time.markActivityAccounted(activities, 'task:10', start + 121000);
 	assert.equal(time.selectUntrackedVisits(accounted, []).some(item => item.taskId === '10'), false);
-	const reopened = time.recordActivityTouch(accounted, { taskId: '10', visitedAt: start + 180000 });
+	assert.equal(accounted.find(item => item.taskId === '10').accountedActiveSeconds, 120);
+	const reopened = time.recordActivityTouch(accounted, { taskId: '10', visitedAt: start + 31 * 60000 });
 	assert.equal(time.selectUntrackedVisits(reopened, []).some(item => item.taskId === '10'), true, 'a new touch after accounting must be suggested again');
+	let continued = time.syncActivitySession(reopened, 'task:10', start + 32 * 60000);
+	const continuedTask = continued.find(item => item.taskId === '10');
+	assert.equal(continuedTask.activeSeconds, 180);
+	assert.equal(time.estimateActivitySeconds(continuedTask), 300, 'continued work must estimate only time added after the last write');
+	continued = time.markActivityAccounted(continued, 'task:10', start + 32 * 60000);
+	continued = time.syncActivitySession(continued, 'task:10', start + 37 * 60000 + 1000);
+	assert.equal(time.estimateActivitySeconds(continued.find(item => item.taskId === '10')), 600, 'the previous saved interval must not be counted twice');
 
 	const visit = [{ taskId: '30', visitedAt: Date.parse('2026-08-27T12:00:00+03:00') }];
 	assert.equal(time.selectUntrackedVisits(visit, [{ taskId: '30', lastTrackedAt: '2026-08-27T11:00:00+03:00' }]).length, 1);
