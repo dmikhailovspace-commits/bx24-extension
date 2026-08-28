@@ -1,9 +1,9 @@
 {
   "schema_version": 2,
-  "version": "7.5.52",
+  "version": "7.5.53",
   "release_date": "2026-08-29",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.52",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.52",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.53",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.53",
   "extension_files": [
     "background.js",
     "content.js",
@@ -32,6 +32,6 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.52/extension/injected.js",
-  "changelog": "v7.5.52: migrates legacy disabled catalog profiles to the native Bitrix24 list; includes the numeric loader and deep task-chat loading fixes from v7.5.51"
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.53/extension/injected.js",
+  "changelog": "v7.5.53: restores the PENA panel for the current Bitrix24 nested scroll layout, loads older chat windows through the real native viewport, keeps numeric progress, and removes the stale permanent verification chip"
 }

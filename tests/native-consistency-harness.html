@@ -13,7 +13,9 @@
     .bx-im-list-container-recent__container,
     .bx-im-list-container-task__container { width: 360px; height: 680px; }
     .bx-im-list-container-recent__scroll-container,
-    .bx-im-list-container-task__scroll-container { width: 360px; height: 600px; overflow-y: auto; }
+    .bx-im-list-container-task__scroll-container,
+    .bx-im-list-recent__scroll-container,
+    .bx-im-list-task__scroll-container { width: 360px; height: 600px; overflow-y: auto; }
     .bx-im-list-container-recent__elements,
     .bx-im-list-container-task__elements { width: 360px; min-height: 600px; }
     .bx-im-list-recent-item__wrap,
@@ -103,6 +105,7 @@
 	const generatedManaged = new URLSearchParams(location.search).get('generatedManaged') === '1';
 	const wideParent = new URLSearchParams(location.search).get('wide') === '1';
 	const nestedViewport = new URLSearchParams(location.search).get('nestedViewport') === '1';
+	const descendantViewport = new URLSearchParams(location.search).get('descendantViewport') === '1';
 	const legacyNativeOff = new URLSearchParams(location.search).get('legacyNativeOff') === '1';
     document.querySelector('.recent-host').hidden = mode === 'tasks';
     document.querySelector('.task-host').hidden = mode !== 'tasks';
@@ -117,6 +120,28 @@
 		wrapper.appendChild(list);
 	  });
 	}
+	if (descendantViewport) {
+	  document.querySelectorAll('.bx-im-list-container-recent__elements,.bx-im-list-container-task__elements').forEach(list => {
+		const oldViewport = list.parentElement;
+		const outerHost = oldViewport.parentElement;
+		const task = list.classList.contains('bx-im-list-container-task__elements');
+		const elementsContainer = document.createElement('div');
+		elementsContainer.className = task
+		  ? 'bx-im-list-container-task__elements_container'
+		  : 'bx-im-list-container-recent__elements_container';
+		elementsContainer.style.cssText = 'height:600px;overflow:hidden';
+		const innerContainer = document.createElement('div');
+		innerContainer.className = task ? 'bx-im-list-task__container' : 'bx-im-list-recent__container';
+		const innerScroll = document.createElement('div');
+		innerScroll.className = task ? 'bx-im-list-task__scroll-container' : 'bx-im-list-recent__scroll-container';
+		Array.from(list.children).forEach(row => innerScroll.appendChild(row));
+		innerContainer.appendChild(innerScroll);
+		list.appendChild(innerContainer);
+		oldViewport.replaceWith(elementsContainer);
+		elementsContainer.appendChild(list);
+	  });
+	}
+	const getNativeRowHost = list => list?.querySelector?.(':scope > .bx-im-list-recent__container > .bx-im-list-recent__scroll-container,:scope > .bx-im-list-task__container > .bx-im-list-task__scroll-container') || list;
 	if (duplicateLists && mode === 'chats') {
 	  const stale = document.createElement('div');
 	  stale.className = 'stale-test-host';
@@ -143,14 +168,15 @@
 	}
 	if (manyRows) items.push({ id: 'folder:colors', type: 'folder', title: 'Цветовая сортировка', icon: 'folder', addedAt: now - 50 });
     if (!shortList) document.querySelectorAll('.bx-im-list-container-recent__elements,.bx-im-list-container-task__elements').forEach(list => {
-      const template = list.lastElementChild;
+	  const rowHost = getNativeRowHost(list);
+	  const template = rowHost.lastElementChild;
 	  for (let index = 0; index < catalogRows; index += 1) {
         const row = template.cloneNode(true);
 		const id = `chat${1000 + index}`;
 		const title = `Заполнитель ${index + 1}`;
 		row.dataset.id = id;
         row.querySelector('.bx-im-chat-title__text').textContent = title;
-        list.appendChild(row);
+        rowHost.appendChild(row);
 		if (!items.some(item => item.id === id)) {
 		  const palette = ['', '#16a34a', '#eab308', '#3b82f6', '#ef4444'];
 		  const color = palette[index % palette.length];
@@ -159,14 +185,17 @@
       }
     });
 	if (lazyRows) document.querySelectorAll('.bx-im-list-container-recent__elements,.bx-im-list-container-task__elements').forEach(list => {
-	  const pending = Array.from(list.children).slice(10);
+	  const rowHost = getNativeRowHost(list);
+	  const pending = Array.from(rowHost.children).slice(10);
 	  pending.forEach(row => row.remove());
-	  const viewport = list.closest('.bx-im-list-container-recent__scroll-container,.bx-im-list-container-task__scroll-container');
+	  const viewport = list.querySelector('.bx-im-list-recent__scroll-container,.bx-im-list-task__scroll-container') ||
+		list.closest('.bx-im-list-container-recent__scroll-container,.bx-im-list-container-task__scroll-container');
+	  if (!viewport) return;
 	  let loading = false;
 	  viewport.addEventListener('scroll', () => {
 		if (loading || viewport.scrollTop + viewport.clientHeight < viewport.scrollHeight - 2 || !pending.length) return;
 		const append = () => {
-		  pending.splice(0, lazyChunk).forEach(row => list.appendChild(row));
+		  pending.splice(0, lazyChunk).forEach(row => rowHost.appendChild(row));
 		  loading = false;
 		};
 		if (lazyDelay > 0) {
@@ -176,7 +205,9 @@
 	  });
 	});
 	const initialScrollTop = Math.max(0, Number(new URLSearchParams(location.search).get('initialTop')) || 0);
-	document.querySelectorAll('.bx-im-list-container-recent__scroll-container,.bx-im-list-container-task__scroll-container').forEach(viewport => {
+	document.querySelectorAll(descendantViewport
+	  ? '.bx-im-list-recent__scroll-container,.bx-im-list-task__scroll-container'
+	  : '.bx-im-list-container-recent__scroll-container,.bx-im-list-container-task__scroll-container').forEach(viewport => {
 	  if (nativePassThrough) viewport.style.overflowY = 'scroll';
 	  viewport.scrollTop = initialScrollTop;
 	});
@@ -185,6 +216,7 @@
 	document.querySelectorAll('.recent-host,.task-host').forEach(host => {
 	  const key = host.classList.contains('task-host') ? 'tasks' : 'chats';
 	  const viewport = host.querySelector('[class*="scroll-container"]');
+	  if (!viewport) return;
 	  const style = getComputedStyle(viewport);
 	  window.nativeScrollbarBaseline[key] = {
 		top: viewport.scrollTop,
@@ -216,7 +248,7 @@
 		input.closest('.test-host')?.classList.add('native-search-active');
 		const query = String(input.value || '').trim().toLowerCase();
 		const list = input.closest('.test-host')?.querySelector('.bx-im-list-container-recent__elements,.bx-im-list-container-task__elements');
-		Array.from(list?.children || []).forEach(row => {
+		Array.from(getNativeRowHost(list)?.children || []).forEach(row => {
 		  const title = String(row.querySelector('.bx-im-chat-title__text')?.textContent || '').toLowerCase();
 		  row.style.display = !query || title.includes(query) ? '' : 'none';
 		});

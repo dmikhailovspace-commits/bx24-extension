@@ -40,7 +40,11 @@ const runScenario = async ({ query = '', expectedFaults = 0, expectActive = true
     assert.equal(report.final.managed.left, report.final.chat.left, `Managed chats are horizontally displaced: ${diagnostic}`);
     assert.equal(report.final.panel.left, report.final.chat.left, `Native controls are horizontally displaced: ${diagnostic}`);
     assert.equal(report.activeContext?.listIsSource, true, `Lifecycle selected a stale list: ${diagnostic}`);
-    assert.equal(report.activeContext?.viewportIsSource, true, `Lifecycle selected a viewport from another list: ${diagnostic}`);
+    assert.equal(
+      report.activeContext?.viewportIsSource || report.activeContext?.viewportIsManaged,
+      true,
+      `Lifecycle selected a viewport from another list: ${diagnostic}`
+    );
   } else {
     assert.equal(report.maxManagedCount, 0, `Managed viewport mounted into an unknown host: ${diagnostic}`);
     assert.equal(report.maxPanelCount, 0, `Native controls mounted into an unknown host: ${diagnostic}`);

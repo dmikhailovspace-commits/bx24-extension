@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.52';
+	window.__ANITREC_RUNNING__ = '7.5.53';
 
-	const VER = '7.5.52';
+	const VER = '7.5.53';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -215,6 +215,23 @@
 				: findVisibleInternalContainer('.bx-im-list-container-task__elements') ||
 					findVisibleInternalContainer('.bx-im-list-container-recent__elements');
 			if (!list) return null;
+
+			// Current Bitrix builds place the real scroll owner *inside* the elements
+			// branch (`elements > list > scroll-container`). Check that shape first;
+			// otherwise the loader scrolls an outer layout wrapper and no older page is
+			// requested. The mode-specific selectors keep us away from the open chat.
+			const descendantSelector = list.matches('.bx-im-list-container-task__elements')
+				? '.bx-im-list-task__scroll-container,.bx-im-list-container-task__scroll-container'
+				: '.bx-im-list-recent__scroll-container,.bx-im-list-container-recent__scroll-container';
+			const descendant = Array.from(list.querySelectorAll?.(descendantSelector) || []).find(candidate => {
+				if (!candidate?.isConnected) return false;
+				const rect = candidate.getBoundingClientRect?.();
+				if (!rect || rect.width <= 1 || rect.height <= 1) return false;
+				const style = getComputedStyle(candidate);
+				return /(?:auto|scroll|overlay)/i.test(String(style.overflowY || '')) ||
+					Number(candidate.scrollHeight) > Number(candidate.clientHeight) + 1;
+			});
+			if (descendant) return descendant;
 
 			// Bitrix wraps the task list in an `elements_container` and keeps the real
 			// scroll owner one level higher. Returning the first named ancestor made
@@ -4054,6 +4071,7 @@
 		if (!container || !sourceViewport || sourceViewport === _dialogControlManagedViewport) {
 			return { count: _countDialogRecentMeta(), skipped: true, unavailable: true };
 		}
+		const sourceRegion = _resolveDialogControlNativeMount(container, { requireStable: false })?.sourceRegion || sourceViewport;
 		const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
 		if (!options.force && _dialogNativePrefetchedModes.has(mode)) {
 			return { count: _countDialogRecentMeta(), skipped: true, native: true, cached: true };
@@ -4099,7 +4117,7 @@
 					const mountDeadline = performance.now() + 2000;
 					while (
 						(! _dialogControlManagedViewport?.isConnected ||
-						 !sourceViewport.classList.contains('pena-native-source-viewport-hidden') ||
+						 !sourceRegion.classList.contains('pena-native-source-viewport-hidden') ||
 						 window.__PENA_MANAGED_DEBUG__?.status !== 'ready') &&
 						performance.now() < mountDeadline
 					) {
@@ -4238,8 +4256,9 @@
 	}
 
 	function _syncDialogNativeOriginalLoadUi(container = findContainer()) {
-		const sourceViewport = container ? findInternalScrollContainer(container) : null;
-		const host = sourceViewport?.parentElement || null;
+		const mount = container ? _resolveDialogControlNativeMount(container, { requireStable: false }) : null;
+		const sourceViewport = mount?.sourceViewport || (container ? findInternalScrollContainer(container) : null);
+		const host = mount?.host || sourceViewport?.parentElement || null;
 		if (!host || host === document.body || host === document.documentElement) return null;
 		let overlay = host.querySelector(':scope > .pena-native-original-load-guard');
 		const apiCatalogBlocking = _dialogRecentApiLoadActive && (
@@ -8221,6 +8240,7 @@ if (_presetChannel) {
 		if (
 			_dialogControlNativeMountGrant?.container === container &&
 			_dialogControlNativeMountGrant?.sourceViewport?.isConnected &&
+			_dialogControlNativeMountGrant?.sourceRegion?.isConnected &&
 			_dialogControlNativeMountGrant?.host?.isConnected
 		) return _dialogControlNativeMountGrant;
 		const fail = (reason, details = {}) => ({ ready: false, reason, container, ...details });
@@ -8228,12 +8248,19 @@ if (_presetChannel) {
 			return fail('invalid-container');
 		}
 		const sourceViewport = findInternalScrollContainer(container);
-		const host = sourceViewport?.parentElement || null;
-		if (!sourceViewport?.isConnected || sourceViewport === container || !sourceViewport.contains(container)) {
+		const viewportContainsList = !!sourceViewport?.contains?.(container);
+		const listContainsViewport = !!container?.contains?.(sourceViewport);
+		const sourceRegion = listContainsViewport
+			? (container.parentElement?.matches?.('.bx-im-list-container-task__elements_container,.bx-im-list-container-recent__elements_container')
+				? container.parentElement
+				: container)
+			: sourceViewport;
+		const host = sourceRegion?.parentElement || null;
+		if (!sourceViewport?.isConnected || sourceViewport === container || (!viewportContainsList && !listContainsViewport)) {
 			return fail('invalid-source-viewport', { sourceViewport, host });
 		}
-		if (!host?.isConnected || host === document.body || host === document.documentElement) {
-			return fail('invalid-host', { sourceViewport, host });
+		if (!sourceRegion?.isConnected || !host?.isConnected || host === document.body || host === document.documentElement) {
+			return fail('invalid-host', { sourceViewport, sourceRegion, host });
 		}
 		const listMode = container.matches('.bx-im-list-container-task__elements') ? 'task' : 'recent';
 		const expectedViewportSelector = listMode === 'task'
@@ -8264,7 +8291,7 @@ if (_presetChannel) {
 			_dialogControlManagedViewport.parentElement === host
 			? _dialogControlManagedViewport
 			: null;
-		const measuredViewport = managedViewport || sourceViewport;
+		const measuredViewport = managedViewport || sourceRegion;
 		const viewportRect = measuredViewport.getBoundingClientRect?.();
 		const hostRect = host.getBoundingClientRect?.();
 		if (!viewportRect || !hostRect || viewportRect.width <= 1 || viewportRect.height <= 1 || hostRect.width <= 1 || hostRect.height <= 1) {
@@ -8319,6 +8346,7 @@ if (_presetChannel) {
 			reason: '',
 			container,
 			sourceViewport,
+			sourceRegion,
 			managedViewport,
 			measuredViewport,
 			host,
@@ -8470,7 +8498,7 @@ if (_presetChannel) {
 		const managedViewport = _dialogControlManagedSource === container && _dialogControlManagedViewport?.isConnected
 			? _dialogControlManagedViewport
 			: null;
-		const viewport = managedViewport || mount.sourceViewport;
+		const viewport = managedViewport || mount.measuredViewport;
 		if (!viewport?.isConnected || viewport.parentElement !== mount.host) return null;
 		const parentHost = mount.host;
 		const viewportRect = viewport.getBoundingClientRect();
@@ -8599,8 +8627,10 @@ if (_presetChannel) {
 		).length;
 		statuses.forEach(status => {
 			const compact = status.classList.contains('pena-native-sync-chip');
-			const compactVisible = gateLocked || !!gateError || !!sync.error || (controlledPending > 0 && !sync.inFlight) ||
-				(!!sync.inFlight && sync.phase !== 'verifying' && !sync.detailsSilent);
+			// The overlay is the single loading surface. Keep the compact chip only as
+			// a recoverable error action; stale folder metadata must not leave an
+			// unexplained permanent "Проверить N" status in the main toolbar.
+			const compactVisible = !!gateError || (!!sync.error && !sync.inFlight);
 			if (compact) status.hidden = !compactVisible;
 			else status.hidden = false;
 			if (gateLocked) {
@@ -11494,6 +11524,7 @@ if (_presetChannel) {
 		}
 		const mount = _resolveDialogControlNativeMount(container);
 		const sourceViewport = mount.sourceViewport || null;
+		const sourceRegion = mount.sourceRegion || mount.measuredViewport || sourceViewport;
 		const host = mount.host || null;
 		if (!mount.ready) {
 			window.__PENA_MANAGED_DEBUG__ = {
@@ -11513,10 +11544,10 @@ if (_presetChannel) {
 			!root?.isConnected ||
 			!viewport?.isConnected ||
 			viewport.parentElement !== host ||
-			_dialogControlManagedSourceViewport !== sourceViewport
+			_dialogControlManagedSourceViewport !== sourceRegion
 		) {
 			const sourceAnchor = _captureDialogControlNativeSourceAnchor(container, sourceViewport);
-			const sourceRect = mount.viewportRect || sourceViewport.getBoundingClientRect?.();
+			const sourceRect = mount.viewportRect || sourceRegion.getBoundingClientRect?.();
 			const hostRect = mount.hostRect || host.getBoundingClientRect?.();
 			_clearDialogControlManagedList();
 			viewport = document.createElement('div');
@@ -11551,11 +11582,11 @@ if (_presetChannel) {
 			}, { passive: false });
 			viewport.append(root);
 			_ensureDialogRecentInteractionGateUi(viewport);
-			host.insertBefore(viewport, sourceViewport.nextSibling);
+			host.insertBefore(viewport, sourceRegion.nextSibling);
 			_dialogControlManagedRoot = root;
 			_dialogControlManagedSource = container;
 			_dialogControlManagedViewport = viewport;
-			_dialogControlManagedSourceViewport = sourceViewport;
+			_dialogControlManagedSourceViewport = sourceRegion;
 		}
 		const state = root._penaManagedState;
 		const prefs = _getDialogControlViewPrefs();
@@ -11602,7 +11633,7 @@ if (_presetChannel) {
 		_syncDialogRecentInteractionGateUi(viewport);
 		// Switch only after the managed view has produced a complete first frame.
 		// The Bitrix list itself remains untouched and can be restored immediately.
-		sourceViewport.classList.add('pena-native-source-viewport-hidden');
+		sourceRegion.classList.add('pena-native-source-viewport-hidden');
 		host.classList.add('pena-native-managed-host');
 		window.__PENA_MANAGED_DEBUG__ = {
 			status: 'ready',
@@ -12653,7 +12684,7 @@ if (_presetChannel) {
 		const managed = _dialogControlManagedSource === container && _dialogControlManagedViewport?.isConnected
 			? _dialogControlManagedViewport
 			: null;
-		const viewport = managed || mount.sourceViewport;
+		const viewport = managed || mount.measuredViewport;
 		if (
 			!host?.isConnected ||
 			host === document.body ||
@@ -12700,12 +12731,12 @@ if (_presetChannel) {
 		const managed = _dialogControlManagedSource === container && _dialogControlManagedViewport?.isConnected
 			? _dialogControlManagedViewport
 			: null;
-		const sourceViewport = _dialogControlManagedSourceViewport?.isConnected
+		const sourceRegion = _dialogControlManagedSourceViewport?.isConnected
 			? _dialogControlManagedSourceViewport
-			: mount?.sourceViewport;
-		const viewport = managed || sourceViewport;
+			: mount?.measuredViewport;
+		const viewport = managed || sourceRegion;
 		const panel = _dialogControlNativeSwitcherNode;
-		const host = viewport?.parentElement;
+		const host = mount?.host || viewport?.parentElement;
 		return !!(
 			viewport?.isConnected &&
 			panel?.isConnected &&
@@ -21696,8 +21727,10 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 		const candidates = [];
 		definitions.forEach(([mode, selector]) => {
 			Array.from(document.querySelectorAll(selector)).forEach((list, index) => {
-				const viewport = findInternalScrollContainer(list);
-				const host = viewport?.parentElement || null;
+				const mount = _resolveDialogControlNativeMount(list, { requireStable: false });
+				const scrollViewport = mount?.sourceViewport || findInternalScrollContainer(list);
+				const viewport = mount?.measuredViewport || mount?.sourceRegion || scrollViewport;
+				const host = mount?.host || viewport?.parentElement || null;
 				if (!viewport || !host || host === document.body || host === document.documentElement) return;
 				const stack = _getElementStackScore(viewport, index);
 				const hitTarget = list === _dialogControlManagedSource && _dialogControlManagedViewport?.isConnected
@@ -21708,6 +21741,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 					mode,
 					list,
 					viewport,
+					scrollViewport,
 					host,
 					searchInput: _findNativeLifecycleSearchInput(list, mode),
 					routeActive: _isElementTopHit(hitTarget),

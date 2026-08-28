@@ -257,7 +257,8 @@
           activeContext: window.__PENA_ACTIVE_LIST_CONTEXT__ ? {
             mode: window.__PENA_ACTIVE_LIST_CONTEXT__.mode,
             listIsSource: window.__PENA_ACTIVE_LIST_CONTEXT__.list === sourceList,
-            viewportIsSource: window.__PENA_ACTIVE_LIST_CONTEXT__.viewport === sourceViewport
+            viewportIsSource: window.__PENA_ACTIVE_LIST_CONTEXT__.viewport === sourceViewport,
+            viewportIsManaged: window.__PENA_ACTIVE_LIST_CONTEXT__.viewport === document.querySelector('.pena-native-managed-viewport')
           } : null,
           panelFaults
         };

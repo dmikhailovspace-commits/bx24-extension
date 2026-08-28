@@ -154,7 +154,7 @@ try {
     assert.equal(await page.locator('.test-host:not([hidden]) .pena-native-managed-viewport').count(), 1, `Default ${mode} mode did not expose the complete REST catalog`);
     let output = await readOutput(page);
     assert.equal(output.switcherCount, 1);
-	assert.equal(output.version, '7.5.52');
+	assert.equal(output.version, '7.5.53');
 	assert.equal(output.controlButtonCount, 0);
 	assert.equal(output.filterButtonCount, 1);
 	assert.equal(output.timeButtonCount, 1);
@@ -1196,6 +1196,48 @@ try {
 	assert.equal(nestedTaskViewport.top, nestedTaskViewport.baselineTop, `Nested task loading moved the real native scrollbar: ${JSON.stringify(nestedTaskViewport)}`);
 	assert.equal(nestedTaskViewport.wrapperTop, 0, `Loader scrolled the elements wrapper instead of the native viewport: ${JSON.stringify(nestedTaskViewport)}`);
 	assert.doesNotMatch(nestedTaskViewport.loaderText, /\u2026|\.\.\./, `Native loader exposed an indeterminate dots state: ${JSON.stringify(nestedTaskViewport)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&descendantViewport=1&catalogRows=120&lazyChunk=12&lazyDelay=20&initialTop=20`);
+	try {
+		await page.waitForFunction(() => {
+			const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+			return status?.loadedModes?.includes('chats') && !status.originalActive && (status.modeCounts?.chats || 0) >= 120;
+		}, null, { timeout: 12000 });
+	} catch (error) {
+		const state = await page.evaluate(() => ({
+			status: window.__PENA_NATIVE_PREFETCH__?.status?.(),
+			scrollDebug: window.__PENA_NATIVE_SCROLL_DEBUG__,
+			managedDebug: window.__PENA_MANAGED_DEBUG__,
+			rows: document.querySelectorAll('.recent-host .bx-im-list-recent__scroll-container > [data-id]').length,
+			top: document.querySelector('.recent-host .bx-im-list-recent__scroll-container')?.scrollTop || 0,
+			height: document.querySelector('.recent-host .bx-im-list-recent__scroll-container')?.scrollHeight || 0,
+			client: document.querySelector('.recent-host .bx-im-list-recent__scroll-container')?.clientHeight || 0
+		}));
+		throw new Error(`Descendant scroll viewport stalled: ${JSON.stringify(state)}`, { cause: error });
+	}
+	const descendantScrollViewport = await page.evaluate(() => {
+		const panel = document.querySelector('.recent-host .pena-native-folder-switcher');
+		const sourceRegion = document.querySelector('.recent-host .bx-im-list-container-recent__elements_container');
+		return ({
+		count: window.__PENA_NATIVE_PREFETCH__?.status?.().modeCounts?.chats || 0,
+		top: document.querySelector('.recent-host .bx-im-list-recent__scroll-container')?.scrollTop || 0,
+		panelVisible: Array.from(document.querySelectorAll('.recent-host .pena-native-folder-switcher')).some(panel => {
+			const rect = panel.getBoundingClientRect();
+			const style = getComputedStyle(panel);
+			return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+		}),
+		filterButtons: document.querySelectorAll('.recent-host .pena-native-command-btn').length,
+		panelIsOuterSibling: !!panel && panel.parentElement === sourceRegion?.parentElement && panel.nextElementSibling === sourceRegion,
+		loaderText: document.querySelector('.pena-native-load-value')?.textContent || ''
+		});
+	});
+	assert.ok(descendantScrollViewport.count >= 120, `Descendant viewport did not materialize the complete native list: ${JSON.stringify(descendantScrollViewport)}`);
+	assert.equal(descendantScrollViewport.top, 20, `Descendant viewport did not restore the native position: ${JSON.stringify(descendantScrollViewport)}`);
+	assert.equal(descendantScrollViewport.panelVisible, true, `Descendant viewport rejected the native PENA panel: ${JSON.stringify(descendantScrollViewport)}`);
+	assert.ok(descendantScrollViewport.filterButtons >= 2, `Descendant viewport did not expose PENA controls: ${JSON.stringify(descendantScrollViewport)}`);
+	assert.equal(descendantScrollViewport.panelIsOuterSibling, true, `PENA panel was mounted inside the native scroll branch: ${JSON.stringify(descendantScrollViewport)}`);
+	assert.doesNotMatch(descendantScrollViewport.loaderText, /\u2026|\.\.\./, `Descendant viewport exposed an indeterminate dots state: ${JSON.stringify(descendantScrollViewport)}`);
 
 	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=160&lazyChunk=10&lazyDelay=300&startupBudget=1200&pendingControl=1`);
