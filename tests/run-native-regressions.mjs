@@ -1251,6 +1251,33 @@ try {
 	await page.mouse.click(410, 20);
 
 	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=80&lazyChunk=8&lazyDelay=20&initialTop=28&skipRuntime=1&sourceUnavailable=1`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		const rows = document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]').length;
+		return status?.loadedModes?.includes('chats') && !status.originalActive &&
+			(status.materializationRevisions?.chats || 0) === 1 && rows >= 80;
+	}, null, { timeout: 10000 });
+	const initialMountRecovery = await page.evaluate(() => ({
+		rows: document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]').length,
+		revision: window.__PENA_NATIVE_PREFETCH__?.status?.().materializationRevisions?.chats || 0,
+		unavailableLeft: window.__PENA_TEST_NATIVE_SOURCE_UNAVAILABLE_COUNT__,
+		sourceTop: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0,
+		baselineTop: window.nativeScrollbarBaseline?.chats?.top || 0,
+		managed: document.querySelectorAll('.pena-native-managed-viewport,.pena-native-managed-row,.pena-native-remote-row').length,
+		imRecentCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').length
+	}));
+	assert.deepEqual(initialMountRecovery, {
+		rows: 83,
+		revision: 1,
+		unavailableLeft: 0,
+		sourceTop: initialMountRecovery.baselineTop,
+		baselineTop: initialMountRecovery.baselineTop,
+		managed: 0,
+		imRecentCalls: 0
+	}, `First messenger mount did not recover the native list: ${JSON.stringify(initialMountRecovery)}`);
+
+	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=120&lazyChunk=8&lazyDelay=20&initialTop=32&activeFolder=1`);
 	await page.locator('.recent-host .pena-native-original-load-guard').waitFor({ state: 'visible', timeout: 3000 });
 	await page.waitForFunction(() => document.querySelector('.recent-host .pena-native-folder-tab[title="Тестовая папка"]')?.classList.contains('--active'));

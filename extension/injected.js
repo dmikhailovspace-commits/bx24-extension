@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.60';
+	window.__ANITREC_RUNNING__ = '7.5.61';
 
-	const VER = '7.5.60';
+	const VER = '7.5.61';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -4469,6 +4469,11 @@
 
 	async function _runDialogNativeOriginalScrollLoad(options = {}) {
 		if (IS_OL_FRAME || !isInternalChatsDOM()) return { count: _countDialogRecentMeta(), skipped: true };
+		const testUnavailableAttempts = Math.max(0, Number(window.__PENA_TEST_NATIVE_SOURCE_UNAVAILABLE_COUNT__) || 0);
+		if (testUnavailableAttempts > 0) {
+			window.__PENA_TEST_NATIVE_SOURCE_UNAVAILABLE_COUNT__ = testUnavailableAttempts - 1;
+			return { count: _countDialogRecentMeta(), skipped: true, unavailable: true };
+		}
 		if (_dialogNativeOriginalScrollPromise) return _dialogNativeOriginalScrollPromise;
 		const container = findContainer();
 		const sourceViewport = container ? findInternalScrollContainer(container) : null;
@@ -5043,6 +5048,16 @@
 					full: true,
 					reason,
 					...(savedPosition ? { restoreTop: savedPosition.top, restoreLeft: savedPosition.left } : {})
+				}).then(result => {
+					if (result?.unavailable === true) {
+						const attempts = Math.max(0, Number(_dialogNativeModeLoadUnavailableRetries.get(mode)) || 0);
+						if (attempts < 20 && window.__PENA_ACTIVE_LIST_CONTEXT__?.mode === mode) {
+							_dialogNativeModeLoadUnavailableRetries.set(mode, attempts + 1);
+							_scheduleDialogNativeModeLoad('source-ready-retry', Math.min(600, 120 + attempts * 40));
+						}
+						return;
+					}
+					_dialogNativeModeLoadUnavailableRetries.delete(mode);
 				}).catch(() => {});
 			}, Math.max(0, Number(delay) || 0));
 			return;
@@ -5148,6 +5163,7 @@
 	}
 
 	function _ensureDialogRecentRuntime() {
+		if (window.__PENA_TEST_SKIP_DIALOG_RUNTIME__ === true) return false;
 		if (IS_OL_FRAME || _dialogRecentSyncArmed || _dialogRecentRuntimeStarting || !isInternalChatsDOM()) return false;
 		_dialogRecentRuntimeStarting = true;
 		if (!_dialogRecentInteractionGateInitialized) {
@@ -5712,6 +5728,7 @@ let _dialogControlTitleLastSyncAt = 0;
 	const _dialogNativeModeLoadedAt = new Map();
 	const _dialogNativeMaterializedSources = new Map();
 	const _dialogNativeScrollPositions = new Map();
+	const _dialogNativeModeLoadUnavailableRetries = new Map();
 	const _dialogNativeBackgroundPendingModes = new Set();
 	const _dialogNativeTraversalFailedModes = new Set();
 	const _dialogNativeTraversalFailedAt = new Map();
@@ -22280,7 +22297,9 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 					_dialogControlNativeSwitcherSig = '';
 					}
 					_syncDialogRecentSourceGateState();
-					if (previous?.mode && (previous.mode !== next?.mode || previous.list !== next.list || previous.viewport !== next.viewport)) {
+					if (!previous?.mode) {
+						_scheduleDialogNativeModeLoad('initial-mount', 90);
+					} else if (previous.mode !== next?.mode || previous.list !== next.list || previous.viewport !== next.viewport) {
 						_scheduleDialogNativeModeLoad(previous.mode !== next?.mode ? 'mode-switch' : 'source-remount', 90);
 					}
 					_scheduleNativeLifecycleRouteTick();

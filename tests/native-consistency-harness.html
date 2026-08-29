@@ -79,6 +79,8 @@
 		new URLSearchParams(location.search).get('nativeCatalog') === '1' &&
 		new URLSearchParams(location.search).get('nativeFirst') !== '1';
 	window.__PENA_TEST_NATIVE_SCROLL_MAX_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('startupBudget')) || 0);
+	window.__PENA_TEST_SKIP_DIALOG_RUNTIME__ = new URLSearchParams(location.search).get('skipRuntime') === '1';
+	window.__PENA_TEST_NATIVE_SOURCE_UNAVAILABLE_COUNT__ = Math.max(0, Number(new URLSearchParams(location.search).get('sourceUnavailable')) || 0);
 	window.__PENA_TEST_DIALOG_CATALOG_TTL_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('catalogTtl')) || 0);
 	window.__PENA_TEST_DIALOG_DEEP_IDLE_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('deepIdle')) || 0);
 	window.__PENA_TEST_DIALOG_HEAD_TTL_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('headTtl')) || 0);
