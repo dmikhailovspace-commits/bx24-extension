@@ -1,9 +1,9 @@
 {
   "schema_version": 2,
-  "version": "7.5.58",
+  "version": "7.5.59",
   "release_date": "2026-08-29",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.58",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.58",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.59",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.59",
   "extension_files": [
     "background.js",
     "content.js",
@@ -32,6 +32,6 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.58/extension/injected.js",
-  "changelog": "v7.5.58: keeps a complete native catalog ready when a lightweight Bitrix head refresh times out, avoids a second slow fallback request, and identifies any genuinely unverified controlled dialog by title and ID"
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.59/extension/injected.js",
+  "changelog": "v7.5.59: keeps complete chat and task-chat catalogs stable across tab switches, window restore and Bitrix list remounts without repeated loading"
 }

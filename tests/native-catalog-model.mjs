@@ -13,7 +13,8 @@ const {
 	selectRows,
 	getVirtualWindow,
 	captureAnchor,
-	restoreAnchor
+	restoreAnchor,
+	shouldUseContinuityView
 } = catalog;
 
 function ids(rows) {
@@ -176,6 +177,15 @@ function testVirtualWindowAndAnchor() {
 	assert.equal(restoreAnchor({ rows: [], anchor, rowHeight: 48, fallbackScrollTop: 33 }), 33);
 }
 
+function testContinuityDecision() {
+	assert.equal(shouldUseContinuityView({ complete: true, expectedCount: 280, liveCount: 35 }), true);
+	assert.equal(shouldUseContinuityView({ complete: true, expectedCount: 280, liveCount: 279 }), false);
+	assert.equal(shouldUseContinuityView({ complete: true, expectedCount: 20, liveCount: 17 }), true);
+	assert.equal(shouldUseContinuityView({ complete: false, expectedCount: 280, liveCount: 35 }), false);
+	assert.equal(shouldUseContinuityView({ complete: true, traversing: true, expectedCount: 280, liveCount: 35 }), false);
+	assert.equal(shouldUseContinuityView({ complete: true, visible: false, expectedCount: 280, liveCount: 0 }), false);
+}
+
 function testTenThousandItems() {
 	const existing = [];
 	const recent = new Map();
@@ -250,7 +260,8 @@ const tests = [
 	['buildIndex', testBuildIndex],
 	['mergeRecentItems', testMergeRecentItems],
 	['selectRows', testSelectRows],
-	['virtual window and anchors', testVirtualWindowAndAnchor]
+	['virtual window and anchors', testVirtualWindowAndAnchor],
+	['continuity decision', testContinuityDecision]
 ];
 
 for (const [name, test] of tests) {

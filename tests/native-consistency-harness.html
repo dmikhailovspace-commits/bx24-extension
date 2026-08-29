@@ -10,8 +10,8 @@
     button { font: 18px/2 Georgia, serif; letter-spacing: 3px; text-transform: uppercase; }
     .test-host { width: 360px; height: 680px; }
     .test-host[hidden] { display: none; }
-    .bx-im-list-container-recent__container,
-    .bx-im-list-container-task__container { width: 360px; height: 680px; }
+	.bx-im-list-container-recent__container,
+	.bx-im-list-container-task__container { display:flex; flex-direction:column; width: 360px; height: 680px; }
     .bx-im-list-container-recent__scroll-container,
     .bx-im-list-container-task__scroll-container,
     .bx-im-list-recent__scroll-container,
@@ -107,6 +107,9 @@
 	const restUnknownTotal = new URLSearchParams(location.search).get('restUnknownTotal') === '1';
 	let recentListFailuresRemaining = Math.max(0, Number(new URLSearchParams(location.search).get('restFailCount')) || 0);
 	const generatedManaged = new URLSearchParams(location.search).get('generatedManaged') === '1';
+	const collapseOnReturn = new URLSearchParams(location.search).get('collapseOnReturn') === '1';
+	const continuityWindow = Math.max(3, Number(new URLSearchParams(location.search).get('continuityWindow')) || 8);
+	const visitedModes = new Set([mode]);
 	const wideParent = new URLSearchParams(location.search).get('wide') === '1';
 	const nestedViewport = new URLSearchParams(location.search).get('nestedViewport') === '1';
 	const descendantViewport = new URLSearchParams(location.search).get('descendantViewport') === '1';
@@ -608,10 +611,17 @@
 		document.body.appendChild(panel);
 	  }
 	}, 650);
-    document.getElementById('switch-mode').addEventListener('click', () => {
+	    document.getElementById('switch-mode').addEventListener('click', () => {
       const recentHost = document.querySelector('.recent-host');
       const taskHost = document.querySelector('.task-host');
-      const showTasks = taskHost.hidden;
+	      const showTasks = taskHost.hidden;
+		  const targetMode = showTasks ? 'tasks' : 'chats';
+		  if (collapseOnReturn && visitedModes.has(targetMode)) {
+			const targetList = (showTasks ? taskHost : recentHost).querySelector('.bx-im-list-container-recent__elements,.bx-im-list-container-task__elements');
+			const targetRowHost = getNativeRowHost(targetList);
+			Array.from(targetRowHost?.children || []).filter(row => row.matches?.('[data-id]')).slice(continuityWindow).forEach(row => row.remove());
+		  }
+		  visitedModes.add(targetMode);
 	  if (transitionGap) {
 		recentHost.hidden = true;
 		taskHost.hidden = true;

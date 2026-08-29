@@ -1666,6 +1666,69 @@ try {
 	assert.equal(await page.evaluate(() => window.__PENA_NATIVE_PREFETCH__.status().active), false, 'Returning to an already loaded mode restarted traversal');
 
 	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=90&lazyChunk=15&lazyDelay=10&collapseOnReturn=1&continuityWindow=8`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return (status?.modeCounts?.chats || 0) >= 90 && status.loadedModes?.includes('chats') && !status.originalActive;
+	}, null, { timeout: 12000 });
+	const continuityBaseline = await page.evaluate(() => ({
+		chatCount: window.__PENA_NATIVE_PREFETCH__.status().modeCounts.chats,
+		recentCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').length
+	}));
+	await switchMode(page);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return (status?.modeCounts?.tasks || 0) >= 90 && status.loadedModes?.includes('tasks') && !status.originalActive;
+	}, null, { timeout: 12000 });
+	await switchMode(page);
+	await page.waitForFunction(expected => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		const view = document.querySelector('.recent-host .pena-native-managed-list')?._penaManagedState?.view || [];
+		return status?.continuityModes?.includes('chats') && view.length >= expected && !status.originalActive;
+	}, continuityBaseline.chatCount, { timeout: 6000 });
+	const continuityAfterReturn = await page.evaluate(() => {
+		const viewport = document.querySelector('.recent-host .pena-native-managed-viewport');
+		const targetTop = Math.min(640, Math.max(0, viewport.scrollHeight - viewport.clientHeight));
+		viewport.scrollTop = targetTop;
+		viewport.dispatchEvent(new Event('scroll'));
+		return {
+			viewCount: document.querySelector('.recent-host .pena-native-managed-list')?._penaManagedState?.view?.length || 0,
+			sourceRows: document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]').length,
+			scrollTop: viewport.scrollTop,
+			scrollHeight: viewport.scrollHeight,
+			clientHeight: viewport.clientHeight,
+			continuity: window.__PENA_NATIVE_CONTINUITY__ || null,
+			recentCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').length,
+			overlays: document.querySelectorAll('.recent-host .pena-native-original-load-guard,.recent-host .pena-native-load-guard:not([hidden])').length
+		};
+	});
+	assert.ok(continuityAfterReturn.sourceRows <= 8, `Regression did not reproduce Bitrix route-window loss: ${JSON.stringify(continuityAfterReturn)}`);
+	assert.ok(continuityAfterReturn.viewCount >= continuityBaseline.chatCount, `Cached continuity view lost dialogs: ${JSON.stringify({ continuityBaseline, continuityAfterReturn })}`);
+	assert.equal(continuityAfterReturn.recentCalls, continuityBaseline.recentCalls, `Returning to a cached mode restarted a full REST load: ${JSON.stringify({ continuityBaseline, continuityAfterReturn })}`);
+	assert.equal(continuityAfterReturn.overlays, 0, `Returning to a cached mode reopened the loader: ${JSON.stringify(continuityAfterReturn)}`);
+	await switchMode(page);
+	await page.waitForFunction(() => window.__PENA_NATIVE_PREFETCH__?.status?.().continuityModes?.includes('tasks'), null, { timeout: 6000 });
+	await switchMode(page);
+	await page.waitForFunction(expected => {
+		const view = document.querySelector('.recent-host .pena-native-managed-list')?._penaManagedState?.view || [];
+		return view.length >= expected;
+	}, continuityBaseline.chatCount, { timeout: 6000 });
+	await page.setViewportSize({ width: 540, height: 820 });
+	await page.waitForTimeout(500);
+	const continuityStable = await page.evaluate(() => ({
+		viewCount: document.querySelector('.recent-host .pena-native-managed-list')?._penaManagedState?.view?.length || 0,
+		scrollTop: document.querySelector('.recent-host .pena-native-managed-viewport')?.scrollTop || 0,
+		modeViewStates: window.__PENA_NATIVE_PREFETCH__.status().modeViewStates,
+		active: window.__PENA_NATIVE_PREFETCH__.status().originalActive,
+		overlays: document.querySelectorAll('.recent-host .pena-native-original-load-guard,.recent-host .pena-native-load-guard:not([hidden])').length
+	}));
+	assert.ok(continuityStable.viewCount >= continuityBaseline.chatCount, `Resize lost cached dialogs: ${JSON.stringify(continuityStable)}`);
+	assert.ok(Math.abs(continuityStable.scrollTop - continuityAfterReturn.scrollTop) <= 2,
+		`Mode round-trip lost the cached scroll position: ${JSON.stringify({ continuityAfterReturn, continuityStable })}`);
+	assert.equal(continuityStable.active, false, `Resize restarted native traversal: ${JSON.stringify(continuityStable)}`);
+	assert.equal(continuityStable.overlays, 0, `Resize reopened the loader: ${JSON.stringify(continuityStable)}`);
+
+	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&restDelay=350`);
 	await page.waitForFunction(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
