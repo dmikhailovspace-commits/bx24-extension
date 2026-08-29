@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.56';
+	window.__ANITREC_RUNNING__ = '7.5.57';
 
-	const VER = '7.5.56';
+	const VER = '7.5.57';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -2471,11 +2471,17 @@
 	function _restoreDialogCatalogState(cached) {
 		if (!cached || Number(cached.catalogVersion) !== _DIALOG_CATALOG_CACHE_VERSION) return false;
 		const now = Date.now();
+		const requiresSessionMaterialization = _isDialogControlNativePassThrough() && window.__PENA_TEST_API_CATALOG__ !== true;
+		let restoredCompleteMode = false;
 		for (const mode of ['chats', 'tasks']) {
 			const saved = cached.catalogModes?.[mode];
 			const loadedAt = Math.min(now, Math.max(0, Number(saved?.loadedAt) || 0));
 			if (saved?.complete === true && loadedAt > 0) {
-				_dialogNativePrefetchedModes.add(mode);
+				restoredCompleteMode = true;
+				// Repository completeness survives reloads, native DOM materialization does not.
+				// In pass-through mode every document must therefore traverse each Bitrix list
+				// once. Reusing this flag made a fresh cache expose only Bitrix' initial window.
+				if (!requiresSessionMaterialization) _dialogNativePrefetchedModes.add(mode);
 				_dialogNativeModeLoadedAt.set(mode, loadedAt);
 				_dialogNativeModeCounts.set(mode, Math.max(0, Number(saved?.count) || 0));
 				_dialogNativeBackgroundPendingModes.delete(mode);
@@ -2484,7 +2490,7 @@
 		const taskFetchedAt = Math.min(now, Math.max(0, Number(cached.taskCatalog?.fetchedAt) || 0));
 		_dialogTaskCatalogComplete = cached.taskCatalog?.complete === true && taskFetchedAt > 0;
 		_dialogTaskCatalogFetchedAt = _dialogTaskCatalogComplete ? taskFetchedAt : 0;
-		return _dialogNativePrefetchedModes.size > 0;
+		return restoredCompleteMode;
 	}
 
 	async function _writeDialogRecentCache() {
@@ -4169,6 +4175,9 @@
 		}
 		const sourceRegion = _resolveDialogControlNativeMount(container, { requireStable: false })?.sourceRegion || sourceViewport;
 		const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
+		if (options.reason === 'manual' || options.reason === 'mode-switch') {
+			_dialogNativeTraversalFailedModes.delete(mode);
+		}
 		if (!options.force && _dialogNativePrefetchedModes.has(mode)) {
 			return { count: _countDialogRecentMeta(), skipped: true, native: true, cached: true };
 		}
@@ -4425,6 +4434,10 @@
 			return { count: _countDialogRecentMeta(), skipped: true, unavailable: true };
 		}
 		const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
+		if (options.reason === 'manual' || options.reason === 'mode-switch') {
+			_dialogNativeTraversalFailedModes.delete(mode);
+			_dialogNativeTraversalFailedAt.delete(mode);
+		}
 		if (!options.force && _dialogNativePrefetchedModes.has(mode)) {
 			return { count: _countDialogRecentMeta(), skipped: true, native: true, cached: true };
 		}
@@ -4450,9 +4463,9 @@
 				else sourceViewport.style.removeProperty(name);
 			};
 			const loadLimit = 0;
-			const startupBudgetMs = Math.max(250, Math.min(
-				_DIALOG_RECENT_FALLBACK_BUDGET_MS,
-				Number(window.__PENA_TEST_NATIVE_SCROLL_MAX_MS__) || _DIALOG_RECENT_FALLBACK_BUDGET_MS
+			const traversalMaxTimeMs = Math.max(250, Math.min(
+				_DIALOG_NATIVE_TRAVERSAL_HARD_TIMEOUT_MS,
+				Number(window.__PENA_TEST_NATIVE_SCROLL_MAX_MS__) || _DIALOG_NATIVE_TRAVERSAL_HARD_TIMEOUT_MS
 			));
 			const state = { mode, seen: new Set(), orderById: new Map(), startedAt: Date.now() };
 			const target = new Map(_dialogRecentMeta);
@@ -4492,7 +4505,7 @@
 					observeEl: container,
 					tick: 36,
 					idleLimit: 1100,
-					maxTime: startupBudgetMs,
+					maxTime: traversalMaxTimeMs,
 					getStep: ({ clientHeight }) => {
 						// When Bitrix retains several screens of rows in DOM, crossing them one
 						// viewport at a time only wastes frames. A small recycled pool keeps the
@@ -4510,13 +4523,7 @@
 						_syncDialogNativeOriginalLoadUi(container);
 					}
 				});
-				let startupBudgetExpired = false;
-				const startupBudgetTimer = setTimeout(() => {
-					startupBudgetExpired = true;
-					runner?.cancel?.();
-				}, Math.max(0, startupBudgetMs - (Date.now() - state.startedAt)));
 				const scrollResult = await runner;
-				clearTimeout(startupBudgetTimer);
 				await new Promise(resolve => requestAnimationFrame(resolve));
 				_captureDialogNativeWindow(container, target, state, loadLimit);
 				_dialogRecentProgress.loadedCount = state.seen.size;
@@ -4530,6 +4537,8 @@
 					&& _dialogRecentLastSuccessAt >= state.startedAt
 					&& newerApiCount > state.seen.size;
 				if (supersededByApi) {
+					_dialogNativeTraversalFailedModes.delete(mode);
+					_dialogNativeTraversalFailedAt.delete(mode);
 					_dialogNativeBackgroundPendingModes.delete(mode);
 					_dialogNativePrefetchedModes.add(mode);
 					_dialogNativeModeCounts.set(mode, Math.max(Number(_dialogNativeModeCounts.get(mode)) || 0, newerApiCount));
@@ -4544,14 +4553,37 @@
 					_publishDialogRecentSyncState();
 					return { count: _countDialogRecentMeta(), received: state.seen.size, native: true, superseded: true };
 				}
-				const reachedConfiguredLimit = loadLimit > 0 && state.seen.size >= loadLimit;
-				const backgroundPending = !reachedConfiguredLimit && (
-					startupBudgetExpired || scrollResult?.reason === 'timeout'
-				);
-				if (backgroundPending) _dialogNativeBackgroundPendingModes.add(mode);
-				else _dialogNativeBackgroundPendingModes.delete(mode);
+				const stopReason = String(scrollResult?.reason || '');
+				const traversalComplete = !cancelled && !['cancelled', 'timeout', 'unavailable'].includes(stopReason);
+				if (!traversalComplete) {
+					_dialogNativeBackgroundPendingModes.delete(mode);
+					_dialogNativePrefetchedModes.delete(mode);
+					_dialogNativeModeLoadedAt.delete(mode);
+					if (!cancelled) {
+						_dialogNativeTraversalFailedModes.add(mode);
+						_dialogNativeTraversalFailedAt.set(mode, Date.now());
+					}
+					_dialogRecentLastError = cancelled
+						? ''
+						: 'Не удалось подтвердить конец списка диалогов';
+					_dialogRecentProgress = Object.assign({}, _dialogRecentProgress, {
+						phase: cancelled ? 'cached' : 'error',
+						loadedCount: _dialogRecentWindowCount,
+						expectedTotal: _dialogRecentWindowCount || null,
+						partial: false,
+						completedAt: Date.now()
+					});
+					_publishDialogRecentSyncState();
+					return {
+						count: _countDialogRecentMeta(), received: state.seen.size, native: true,
+						cancelled, incomplete: true, reason: stopReason || (cancelled ? 'cancelled' : 'unknown')
+					};
+				}
+				_dialogNativeTraversalFailedModes.delete(mode);
+				_dialogNativeTraversalFailedAt.delete(mode);
+				_dialogNativeBackgroundPendingModes.delete(mode);
 				const finalCommit = _commitDialogNativeCatalog(target, state, {
-					truncated: cancelled || reachedConfiguredLimit || backgroundPending
+					truncated: false
 				});
 				if (finalCommit?.detailsPromise) {
 					_dialogRecentDetailUiSilent = true;
@@ -4560,16 +4592,11 @@
 						_publishDialogRecentSyncState();
 					});
 				}
-				if (!cancelled && !backgroundPending) {
-					_dialogNativePrefetchedModes.add(mode);
-					_dialogNativeModeCounts.set(mode, state.seen.size);
-					_dialogNativeModeLoadedAt.set(mode, Date.now());
-					_dialogRecentRepositoryNeedsFullCommit = true;
-					_scheduleDialogRecentCacheWrite(80);
-				} else {
-					_dialogNativePrefetchedModes.delete(mode);
-					_dialogNativeModeLoadedAt.delete(mode);
-				}
+				_dialogNativePrefetchedModes.add(mode);
+				_dialogNativeModeCounts.set(mode, state.seen.size);
+				_dialogNativeModeLoadedAt.set(mode, Date.now());
+				_dialogRecentRepositoryNeedsFullCommit = true;
+				_scheduleDialogRecentCacheWrite(80);
 				_dialogRecentProgress = Object.assign({}, _dialogRecentProgress, {
 					phase: 'ready', loadedCount: state.seen.size, expectedTotal: state.seen.size,
 					partial: false, completedAt: Date.now()
@@ -4716,6 +4743,7 @@
 			modeCounts: Object.fromEntries(_dialogNativeModeCounts),
 			modeLoadedAt: Object.fromEntries(_dialogNativeModeLoadedAt),
 			backgroundModes: [..._dialogNativeBackgroundPendingModes],
+			failedModes: [..._dialogNativeTraversalFailedModes],
 			retryPending: !!_dialogRecentApiRetryTimer,
 			retryAttempt: _dialogRecentApiRetryAttempt,
 			lastApiResult: _dialogRecentLastApiResult
@@ -4843,6 +4871,7 @@
 				return;
 			}
 			const activeMode = _pMode();
+			if (_dialogNativeTraversalFailedModes.has(activeMode)) return;
 			const activeModeStale = !_isDialogModeCatalogFresh(activeMode);
 			const activeModePending = _dialogNativeBackgroundPendingModes.has(activeMode);
 			if (!activeModeStale && !activeModePending) return;
@@ -4889,6 +4918,12 @@
 				const container = findContainer();
 				if (!container || !isInternalChatsDOM()) return;
 				const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
+				if (_dialogNativeTraversalFailedModes.has(mode)) {
+					const failedAgo = Date.now() - (Number(_dialogNativeTraversalFailedAt.get(mode)) || 0);
+					if (reason !== 'mode-switch' || failedAgo < 2000) return;
+					_dialogNativeTraversalFailedModes.delete(mode);
+					_dialogNativeTraversalFailedAt.delete(mode);
+				}
 				if (_isDialogModeCatalogFresh(mode)) {
 					if (mode === 'tasks') _scheduleDialogTaskCatalogRefresh('mode-task-metadata');
 					return;
@@ -4954,7 +4989,13 @@
 				return;
 			}
 			_invalidateDialogControlDomReadCache();
-			_refreshDialogNativeVisibleWindow();
+			const mode = _pMode();
+			// Visible rows may enrich a catalog only after the current document has
+			// completed its atomic traversal. Otherwise a post-timeout DOM mutation
+			// republishes the partial window that the traversal deliberately rejected.
+			if (_dialogNativePrefetchedModes.has(mode) && !_dialogNativeTraversalFailedModes.has(mode)) {
+				_refreshDialogNativeVisibleWindow();
+			}
 			_dialogControlNativeViewSig = '';
 			_scheduleDialogControlNativeView(findContainer(), { restoreDisplay: false });
 			_refreshDialogControlPanel(filtersHost);
@@ -5480,7 +5521,7 @@ let _dialogControlTitleLastSyncAt = 0;
 	const _DIALOG_RECENT_METADATA_FREE_STAGNANT_MAX = 10;
 	const _DIALOG_RECENT_PAGE_DELAY_MS = 24;
 	const _DIALOG_RECENT_QUICK_MS = 15000;
-	const _DIALOG_RECENT_FALLBACK_BUDGET_MS = 10000;
+	const _DIALOG_NATIVE_TRAVERSAL_HARD_TIMEOUT_MS = 120000;
 	const _DIALOG_RECENT_REFRESH_STALE_MS = 60 * 1000;
 	const _DIALOG_CATALOG_CACHE_VERSION = 1;
 	const _DIALOG_RECENT_FULL_REFRESH_MS = 24 * 60 * 60 * 1000;
@@ -5565,6 +5606,8 @@ let _dialogControlTitleLastSyncAt = 0;
 	const _dialogNativeModeCounts = new Map();
 	const _dialogNativeModeLoadedAt = new Map();
 	const _dialogNativeBackgroundPendingModes = new Set();
+	const _dialogNativeTraversalFailedModes = new Set();
+	const _dialogNativeTraversalFailedAt = new Map();
 	let _dialogRecentApiLoadActive = false;
 	let _dialogRecentApiLoadSilent = false;
 	let _dialogRecentApiLoadPromise = null;

@@ -735,25 +735,42 @@ try {
 	assert.equal(duplicateLists.activeMode, 'chats');
 
 	await page.evaluate(() => localStorage.clear());
-	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&repositoryCache=1&restDelay=300`);
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&nativeFirst=1&repositoryCache=1&restDelay=300`);
 	await page.locator('.recent-host .pena-native-chat-row[data-id="chat225"]').waitFor({ state: 'visible', timeout: 5000 });
 	await page.waitForTimeout(450);
-	const warmCacheStartup = await page.evaluate(() => {
+	const warmCacheMaterialization = await page.evaluate(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.() || {};
 		return {
 			loadedModes: status.loadedModes || [],
-			loadedAt: status.modeLoadedAt?.chats || 0,
-			seededAt: window.__repositorySeedLoadedAt || 0,
 			originalActive: !!status.originalActive,
 			overlays: document.querySelectorAll('.pena-native-original-load-guard,.pena-native-load-guard:not([hidden])').length,
 			recentCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').length
 		};
 	});
-	assert.ok(warmCacheStartup.loadedModes.includes('chats') && warmCacheStartup.loadedModes.includes('tasks'), `Fresh per-mode cache was not restored: ${JSON.stringify(warmCacheStartup)}`);
-	assert.ok(warmCacheStartup.loadedAt >= warmCacheStartup.seededAt, `Fresh cache timestamp was lost: ${JSON.stringify(warmCacheStartup)}`);
-	assert.equal(warmCacheStartup.originalActive, false, `Fresh cache triggered a blocking full traversal: ${JSON.stringify(warmCacheStartup)}`);
-	assert.equal(warmCacheStartup.overlays, 0, `Fresh cache showed a loader on startup: ${JSON.stringify(warmCacheStartup)}`);
-	assert.ok(warmCacheStartup.recentCalls <= 1, `Fresh cache repeated full recent pagination: ${JSON.stringify(warmCacheStartup)}`);
+	assert.equal(warmCacheMaterialization.loadedModes.includes('chats'), false, `Persisted completeness was mistaken for current-document materialization: ${JSON.stringify(warmCacheMaterialization)}`);
+	assert.equal(warmCacheMaterialization.originalActive, true, `Fresh metadata cache skipped the required one-time native materialization: ${JSON.stringify(warmCacheMaterialization)}`);
+	assert.equal(warmCacheMaterialization.overlays, 1, `One-time native materialization has no visible progress state: ${JSON.stringify(warmCacheMaterialization)}`);
+	assert.equal(warmCacheMaterialization.recentCalls, 0, `Native materialization repeated REST recent pagination: ${JSON.stringify(warmCacheMaterialization)}`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.loadedModes?.includes('chats') && !status.originalActive;
+	}, null, { timeout: 20000 });
+	const materializedOnce = await page.evaluate(() => ({
+		count: window.__PENA_NATIVE_PREFETCH__?.status?.().modeCounts?.chats || 0,
+		loadedAt: window.__PENA_NATIVE_PREFETCH__?.status?.().modeLoadedAt?.chats || 0,
+		seededAt: window.__repositorySeedLoadedAt || 0,
+		recentCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').length,
+		loops: window.__PENA_NATIVE_SCROLL_DEBUG__?.loops || 0
+	}));
+	assert.ok(materializedOnce.count > 2 && materializedOnce.loadedAt >= materializedOnce.seededAt, `Native session catalog did not replace the small persisted window: ${JSON.stringify(materializedOnce)}`);
+	await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+	await page.waitForTimeout(500);
+	const afterWarmFocus = await page.evaluate(() => ({
+		active: window.__PENA_NATIVE_PREFETCH__?.status?.().originalActive || false,
+		count: window.__PENA_NATIVE_PREFETCH__?.status?.().modeCounts?.chats || 0,
+		loops: window.__PENA_NATIVE_SCROLL_DEBUG__?.loops || 0
+	}));
+	assert.deepEqual(afterWarmFocus, { active: false, count: materializedOnce.count, loops: materializedOnce.loops }, `Focus restarted a fresh session traversal: ${JSON.stringify({ materializedOnce, afterWarmFocus })}`);
 
 	await page.evaluate(() => {
 		localStorage.removeItem('pena.nativeSearchQuery.v1.chats');
@@ -1218,6 +1235,20 @@ try {
 	assert.equal(nativeFirstChats.imRecentCalls, 0, `Native-first loading waited for the metadata-only recent API: ${JSON.stringify(nativeFirstChats)}`);
 	assert.ok(nativeFirstChats.taskCalls > 0 && nativeFirstChats.duration < 6000,
 		`Native-first loading missed the fast startup path: ${JSON.stringify(nativeFirstChats)}`);
+	const nativeFirstDateBaseline = await visibleIds(page);
+	assert.ok(nativeFirstDateBaseline.length >= 120, `Date sort baseline omitted old native dialogs: ${nativeFirstDateBaseline.length}`);
+	await page.getByRole('button', { name: /Фильтры/ }).click();
+	const nativeFirstFilterPanel = page.locator('.recent-host .pena-native-filter-panel');
+	await nativeFirstFilterPanel.getByRole('button', { name: 'Дата', exact: true }).click();
+	await nativeFirstFilterPanel.getByRole('button', { name: 'По возрастанию', exact: true }).click();
+	await page.waitForTimeout(180);
+	assert.deepEqual(await visibleIds(page), [...nativeFirstDateBaseline].reverse(), 'Production native date sort did not include the full materialized list');
+	await nativeFirstFilterPanel.getByRole('button', { name: 'По убыванию', exact: true }).click();
+	await page.waitForTimeout(180);
+	assert.deepEqual(await visibleIds(page), nativeFirstDateBaseline, 'Production native date sort did not restore descending order');
+	assert.equal(await page.locator('.recent-host .bx-im-list-container-recent__scroll-container').evaluate(viewport => viewport.scrollTop), 32,
+		'Production date sorting moved the native viewport');
+	await page.mouse.click(410, 20);
 
 	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=120&lazyChunk=8&lazyDelay=20&initialTop=32&activeFolder=1`);
@@ -1336,18 +1367,31 @@ try {
 	assert.doesNotMatch(descendantScrollViewport.loaderText, /\u2026|\.\.\./, `Descendant viewport exposed an indeterminate dots state: ${JSON.stringify(descendantScrollViewport)}`);
 
 	await page.evaluate(() => localStorage.clear());
-	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=160&lazyChunk=10&lazyDelay=300&startupBudget=1200&pendingControl=1`);
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&repositoryCache=1&lazy=1&catalogRows=160&lazyChunk=10&lazyDelay=300&startupBudget=1200`);
+	await page.waitForFunction(() => window.__PENA_NATIVE_PREFETCH__?.status?.().originalActive === true, null, { timeout: 3000 });
+	const timedOutBaseline = await page.evaluate(() => ({
+		modeCount: window.__PENA_NATIVE_PREFETCH__?.status?.().modeCounts?.chats || 0,
+		syncCount: window.__PENA_RECENT_SYNC__?.count || 0
+	}));
 	await page.waitForFunction(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
-		return status?.originalActive === false && status?.backgroundModes?.includes('chats');
+		return status?.originalActive === false && window.__PENA_RECENT_SYNC__?.phase === 'error';
 	}, null, { timeout: 6000 });
-	await page.waitForTimeout(500);
-	const partialNativeRequests = await page.evaluate(() => ({
+	await page.waitForTimeout(250);
+	const timedOutNativeTraversal = await page.evaluate(() => ({
 		detailCalls: (window.nativeRestCalls || []).filter(call => call.method === 'im.dialog.get').length,
-		background: window.__PENA_NATIVE_PREFETCH__?.status?.().backgroundModes?.includes('chats') || false
+		background: window.__PENA_NATIVE_PREFETCH__?.status?.().backgroundModes?.includes('chats') || false,
+		loaded: window.__PENA_NATIVE_PREFETCH__?.status?.().loadedModes?.includes('chats') || false,
+		modeCount: window.__PENA_NATIVE_PREFETCH__?.status?.().modeCounts?.chats || 0,
+		syncCount: window.__PENA_RECENT_SYNC__?.count || 0,
+		error: window.__PENA_RECENT_SYNC__?.error || ''
 	}));
-	assert.equal(partialNativeRequests.detailCalls, 0, `Partial native loading started a per-dialog REST storm: ${JSON.stringify(partialNativeRequests)}`);
-	assert.equal(partialNativeRequests.background, true, `Partial native catalog lost its continuation state: ${JSON.stringify(partialNativeRequests)}`);
+	assert.ok(timedOutNativeTraversal.detailCalls < 10, `Timed-out native loading started a per-dialog REST storm: ${JSON.stringify(timedOutNativeTraversal)}`);
+	assert.equal(timedOutNativeTraversal.background, false, `Timed-out traversal scheduled an invisible continuation: ${JSON.stringify(timedOutNativeTraversal)}`);
+	assert.equal(timedOutNativeTraversal.loaded, false, `Timed-out traversal was marked complete: ${JSON.stringify(timedOutNativeTraversal)}`);
+	assert.equal(timedOutNativeTraversal.modeCount, timedOutBaseline.modeCount, `Timed-out traversal published a partial mode count: ${JSON.stringify({ timedOutBaseline, timedOutNativeTraversal })}`);
+	assert.equal(timedOutNativeTraversal.syncCount, timedOutBaseline.syncCount, `Timed-out traversal replaced the atomic catalog: ${JSON.stringify({ timedOutBaseline, timedOutNativeTraversal })}`);
+	assert.match(timedOutNativeTraversal.error, /конец списка/i, `Timed-out traversal has no recoverable error state: ${JSON.stringify(timedOutNativeTraversal)}`);
 
 	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=30&lazyChunk=10&lazyDelay=10&initialTop=16&catalogTtl=120&deepIdle=50`);
@@ -1478,29 +1522,31 @@ try {
 	assert.equal(passiveComplete.sourceTop, 0, `Passive completion moved the visible native viewport: ${JSON.stringify(passiveComplete)}`);
 
 	await page.evaluate(() => localStorage.clear());
-	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&lazy=1&catalogRows=620&lazyChunk=20&lazyDelay=300&startupBudget=1200&generatedManaged=1&restFailCount=1&restDelay=80`);
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&nativeFirst=1&lazy=1&catalogRows=620&lazyChunk=20&lazyDelay=200&generatedManaged=1&restDelay=80`);
 	await page.waitForFunction(() => window.__PENA_NATIVE_PREFETCH__?.status?.().originalActive === true, null, { timeout: 3000 });
 	await page.waitForFunction(() => {
-		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
-		return status?.loadedModes?.includes('chats') && status.originalActive === false;
-	}, null, { timeout: 10000 });
-	const startupBudgetState = await page.evaluate(() => ({
+		const value = document.querySelector('.recent-host .pena-native-original-load-guard .pena-native-load-value')?.textContent || '';
+		const percent = Number.parseInt(value, 10);
+		return Number.isFinite(percent) && percent > 0 && percent < 100;
+	}, null, { timeout: 5000 });
+	const midTraversalState = await page.evaluate(() => ({
 		count: window.__PENA_NATIVE_PREFETCH__?.status?.().modeCounts?.chats || 0,
+		progress: document.querySelector('.recent-host .pena-native-original-load-guard .pena-native-load-value')?.textContent || '',
+		phase: window.__PENA_RECENT_SYNC__?.phase || '',
+		ready: window.__PENA_NATIVE_PREFETCH__?.status?.().loadedModes?.includes('chats') || false,
 		background: window.__PENA_NATIVE_PREFETCH__?.status?.().backgroundModes?.includes('chats') || false,
-		overlay: document.querySelectorAll('.pena-native-original-load-guard').length,
-		duration: Math.max(0, Number(window.__PENA_RECENT_SYNC__?.completedAt) - Number(window.__PENA_RECENT_SYNC__?.startedAt))
+		overlay: document.querySelectorAll('.pena-native-original-load-guard').length
 	}));
-	const fallbackIncomplete = startupBudgetState.count > 0 && startupBudgetState.count < 620;
-	const apiRecoveredEarly = startupBudgetState.count >= 620 && startupBudgetState.background === false;
-	assert.ok(fallbackIncomplete || apiRecoveredEarly, `Neither native fallback nor early REST recovery produced a usable catalog: ${JSON.stringify(startupBudgetState)}`);
-	assert.ok(startupBudgetState.duration > 0 && startupBudgetState.duration < 3500, `Startup loader exceeded its time budget: ${JSON.stringify(startupBudgetState)}`);
-	assert.equal(startupBudgetState.background, fallbackIncomplete, `Background state diverged from catalog completeness: ${JSON.stringify(startupBudgetState)}`);
-	assert.equal(startupBudgetState.overlay, 0, `Startup loader stayed visible after its time budget: ${JSON.stringify(startupBudgetState)}`);
+	assert.match(midTraversalState.progress, /^(?:[1-9]|[1-9]\d)%$/, `Slow native traversal did not expose measurable progress: ${JSON.stringify(midTraversalState)}`);
+	assert.equal(midTraversalState.ready, false, `A partial native window was published as complete: ${JSON.stringify(midTraversalState)}`);
+	assert.equal(midTraversalState.phase, 'native-scroll', `Loader left the traversal phase before the real end: ${JSON.stringify(midTraversalState)}`);
+	assert.equal(midTraversalState.background, false, `Foreground traversal was converted into an invisible background load: ${JSON.stringify(midTraversalState)}`);
+	assert.equal(midTraversalState.overlay, 1, `Loader disappeared while old dialogs were still missing: ${JSON.stringify(midTraversalState)}`);
 	try {
 		await page.waitForFunction(() => {
 			const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
-			return (status?.modeCounts?.chats || 0) >= 620 && !status?.backgroundModes?.includes('chats') && !status?.apiActive;
-		}, null, { timeout: 12000 });
+			return (status?.modeCounts?.chats || 0) >= 620 && status?.loadedModes?.includes('chats') && !status?.originalActive;
+		}, null, { timeout: 30000 });
 	} catch (error) {
 		const diagnostic = await page.evaluate(() => ({
 			prefetch: window.__PENA_NATIVE_PREFETCH__?.status?.() || null,
@@ -1511,20 +1557,25 @@ try {
 			sourceTop: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0,
 			sourceHeight: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollHeight || 0
 		}));
-		throw new Error(`Automatic REST recovery did not complete: ${JSON.stringify(diagnostic)}; ${error.message}`);
+		throw new Error(`Foreground native traversal did not reach the actual end: ${JSON.stringify(diagnostic)}; ${error.message}`);
 	}
-	const backgroundCaptureState = await page.evaluate(() => ({
+	const foregroundCompleteState = await page.evaluate(() => ({
 		count: window.__PENA_NATIVE_PREFETCH__?.status?.().modeCounts?.chats || 0,
-		overlay: document.querySelectorAll('.pena-native-original-load-guard,.pena-native-load-guard:not([hidden])').length
+		background: window.__PENA_NATIVE_PREFETCH__?.status?.().backgroundModes?.includes('chats') || false,
+		overlay: document.querySelectorAll('.pena-native-original-load-guard,.pena-native-load-guard:not([hidden])').length,
+		sourceTop: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0
 	}));
-	assert.ok(backgroundCaptureState.count >= 620, `Automatic retry did not restore the complete catalog: ${JSON.stringify({ startupBudgetState, backgroundCaptureState })}`);
-	assert.equal(backgroundCaptureState.overlay, 0, `Automatic retry reopened a blocking loader: ${JSON.stringify(backgroundCaptureState)}`);
-	await page.waitForTimeout(500);
+	assert.ok(foregroundCompleteState.count >= 620, `Full native traversal lost old dialogs: ${JSON.stringify({ midTraversalState, foregroundCompleteState })}`);
+	assert.equal(foregroundCompleteState.background, false, `Completed traversal left a passive completion job: ${JSON.stringify(foregroundCompleteState)}`);
+	assert.equal(foregroundCompleteState.overlay, 0, `Loader stayed after the confirmed end: ${JSON.stringify(foregroundCompleteState)}`);
+	assert.equal(foregroundCompleteState.sourceTop, 0, `Full traversal moved the visible source viewport: ${JSON.stringify(foregroundCompleteState)}`);
+	await page.waitForTimeout(1200);
 	const stableRecovery = await page.evaluate(() => ({
 		count: window.__PENA_NATIVE_PREFETCH__?.status?.().modeCounts?.chats || 0,
-		background: window.__PENA_NATIVE_PREFETCH__?.status?.().backgroundModes?.includes('chats') || false
+		background: window.__PENA_NATIVE_PREFETCH__?.status?.().backgroundModes?.includes('chats') || false,
+		active: window.__PENA_NATIVE_PREFETCH__?.status?.().originalActive || false
 	}));
-	assert.ok(stableRecovery.count >= 620 && !stableRecovery.background, `A stale fallback overwrote the complete REST catalog: ${JSON.stringify(stableRecovery)}`);
+	assert.deepEqual(stableRecovery, { count: foregroundCompleteState.count, background: false, active: false }, `Catalog changed after foreground completion: ${JSON.stringify({ foregroundCompleteState, stableRecovery })}`);
 
 	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&pendingControl=1&detailDelay=800`);
@@ -1683,7 +1734,7 @@ try {
   assert.equal((await readOutput(page)).switchers, 1);
 
   assert.deepEqual(pageErrors, []);
-	console.log('PASS native regressions: matching marker controls, isolated search, dynamic REST batch completion and automatic recovery');
+	console.log('PASS native regressions: complete native traversal, atomic timeout recovery, sorting, search, folders, markers and time tracking');
 } finally {
   await browser.close();
   await closeServer();
