@@ -84,22 +84,49 @@ const records = Array.from({ length: 620 }, (_, index) => ({
 
 const firstCommit = await request('catalog.commit', scopeA, {
   records,
-  meta: { lastSuccessAt: 100, lastFullAt: 90, cursorAt: 100, windowCount: 620 }
+  meta: {
+    lastSuccessAt: 100,
+    lastFullAt: 90,
+    cursorAt: 100,
+    windowCount: 620,
+    catalogVersion: 1,
+    catalogModes: {
+      chats: { complete: true, loadedAt: 80, count: 531 },
+      tasks: { complete: true, loadedAt: 85, count: 89 }
+    },
+    taskCatalog: { complete: true, fetchedAt: 85 }
+  }
 });
 assert.equal(firstCommit.count, 620);
 assert.equal(firstCommit.manifest.chunkCount, 3, 'catalog was not chunked in groups of 250');
 let snapshot = await request('catalog.get', scopeA);
 assert.equal(snapshot.records.length, 620);
 assert.equal(snapshot.records[619].title, 'Dialog 620');
+assert.equal(snapshot.manifest.catalogVersion, 1, 'catalog cache contract version was not persisted');
+assert.deepEqual(
+  JSON.parse(JSON.stringify(snapshot.manifest.catalogModes)),
+  {
+    chats: { complete: true, loadedAt: 80, count: 531 },
+    tasks: { complete: true, loadedAt: 85, count: 89 }
+  },
+  'per-mode completeness was not persisted'
+);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(snapshot.manifest.taskCatalog)),
+  { complete: true, fetchedAt: 85 },
+  'task metadata freshness was not persisted'
+);
 
 await request('catalog.patch', scopeA, {
   records: [{ ...records[9], title: 'Patched dialog' }],
   deletedIds: ['chat11'],
-  meta: { lastSuccessAt: 110, cursorAt: 110 }
+  meta: { lastSuccessAt: 110, cursorAt: 110, taskCatalog: { complete: true, fetchedAt: 105 } }
 });
 snapshot = await request('catalog.get', scopeA);
 assert.equal(snapshot.records.find(record => record.id === 'chat10')?.title, 'Patched dialog');
 assert.equal(snapshot.records.some(record => record.id === 'chat11'), false);
+assert.equal(snapshot.manifest.catalogModes.chats.loadedAt, 80, 'metadata patch erased mode completeness');
+assert.equal(snapshot.manifest.taskCatalog.fetchedAt, 105, 'metadata patch did not advance task freshness');
 
 const oldGeneration = snapshot.manifest.generation;
 const keysBeforeInterruptedCommit = Object.keys(localData).sort();

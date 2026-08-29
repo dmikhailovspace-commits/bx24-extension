@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.53';
+	window.__ANITREC_RUNNING__ = '7.5.54';
 
-	const VER = '7.5.53';
+	const VER = '7.5.54';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -1512,6 +1512,30 @@
 		});
 	}
 
+	function _isBxRestReadRetryable(error) {
+		const code = String(error?.code || '').toUpperCase();
+		const message = String(error?.message || error || '');
+		if (/ACCESS|DENIED|NOT_ALLOWED|0X100002|0X000004/.test(code) || /access|denied|not allowed|0x100002|0x000004/i.test(message)) return false;
+		return /TEMPORARY|INTERNAL|NETWORK|CONNECTION|TIMEOUT|QUERY_LIMIT|SERVICE_UNAVAILABLE/.test(code) ||
+			/время ожидания|timeout|temporary|network|connection|temporarily|service unavailable|BX\.rest|BX24|недоступен/i.test(message);
+	}
+
+	async function _callBxRestReadPage(method, params = {}, options = {}) {
+		const attempts = Math.min(3, Math.max(1, Number(options.attempts) || 2));
+		const baseTimeoutMs = Math.max(1000, Number(options.timeoutMs) || 12000);
+		let lastError = null;
+		for (let attempt = 0; attempt < attempts; attempt += 1) {
+			try {
+				return await _callBxRestPageWithTimeout(method, params, baseTimeoutMs + attempt * 8000);
+			} catch (error) {
+				lastError = error;
+				if (attempt + 1 >= attempts || !_isBxRestReadRetryable(error)) throw error;
+				await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+			}
+		}
+		throw lastError || new Error(`${method}: не удалось получить данные`);
+	}
+
 	async function _callBxRestPagesFast(requests, timeoutMs = 12000) {
 		const jobs = Array.isArray(requests) ? requests.filter(job => job?.method) : [];
 		if (!jobs.length) return [];
@@ -2421,13 +2445,46 @@
 	}
 
 	function _getDialogRecentRepositoryMeta() {
+		const catalogModes = {};
+		for (const mode of ['chats', 'tasks']) {
+			catalogModes[mode] = {
+				complete: _dialogNativePrefetchedModes.has(mode) && !_dialogNativeBackgroundPendingModes.has(mode),
+				loadedAt: Math.max(0, Number(_dialogNativeModeLoadedAt.get(mode)) || 0),
+				count: Math.max(0, Number(_dialogNativeModeCounts.get(mode)) || 0)
+			};
+		}
 		return {
 			lastSuccessAt: _dialogRecentLastSuccessAt,
 			lastFullAt: _dialogRecentLastFullAt,
 			cursorAt: _dialogRecentLastSuccessAt,
 			windowCount: _dialogRecentWindowCount,
-			truncated: _dialogRecentTruncated
+			truncated: _dialogRecentTruncated,
+			catalogVersion: _DIALOG_CATALOG_CACHE_VERSION,
+			catalogModes,
+			taskCatalog: {
+				complete: _dialogTaskCatalogComplete,
+				fetchedAt: _dialogTaskCatalogFetchedAt
+			}
 		};
+	}
+
+	function _restoreDialogCatalogState(cached) {
+		if (!cached || Number(cached.catalogVersion) !== _DIALOG_CATALOG_CACHE_VERSION) return false;
+		const now = Date.now();
+		for (const mode of ['chats', 'tasks']) {
+			const saved = cached.catalogModes?.[mode];
+			const loadedAt = Math.min(now, Math.max(0, Number(saved?.loadedAt) || 0));
+			if (saved?.complete === true && loadedAt > 0) {
+				_dialogNativePrefetchedModes.add(mode);
+				_dialogNativeModeLoadedAt.set(mode, loadedAt);
+				_dialogNativeModeCounts.set(mode, Math.max(0, Number(saved?.count) || 0));
+				_dialogNativeBackgroundPendingModes.delete(mode);
+			}
+		}
+		const taskFetchedAt = Math.min(now, Math.max(0, Number(cached.taskCatalog?.fetchedAt) || 0));
+		_dialogTaskCatalogComplete = cached.taskCatalog?.complete === true && taskFetchedAt > 0;
+		_dialogTaskCatalogFetchedAt = _dialogTaskCatalogComplete ? taskFetchedAt : 0;
+		return _dialogNativePrefetchedModes.size > 0;
 	}
 
 	async function _writeDialogRecentCache() {
@@ -2536,6 +2593,7 @@
 				_dialogRecentRepositoryAvailable = true;
 				_dialogRecentRepositoryManifest = snapshot?.manifest || null;
 			if (snapshot?.manifest) {
+				_restoreDialogCatalogState(snapshot.manifest);
 				if (snapshot.records?.length) {
 					_restoreDialogRecentPayload({
 						entries: snapshot.records,
@@ -2543,7 +2601,10 @@
 						lastSuccessAt: snapshot.manifest?.lastSuccessAt,
 						lastFullAt: snapshot.manifest?.lastFullAt,
 						windowCount: snapshot.manifest?.windowCount,
-						truncated: snapshot.manifest?.truncated
+						truncated: snapshot.manifest?.truncated,
+						catalogVersion: snapshot.manifest?.catalogVersion,
+						catalogModes: snapshot.manifest?.catalogModes,
+						taskCatalog: snapshot.manifest?.taskCatalog
 					}, scope.userId);
 				} else {
 					_dialogRecentCacheLoaded = true;
@@ -3357,7 +3418,9 @@
 		const now = Date.now();
 		const force = !!options.force;
 		const cursorExpired = !_dialogRecentLastSuccessAt || now - _dialogRecentLastSuccessAt >= _DIALOG_RECENT_DELTA_MAX_AGE_MS;
-		const full = !!options.full || !_dialogRecentMeta.size || cursorExpired || (now - _dialogRecentLastFullAt) >= _DIALOG_RECENT_FULL_MS;
+		const full = options.incrementalOnly === true
+			? !_dialogRecentMeta.size
+			: (!!options.full || !_dialogRecentMeta.size || cursorExpired || (now - _dialogRecentLastFullAt) >= _DIALOG_RECENT_FULL_MS);
 		if (force && full && !options.reason && _dialogRecentLastSuccessAt > 0 && now - _dialogRecentLastSuccessAt < _DIALOG_RECENT_MIN_MS) {
 			return { count: _dialogRecentMeta.size, skipped: true, duplicate: true };
 		}
@@ -3814,10 +3877,9 @@
 
 	function _commitDialogTaskCatalogResult(taskCatalog) {
 		const rows = Array.isArray(taskCatalog?.rows) ? taskCatalog.rows : [];
-		if (!rows.length) return 0;
-		const merged = _mergeDialogTaskCatalogRows(rows);
+		const merged = rows.length ? _mergeDialogTaskCatalogRows(rows) : 0;
 		const hydrated = _hydrateAllDialogControlModesFromRecent({ pruneMissing: false });
-		if (merged || hydrated) {
+		if (merged || hydrated || taskCatalog?.complete === true) {
 			_dialogRecentDataRevision += 1;
 			_dialogRecentRepositoryNeedsFullCommit = true;
 			_scheduleDialogRecentCacheWrite();
@@ -3836,6 +3898,7 @@
 		_dialogNativeBackgroundPendingModes.add('chats');
 		_dialogNativeBackgroundPendingModes.add('tasks');
 		_dialogRecentApiLoadActive = true;
+		_dialogRecentApiLoadSilent = options.silent === true;
 		_dialogRecentApiLoadMode = 'all';
 		if (showOriginalOverlay) {
 			_syncDialogNativeOriginalLoadUi(container);
@@ -3893,6 +3956,12 @@
 				else _dialogNativePrefetchedModes.delete('tasks');
 				_dialogNativeModeCounts.set('chats', Math.max(Number(_dialogNativeModeCounts.get('chats')) || 0, chatLoadedCount));
 				_dialogNativeModeCounts.set('tasks', Math.max(Number(_dialogNativeModeCounts.get('tasks')) || 0, taskLoadedCount));
+				if (recentComplete) _dialogNativeModeLoadedAt.set('chats', Math.max(_dialogRecentLastFullAt, Date.now()));
+				else _dialogNativeModeLoadedAt.delete('chats');
+				if (taskComplete) _dialogNativeModeLoadedAt.set('tasks', Math.max(_dialogTaskCatalogFetchedAt, Date.now()));
+				else _dialogNativeModeLoadedAt.delete('tasks');
+				_dialogRecentRepositoryNeedsFullCommit = true;
+				_scheduleDialogRecentCacheWrite(80);
 				if (!apiComplete) {
 					if (!recentComplete) _dialogNativeBackgroundPendingModes.add('chats');
 					if (!taskComplete) _dialogNativeBackgroundPendingModes.add('tasks');
@@ -3925,6 +3994,7 @@
 			} finally {
 				_dialogRecentApiLoadPromise = null;
 				_dialogRecentApiLoadActive = false;
+				_dialogRecentApiLoadSilent = false;
 				_dialogRecentApiLoadMode = '';
 				if (showOriginalOverlay) _syncDialogNativeOriginalLoadUi(container);
 				_publishDialogRecentSyncState();
@@ -4185,6 +4255,9 @@
 				if (!cancelled) {
 					_dialogNativePrefetchedModes.add(mode);
 					_dialogNativeModeCounts.set(mode, state.seen.size);
+					_dialogNativeModeLoadedAt.set(mode, Date.now());
+					_dialogRecentRepositoryNeedsFullCommit = true;
+					_scheduleDialogRecentCacheWrite(80);
 				}
 				_publishDialogRecentSyncState();
 				applyFilters();
@@ -4261,6 +4334,13 @@
 		const host = mount?.host || sourceViewport?.parentElement || null;
 		if (!host || host === document.body || host === document.documentElement) return null;
 		let overlay = host.querySelector(':scope > .pena-native-original-load-guard');
+		const silentBackgroundLoad = (_dialogNativeOriginalScrollActive && _dialogNativeOriginalScrollSilent) ||
+			(_dialogRecentApiLoadActive && _dialogRecentApiLoadSilent);
+		if (silentBackgroundLoad) {
+			overlay?.remove();
+			host.classList.remove('pena-native-original-loading-host');
+			return null;
+		}
 		const apiCatalogBlocking = _dialogRecentApiLoadActive && (
 			_dialogRecentProgress.phase === 'full-sync' || !!_dialogTaskCatalogSyncPromise
 		);
@@ -4350,6 +4430,7 @@
 			_dialogNativeBackgroundPendingModes.delete(mode);
 			_dialogRecentDetailUiSilent = false;
 			_dialogNativeOriginalScrollActive = true;
+			_dialogNativeOriginalScrollSilent = options.silent === true;
 			_dialogNativeOriginalScrollMode = mode;
 			_dialogRecentProgress = {
 				phase: 'native-scroll', loadedCount: 0, expectedTotal: null,
@@ -4422,7 +4503,10 @@
 					_dialogNativeBackgroundPendingModes.delete(mode);
 					_dialogNativePrefetchedModes.add(mode);
 					_dialogNativeModeCounts.set(mode, Math.max(Number(_dialogNativeModeCounts.get(mode)) || 0, newerApiCount));
+					_dialogNativeModeLoadedAt.set(mode, Math.max(_dialogRecentLastFullAt, Date.now()));
 					_dialogRecentWindowCount = Math.max(_dialogRecentWindowCount, newerApiCount);
+					_dialogRecentRepositoryNeedsFullCommit = true;
+					_scheduleDialogRecentCacheWrite(80);
 					_dialogRecentProgress = Object.assign({}, _dialogRecentProgress, {
 						phase: 'ready', loadedCount: newerApiCount, expectedTotal: newerApiCount,
 						full: true, partial: false, completedAt: Date.now()
@@ -4450,6 +4534,8 @@
 					_dialogNativePrefetchedModes.add(mode);
 					_dialogNativeModeCounts.set(mode, state.seen.size);
 					_dialogNativeModeLoadedAt.set(mode, Date.now());
+					_dialogRecentRepositoryNeedsFullCommit = true;
+					_scheduleDialogRecentCacheWrite(80);
 				} else {
 					_dialogNativePrefetchedModes.delete(mode);
 					_dialogNativeModeLoadedAt.delete(mode);
@@ -4465,6 +4551,7 @@
 				sourceViewport.scrollLeft = originalLeft;
 				sourceViewport.dispatchEvent(new Event('scroll'));
 				_dialogNativeOriginalScrollActive = false;
+				_dialogNativeOriginalScrollSilent = false;
 				_dialogNativeOriginalScrollFinishing = true;
 				_dialogNativeOriginalScrollMode = '';
 				_dialogNativeOriginalScrollCancel = null;
@@ -4503,6 +4590,7 @@
 		}
 		if (
 			options.full !== false &&
+			options.preferApi !== true &&
 			_isDialogControlNativePassThrough() &&
 			window.__PENA_TEST_API_CATALOG__ !== true
 		) {
@@ -4659,9 +4747,16 @@
 			: _DIALOG_RECENT_FULL_REFRESH_MS;
 	}
 
+	function _getDialogTaskCatalogTtlMs() {
+		const testTtl = Number(window.__PENA_TEST_DIALOG_CATALOG_TTL_MS__);
+		return Number.isFinite(testTtl) && testTtl >= 50
+			? testTtl
+			: _DIALOG_TASK_CATALOG_REFRESH_MS;
+	}
+
 	function _isDialogTaskCatalogMetadataFresh(now = Date.now()) {
 		return _dialogTaskCatalogComplete && _dialogTaskCatalogFetchedAt > 0 &&
-			Math.max(0, Number(now) || Date.now()) - _dialogTaskCatalogFetchedAt < _getDialogCompleteCatalogTtlMs();
+			Math.max(0, Number(now) || Date.now()) - _dialogTaskCatalogFetchedAt < _getDialogTaskCatalogTtlMs();
 	}
 
 	function _isDialogModeCatalogFresh(mode, now = Date.now()) {
@@ -4669,13 +4764,89 @@
 		if (!_dialogNativePrefetchedModes.has(targetMode)) return false;
 		const productionNativeFirst = _isDialogControlNativePassThrough() && window.__PENA_TEST_API_CATALOG__ !== true;
 		if (productionNativeFirst) {
-			if (targetMode === 'tasks' && !_isDialogTaskCatalogMetadataFresh(now)) return false;
 			const materializedAt = Math.max(0, Number(_dialogNativeModeLoadedAt.get(targetMode)) || 0);
 			return materializedAt > 0 && Math.max(0, Number(now) || Date.now()) - materializedAt < _getDialogCompleteCatalogTtlMs();
 		}
-		if (targetMode === 'tasks' && !_dialogTaskCatalogComplete) return false;
-		const completedAt = targetMode === 'tasks' ? _dialogTaskCatalogFetchedAt : _dialogRecentLastFullAt;
+		const completedAt = Math.max(0, Number(_dialogNativeModeLoadedAt.get(targetMode)) || 0) ||
+			(targetMode === 'tasks' ? _dialogTaskCatalogFetchedAt : _dialogRecentLastFullAt);
 		return completedAt > 0 && Math.max(0, Number(now) || Date.now()) - completedAt < _getDialogCompleteCatalogTtlMs();
+	}
+
+	async function _refreshDialogTaskCatalogMetadata(options = {}) {
+		if (!options.force && _isDialogTaskCatalogMetadataFresh()) return { cached: true, complete: true };
+		const taskCatalog = await _syncDialogTaskCatalog({ force: true, deferMerge: true });
+		_commitDialogTaskCatalogResult(taskCatalog);
+		_dialogRecentRepositoryNeedsFullCommit = true;
+		_scheduleDialogRecentCacheWrite(120);
+		_publishDialogRecentSyncState();
+		return taskCatalog;
+	}
+
+	function _scheduleDialogTaskCatalogRefresh(reason = 'task-metadata-stale', delay = 250) {
+		if (_dialogTaskCatalogRefreshTimer || _isDialogTaskCatalogMetadataFresh()) return;
+		_dialogTaskCatalogRefreshTimer = setTimeout(() => {
+			_dialogTaskCatalogRefreshTimer = null;
+			if (document.hidden || !isInternalChatsDOM()) return;
+			_refreshDialogTaskCatalogMetadata({ reason }).catch(error => {
+				warn('Не удалось фоново обновить индекс task-чатов', error?.message || error);
+			});
+		}, Math.max(0, Number(delay) || 0));
+	}
+
+	function _getDialogDeepRefreshIdleDelayMs() {
+		const testDelay = Number(window.__PENA_TEST_DIALOG_DEEP_IDLE_MS__);
+		return Number.isFinite(testDelay) && testDelay >= 20 ? testDelay : _DIALOG_DEEP_REFRESH_IDLE_MS;
+	}
+
+	function _scheduleDialogDeepRefresh(reason = 'deep-cache-stale', delay = _getDialogDeepRefreshIdleDelayMs()) {
+		if (_dialogDeepRefreshTimer || _dialogDeepRefreshIdleHandle != null || _dialogDeepRefreshPromise) return;
+		_dialogDeepRefreshTimer = setTimeout(() => {
+			_dialogDeepRefreshTimer = null;
+			if (document.hidden || !isInternalChatsDOM()) {
+				_scheduleDialogDeepRefresh(reason, 60000);
+				return;
+			}
+			const idleFor = Date.now() - _dialogNativeLastUserActivityAt;
+			if (idleFor < _DIALOG_DEEP_REFRESH_USER_IDLE_MS) {
+				_scheduleDialogDeepRefresh(reason, _DIALOG_DEEP_REFRESH_USER_IDLE_MS - idleFor + 250);
+				return;
+			}
+			const activeMode = _pMode();
+			const activeModeStale = !_isDialogModeCatalogFresh(activeMode);
+			const activeModePending = _dialogNativeBackgroundPendingModes.has(activeMode);
+			if (!activeModeStale && !activeModePending) return;
+			const start = () => {
+				_dialogDeepRefreshIdleHandle = null;
+				if (Date.now() - _dialogNativeLastUserActivityAt < _DIALOG_DEEP_REFRESH_USER_IDLE_MS) {
+					_scheduleDialogDeepRefresh(reason, _DIALOG_DEEP_REFRESH_USER_IDLE_MS);
+					return;
+				}
+				_dialogDeepRefreshPromise = _refreshDialogRecentCatalog({
+					full: true,
+					force: true,
+					preferApi: false,
+					silent: true,
+					reason
+				}).catch(error => {
+					warn('Не удалось фоново обновить полный каталог', error?.message || error);
+				}).finally(() => {
+					_dialogDeepRefreshPromise = null;
+					if (_dialogNativeBackgroundPendingModes.has(_pMode())) _scheduleDialogDeepRefresh('deep-cache-retry', 60000);
+				});
+			};
+			if (typeof requestIdleCallback === 'function') {
+				_dialogDeepRefreshIdleHandle = requestIdleCallback(start, { timeout: 3000 });
+			} else {
+				start();
+			}
+		}, Math.max(0, Number(delay) || 0));
+	}
+
+	function _noteDialogCatalogUserActivity() {
+		_dialogNativeLastUserActivityAt = Date.now();
+		if (_dialogNativeOriginalScrollActive && _dialogNativeOriginalScrollSilent) {
+			_dialogNativeOriginalScrollCancel?.();
+		}
 	}
 
 	function _scheduleDialogNativeModeLoad(reason = 'mode-enter', delay = 80) {
@@ -4687,7 +4858,10 @@
 				const container = findContainer();
 				if (!container || !isInternalChatsDOM()) return;
 				const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
-				if (_isDialogModeCatalogFresh(mode)) return;
+				if (_isDialogModeCatalogFresh(mode)) {
+					if (mode === 'tasks') _scheduleDialogTaskCatalogRefresh('mode-task-metadata');
+					return;
+				}
 				_dialogNativePrefetchedModes.delete(mode);
 				if (_dialogRecentRuntimeStarting) {
 					_scheduleDialogNativeModeLoad(reason, 140);
@@ -4709,6 +4883,7 @@
 			if (!container || !isInternalChatsDOM()) return;
 			const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
 			if (_isDialogModeCatalogFresh(mode)) {
+				if (mode === 'tasks') _scheduleDialogTaskCatalogRefresh('mode-task-metadata');
 				if (_isDialogRecentInteractionBlocked()) _completeDialogRecentInteractionGate();
 				return;
 			}
@@ -4774,14 +4949,18 @@
 				if (document.hidden || !isInternalChatsDOM()) return;
 				const now = Date.now();
 				const headStale = !_dialogRecentLastSuccessAt || now - _dialogRecentLastSuccessAt >= _DIALOG_RECENT_REFRESH_STALE_MS;
-				const completeCatalogStale = _isDialogControlNativePassThrough()
-					? (!_isDialogModeCatalogFresh(_pMode(), now) || !_isDialogTaskCatalogMetadataFresh(now))
-					: (!_isDialogModeCatalogFresh('chats', now) || !_isDialogModeCatalogFresh('tasks', now));
-				const needsCompletion = _dialogNativeBackgroundPendingModes.size > 0;
-				if (!headStale && !completeCatalogStale && !needsCompletion) return;
-				const full = needsCompletion || completeCatalogStale;
-				_scheduleDialogRecentSync({ delay: 120, force: true, full, reason });
+				const activeMode = _pMode();
+				const completeCatalogStale = !_isDialogModeCatalogFresh(activeMode, now);
+				const needsCompletion = _dialogNativeBackgroundPendingModes.has(activeMode);
+				if (headStale) {
+					_scheduleDialogRecentSync({ delay: 120, full: false, incrementalOnly: true, silent: true, reason: `${reason}-delta` });
+				}
+				if (!_isDialogTaskCatalogMetadataFresh(now)) _scheduleDialogTaskCatalogRefresh(`${reason}-tasks`);
+				if (completeCatalogStale || needsCompletion) _scheduleDialogDeepRefresh(`${reason}-deep`);
 			};
+			['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(type => {
+				document.addEventListener(type, _noteDialogCatalogUserActivity, { capture: true, passive: true });
+			});
 			_dialogRecentSyncTimer = setInterval(() => scheduleFreshCatalog('periodic-freshness'), _DIALOG_RECENT_REFRESH_STALE_MS);
 			window.addEventListener('focus', () => scheduleFreshCatalog('focus-freshness'));
 			document.addEventListener('visibilitychange', () => {
@@ -4803,10 +4982,20 @@
 			_dialogRecentRuntimeStarting = false;
 			_publishDialogRecentSyncState();
 			_armDialogRecentSync();
-			_scheduleDialogRecentSync({
-				delay: _dialogRecentCacheLoaded ? 100 : 0,
-				full: window.__PENA_FORCE_REST_CATALOG__ === true ? !_dialogRecentCacheLoaded : true
-			});
+			const mode = _pMode();
+			const cachedModeKnown = _dialogRecentCacheLoaded && _dialogNativePrefetchedModes.has(mode) &&
+				Math.max(0, Number(_dialogNativeModeLoadedAt.get(mode)) || 0) > 0;
+			if (window.__PENA_FORCE_REST_CATALOG__ === true) {
+				_scheduleDialogRecentSync({ delay: _dialogRecentCacheLoaded ? 100 : 0, full: !_dialogRecentCacheLoaded });
+			} else if (cachedModeKnown) {
+				_scheduleDialogRecentSync({ delay: 100, full: false, incrementalOnly: true, silent: true, reason: 'startup-delta' });
+				if (!_isDialogTaskCatalogMetadataFresh()) _scheduleDialogTaskCatalogRefresh('startup-tasks');
+				if (!_isDialogModeCatalogFresh(mode) || _dialogNativeBackgroundPendingModes.has(mode)) {
+					_scheduleDialogDeepRefresh('startup-cache-stale');
+				}
+			} else {
+				_scheduleDialogRecentSync({ delay: 0, full: true, reason: 'startup-cold' });
+			}
 		}).catch(() => {
 			_dialogRecentRuntimeStarting = false;
 			_armDialogRecentSync();
@@ -5262,7 +5451,11 @@ let _dialogControlTitleLastSyncAt = 0;
 	const _DIALOG_RECENT_QUICK_MS = 15000;
 	const _DIALOG_RECENT_FALLBACK_BUDGET_MS = 10000;
 	const _DIALOG_RECENT_REFRESH_STALE_MS = 60 * 1000;
-	const _DIALOG_RECENT_FULL_REFRESH_MS = 15 * 60 * 1000;
+	const _DIALOG_CATALOG_CACHE_VERSION = 1;
+	const _DIALOG_RECENT_FULL_REFRESH_MS = 24 * 60 * 60 * 1000;
+	const _DIALOG_TASK_CATALOG_REFRESH_MS = 15 * 60 * 1000;
+	const _DIALOG_DEEP_REFRESH_IDLE_MS = 10 * 1000;
+	const _DIALOG_DEEP_REFRESH_USER_IDLE_MS = 5 * 1000;
 	const _DIALOG_TASK_CATALOG_MAX_PAGES = 500;
 	const _DIALOG_RECENT_DELTA_OVERLAP_MS = 60 * 1000;
 	const _DIALOG_RECENT_FULL_MS = 24 * 60 * 60 * 1000;
@@ -5333,6 +5526,7 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogNativeOriginalScrollPromise = null;
 	let _dialogNativeOriginalScrollCancel = null;
 	let _dialogNativeOriginalScrollActive = false;
+	let _dialogNativeOriginalScrollSilent = false;
 	let _dialogNativeOriginalScrollFinishing = false;
 	let _dialogNativeOriginalScrollMode = '';
 	// Every Bitrix page loads each mode once, then the catalog goes idle.
@@ -5341,6 +5535,7 @@ let _dialogControlTitleLastSyncAt = 0;
 	const _dialogNativeModeLoadedAt = new Map();
 	const _dialogNativeBackgroundPendingModes = new Set();
 	let _dialogRecentApiLoadActive = false;
+	let _dialogRecentApiLoadSilent = false;
 	let _dialogRecentApiLoadPromise = null;
 	let _dialogRecentApiLoadMode = '';
 	let _dialogRecentOverlayHideTimer = null;
@@ -5348,8 +5543,13 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogRecentApiRetryAttempt = 0;
 	let _dialogRecentLastApiResult = null;
 	let _dialogTaskCatalogSyncPromise = null;
+	let _dialogTaskCatalogRefreshTimer = null;
 	let _dialogTaskCatalogComplete = false;
 	let _dialogTaskCatalogFetchedAt = 0;
+	let _dialogDeepRefreshTimer = null;
+	let _dialogDeepRefreshIdleHandle = null;
+	let _dialogDeepRefreshPromise = null;
+	let _dialogNativeLastUserActivityAt = 0;
 	let _dialogRecentLastAttemptAt = 0;
 	let _dialogRecentLastSuccessAt = 0;
 	let _dialogRecentLastFullAt = 0;
@@ -8957,13 +9157,18 @@ if (_presetChannel) {
 
 	function _getDialogTimeTaskCandidates(data, visits) {
 		const map = new Map();
-		visits.filter(visit => /^\d+$/.test(String(visit.taskId || '')) && _dialogTimeTaskEligibility.get(String(visit.taskId)) === true).forEach(visit => map.set(String(visit.taskId), {
-			taskId: String(visit.taskId), title: _getDialogTimeTaskTitle(visit.taskId, visit.title), dialogId: visit.dialogId || '', visitedAt: visit.visitedAt || 0
-		}));
+		visits.filter(visit => /^\d+$/.test(String(visit.taskId || '')) && _dialogTimeTaskEligibility.get(String(visit.taskId)) === true).forEach(visit => {
+			const taskId = String(visit.taskId);
+			const title = _getDialogTimeTaskTitle(taskId, visit.title);
+			if (title === `Задача #${taskId}`) return;
+			map.set(taskId, { taskId, title, dialogId: visit.dialogId || '', visitedAt: visit.visitedAt || 0 });
+		});
 		(data?.tasks || []).forEach(task => {
 			const id = String(task.taskId || '');
 			if (!id || id === 'unknown' || _dialogTimeTaskEligibility.get(id) !== true) return;
-			map.set(id, { ...(map.get(id) || {}), taskId: id, title: _getDialogTimeTaskTitle(id), trackedSeconds: task.seconds || 0 });
+			const title = _getDialogTimeTaskTitle(id);
+			if (title === `Задача #${id}`) return;
+			map.set(id, { ...(map.get(id) || {}), taskId: id, title, trackedSeconds: task.seconds || 0 });
 		});
 		return Array.from(map.values()).sort((a, b) => (b.visitedAt || 0) - (a.visitedAt || 0) || (b.trackedSeconds || 0) - (a.trackedSeconds || 0));
 	}
@@ -9557,6 +9762,7 @@ if (_presetChannel) {
 		const trackerHint = panel.querySelector('.pena-native-time-tracker-hint');
 		const trackerInfo = panel.querySelector('.pena-native-time-tracker-info');
 		const trackerSelect = panel.querySelector('.pena-native-time-task-select');
+		const trackerEmpty = panel.querySelector('.pena-native-time-tracker-empty');
 		const start = panel.querySelector('.pena-native-time-start');
 		const stop = panel.querySelector('.pena-native-time-stop');
 		const cancelTracker = panel.querySelector('.pena-native-time-cancel');
@@ -9579,10 +9785,6 @@ if (_presetChannel) {
 			if (trackerSelect.dataset.penaOptionsKey !== optionsKey) {
 				const previous = trackerSelect.value;
 				const options = document.createDocumentFragment();
-				const placeholder = document.createElement('option');
-				placeholder.value = '';
-				placeholder.textContent = candidates.length ? 'Выберите задачу' : 'Сначала откройте задачу';
-				options.appendChild(placeholder);
 				candidates.forEach(task => {
 					const option = document.createElement('option');
 					option.value = task.taskId;
@@ -9594,10 +9796,11 @@ if (_presetChannel) {
 				trackerSelect.dataset.penaOptionsKey = optionsKey;
 			}
 			trackerSelect.disabled = !!tracker || _dialogTimeActionInFlight;
-			trackerSelect.hidden = !!tracker;
+			trackerSelect.hidden = !!tracker || !candidates.length;
 		}
+		if (trackerEmpty) trackerEmpty.hidden = !!tracker || !!candidates.length;
 		if (start) {
-			start.hidden = !!tracker;
+			start.hidden = !!tracker || !candidates.length;
 			start.disabled = _dialogTimeActionInFlight || !trackerSelect?.value;
 		}
 		if (stop) {
@@ -9818,7 +10021,7 @@ if (_presetChannel) {
 			from: normalized.from,
 			to: normalized.to,
 			userId,
-			callPage: params => _callBxRestPageWithTimeout('task.elapseditem.getlist', params, 12000)
+			callPage: params => _callBxRestReadPage('task.elapseditem.getlist', params, { timeoutMs: 12000, attempts: 2 })
 		}).then(data => {
 			_setDialogTimeCacheRecord(key, { status: 'ready', data, error: '', updatedAt: Date.now() });
 			_loadDialogTimeTaskTitles(data).catch(() => {});
@@ -9887,7 +10090,7 @@ if (_presetChannel) {
 		refresh.className = 'pena-native-time-refresh';
 		refresh.title = 'Обновить данные за сегодня';
 		refresh.setAttribute('aria-label', 'Обновить данные за сегодня');
-		refresh.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66"/><path d="M20 4v7h-7"/></svg>';
+		refresh.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.8-4.2L4 9m0 0V4m0 5h5"/><path d="M4 13a8 8 0 0 0 14.8 4.2L20 15m0 0v5m0-5h-5"/></svg>';
 		refresh.addEventListener('click', event => {
 			event.preventDefault();
 			event.stopPropagation();
@@ -9924,6 +10127,9 @@ if (_presetChannel) {
 		const taskSelect = document.createElement('select');
 		taskSelect.className = 'pena-native-time-task-select';
 		taskSelect.setAttribute('aria-label', 'Задача для трекинга');
+		const trackerEmpty = document.createElement('span');
+		trackerEmpty.className = 'pena-native-time-tracker-empty';
+		trackerEmpty.textContent = 'Нет задач с включённым учётом времени';
 		const start = document.createElement('button');
 		start.type = 'button';
 		start.className = 'pena-native-time-start';
@@ -9956,7 +10162,7 @@ if (_presetChannel) {
 			event.stopPropagation();
 			_cancelDialogTimeTracker();
 		});
-		trackerControls.append(taskSelect, start, stop, cancelTracker);
+		trackerControls.append(taskSelect, trackerEmpty, start, stop, cancelTracker);
 		tracker.append(trackerInfo, trackerHint, trackerControls);
 
 		const manualToggle = document.createElement('button');
@@ -18906,7 +19112,7 @@ if (_presetChannel) {
 		_ensureDialogRecentRuntime();
 		await waitForBody(5000);
 		_removeLegacyControlPanels();
-		_scheduleDialogRecentSync({ full: !_dialogRecentMeta.size, force: !_dialogRecentMeta.size, delay: 80 });
+		if (_dialogNativePrefetchedModes.has(_pMode())) _scheduleDialogRecentSync({ delay: 80 });
 		_updateDialogControlUI(null);
 		const nativeContainer = findContainer();
 		if (nativeContainer) _scheduleDialogControlNativeView(nativeContainer, { restoreDisplay: false, forceShow: true });
@@ -19854,7 +20060,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 	renderPresetsUI(host);
 	_renderDialogControlPanel(host);
 	_startDialogControlLiveRefresh(host);
-	_scheduleDialogRecentSync({ full: !_dialogRecentMeta.size, force: !_dialogRecentMeta.size, delay: 80 });
+	if (_dialogNativePrefetchedModes.has(_pMode())) _scheduleDialogRecentSync({ delay: 80 });
 	_updateDialogControlUI(host);
 
 

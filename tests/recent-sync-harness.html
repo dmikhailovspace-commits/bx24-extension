@@ -64,7 +64,8 @@
 			  count: sourceRecords.length, savedAt: now,
 			  lastSuccessAt: meta.lastSuccessAt || now, lastFullAt: meta.lastFullAt || now,
 			  cursorAt: meta.cursorAt || meta.lastSuccessAt || now, windowCount: meta.windowCount || sourceRecords.length,
-			  truncated: !!meta.truncated, patches: []
+			  truncated: !!meta.truncated, catalogVersion: Number(meta.catalogVersion) || 0,
+			  catalogModes: meta.catalogModes || {}, taskCatalog: meta.taskCatalog || {}, patches: []
 			}
 		  };
 		  localStorage.setItem(key, JSON.stringify(snapshot));
@@ -75,7 +76,16 @@
 		  (request.payload?.records || []).forEach(record => byId.set(record.id, record));
 		  snapshot = snapshot || { records: [], manifest: { schema: 1, generation: String(Date.now()), patches: [] } };
 		  snapshot.records = Array.from(byId.values());
-		  snapshot.manifest = { ...snapshot.manifest, savedAt: Date.now(), count: snapshot.records.length };
+		  const meta = request.payload?.meta || {};
+		  snapshot.manifest = {
+			...snapshot.manifest,
+			savedAt: Date.now(),
+			count: snapshot.records.length,
+			lastFullAt: Math.max(Number(snapshot.manifest.lastFullAt) || 0, Number(meta.lastFullAt) || 0),
+			catalogVersion: Number(meta.catalogVersion) || Number(snapshot.manifest.catalogVersion) || 0,
+			catalogModes: meta.catalogModes || snapshot.manifest.catalogModes || {},
+			taskCatalog: meta.taskCatalog || snapshot.manifest.taskCatalog || {}
+		  };
 		  localStorage.setItem(key, JSON.stringify(snapshot));
 		  result = { manifest: snapshot.manifest, count: snapshot.records.length, patched: request.payload?.records?.length || 0 };
 		} else if (request.command === 'sync.acquire') {

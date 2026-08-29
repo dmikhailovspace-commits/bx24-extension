@@ -115,6 +115,23 @@ function normalizeRecords(records) {
   return Array.from(byId.values());
 }
 
+function compactCatalogModes(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  const compactMode = mode => ({
+    complete: source[mode]?.complete === true,
+    loadedAt: Math.max(0, Number(source[mode]?.loadedAt) || 0),
+    count: Math.max(0, Number(source[mode]?.count) || 0)
+  });
+  return { chats: compactMode('chats'), tasks: compactMode('tasks') };
+}
+
+function compactTaskCatalog(value) {
+  return {
+    complete: value?.complete === true,
+    fetchedAt: Math.max(0, Number(value?.fetchedAt) || 0)
+  };
+}
+
 function compactGenerationDescriptor(manifest) {
   if (!manifest || !manifest.generation) return null;
   return {
@@ -128,6 +145,9 @@ function compactGenerationDescriptor(manifest) {
     cursorAt: Math.max(0, Number(manifest.cursorAt) || 0),
     windowCount: Math.max(0, Number(manifest.windowCount) || 0),
     truncated: !!manifest.truncated,
+    catalogVersion: Math.max(0, Number(manifest.catalogVersion) || 0),
+    catalogModes: compactCatalogModes(manifest.catalogModes),
+    taskCatalog: compactTaskCatalog(manifest.taskCatalog),
     patches: Array.isArray(manifest.patches) ? manifest.patches.map(patch => ({
       generation: String(patch?.generation || ''),
       count: Math.max(0, Number(patch?.count) || 0),
@@ -232,6 +252,9 @@ function previousDescriptor(manifest) {
     cursorAt: manifest.cursorAt,
     windowCount: manifest.windowCount,
     truncated: manifest.truncated,
+    catalogVersion: Math.max(0, Number(manifest.catalogVersion) || 0),
+    catalogModes: compactCatalogModes(manifest.catalogModes),
+    taskCatalog: compactTaskCatalog(manifest.taskCatalog),
     patches: Array.isArray(manifest.patches) ? manifest.patches.map(patch => ({ ...patch })) : []
   };
 }
@@ -280,6 +303,9 @@ async function commitCatalogUnlocked(scope, payload = {}) {
     cursorAt: Math.max(0, Number(meta.cursorAt) || Number(meta.lastSuccessAt) || now),
     windowCount: Math.max(0, Number(meta.windowCount) || records.length),
     truncated: !!meta.truncated,
+    catalogVersion: Math.max(0, Number(meta.catalogVersion) || 0),
+    catalogModes: compactCatalogModes(meta.catalogModes),
+    taskCatalog: compactTaskCatalog(meta.taskCatalog),
     patches: [],
     previous
   };
@@ -319,9 +345,17 @@ async function patchCatalogUnlocked(scope, payload = {}) {
     ...current.manifest,
     savedAt: patch.savedAt,
     lastSuccessAt: Math.max(Number(current.manifest.lastSuccessAt) || 0, Number(meta.lastSuccessAt) || 0),
+    lastFullAt: Math.max(Number(current.manifest.lastFullAt) || 0, Number(meta.lastFullAt) || 0),
     cursorAt: Math.max(Number(current.manifest.cursorAt) || 0, Number(meta.cursorAt) || Number(meta.lastSuccessAt) || 0),
     windowCount: Math.max(0, Number(meta.windowCount) || Number(current.manifest.windowCount) || current.records.length),
     truncated: meta.truncated === undefined ? !!current.manifest.truncated : !!meta.truncated,
+    catalogVersion: Math.max(0, Number(meta.catalogVersion) || Number(current.manifest.catalogVersion) || 0),
+    catalogModes: meta.catalogModes === undefined
+      ? compactCatalogModes(current.manifest.catalogModes)
+      : compactCatalogModes(meta.catalogModes),
+    taskCatalog: meta.taskCatalog === undefined
+      ? compactTaskCatalog(current.manifest.taskCatalog)
+      : compactTaskCatalog(meta.taskCatalog),
     patches: [...current.manifest.patches, {
       generation,
       count: records.length,
@@ -348,7 +382,10 @@ async function patchCatalogUnlocked(scope, payload = {}) {
         lastFullAt: next.lastFullAt,
         cursorAt: next.cursorAt,
         windowCount: next.windowCount,
-        truncated: next.truncated
+        truncated: next.truncated,
+        catalogVersion: next.catalogVersion,
+        catalogModes: next.catalogModes,
+        taskCatalog: next.taskCatalog
       }
     });
   }

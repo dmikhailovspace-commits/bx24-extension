@@ -80,6 +80,7 @@
 		new URLSearchParams(location.search).get('nativeFirst') !== '1';
 	window.__PENA_TEST_NATIVE_SCROLL_MAX_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('startupBudget')) || 0);
 	window.__PENA_TEST_DIALOG_CATALOG_TTL_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('catalogTtl')) || 0);
+	window.__PENA_TEST_DIALOG_DEEP_IDLE_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('deepIdle')) || 0);
 	window.__PENA_TEST_MANAGED_CATALOG__ = !nativePassThrough;
 	window.__PENA_TEST_NATIVE_SCROLL__ = !nativePassThrough &&
 		new URLSearchParams(location.search).get('nativeCatalog') === '1' &&
@@ -325,6 +326,7 @@
 	window.timeSeedItems = null;
 	window.timeAddFailures = 0;
 	window.timeListFailures = 0;
+	window.timeListTimeoutFailures = 0;
 	window.nativeRestCalls = [];
 	window.nativeBatchCalls = 0;
 	window.nativeBatchSizes = [];
@@ -404,6 +406,11 @@
 		}
 		if (method === 'task.elapseditem.getlist') {
 		  window.timeRestCalls.push(params);
+		  if (window.timeListTimeoutFailures > 0) {
+			window.timeListTimeoutFailures -= 1;
+			callback({ error: () => 'TIMEOUT', error_description: () => 'Bitrix24 request timeout' });
+			return;
+		  }
 		  if (window.timeListFailures > 0) {
 			window.timeListFailures -= 1;
 			callback({ error: () => 'TEMPORARY_ERROR', error_description: () => 'temporary elapsed-list failure' });
@@ -505,6 +512,48 @@
 	  }
 	};
 	const startupNativeQuery = new URLSearchParams(location.search).get('nativeQuery');
+	if (new URLSearchParams(location.search).get('repositoryCache') === '1') {
+	  const seededAt = Date.now() - 1000;
+	  window.__repositorySeedLoadedAt = seededAt;
+	  let repositorySnapshot = {
+		records: [
+		  { id: 'chat225', restDialogId: 'chat225', mode: 'chats', title: 'Чат 225', lastMessage: { id: 225, text: 'Из кэша', date: seededAt }, remoteUpdatedAt: seededAt },
+		  { id: 'chat5', restDialogId: 'chat5', mode: 'chats', title: 'Чат 5', lastMessage: { id: 5, text: 'Из кэша', date: seededAt - 1000 }, remoteUpdatedAt: seededAt },
+		  { id: 'chat404', restDialogId: 'chat404', mode: 'tasks', title: 'Старая задача', task: { id: '404', url: '/company/personal/user/101/tasks/task/view/404/' }, lastMessage: { id: 404, text: 'Из кэша', date: seededAt - 2000 }, remoteUpdatedAt: seededAt }
+		],
+		manifest: {
+		  schema: 1, generation: 'seed', chunkCount: 1, count: 3, savedAt: seededAt,
+		  lastSuccessAt: seededAt, lastFullAt: seededAt, cursorAt: seededAt, windowCount: 3,
+		  truncated: false, catalogVersion: 1,
+		  catalogModes: {
+			chats: { complete: true, loadedAt: seededAt, count: 2 },
+			tasks: { complete: true, loadedAt: seededAt, count: 1 }
+		  },
+		  taskCatalog: { complete: true, fetchedAt: seededAt }, patches: []
+		}
+	  };
+	  const clone = value => JSON.parse(JSON.stringify(value));
+	  window.__PENA_DIALOG_REPOSITORY__ = Object.freeze({
+		get: async () => clone(repositorySnapshot),
+		commit: async (_scope, records, meta) => {
+		  const savedAt = Date.now();
+		  repositorySnapshot = {
+			records: clone(records || []),
+			manifest: { ...repositorySnapshot.manifest, ...clone(meta || {}), count: records?.length || 0, savedAt }
+		  };
+		  return { manifest: clone(repositorySnapshot.manifest), count: repositorySnapshot.records.length };
+		},
+		patch: async (_scope, records, deletedIds, meta) => {
+		  const byId = new Map(repositorySnapshot.records.map(record => [record.id, record]));
+		  (deletedIds || []).forEach(id => byId.delete(id));
+		  (records || []).forEach(record => byId.set(record.id, clone(record)));
+		  repositorySnapshot.records = Array.from(byId.values());
+		  repositorySnapshot.manifest = { ...repositorySnapshot.manifest, ...clone(meta || {}), count: repositorySnapshot.records.length, savedAt: Date.now() };
+		  return { manifest: clone(repositorySnapshot.manifest), count: repositorySnapshot.records.length };
+		},
+		acquire: async () => ({ acquired: true, expiresAt: Date.now() + 30000, retryAfterMs: 0 })
+	  });
+	}
 	if (startupNativeQuery !== null) {
 		document.querySelector('.test-host:not([hidden]) input[type="search"]')?.setAttribute('value', startupNativeQuery);
 	}
