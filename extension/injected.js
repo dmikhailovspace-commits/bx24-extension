@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.57';
+	window.__ANITREC_RUNNING__ = '7.5.58';
 
-	const VER = '7.5.57';
+	const VER = '7.5.58';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -1512,6 +1512,11 @@
 		});
 	}
 
+	function _getDialogRecentHeadTimeoutMs() {
+		const testTimeout = Number(window.__PENA_TEST_DIALOG_HEAD_TIMEOUT_MS__);
+		return Number.isFinite(testTimeout) && testTimeout >= 50 ? testTimeout : 12000;
+	}
+
 	function _isBxRestReadRetryable(error) {
 		const code = String(error?.code || '').toUpperCase();
 		const message = String(error?.message || error || '');
@@ -1965,6 +1970,15 @@
 		const controlledMeta = Array.from(mandatoryItems.keys()).map(id => _getDialogRecentMeta(id));
 		const controlledReadyCount = controlledMeta.filter(_isDialogRecentPublishable).length;
 		const controlledPendingCount = controlledMeta.filter(_isDialogRecentPending).length;
+		const controlledPendingDialogs = Array.from(mandatoryItems.entries()).map(([id, record]) => {
+			const meta = _getDialogRecentMeta(id);
+			if (!_isDialogRecentPending(meta)) return null;
+			return Object.freeze({
+				id,
+				title: String(meta?.displayTitle || record?.item?.title || `Диалог ${id.replace(/^(?:chat|user)/, '')}`).trim(),
+				reason: String(meta?.availabilityReason || '').trim()
+			});
+		}).filter(Boolean);
 		const controlledOutsideReadyCount = controlledMeta.filter(meta =>
 			_isDialogRecentPublishable(meta) && !(Number(meta?.recentListFetchedAt) > 0)
 		).length;
@@ -2020,6 +2034,7 @@
 			controlledCount,
 			controlledReadyCount,
 			controlledPendingCount,
+			controlledPendingDialogs: Object.freeze(controlledPendingDialogs),
 			controlledOutsideCount: _dialogRecentControlledOutsideCount,
 			controlledOutsideReadyCount,
 			truncated: _dialogRecentTruncated,
@@ -2042,7 +2057,9 @@
 			startedAt: Number(_dialogRecentProgress.startedAt) || 0,
 			completedAt: Number(_dialogRecentProgress.completedAt) || 0,
 			inFlight: loading || !!_dialogRecentSyncPromise || !!_dialogNativePrefetchPromise,
-			error: _dialogRecentLastError
+			error: _dialogRecentLastError,
+			backgroundError: _dialogRecentLastSoftError,
+			backgroundErrorAt: _dialogRecentLastSoftErrorAt
 		});
 		if (_dialogNativeOriginalScrollActive || _dialogRecentApiLoadActive) {
 			const originalContainer = findContainer();
@@ -3440,6 +3457,7 @@
 			_dialogRecentActiveLoadLimit = loadLimit;
 			const mandatory = _getDialogRecentMandatoryItems();
 			const previousFullMap = _dialogRecentMeta;
+			const previousProgress = _dialogRecentProgress;
 			const previousRenderSignature = _getDialogRecentRenderSignature(previousFullMap);
 			const nextFullMap = full ? new Map() : null;
 			const hadPreviousCatalog = _countDialogRecentMeta(previousFullMap) > 0;
@@ -3498,8 +3516,11 @@
 							SKIP_CHAT: 'N'
 						};
 						try {
-							page = await _callBxRestPageWithTimeout('im.recent.get', deltaParams);
-						} catch {
+							page = await _callBxRestPageWithTimeout('im.recent.get', deltaParams, _getDialogRecentHeadTimeoutMs());
+						} catch (deltaError) {
+							// A timeout in the lightweight head refresh must not immediately start
+							// another slow request or overwrite an already complete native catalog.
+							if (_isBxRestReadRetryable(deltaError)) throw deltaError;
 							// Older portals can lack the delta method. One recent page keeps those
 							// installations functional without reintroducing DOM auto-scroll.
 							page = await _callBxRestPageWithTimeout('im.recent.list', {
@@ -3511,7 +3532,7 @@
 								UNREAD_ONLY: 'N',
 								PARSE_TEXT: 'Y',
 								GET_ORIGINAL_TEXT: 'N'
-							});
+							}, _getDialogRecentHeadTimeoutMs());
 						}
 					}
 					if (_dialogRecentRepositoryAvailable && !(await _claimDialogRecentSyncOwnership())) {
@@ -3647,6 +3668,8 @@
 				}
 				_dialogRecentLastSuccessAt = Date.now();
 				_dialogRecentLastError = '';
+				_dialogRecentLastSoftError = '';
+				_dialogRecentLastSoftErrorAt = 0;
 				const added = _hydrateAllDialogControlModesFromRecent();
 				const committedCount = _countDialogRecentMeta();
 				const dataChanged = previousRenderSignature !== _getDialogRecentRenderSignature(_dialogRecentMeta) || added > 0;
@@ -3689,7 +3712,11 @@
 				if (unresolvedMandatory.length) verificationErrors.push(`Не удалось проверить ${unresolvedMandatory.length} диалог(а) в папках`);
 				if (_dialogRecentCountersError) verificationErrors.push('Не удалось получить актуальные уведомления');
 				const verificationError = verificationErrors.join('. ');
-				_dialogRecentLastError = verificationError;
+				// The complete catalog is already usable. A failed optional detail/counter
+				// check is a recoverable warning and must not replace it with a hard error.
+				_dialogRecentLastError = '';
+				_dialogRecentLastSoftError = verificationError;
+				_dialogRecentLastSoftErrorAt = verificationError ? Date.now() : 0;
 				_dialogRecentProgress = Object.assign({}, _dialogRecentProgress, {
 					phase: 'ready',
 					completedAt: Date.now()
@@ -3734,7 +3761,20 @@
 					_dialogRecentDataRevision += 1;
 					_notifyDialogRecentDataChanged();
 				}
-				_dialogRecentLastError = String(e?.message || e || 'Ошибка синхронизации');
+				const syncError = String(e?.message || e || 'Ошибка синхронизации');
+				const softBackgroundFailure = !full && options.silent === true && hadPreviousCatalog;
+				if (softBackgroundFailure) {
+					_dialogRecentLastSoftError = syncError;
+					_dialogRecentLastSoftErrorAt = Date.now();
+					_dialogRecentProgress = Object.assign({}, previousProgress, {
+						phase: previousProgress?.phase === 'error' ? 'ready' : (previousProgress?.phase || 'ready'),
+						partial: false
+					});
+					_publishDialogRecentSyncState();
+					warn('Фоновая проверка новых диалогов отложена', syncError);
+					return { count: _countDialogRecentMeta(), backgroundFailed: true, error: syncError };
+				}
+				_dialogRecentLastError = syncError;
 				_dialogRecentProgress = Object.assign({}, _dialogRecentProgress, {
 					phase: 'error',
 					loadedCount: currentWindowIds.size,
@@ -4125,6 +4165,8 @@
 			});
 		}
 		_dialogRecentLastError = '';
+		_dialogRecentLastSoftError = '';
+		_dialogRecentLastSoftErrorAt = 0;
 		const changed = _hydrateDialogControlItemsFromRecent(state.mode || _pMode(), { pruneMissing: false });
 		_dialogRecentDataRevision += 1;
 		_dialogRecentRepositoryNeedsFullCommit = true;
@@ -4726,6 +4768,9 @@
 	window.__PENA_NATIVE_PREFETCH__ = Object.freeze({
 		run: options => _runDialogNativeSilentPrefetch({ ...(options || {}), force: true }),
 		runOriginal: options => _runDialogNativeOriginalScrollLoad({ ...(options || {}), force: true }),
+		refreshHead: options => _refreshDialogRecentCatalog({
+			...(options || {}), force: true, full: false, incrementalOnly: true, silent: true, reason: 'diagnostic-head-refresh'
+		}),
 		cancel: () => _dialogNativePrefetchCancel?.(),
 		status: () => ({
 			active: _dialogNativePrefetchActive,
@@ -4804,6 +4849,13 @@
 		return Number.isFinite(testTtl) && testTtl >= 50
 			? testTtl
 			: _DIALOG_RECENT_FULL_REFRESH_MS;
+	}
+
+	function _getDialogRecentHeadRefreshMs() {
+		const testTtl = Number(window.__PENA_TEST_DIALOG_HEAD_TTL_MS__);
+		return Number.isFinite(testTtl) && testTtl >= 50
+			? testTtl
+			: _DIALOG_RECENT_REFRESH_STALE_MS;
 	}
 
 	function _getDialogTaskCatalogTtlMs() {
@@ -5020,7 +5072,7 @@
 			const scheduleFreshCatalog = reason => {
 				if (document.hidden || !isInternalChatsDOM()) return;
 				const now = Date.now();
-				const headStale = !_dialogRecentLastSuccessAt || now - _dialogRecentLastSuccessAt >= _DIALOG_RECENT_REFRESH_STALE_MS;
+				const headStale = !_dialogRecentLastSuccessAt || now - _dialogRecentLastSuccessAt >= _getDialogRecentHeadRefreshMs();
 				const activeMode = _pMode();
 				const completeCatalogStale = !_isDialogModeCatalogFresh(activeMode, now);
 				const needsCompletion = _dialogNativeBackgroundPendingModes.has(activeMode);
@@ -5033,7 +5085,7 @@
 			['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(type => {
 				document.addEventListener(type, _noteDialogCatalogUserActivity, { capture: true, passive: true });
 			});
-			_dialogRecentSyncTimer = setInterval(() => scheduleFreshCatalog('periodic-freshness'), _DIALOG_RECENT_REFRESH_STALE_MS);
+			_dialogRecentSyncTimer = setInterval(() => scheduleFreshCatalog('periodic-freshness'), _getDialogRecentHeadRefreshMs());
 			window.addEventListener('focus', () => scheduleFreshCatalog('focus-freshness'));
 			document.addEventListener('visibilitychange', () => {
 				if (!document.hidden) scheduleFreshCatalog('visibility-freshness');
@@ -5628,6 +5680,8 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogRecentLastSuccessAt = 0;
 	let _dialogRecentLastFullAt = 0;
 	let _dialogRecentLastError = '';
+	let _dialogRecentLastSoftError = '';
+	let _dialogRecentLastSoftErrorAt = 0;
 	let _dialogRecentProgress = {
 		phase: 'idle',
 		loadedCount: 0,
@@ -8888,6 +8942,9 @@ if (_presetChannel) {
 		const windowCount = Math.max(0, Number(sync.windowCount) || 0);
 		const controlledOutsideReady = Math.max(0, Number(sync.controlledOutsideReadyCount) || 0);
 		const controlledPending = Math.max(0, Number(sync.controlledPendingCount) || 0);
+		const controlledPendingDialogs = Array.isArray(sync.controlledPendingDialogs) ? sync.controlledPendingDialogs : [];
+		const singlePendingDialog = controlledPending === 1 ? controlledPendingDialogs[0] : null;
+		const singlePendingTitle = String(singlePendingDialog?.title || '').trim();
 		const detailsTotal = Math.max(0, Number(sync.detailsTotal) || 0);
 		const detailsCompleted = Math.max(0, Number(sync.detailsCompleted) || 0);
 		const detailsFailed = Math.max(0, Number(sync.detailsFailed) || 0);
@@ -8921,12 +8978,14 @@ if (_presetChannel) {
 				status.textContent = compact
 					? `${detailsTotal > 0 ? Math.round((detailsCompleted / detailsTotal) * 100) : 0}%`
 					: `Догружаем сохранённые диалоги: ${detailsCompleted} из ${detailsTotal} · доступно ${inList}`;
+			} else if (sync.error) {
+				status.textContent = compact ? 'Повторить' : `Ошибка обновления · доступно ${inList}`;
 			} else if (controlledPending > 0) {
 				status.textContent = compact
 					? `Проверить ${controlledPending}`
-					: `Не загружено диалогов: ${controlledPending} · доступно ${inList}`;
-			} else if (sync.error) {
-				status.textContent = compact ? 'Повторить' : `Ошибка загрузки · доступно ${inList}`;
+					: (singlePendingTitle
+						? `Не проверен: ${singlePendingTitle}`
+						: `Не проверено диалогов: ${controlledPending} · доступно ${inList}`);
 			} else if (sync.cached) {
 				status.textContent = compact ? `Кеш ${received}` : `Из кеша: ${received} · проверка статусов`;
 			} else if (sync.ready) {
@@ -8947,11 +9006,14 @@ if (_presetChannel) {
 			const detailTitle = detailsTotal > 0
 				? `; детали: ${detailsCompleted} из ${detailsTotal}${transientDetailFailures ? `, временные ошибки: ${transientDetailFailures}` : ''}`
 				: '';
+			const pendingTitle = controlledPendingDialogs.length
+				? `; не проверено: ${controlledPendingDialogs.map(dialog => `${dialog.title} [${dialog.id}]${dialog.reason ? ` — ${dialog.reason}` : ''}`).join(', ')}`
+				: (controlledPending > 0 ? `; ещё не проверено: ${controlledPending}` : '');
 			const unavailableTitle = unavailableCount > 0 ? `; недоступно или удалено: ${unavailableCount}` : '';
 			const truncatedTitle = truncated ? '; список ограничен настройкой загрузки' : '';
 			status.title = sync.error || sync.countersError || (sync.inFlight
 				? `Загружено ${loaded}${total != null ? ` из ${total}` : ''}, страниц: ${sync.pagesLoaded || 0}`
-				: `Последние диалоги: ${windowCount || received}${controlledOutsideReady > 0 ? `; дополнительно загружено: ${controlledOutsideReady}` : ''}${controlledPending > 0 ? `; ещё не загружено: ${controlledPending}` : ''}${truncatedTitle}${unavailableTitle}${detailTitle}`);
+				: `Последние диалоги: ${windowCount || received}${controlledOutsideReady > 0 ? `; дополнительно загружено: ${controlledOutsideReady}` : ''}${pendingTitle}${truncatedTitle}${unavailableTitle}${detailTitle}`);
 		});
 	}
 

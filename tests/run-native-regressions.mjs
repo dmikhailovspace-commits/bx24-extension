@@ -1417,6 +1417,33 @@ try {
 	assert.equal(nativeFirstAfterTtl.imRecentCalls, 0, 'Idle TTL refresh regressed to the metadata-only recent catalog');
 	assert.equal(await page.locator('.recent-host .pena-native-original-load-guard').count(), 0, 'Idle TTL refresh showed a blocking loader');
 
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=35&lazyChunk=10&lazyDelay=10&headTtl=1000&headTimeout=80&deltaTimeout=1`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.loadedModes?.includes('chats') && !status.originalActive && window.__PENA_RECENT_SYNC__?.phase === 'ready';
+	}, null, { timeout: 6000 });
+	const readyBeforeHeadTimeout = await page.evaluate(() => ({
+		count: window.__PENA_RECENT_SYNC__?.count || 0,
+		modeCount: window.__PENA_NATIVE_PREFETCH__?.status?.().modeCounts?.chats || 0,
+		recentListCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').length
+	}));
+	const headRefreshResult = await page.evaluate(() => window.__PENA_NATIVE_PREFETCH__.refreshHead());
+	await page.waitForFunction(() => window.nativeRestCalls.some(call => call.method === 'im.recent.get'), null, { timeout: 3000 });
+	assert.equal(headRefreshResult?.backgroundFailed, true, `Timed-out head refresh did not settle as a soft failure: ${JSON.stringify(headRefreshResult)}`);
+	const afterHeadTimeout = await page.evaluate(() => ({
+		sync: window.__PENA_RECENT_SYNC__ || null,
+		modeCount: window.__PENA_NATIVE_PREFETCH__?.status?.().modeCounts?.chats || 0,
+		recentListCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').length,
+		chipVisible: Array.from(document.querySelectorAll('.pena-native-sync-chip')).some(chip => !chip.hidden)
+	}));
+	assert.equal(afterHeadTimeout.sync.phase, 'ready', `Background head timeout replaced ready catalog state: ${JSON.stringify(afterHeadTimeout)}`);
+	assert.equal(afterHeadTimeout.sync.error, '', `Background head timeout became a blocking error: ${JSON.stringify(afterHeadTimeout)}`);
+	assert.equal(afterHeadTimeout.sync.count, readyBeforeHeadTimeout.count, `Background head timeout replaced the atomic catalog: ${JSON.stringify(afterHeadTimeout)}`);
+	assert.equal(afterHeadTimeout.modeCount, readyBeforeHeadTimeout.modeCount, `Background head timeout changed the complete mode count: ${JSON.stringify(afterHeadTimeout)}`);
+	assert.equal(afterHeadTimeout.recentListCalls, readyBeforeHeadTimeout.recentListCalls, `Timed-out delta started a second slow recent-list request: ${JSON.stringify(afterHeadTimeout)}`);
+	assert.equal(afterHeadTimeout.chipVisible, false, `Background head timeout exposed a misleading retry chip: ${JSON.stringify(afterHeadTimeout)}`);
+
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&lazy=1&catalogRows=1820&restDelay=80&restUnknownTotal=1`);
 	try {
 		await page.waitForFunction(() => {

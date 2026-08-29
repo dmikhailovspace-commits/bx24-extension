@@ -177,7 +177,7 @@ const runCacheFallbackScenario = async () => {
     await page.locator('.pena-native-folder-switcher').waitFor({ state: 'visible', timeout: 5000 });
     await page.waitForFunction(() => {
       const sync = window.__PENA_RECENT_SYNC__;
-      return sync && !sync.inFlight && !!sync.error && sync.count === 401 && sync.ready;
+      return sync && !sync.inFlight && !sync.error && !!sync.backgroundError && sync.count === 401 && sync.ready;
     }, null, { timeout: 10000 });
     assertExactIds(await managedIds(page), expectedIds(1, 401), 'Cached catalog was not restored after REST failure');
     await activateAscending(page);
@@ -197,6 +197,7 @@ const runCacheFallbackScenario = async () => {
 	const cachedAvatar = await avatarState(avatar);
 	assert.match(cachedAvatar.src, /avatar-9\.png/);
 	assert.equal(cachedAvatar.imageHidden && cachedAvatar.initialsHidden && !cachedAvatar.loading, false, 'Broken cached avatar left an empty circle');
+	assert.equal(await page.locator('.pena-native-sync-chip').isHidden(), true, 'Background cache refresh failure exposed a blocking retry chip');
 	await page.waitForFunction(() => {
 		const counter = document.querySelector('.pena-native-remote-row[data-id="chat9"] .pena-native-remote-counter');
 		return counter?.textContent === '99' && !counter.hidden;
@@ -335,8 +336,9 @@ const runCacheFirstFolderScenario = async () => {
 	assert.match((await avatarState(page.locator('.pena-native-remote-row[data-id="chat1"] .pena-native-remote-avatar'))).src, /avatar-1\.png/);
 	assert.equal(await page.locator('.pena-native-remote-row[data-id="chat1"] .pena-native-remote-counter').innerText(), '1');
 	await page.waitForFunction(() => !window.__PENA_RECENT_SYNC__?.inFlight, null, { timeout: 5000 });
-	const calls = await page.evaluate(() => window.__recentHarness.calls().filter(call => call.method === 'im.recent.list'));
-	assert.deepEqual(calls.map(call => call.offset), [0], 'Fresh cache repeated the complete catalog download');
+	const calls = await page.evaluate(() => window.__recentHarness.calls().filter(call => ['im.recent.list', 'im.recent.get'].includes(call.method)));
+	assert.ok(calls.length <= 1, `Fresh cache repeated the catalog download: ${JSON.stringify(calls)}`);
+	assert.ok(calls.every(call => call.method === 'im.recent.get' || call.offset === 0), `Fresh cache requested a deep recent page: ${JSON.stringify(calls)}`);
 	assert.deepEqual(pageErrors, [], 'cache-first folder: uncaught browser errors');
 	console.log('PASS recent sync: cache-first folder render');
   } catch (error) {
@@ -1036,10 +1038,15 @@ try {
 
   await runScenario('transient detail failure keeps an unverified controlled dialog disabled', async page => {
 	await page.waitForFunction(() => window.__PENA_RECENT_SYNC__?.detailsFailed === 1 && !window.__PENA_RECENT_SYNC__?.detailsInFlight && !window.__PENA_RECENT_SYNC__?.inFlight);
-	assert.equal((await syncState(page)).unavailableCount, 0);
+	const pendingSync = await syncState(page);
+	assert.equal(pendingSync.unavailableCount, 0);
+	assert.deepEqual(pendingSync.controlledPendingDialogs.map(dialog => ({ id: dialog.id, title: dialog.title })), [
+		{ id: 'chat9000', title: 'Старый контролируемый' }
+	]);
 	const syncChip = page.locator('.pena-native-sync-chip');
 	await page.waitForFunction(() => document.querySelector('.pena-native-sync-chip')?.textContent?.includes('Проверить 1'));
 	assert.match(await syncChip.innerText(), /Проверить 1/);
+	assert.match(await syncChip.getAttribute('title'), /Старый контролируемый \[chat9000\]/);
 	assert.match(await syncChip.getAttribute('class'), /--(?:warning|error)/);
 	assert.doesNotMatch(await syncChip.getAttribute('class'), /--ready/);
 	await page.locator('.pena-native-folder-tab[title="Старый контроль"]').click();

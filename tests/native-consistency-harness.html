@@ -81,6 +81,8 @@
 	window.__PENA_TEST_NATIVE_SCROLL_MAX_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('startupBudget')) || 0);
 	window.__PENA_TEST_DIALOG_CATALOG_TTL_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('catalogTtl')) || 0);
 	window.__PENA_TEST_DIALOG_DEEP_IDLE_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('deepIdle')) || 0);
+	window.__PENA_TEST_DIALOG_HEAD_TTL_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('headTtl')) || 0);
+	window.__PENA_TEST_DIALOG_HEAD_TIMEOUT_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('headTimeout')) || 0);
 	window.__PENA_TEST_MANAGED_CATALOG__ = !nativePassThrough;
 	window.__PENA_TEST_NATIVE_SCROLL__ = !nativePassThrough &&
 		new URLSearchParams(location.search).get('nativeCatalog') === '1' &&
@@ -100,6 +102,7 @@
 	const lazyDelay = Math.max(0, Number(new URLSearchParams(location.search).get('lazyDelay')) || 0);
 	const detailDelay = Math.max(0, Number(new URLSearchParams(location.search).get('detailDelay')) || 0);
 	const restDelay = Math.max(0, Number(new URLSearchParams(location.search).get('restDelay')) || 0);
+	const deltaTimeout = new URLSearchParams(location.search).get('deltaTimeout') === '1';
 	const restIncompleteZero = new URLSearchParams(location.search).get('restIncompleteZero') === '1';
 	const restUnknownTotal = new URLSearchParams(location.search).get('restUnknownTotal') === '1';
 	let recentListFailuresRemaining = Math.max(0, Number(new URLSearchParams(location.search).get('restFailCount')) || 0);
@@ -502,6 +505,7 @@
 		  else respond();
 		  return;
 		}
+		if (method === 'im.recent.get' && deltaTimeout) return;
 		callback({ error: () => null, data: () => ({ items: recentEntries }), total: () => recentEntries.length });
 	  } }
 	};
