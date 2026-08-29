@@ -5,12 +5,12 @@
 <!-- AUTO:BEGIN -->
 ## Current release facts (generated)
 
-- Version: **7.5.58**
+- Version: **7.5.60**
 - Release date: **2026-08-29**
 - Runtime files: **18**
 - Regression suites: **14**
-- Windows artifact: `dist/PENA_Agency_Windows_v7.5.58.exe` - SHA-256: `0DEA19487ED181B08A923BD69CA0AF372964B9C6A043F78A5DDBBD3E942E7451`
-- macOS artifact: `dist/PENA_Agency_macOS_Universal_v7.5.58.dmg` - SHA-256: `EE53584BBD06E36B20294677C0F31A795EFD36E3E7C3562E152D58648183C9B5`
+- Windows artifact: `dist/PENA_Agency_Windows_v7.5.60.exe` - SHA-256: `C15004CEBF7BBE4DD56CAA76F102B325E52C2973048FCF6936FF1651AFD19D46`
+- macOS artifact: `dist/PENA_Agency_macOS_Universal_v7.5.60.dmg` - SHA-256: `408851A06A07A77C729AF9A2B3EDA26462C1E58E3E1775AE98350CCA6F5173F2`
 <!-- AUTO:END -->
 
 ## Назначение
