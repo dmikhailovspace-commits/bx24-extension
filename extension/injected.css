@@ -289,6 +289,8 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .pena-dialog-recent-loading .bx-im-list-container-task__elements,.pena-dialog-recent-loading .bx-im-list-container-recent__elements{pointer-events:none!important;user-select:none!important}
 .pena-native-managed-viewport.--pena-catalog-locked{overflow:hidden!important}
 .pena-native-managed-viewport.--pena-catalog-locked>.pena-native-managed-list{filter:blur(2px);opacity:.48;pointer-events:none!important;user-select:none!important}
+.pena-native-traversal-active .bx-im-list-recent-item__wrap,.pena-native-traversal-active .bx-im-list-item,.pena-native-traversal-active .bx-messenger-cl-item{visibility:hidden!important;pointer-events:none!important}
+.pena-native-traversal-active .pena-native-traversal-visible{visibility:visible!important;pointer-events:auto!important}
 .pena-native-load-guard{position:absolute;inset:0;z-index:40;display:flex;align-items:flex-start;justify-content:center;padding:22px 14px 14px;background:rgba(255,255,255,.7);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);box-sizing:border-box;cursor:wait;overflow:hidden}
 .pena-native-load-guard[hidden]{display:none!important}
 .pena-native-load-card{width:min(280px,calc(100% - 20px));padding:14px;border:1px solid #dbe3ec;border-radius:7px;background:#fff;color:#263241;box-shadow:0 8px 22px rgba(15,23,42,.12);box-sizing:border-box}

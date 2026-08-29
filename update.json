@@ -1,9 +1,9 @@
 {
   "schema_version": 2,
-  "version": "7.5.55",
+  "version": "7.5.56",
   "release_date": "2026-08-29",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.55",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.55",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.56",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.56",
   "extension_files": [
     "background.js",
     "content.js",
@@ -32,6 +32,6 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.55/extension/injected.js",
-  "changelog": "v7.5.55: restores task search with local-first results and REST fallback, separates the time-panel header from refresh, moves refresh feedback to toasts, and prevents search results from covering duration fields"
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.56/extension/injected.js",
+  "changelog": "v7.5.56: keeps active-folder membership visually isolated during native background traversal, preserves virtual-list geometry, and adds regression coverage for folder stability before and after loading"
 }

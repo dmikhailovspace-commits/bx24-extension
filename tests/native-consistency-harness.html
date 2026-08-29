@@ -238,7 +238,11 @@
 		: [];
 	  localStorage.setItem(`pena.dialogControlSegments.v1.${storageMode}`, JSON.stringify(segmentFixture));
 	  localStorage.removeItem(`pena.dialogControlSegments.v1.active.${storageMode}`);
-	  localStorage.removeItem(`pena.dialogControlNativeFolder.v1.${storageMode}`);
+	  if (new URLSearchParams(location.search).get('activeFolder') === '1') {
+		localStorage.setItem(`pena.dialogControlNativeFolder.v1.${storageMode}`, 'folder:test');
+	  } else {
+		localStorage.removeItem(`pena.dialogControlNativeFolder.v1.${storageMode}`);
+	  }
     });
 	window.nativeSearchRuns = 0;
 	document.querySelectorAll('.recent-host input[type="search"],.task-host input[type="search"]').forEach(input => {

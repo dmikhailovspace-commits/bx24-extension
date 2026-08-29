@@ -1218,6 +1218,48 @@ try {
 	assert.equal(nativeFirstChats.imRecentCalls, 0, `Native-first loading waited for the metadata-only recent API: ${JSON.stringify(nativeFirstChats)}`);
 	assert.ok(nativeFirstChats.taskCalls > 0 && nativeFirstChats.duration < 6000,
 		`Native-first loading missed the fast startup path: ${JSON.stringify(nativeFirstChats)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=120&lazyChunk=8&lazyDelay=20&initialTop=32&activeFolder=1`);
+	await page.locator('.recent-host .pena-native-original-load-guard').waitFor({ state: 'visible', timeout: 3000 });
+	await page.waitForFunction(() => document.querySelector('.recent-host .pena-native-folder-tab[title="Тестовая папка"]')?.classList.contains('--active'));
+	const loadingFolderIsolation = await page.evaluate(() => {
+		const assigned = document.querySelector('.recent-host [data-id="chat225"]');
+		const foreign = document.querySelector('.recent-host [data-id="chat5"]');
+		const state = row => row ? ({ display: getComputedStyle(row).display, visibility: getComputedStyle(row).visibility }) : null;
+		return {
+			assigned: state(assigned),
+			foreign: state(foreign),
+			active: document.querySelector('.recent-host .bx-im-list-container-recent__elements')?.classList.contains('pena-native-traversal-active') || false,
+			folderId: JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats') || '[]').find(item => item.id === 'chat225')?.folderId || ''
+		};
+	});
+	assert.equal(loadingFolderIsolation.active, true, `Native traversal did not enter its isolated state: ${JSON.stringify(loadingFolderIsolation)}`);
+	assert.equal(loadingFolderIsolation.assigned?.visibility, 'visible', `Assigned dialog disappeared during loading: ${JSON.stringify(loadingFolderIsolation)}`);
+	assert.equal(loadingFolderIsolation.foreign?.visibility, 'hidden', `Foreign dialog leaked into the active folder during loading: ${JSON.stringify(loadingFolderIsolation)}`);
+	assert.notEqual(loadingFolderIsolation.foreign?.display, 'none', `Folder isolation collapsed the native catalog geometry: ${JSON.stringify(loadingFolderIsolation)}`);
+	assert.equal(loadingFolderIsolation.folderId, 'folder:test', `Loading changed the persisted folder assignment: ${JSON.stringify(loadingFolderIsolation)}`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.loadedModes?.includes('chats') && !status.originalActive && (status.modeCounts?.chats || 0) >= 120;
+	}, null, { timeout: 8000 });
+	const loadedFolderIsolation = await page.evaluate(() => {
+		const assigned = document.querySelector('.recent-host [data-id="chat225"]');
+		const foreign = document.querySelector('.recent-host [data-id="chat5"]');
+		const items = JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats') || '[]');
+		return {
+			assignedDisplay: assigned ? getComputedStyle(assigned).display : '',
+			foreignDisplay: foreign ? getComputedStyle(foreign).display : '',
+			traversalActive: document.querySelector('.recent-host .bx-im-list-container-recent__elements')?.classList.contains('pena-native-traversal-active') || false,
+			assignedFolder: items.find(item => item.id === 'chat225')?.folderId || '',
+			foreignFolder: items.find(item => item.id === 'chat5')?.folderId || ''
+		};
+	});
+	assert.equal(loadedFolderIsolation.traversalActive, false, `Traversal isolation was not cleaned up: ${JSON.stringify(loadedFolderIsolation)}`);
+	assert.notEqual(loadedFolderIsolation.assignedDisplay, 'none', `Assigned dialog vanished after loading: ${JSON.stringify(loadedFolderIsolation)}`);
+	assert.equal(loadedFolderIsolation.foreignDisplay, 'none', `Foreign dialog remained in the folder after loading: ${JSON.stringify(loadedFolderIsolation)}`);
+	assert.equal(loadedFolderIsolation.assignedFolder, 'folder:test', `Final catalog lost the assigned dialog: ${JSON.stringify(loadedFolderIsolation)}`);
+	assert.equal(loadedFolderIsolation.foreignFolder, '', `Final catalog assigned a foreign dialog to the folder: ${JSON.stringify(loadedFolderIsolation)}`);
 	await switchMode(page);
 	await page.waitForFunction(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();

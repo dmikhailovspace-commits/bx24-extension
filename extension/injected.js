@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.55';
+	window.__ANITREC_RUNNING__ = '7.5.56';
 
-	const VER = '7.5.55';
+	const VER = '7.5.56';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -4133,6 +4133,32 @@
 		return { changed, detailsPromise };
 	}
 
+	function _syncDialogNativeTraversalRows(container = findContainer()) {
+		if (!container) return 0;
+		container.classList.add('pena-native-traversal-active');
+		const nativeFolderFilter = _getDialogControlNativeFilter();
+		const rows = _getDialogControlNativeRows(container);
+		rows.forEach(row => {
+			const meta = _getDialogRowFilterMeta(row);
+			let visible = matchByFilters(meta);
+			if (visible && nativeFolderFilter) visible = _matchesDialogControlNativeFilter(row, meta, nativeFolderFilter);
+			row.classList.toggle('pena-native-traversal-visible', visible);
+			// display:none collapses Bitrix' virtual list and prevents reaching old rows.
+			// Visibility keeps the geometry intact without leaking foreign dialogs into
+			// the currently selected PENA folder while the native loader is traversing it.
+			row.style.display = row.dataset.penaNativeOriginalDisplay || '';
+		});
+		return rows.length;
+	}
+
+	function _clearDialogNativeTraversalRows(container = findContainer()) {
+		if (!container) return;
+		container.classList.remove('pena-native-traversal-active');
+		container.querySelectorAll('.pena-native-traversal-visible').forEach(row => {
+			row.classList.remove('pena-native-traversal-visible');
+		});
+	}
+
 	async function _runDialogNativeSilentPrefetch(options = {}) {
 		if (IS_OL_FRAME || !isInternalChatsDOM()) return { count: _countDialogRecentMeta(), skipped: true };
 		if (_dialogNativePrefetchPromise) return _dialogNativePrefetchPromise;
@@ -4172,7 +4198,7 @@
 			try {
 				// A folder can remain selected between sessions. Its inline filtering must
 				// not shorten the Bitrix viewport while we traverse the complete source.
-				_getCurrentFilterRows(container).forEach(row => { row.style.display = ''; });
+				_syncDialogNativeTraversalRows(container);
 				sourceViewport.scrollTop = 0;
 				sourceViewport.dispatchEvent(new Event('scroll'));
 				await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -4214,6 +4240,7 @@
 					await new Promise(resolve => setTimeout(resolve, nextTop >= maxTop ? 180 : 92));
 					await new Promise(resolve => requestAnimationFrame(resolve));
 					_captureDialogNativeWindow(container, target, state, loadLimit);
+					_syncDialogNativeTraversalRows(container);
 					passes += 1;
 					const signature = `${state.seen.size}:${sourceViewport.scrollHeight}:${sourceViewport.scrollTop}`;
 					const atBottom = maxTop <= 1 || Number(sourceViewport.scrollTop) >= maxTop - 1;
@@ -4260,9 +4287,11 @@
 					_scheduleDialogRecentCacheWrite(80);
 				}
 				_publishDialogRecentSyncState();
+				_clearDialogNativeTraversalRows(container);
 				applyFilters();
 				return { count: _countDialogRecentMeta(), received: state.seen.size, pages: passes, native: true, expanded, cancelled };
 			} finally {
+				_clearDialogNativeTraversalRows(container);
 				sourceViewport.scrollTop = originalTop;
 				sourceViewport.dispatchEvent(new Event('scroll'));
 				if (_dialogControlManagedViewport?.isConnected) {
@@ -4444,7 +4473,7 @@
 				_syncDialogNativeOriginalLoadUi(container);
 				// A persisted folder/filter must not shorten the source while the loader
 				// traverses it. The exact filter is applied again before the overlay leaves.
-				_getCurrentFilterRows(container).forEach(row => { row.style.display = ''; });
+				_syncDialogNativeTraversalRows(container);
 				sourceViewport.scrollTop = 0;
 				sourceViewport.scrollLeft = originalLeft;
 				sourceViewport.dispatchEvent(new Event('scroll'));
@@ -4472,13 +4501,14 @@
 						return Math.max(160, Math.floor((Number(clientHeight) || 480) * multiplier));
 					},
 					getProgressToken: () => `${state.seen.size}:${Number(sourceViewport.scrollHeight) || 0}`,
-						onTick: () => {
-							nativeWindowRows = _captureDialogNativeWindow(container, target, state, loadLimit).rows;
-							_dialogRecentProgress.loadedCount = state.seen.size;
-							_dialogRecentProgress.expectedTotal = estimateExpectedTotal();
-							_dialogRecentProgress.pagesLoaded += 1;
-							_syncDialogNativeOriginalLoadUi(container);
-						}
+					onTick: () => {
+						nativeWindowRows = _captureDialogNativeWindow(container, target, state, loadLimit).rows;
+						_syncDialogNativeTraversalRows(container);
+						_dialogRecentProgress.loadedCount = state.seen.size;
+						_dialogRecentProgress.expectedTotal = estimateExpectedTotal();
+						_dialogRecentProgress.pagesLoaded += 1;
+						_syncDialogNativeOriginalLoadUi(container);
+					}
 				});
 				let startupBudgetExpired = false;
 				const startupBudgetTimer = setTimeout(() => {
@@ -4547,6 +4577,7 @@
 				_publishDialogRecentSyncState();
 				return { count: _countDialogRecentMeta(), received: state.seen.size, native: true, cancelled };
 			} finally {
+				_clearDialogNativeTraversalRows(container);
 				sourceViewport.scrollTop = originalTop;
 				sourceViewport.scrollLeft = originalLeft;
 				sourceViewport.dispatchEvent(new Event('scroll'));
@@ -19465,6 +19496,8 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .pena-dialog-recent-loading .bx-im-list-container-task__elements,.pena-dialog-recent-loading .bx-im-list-container-recent__elements{pointer-events:none!important;user-select:none!important}
 .pena-native-managed-viewport.--pena-catalog-locked{overflow:hidden!important}
 .pena-native-managed-viewport.--pena-catalog-locked>.pena-native-managed-list{filter:blur(2px);opacity:.48;pointer-events:none!important;user-select:none!important}
+.pena-native-traversal-active .bx-im-list-recent-item__wrap,.pena-native-traversal-active .bx-im-list-item,.pena-native-traversal-active .bx-messenger-cl-item{visibility:hidden!important;pointer-events:none!important}
+.pena-native-traversal-active .pena-native-traversal-visible{visibility:visible!important;pointer-events:auto!important}
 .pena-native-load-guard{position:absolute;inset:0;z-index:40;display:flex;align-items:flex-start;justify-content:center;padding:22px 14px 14px;background:rgba(255,255,255,.7);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);box-sizing:border-box;cursor:wait;overflow:hidden}
 .pena-native-load-guard[hidden]{display:none!important}.pena-native-load-card{width:min(280px,calc(100% - 20px));padding:14px;border:1px solid #dbe3ec;border-radius:7px;background:#fff;color:#263241;box-shadow:0 8px 22px rgba(15,23,42,.12);box-sizing:border-box}.pena-native-load-heading{font:700 13px/18px system-ui,-apple-system,Segoe UI,Roboto,Arial;color:#263241}.pena-native-load-progress{height:5px;margin-top:12px;overflow:hidden;border-radius:3px;background:#e7edf4}.pena-native-load-progress>span{display:block;width:0;height:100%;border-radius:inherit;background:#2f80ed;transition:width .18s ease-out}.pena-native-load-progress.--indeterminate>span{width:38%;animation:pena-native-load-indeterminate .8s ease-in-out infinite}.pena-native-load-value{margin-top:8px;text-align:center;font:700 11px/14px system-ui,-apple-system,Segoe UI,Roboto,Arial;color:#526071;font-variant-numeric:tabular-nums}.pena-native-load-guard.--complete .pena-native-load-progress>span{transition:none}@keyframes pena-native-load-indeterminate{0%{transform:translateX(-120%)}100%{transform:translateX(365%)}}
 .pena-native-original-loading-host{position:relative!important}.pena-native-original-load-guard{position:absolute;inset:0;z-index:45;display:flex;align-items:flex-start;justify-content:center;padding:72px 14px 14px;background:rgba(255,255,255,.78);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);box-sizing:border-box;cursor:wait;pointer-events:auto;overflow:hidden}
