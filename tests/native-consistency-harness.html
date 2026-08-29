@@ -10,8 +10,8 @@
     button { font: 18px/2 Georgia, serif; letter-spacing: 3px; text-transform: uppercase; }
     .test-host { width: 360px; height: 680px; }
     .test-host[hidden] { display: none; }
-	.bx-im-list-container-recent__container,
-	.bx-im-list-container-task__container { display:flex; flex-direction:column; width: 360px; height: 680px; }
+    .bx-im-list-container-recent__container,
+    .bx-im-list-container-task__container { width: 360px; height: 680px; }
     .bx-im-list-container-recent__scroll-container,
     .bx-im-list-container-task__scroll-container,
     .bx-im-list-recent__scroll-container,
@@ -97,6 +97,7 @@
 	if (shortList) localStorage.removeItem('pena.dialogRecentCache.v2');
 	const manyRows = new URLSearchParams(location.search).get('many') === '1';
 	const lazyRows = new URLSearchParams(location.search).get('lazy') === '1';
+	const rematerializeOnReturn = new URLSearchParams(location.search).get('rematerializeOnReturn') === '1';
 	const catalogRows = Math.max(0, Number(new URLSearchParams(location.search).get('catalogRows')) || (manyRows ? 120 : 18));
 	const lazyChunk = Math.max(1, Number(new URLSearchParams(location.search).get('lazyChunk')) || 4);
 	const lazyDelay = Math.max(0, Number(new URLSearchParams(location.search).get('lazyDelay')) || 0);
@@ -107,9 +108,6 @@
 	const restUnknownTotal = new URLSearchParams(location.search).get('restUnknownTotal') === '1';
 	let recentListFailuresRemaining = Math.max(0, Number(new URLSearchParams(location.search).get('restFailCount')) || 0);
 	const generatedManaged = new URLSearchParams(location.search).get('generatedManaged') === '1';
-	const collapseOnReturn = new URLSearchParams(location.search).get('collapseOnReturn') === '1';
-	const continuityWindow = Math.max(3, Number(new URLSearchParams(location.search).get('continuityWindow')) || 8);
-	const visitedModes = new Set([mode]);
 	const wideParent = new URLSearchParams(location.search).get('wide') === '1';
 	const nestedViewport = new URLSearchParams(location.search).get('nestedViewport') === '1';
 	const descendantViewport = new URLSearchParams(location.search).get('descendantViewport') === '1';
@@ -191,10 +189,15 @@
 		}
       }
     });
-	if (lazyRows) document.querySelectorAll('.bx-im-list-container-recent__elements,.bx-im-list-container-task__elements').forEach(list => {
+	window.nativeMaterializationResets = 0;
+	const nativeFullRows = new Map();
+	const installLazyMaterialization = list => {
 	  const rowHost = getNativeRowHost(list);
-	  const pending = Array.from(rowHost.children).slice(10);
-	  pending.forEach(row => row.remove());
+	  const modeKey = list.classList.contains('bx-im-list-container-task__elements') ? 'tasks' : 'chats';
+	  if (!nativeFullRows.has(modeKey)) nativeFullRows.set(modeKey, Array.from(rowHost.children, row => row.cloneNode(true)));
+	  const fullRows = nativeFullRows.get(modeKey);
+	  rowHost.replaceChildren(...fullRows.slice(0, 10).map(row => row.cloneNode(true)));
+	  const pending = fullRows.slice(10).map(row => row.cloneNode(true));
 	  const viewport = list.querySelector('.bx-im-list-recent__scroll-container,.bx-im-list-task__scroll-container') ||
 		list.closest('.bx-im-list-container-recent__scroll-container,.bx-im-list-container-task__scroll-container');
 	  if (!viewport) return;
@@ -210,7 +213,8 @@
 		  setTimeout(append, lazyDelay);
 		} else append();
 	  });
-	});
+	};
+	if (lazyRows) document.querySelectorAll('.bx-im-list-container-recent__elements,.bx-im-list-container-task__elements').forEach(installLazyMaterialization);
 	const initialScrollTop = Math.max(0, Number(new URLSearchParams(location.search).get('initialTop')) || 0);
 	document.querySelectorAll(descendantViewport
 	  ? '.bx-im-list-recent__scroll-container,.bx-im-list-task__scroll-container'
@@ -611,17 +615,17 @@
 		document.body.appendChild(panel);
 	  }
 	}, 650);
-	    document.getElementById('switch-mode').addEventListener('click', () => {
+    document.getElementById('switch-mode').addEventListener('click', () => {
       const recentHost = document.querySelector('.recent-host');
       const taskHost = document.querySelector('.task-host');
-	      const showTasks = taskHost.hidden;
-		  const targetMode = showTasks ? 'tasks' : 'chats';
-		  if (collapseOnReturn && visitedModes.has(targetMode)) {
-			const targetList = (showTasks ? taskHost : recentHost).querySelector('.bx-im-list-container-recent__elements,.bx-im-list-container-task__elements');
-			const targetRowHost = getNativeRowHost(targetList);
-			Array.from(targetRowHost?.children || []).filter(row => row.matches?.('[data-id]')).slice(continuityWindow).forEach(row => row.remove());
-		  }
-		  visitedModes.add(targetMode);
+      const showTasks = taskHost.hidden;
+	  if (!showTasks && rematerializeOnReturn) {
+		const recentList = recentHost.querySelector('.bx-im-list-container-recent__elements');
+		if (recentList) {
+		  installLazyMaterialization(recentList);
+		  window.nativeMaterializationResets += 1;
+		}
+	  }
 	  if (transitionGap) {
 		recentHost.hidden = true;
 		taskHost.hidden = true;

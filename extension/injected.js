@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.59';
+	window.__ANITREC_RUNNING__ = '7.5.60';
 
-	const VER = '7.5.59';
+	const VER = '7.5.60';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -2232,26 +2232,6 @@
 		return _dialogRecentMeta;
 	}
 
-	function _preserveDialogRecentCompleteModes(previous, target) {
-		if (!(previous instanceof Map) || !(target instanceof Map) || !previous.size || !_dialogNativePrefetchedModes.size) return 0;
-		const targetIds = new Set();
-		new Set(Array.from(target.values())).forEach(meta => {
-			const id = normId(meta?.id || meta?.restDialogId);
-			if (id) targetIds.add(id);
-		});
-		let preserved = 0;
-		new Set(Array.from(previous.values())).forEach(meta => {
-			const id = normId(meta?.id || meta?.restDialogId);
-			if (!id || targetIds.has(id)) return;
-			const mode = meta?.isTask === true ? 'tasks' : 'chats';
-			if (!_dialogNativePrefetchedModes.has(mode) || _isDialogRecentUnavailable(meta)) return;
-			_setDialogRecentMeta(target, { ...meta }, _getDialogRecentKeys(meta));
-			targetIds.add(id);
-			preserved += 1;
-		});
-		return preserved;
-	}
-
 	function _isDialogRecentMandatoryItem(item) {
 		if (!item || _isDialogControlFolder(item)) return false;
 		return item.recentManaged !== true || !!(
@@ -2354,7 +2334,7 @@
 
 	function _serializeDialogRecentMeta(meta) {
 		const fields = [
-			'id', 'entityKind', 'title', 'displayTitle', 'avatarUrl', 'avatarColor', 'avatarInitials', 'avatarSource', 'lastText', 'displayLastText',
+			'id', 'entityKind', 'title', 'displayTitle', 'avatarUrl', 'avatarColor', 'avatarSource', 'lastText', 'displayLastText',
 			'lastAuthorId', 'lastAuthorName', 'lastAuthorAvatarUrl', 'lastAuthorOwn', 'lastAuthorSystem', 'lastAuthorResolved', 'lastMessageStatus',
 			'lastMessageHasFile', 'lastMessageHasAttach', 'lastMessageSticker',
 			'lastMessageTs', 'lastMessageTsSource', 'nativeRecentRank', 'lastMessageId', 'lastReadMessageId', 'unreadCount', 'hasUnread', 'hasLater', 'hasMention',
@@ -3673,11 +3653,6 @@
 					}
 				}
 				let commitTarget = nextFullMap || _dialogRecentMeta;
-				// A complete per-mode catalog is monotonic inside the current page. Bitrix can
-				// return a shorter recent window after a route remount; that response enriches
-				// known rows but cannot silently evict older dialogs already confirmed by a
-				// native traversal. Explicit unavailability checks remain the removal path.
-				if (full && hadPreviousCatalog) _preserveDialogRecentCompleteModes(previousFullMap, commitTarget);
 				if (!full) commitTarget = _trimDialogRecentMap(commitTarget, loadLimit, mandatory);
 				_ensureDialogRecentMandatoryMeta(commitTarget, mandatory);
 				const counters = await countersPromise;
@@ -4115,18 +4090,9 @@
 			let avatarUrl = _normalizeDialogRecentAvatarUrl(
 				nativeAvatarImage?.currentSrc || nativeAvatarImage?.src || nativeAvatarImage?.getAttribute?.('src') || ''
 			);
-			let avatarColor = String(existing.avatarColor || '');
 			if (!avatarUrl && nativeAvatar) {
-				try {
-					const avatarStyle = getComputedStyle(nativeAvatar);
-					avatarUrl = _normalizeDialogRecentAvatarUrl(avatarStyle.backgroundImage);
-					if (!avatarColor && avatarStyle.backgroundColor && avatarStyle.backgroundColor !== 'rgba(0, 0, 0, 0)') {
-						avatarColor = avatarStyle.backgroundColor;
-					}
-				} catch {}
+				try { avatarUrl = _normalizeDialogRecentAvatarUrl(getComputedStyle(nativeAvatar).backgroundImage); } catch {}
 			}
-			const avatarInitials = String(nativeAvatar?.textContent || existing.avatarInitials || '')
-				.replace(/\s+/g, '').trim().slice(0, 4);
 			const nativeMessage = _getDialogControlNativeMessageState(row);
 			const lastText = _normalizeDialogRecentPreviewText(nativeMessage?.text || dom.lastText || existing.displayLastText || existing.lastText || '');
 			const existingDate = Number(existing.lastMessageTs) || 0;
@@ -4153,8 +4119,6 @@
 				nativeRecentRank,
 				messagePreviewResolved: true,
 				avatarUrl: avatarUrl || existing.avatarUrl || '',
-				avatarColor,
-				avatarInitials,
 				avatarSource: avatarUrl ? 'native' : (existing.avatarSource || 'none'),
 				avatarResolved: true,
 				lastAuthorAvatarUrl: nativeMessage?.authorAvatarUrl || existing.lastAuthorAvatarUrl || '',
@@ -4526,8 +4490,10 @@
 			runner?.cancel?.();
 		};
 		_dialogNativeOriginalScrollPromise = (async () => {
-			const originalTop = Number(sourceViewport.scrollTop) || 0;
-			const originalLeft = Number(sourceViewport.scrollLeft) || 0;
+			const requestedTop = Number(options.restoreTop);
+			const requestedLeft = Number(options.restoreLeft);
+			const originalTop = Number.isFinite(requestedTop) ? Math.max(0, requestedTop) : (Number(sourceViewport.scrollTop) || 0);
+			const originalLeft = Number.isFinite(requestedLeft) ? Math.max(0, requestedLeft) : (Number(sourceViewport.scrollLeft) || 0);
 			const originalOverflowAnchor = {
 				value: sourceViewport.style.getPropertyValue('overflow-anchor'),
 				priority: sourceViewport.style.getPropertyPriority('overflow-anchor')
@@ -4673,6 +4639,8 @@
 				_dialogNativePrefetchedModes.add(mode);
 				_dialogNativeModeCounts.set(mode, state.seen.size);
 				_dialogNativeModeLoadedAt.set(mode, Date.now());
+				_recordDialogNativeMaterialization(mode, container, sourceViewport, state.seen.size);
+				_dialogNativeScrollPositions.set(mode, { top: originalTop, left: originalLeft });
 				_dialogRecentRepositoryNeedsFullCommit = true;
 				_scheduleDialogRecentCacheWrite(80);
 				_dialogRecentProgress = Object.assign({}, _dialogRecentProgress, {
@@ -4680,7 +4648,6 @@
 					partial: false, completedAt: Date.now()
 				});
 				_publishDialogRecentSyncState();
-				_scheduleDialogNativeContinuityAudit('native-complete', 240);
 				return { count: _countDialogRecentMeta(), received: state.seen.size, native: true, cancelled };
 			} finally {
 				_clearDialogNativeTraversalRows(container);
@@ -4824,10 +4791,9 @@
 			loadedModes: [..._dialogNativePrefetchedModes],
 			modeCounts: Object.fromEntries(_dialogNativeModeCounts),
 			modeLoadedAt: Object.fromEntries(_dialogNativeModeLoadedAt),
+			materializationRevisions: Object.fromEntries(Array.from(_dialogNativeMaterializedSources, ([mode, state]) => [mode, state.revision])),
 			backgroundModes: [..._dialogNativeBackgroundPendingModes],
 			failedModes: [..._dialogNativeTraversalFailedModes],
-			continuityModes: [..._dialogNativeContinuityModes],
-			modeViewStates: Object.fromEntries(_dialogNativeModeViewStates),
 			retryPending: !!_dialogRecentApiRetryTimer,
 			retryAttempt: _dialogRecentApiRetryAttempt,
 			lastApiResult: _dialogRecentLastApiResult
@@ -4922,66 +4888,42 @@
 		return completedAt > 0 && Math.max(0, Number(now) || Date.now()) - completedAt < _getDialogCompleteCatalogTtlMs();
 	}
 
-	function _getDialogNativeModeFromContainer(container = findContainer()) {
-		return container?.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
-	}
-
-	function _getDialogNativeModeCatalogCount(mode) {
-		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
-		const storedCount = _getDialogControlItemsForMode(targetMode)
-			.filter(item => !_isDialogControlFolder(item) && !item?.recentMissing).length;
-		const metadataCount = _getDialogRecentUniqueMeta().filter(meta =>
-			_isDialogRecentPublishable(meta) && (targetMode === 'tasks' ? meta?.isTask === true : meta?.isTask !== true)
-		).length;
-		return Math.max(Number(_dialogNativeModeCounts.get(targetMode)) || 0, storedCount, metadataCount);
-	}
-
-	function _auditDialogNativeContinuity(reason = 'route') {
-		if (IS_OL_FRAME || document.hidden || !isInternalChatsDOM()) return { active: false, skipped: true };
-		const container = findContainer();
-		const sourceViewport = container ? findInternalScrollContainer(container) : null;
-		if (!container || !sourceViewport) return { active: false, skipped: true, unavailable: true };
-		const mode = _getDialogNativeModeFromContainer(container);
-		if (_dialogNativeContinuityModes.has(mode)) {
-			_dialogControlNativeViewSig = '';
-			_scheduleDialogControlNativeView(container, { restoreDisplay: false, forceShow: true });
-			return { active: true, cached: true, mode };
-		}
-		const route = window.__PENA_ACTIVE_LIST_CONTEXT__;
-		const routeVisible = route?.list === container || _isElementTopHit(sourceViewport);
-		const liveIds = new Set(_getDialogNativeSourceRows(container)
-			.map(row => normId(getChatIdFromElement(row))).filter(Boolean));
-		const expectedCount = _getDialogNativeModeCatalogCount(mode);
-		const activate = window.__PENA_NATIVE_CATALOG__?.shouldUseContinuityView?.({
-			complete: _dialogNativePrefetchedModes.has(mode) && !_dialogNativeTraversalFailedModes.has(mode),
-			traversing: _dialogNativeOriginalScrollActive || _dialogNativePrefetchActive,
-			visible: routeVisible,
-			expectedCount,
-			liveCount: liveIds.size
-		}) === true;
-		window.__PENA_NATIVE_CONTINUITY__ = {
-			active: activate,
-			mode,
-			reason,
-			expectedCount,
-			liveCount: liveIds.size,
-			at: Date.now()
+	function _getDialogNativeMaterializationSnapshot(container = findContainer()) {
+		if (!container?.isConnected) return null;
+		const viewport = findInternalScrollContainer(container);
+		if (!viewport?.isConnected || viewport === _dialogControlManagedViewport) return null;
+		return {
+			list: container,
+			viewport,
+			scrollHeight: Math.max(0, Number(viewport.scrollHeight) || 0),
+			clientHeight: Math.max(0, Number(viewport.clientHeight) || 0)
 		};
-		if (!activate) return { active: false, mode, expectedCount, liveCount: liveIds.size };
-		_dialogNativeContinuityModes.add(mode);
-		_dialogControlNativeViewSig = '';
-		_dialogControlLastSig = '';
-		_scheduleDialogControlNativeView(container, { restoreDisplay: false, forceShow: true });
-		return { active: true, mode, expectedCount, liveCount: liveIds.size };
 	}
 
-	function _scheduleDialogNativeContinuityAudit(reason = 'route', delay = 220) {
-		if (IS_OL_FRAME) return;
-		if (_dialogNativeContinuityAuditTimer) clearTimeout(_dialogNativeContinuityAuditTimer);
-		_dialogNativeContinuityAuditTimer = setTimeout(() => {
-			_dialogNativeContinuityAuditTimer = null;
-			_auditDialogNativeContinuity(reason);
-		}, Math.max(60, Number(delay) || 220));
+	function _recordDialogNativeMaterialization(mode, container, viewport, count) {
+		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
+		const previous = _dialogNativeMaterializedSources.get(targetMode);
+		const snapshot = _getDialogNativeMaterializationSnapshot(container);
+		if (!snapshot || snapshot.viewport !== viewport) return false;
+		_dialogNativeMaterializedSources.set(targetMode, {
+			...snapshot,
+			count: Math.max(0, Number(count) || 0),
+			revision: Math.max(0, Number(previous?.revision) || 0) + 1,
+			completedAt: Date.now()
+		});
+		return true;
+	}
+
+	function _isDialogNativeMaterializationCurrent(mode, container = findContainer()) {
+		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
+		const previous = _dialogNativeMaterializedSources.get(targetMode);
+		const current = _getDialogNativeMaterializationSnapshot(container);
+		if (!previous || !current) return false;
+		if (previous.list !== current.list || previous.viewport !== current.viewport) return false;
+		const previousRange = Math.max(0, previous.scrollHeight - previous.clientHeight);
+		const currentRange = Math.max(0, current.scrollHeight - current.clientHeight);
+		const meaningfulRange = Math.max(600, previous.clientHeight * 1.5);
+		return previousRange < meaningfulRange || currentRange >= previousRange * .6;
 	}
 
 	async function _refreshDialogTaskCatalogMetadata(options = {}) {
@@ -5077,11 +5019,15 @@
 					_dialogNativeTraversalFailedModes.delete(mode);
 					_dialogNativeTraversalFailedAt.delete(mode);
 				}
-				if (_isDialogModeCatalogFresh(mode)) {
+				const catalogFresh = _isDialogModeCatalogFresh(mode);
+				const nativeMaterializationFresh = catalogFresh && _isDialogNativeMaterializationCurrent(mode, container);
+				if (catalogFresh && nativeMaterializationFresh) {
 					if (mode === 'tasks') _scheduleDialogTaskCatalogRefresh('mode-task-metadata');
-					_scheduleDialogNativeContinuityAudit(`${reason}-cached`, 180);
 					return;
 				}
+				// A complete repository does not keep Bitrix' virtual list alive. When the
+				// native list instance is replaced or its scroll range collapses, repeat the
+				// original one-shot traversal for this source only. Never replace its DOM.
 				_dialogNativePrefetchedModes.delete(mode);
 				if (_dialogRecentRuntimeStarting) {
 					_scheduleDialogNativeModeLoad(reason, 140);
@@ -5092,7 +5038,12 @@
 					_scheduleDialogNativeModeLoad(reason, 140);
 					return;
 				}
-				_refreshDialogRecentCatalog({ full: true, reason }).catch(() => {});
+				const savedPosition = _dialogNativeScrollPositions.get(mode);
+				_refreshDialogRecentCatalog({
+					full: true,
+					reason,
+					...(savedPosition ? { restoreTop: savedPosition.top, restoreLeft: savedPosition.left } : {})
+				}).catch(() => {});
 			}, Math.max(0, Number(delay) || 0));
 			return;
 		}
@@ -5105,7 +5056,6 @@
 			if (_isDialogModeCatalogFresh(mode)) {
 				if (mode === 'tasks') _scheduleDialogTaskCatalogRefresh('mode-task-metadata');
 				if (_isDialogRecentInteractionBlocked()) _completeDialogRecentInteractionGate();
-				_scheduleDialogNativeContinuityAudit(`${reason}-cached`, 180);
 				return;
 			}
 			_dialogNativePrefetchedModes.delete(mode);
@@ -5184,14 +5134,12 @@
 				}
 				if (!_isDialogTaskCatalogMetadataFresh(now)) _scheduleDialogTaskCatalogRefresh(`${reason}-tasks`);
 				if (completeCatalogStale || needsCompletion) _scheduleDialogDeepRefresh(`${reason}-deep`);
-				_scheduleDialogNativeContinuityAudit(reason, 240);
 			};
 			['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(type => {
 				document.addEventListener(type, _noteDialogCatalogUserActivity, { capture: true, passive: true });
 			});
 			_dialogRecentSyncTimer = setInterval(() => scheduleFreshCatalog('periodic-freshness'), _getDialogRecentHeadRefreshMs());
 			window.addEventListener('focus', () => scheduleFreshCatalog('focus-freshness'));
-			window.addEventListener('resize', () => _scheduleDialogNativeContinuityAudit('resize', 260));
 			document.addEventListener('visibilitychange', () => {
 				if (!document.hidden) scheduleFreshCatalog('visibility-freshness');
 			});
@@ -5750,7 +5698,6 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogNativeModeLoadTimer = null;
 	let _dialogNativeVisibleRefreshTimer = null;
 	let _dialogNativePassThroughRefreshTimer = null;
-	let _dialogNativeContinuityAuditTimer = null;
 	let _dialogNativePassThroughCaptureViewport = null;
 	let _dialogNativePassThroughCaptureHandler = null;
 	let _dialogNativeOriginalScrollPromise = null;
@@ -5763,12 +5710,11 @@ let _dialogControlTitleLastSyncAt = 0;
 	const _dialogNativePrefetchedModes = new Set();
 	const _dialogNativeModeCounts = new Map();
 	const _dialogNativeModeLoadedAt = new Map();
+	const _dialogNativeMaterializedSources = new Map();
+	const _dialogNativeScrollPositions = new Map();
 	const _dialogNativeBackgroundPendingModes = new Set();
 	const _dialogNativeTraversalFailedModes = new Set();
 	const _dialogNativeTraversalFailedAt = new Map();
-	const _dialogNativeContinuityModes = new Set();
-	const _dialogNativeModeViewStates = new Map();
-	const _dialogNativeModeTransitionUntil = new Map();
 	let _dialogRecentApiLoadActive = false;
 	let _dialogRecentApiLoadSilent = false;
 	let _dialogRecentApiLoadPromise = null;
@@ -11548,7 +11494,7 @@ if (_presetChannel) {
 		const effectiveMeta = row._penaRemoteMeta || meta || {};
 		const title = String(effectiveMeta.displayTitle || item.title || `Диалог ${item.id || ''}`).trim();
 		const words = title.split(/\s+/).filter(Boolean);
-		const initials = String(effectiveMeta.avatarInitials || '').trim() || words
+		const initials = words
 			.map(word => word.match(/\p{L}/u)?.[0] || '')
 			.filter(Boolean)
 			.slice(0, 2)
@@ -11739,30 +11685,6 @@ if (_presetChannel) {
 		const viewport = _dialogControlManagedViewport;
 		const sourceViewport = _dialogControlManagedSourceViewport;
 		if (container && source && source !== container) return;
-		if (root?._penaManagedState && viewport) {
-			const mode = _getDialogNativeModeFromContainer(source);
-			const view = Array.isArray(root._penaManagedState.view) ? root._penaManagedState.view : [];
-			const scrollTop = Math.max(0, Number.isFinite(root._penaManagedState.lastStableScrollTop)
-				? root._penaManagedState.lastStableScrollTop
-				: (Number(viewport.scrollTop) || 0));
-			const anchor = window.__PENA_NATIVE_CATALOG__?.captureAnchor?.({
-				rows: view,
-				rowHeight: _DIALOG_CONTROL_MANAGED_ROW_HEIGHT,
-				scrollTop
-			}) || null;
-			const savedState = _dialogNativeModeViewStates.get(mode);
-			// Route transitions can briefly mount an empty replacement viewport. Do not
-			// let that transient zero overwrite a position captured by the live scroll
-			// handler milliseconds earlier.
-			if (!(scrollTop <= 0 && Number(savedState?.scrollTop) > 0 && Date.now() - Number(savedState?.at || 0) < 3000)) {
-				_dialogNativeModeViewStates.set(mode, {
-					scrollTop,
-					anchor,
-					selectedId: String(root._penaManagedState.selectedId || ''),
-					at: Date.now()
-				});
-			}
-		}
 		if (root || viewport || source) {
 			window.__PENA_MANAGED_DEBUG__ = {
 				status: 'cleared',
@@ -11791,9 +11713,7 @@ if (_presetChannel) {
 	}
 
 	function _hasDialogControlManagedTransform() {
-		return _isDialogControlNativeMode() && !IS_OL_FRAME && (
-			!_isDialogControlNativePassThrough() || _dialogNativeContinuityModes.has(_pMode())
-		);
+		return _isDialogControlNativeMode() && !IS_OL_FRAME && !_isDialogControlNativePassThrough();
 	}
 
 	function _selectDialogControlManagedItems(items) {
@@ -11952,7 +11872,6 @@ if (_presetChannel) {
 				_applyDialogControlNativeRowState(row, item, parentFolder || null);
 			});
 			if (Math.abs((Number(viewport.scrollTop) || 0) - nextTop) > .5) viewport.scrollTop = nextTop;
-			state.lastStableScrollTop = nextTop;
 			return Array.from(currentRows.values());
 		}
 		const nextRows = new Map();
@@ -12010,7 +11929,6 @@ if (_presetChannel) {
 		});
 		while (root.children.length > desiredNodes.length) root.lastElementChild?.remove();
 		if (Math.abs((Number(viewport.scrollTop) || 0) - nextTop) > .5) viewport.scrollTop = nextTop;
-		state.lastStableScrollTop = nextTop;
 		const unresolvedVisibleIds = visibleIds.filter(id => {
 			const meta = _getDialogRecentMeta(id);
 			return meta && meta.avatarResolved !== true && !meta.avatarUrl;
@@ -12069,9 +11987,7 @@ if (_presetChannel) {
 			viewport.parentElement !== host ||
 			_dialogControlManagedSourceViewport !== sourceRegion
 		) {
-			const containerMode = _getDialogNativeModeFromContainer(container);
-			const savedViewState = _dialogNativeModeViewStates.get(containerMode) || null;
-			const sourceAnchor = savedViewState?.anchor || _captureDialogControlNativeSourceAnchor(container, sourceViewport);
+			const sourceAnchor = _captureDialogControlNativeSourceAnchor(container, sourceViewport);
 			const sourceRect = mount.viewportRect || sourceRegion.getBoundingClientRect?.();
 			const hostRect = mount.hostRect || host.getBoundingClientRect?.();
 			_clearDialogControlManagedList();
@@ -12097,32 +12013,8 @@ if (_presetChannel) {
 			root.className = 'pena-native-managed-list';
 			root.setAttribute('role', 'list');
 			root.setAttribute('aria-label', _pMode() === 'tasks' ? 'Чаты задач' : 'Чаты');
-			root._penaManagedState = {
-				view: [], rows: new Map(), rowCache: new Map(), signature: '', renderSignature: '',
-				pendingScrollTop: null, pendingFallbackTop: null,
-				selectedId: String(savedViewState?.selectedId || ''), sourceAnchor,
-				sourceFallbackTop: Number.isFinite(Number(savedViewState?.scrollTop)) ? Number(savedViewState.scrollTop) : null,
-				lastStableScrollTop: Number.isFinite(Number(savedViewState?.scrollTop)) ? Number(savedViewState.scrollTop) : 0
-			};
-			root._penaManagedScrollHandler = () => {
-				const scrollTop = Math.max(0, Number(viewport.scrollTop) || 0);
-				root._penaManagedState.lastStableScrollTop = scrollTop;
-				const view = Array.isArray(root._penaManagedState.view) ? root._penaManagedState.view : [];
-				const savedState = _dialogNativeModeViewStates.get(containerMode);
-				const transientRouteZero = scrollTop <= 0 && Number(savedState?.scrollTop) > 0 &&
-					Date.now() < Number(_dialogNativeModeTransitionUntil.get(containerMode) || 0);
-				if (!transientRouteZero) _dialogNativeModeViewStates.set(containerMode, {
-					scrollTop,
-					anchor: window.__PENA_NATIVE_CATALOG__?.captureAnchor?.({
-						rows: view,
-						rowHeight: _DIALOG_CONTROL_MANAGED_ROW_HEIGHT,
-						scrollTop
-					}) || null,
-					selectedId: String(root._penaManagedState.selectedId || ''),
-					at: Date.now()
-				});
-				_scheduleDialogControlManagedVirtualRender();
-			};
+			root._penaManagedState = { view: [], rows: new Map(), rowCache: new Map(), signature: '', renderSignature: '', pendingScrollTop: null, pendingFallbackTop: null, selectedId: '', sourceAnchor };
+			root._penaManagedScrollHandler = _scheduleDialogControlManagedVirtualRender;
 			viewport.addEventListener('scroll', root._penaManagedScrollHandler, { passive: true });
 			viewport.addEventListener('wheel', event => {
 				const dy = _getDialogControlNativeWheelDelta(event);
@@ -12169,16 +12061,13 @@ if (_presetChannel) {
 				}) ?? 0;
 				state.pendingFallbackTop = previousTop;
 			} else if (!previousView.length) {
-				const fallbackTop = Number.isFinite(state.sourceFallbackTop) ? state.sourceFallbackTop : 0;
 				state.pendingScrollTop = window.__PENA_NATIVE_CATALOG__?.restoreAnchor?.({
 					rows: state.view,
 					anchor: state.sourceAnchor,
 					rowHeight: _DIALOG_CONTROL_MANAGED_ROW_HEIGHT,
-					fallbackScrollTop: fallbackTop
-				}) ?? fallbackTop;
-				state.pendingFallbackTop = fallbackTop;
+					fallbackScrollTop: 0
+				}) ?? 0;
 				state.sourceAnchor = null;
-				state.sourceFallbackTop = null;
 			}
 		}
 		_renderDialogControlManagedVirtualRows();
@@ -22118,8 +22007,17 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 				_dialogNativePassThroughCaptureViewport.removeEventListener('scroll', _dialogNativePassThroughCaptureHandler);
 			}
 			_dialogNativePassThroughCaptureViewport = passThroughViewport;
+			const passThroughMode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
 			_dialogNativePassThroughCaptureHandler = passThroughViewport
-				? () => _scheduleDialogNativePassThroughRefresh(180)
+				? () => {
+					if (!_dialogNativeOriginalScrollActive && !_dialogNativeOriginalScrollFinishing) {
+						_dialogNativeScrollPositions.set(passThroughMode, {
+							top: Math.max(0, Number(passThroughViewport.scrollTop) || 0),
+							left: Math.max(0, Number(passThroughViewport.scrollLeft) || 0)
+						});
+					}
+					_scheduleDialogNativePassThroughRefresh(180);
+				}
 				: null;
 			if (passThroughViewport && _dialogNativePassThroughCaptureHandler) {
 				passThroughViewport.addEventListener('scroll', _dialogNativePassThroughCaptureHandler, { passive: true });
@@ -22362,10 +22260,18 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 			absenceGraceMs: 1200,
 			visibilityResolver: _nativeLifecycleVisibilityResolver,
 				onTransition(next, previous) {
+					if (previous?.mode && previous.viewport) {
+						const previousMode = previous.mode === 'tasks' ? 'tasks' : 'chats';
+						const previousVisible = _nativeLifecycleVisibilityResolver(previous.viewport)?.visible === true;
+						const savedPosition = _dialogNativeScrollPositions.get(previousMode);
+						if (previousVisible || !savedPosition) {
+							_dialogNativeScrollPositions.set(previousMode, {
+								top: Math.max(0, Number(previous.viewport.scrollTop) || 0),
+								left: Math.max(0, Number(previous.viewport.scrollLeft) || 0)
+							});
+						}
+					}
 				window.__PENA_ACTIVE_LIST_CONTEXT__ = next;
-					const transitionUntil = Date.now() + 1200;
-					if (previous?.mode) _dialogNativeModeTransitionUntil.set(previous.mode === 'tasks' ? 'tasks' : 'chats', transitionUntil);
-					if (next?.mode) _dialogNativeModeTransitionUntil.set(next.mode === 'tasks' ? 'tasks' : 'chats', transitionUntil);
 				window.__PENA_INTERACTIONS__?.reset?.('route');
 					_dialogControlEyedropperClickToken = null;
 					if (previous?.list && previous.list !== next.list) {
@@ -22374,8 +22280,9 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 					_dialogControlNativeSwitcherSig = '';
 					}
 					_syncDialogRecentSourceGateState();
-					if (previous?.mode && previous.mode !== next?.mode) _scheduleDialogNativeModeLoad('mode-switch', 60);
-					_scheduleDialogNativeContinuityAudit('route-transition', 260);
+					if (previous?.mode && (previous.mode !== next?.mode || previous.list !== next.list || previous.viewport !== next.viewport)) {
+						_scheduleDialogNativeModeLoad(previous.mode !== next?.mode ? 'mode-switch' : 'source-remount', 90);
+					}
 					_scheduleNativeLifecycleRouteTick();
 			},
 			onInactive(previous) {
@@ -22430,7 +22337,6 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 			: null;
 		if (currentContainer) _ensureDialogRecentRuntime();
 		if (currentContainer && modeChanged) _scheduleDialogNativeModeLoad('mode-switch', 60);
-		if (currentContainer && modeChanged) _scheduleDialogNativeContinuityAudit('mode-switch', 260);
 		if (currentContainer && currentContainer !== _observedDialogContainer) {
 			armObserver(currentContainer);
 			_invalidateDialogControlDomReadCache();

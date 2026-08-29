@@ -444,18 +444,6 @@
 		return index * rowHeight + offset;
 	}
 
-	function shouldUseContinuityView(options) {
-		const settings = options && typeof options === 'object' ? options : {};
-		if (settings.complete !== true || settings.traversing === true || settings.visible === false) return false;
-		const expectedCount = Math.max(0, Math.floor(nonNegativeNumber(settings.expectedCount, 0)));
-		const liveCount = Math.max(0, Math.floor(nonNegativeNumber(settings.liveCount, 0)));
-		if (expectedCount < 4 || liveCount >= expectedCount) return false;
-		const missingCount = expectedCount - liveCount;
-		const minimumGap = Math.max(2, Math.floor(nonNegativeNumber(settings.minimumGap, 3)));
-		const minimumCoverage = Math.max(0.5, Math.min(0.99, nonNegativeNumber(settings.minimumCoverage, 0.92)));
-		return missingCount >= minimumGap && liveCount / expectedCount < minimumCoverage;
-	}
-
 	return Object.freeze({
 		buildIndex,
 		mergeRecentItems,
@@ -463,7 +451,6 @@
 		getVirtualWindow,
 		captureAnchor,
 		restoreAnchor,
-		shouldUseContinuityView,
 		normalizeId,
 		normalizeText
 	});
