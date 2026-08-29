@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.54';
+	window.__ANITREC_RUNNING__ = '7.5.55';
 
-	const VER = '7.5.54';
+	const VER = '7.5.55';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -9228,7 +9228,7 @@ if (_presetChannel) {
 			return;
 		}
 		results.hidden = false;
-		if (_dialogTimeManualSearchLoading) {
+		if (_dialogTimeManualSearchLoading && !_dialogTimeManualSearchResults.length) {
 			const status = document.createElement('span');
 			status.className = 'pena-native-time-manual-search-status';
 			status.textContent = 'Поиск…';
@@ -9262,6 +9262,43 @@ if (_presetChannel) {
 		});
 	}
 
+	function _getDialogTimeLocalTaskSearchResults(query) {
+		const normalizedQuery = String(query || '').replace(/\s+/g, ' ').trim().toLocaleLowerCase('ru');
+		if (!normalizedQuery) return [];
+		const byId = new Map();
+		const add = (taskId, title, dialogId = '') => {
+			const id = String(taskId || '').trim();
+			const cleanTitle = String(title || '').replace(/\s+/g, ' ').trim();
+			if (!/^\d+$/.test(id) || !cleanTitle || _dialogTimeTaskEligibility.get(id) !== true) return;
+			const haystack = `${cleanTitle} ${id}`.toLocaleLowerCase('ru');
+			if (!haystack.includes(normalizedQuery)) return;
+			byId.set(id, { taskId: id, title: cleanTitle, dialogId: normId(dialogId || '') });
+		};
+		_getDialogRecentUniqueMeta().forEach(meta => {
+			if (meta?.isTask !== true) return;
+			add(meta.taskId, meta.displayTitle || meta.title, meta.id);
+		});
+		_getDialogControlItemsForMode('tasks').forEach(item => {
+			if (_isDialogControlFolder(item)) return;
+			add(item.taskId || _extractTaskIdFromTaskUrl(item.taskUrl || ''), item.title, item.id);
+		});
+		_dialogTimeTaskTitles.forEach((title, taskId) => add(taskId, title));
+		_readDialogTimeVisits().forEach(visit => add(visit.taskId, visit.title, visit.dialogId));
+		return Array.from(byId.values())
+			.sort((a, b) => {
+				const aStarts = a.title.toLocaleLowerCase('ru').startsWith(normalizedQuery) ? 0 : 1;
+				const bStarts = b.title.toLocaleLowerCase('ru').startsWith(normalizedQuery) ? 0 : 1;
+				return aStarts - bStarts || a.title.localeCompare(b.title, 'ru');
+			})
+			.slice(0, 20);
+	}
+
+	function _getDialogTimeTaskSearchError(error) {
+		const message = String(error?.message || error || '');
+		if (/access|denied|not allowed|0x100002|0x000004/i.test(message)) return 'Нет доступа к задачам';
+		return 'Поиск недоступен. Повторите';
+	}
+
 	async function _searchDialogTimeEligibleTasks(query) {
 		const normalizedQuery = String(query || '').replace(/\s+/g, ' ').trim();
 		const token = ++_dialogTimeManualSearchToken;
@@ -9271,18 +9308,20 @@ if (_presetChannel) {
 			_renderDialogTimeManualSearch();
 			return [];
 		}
+		const localResults = _getDialogTimeLocalTaskSearchResults(normalizedQuery);
+		_dialogTimeManualSearchResults = localResults;
 		_dialogTimeManualSearchLoading = true;
 		_dialogTimeManualError = '';
 		_renderDialogTimeManualSearch();
 		try {
-			const page = await _callBxRestPageWithTimeout('tasks.task.list', {
-				filter: { '%TITLE': normalizedQuery, ALLOW_TIME_TRACKING: 'Y' },
+			const page = await _callBxRestReadPage('tasks.task.list', {
+				filter: { '%TITLE': normalizedQuery },
 				select: ['ID', 'TITLE', 'CHAT_ID', 'ALLOW_TIME_TRACKING'],
 				order: { ACTIVITY: 'desc' },
 				start: 0
-			}, 12000);
+			}, { timeoutMs: 12000, attempts: 2 });
 			if (token !== _dialogTimeManualSearchToken || normalizedQuery !== _dialogTimeManualSearchQuery.trim()) return [];
-			const byId = new Map();
+			const byId = new Map(localResults.map(task => [task.taskId, task]));
 			_extractDialogTaskCatalogRows(page?.data).forEach(task => {
 				const taskId = String(task?.ID ?? task?.id ?? '').trim();
 				const title = String(task?.TITLE ?? task?.title ?? '').replace(/\s+/g, ' ').trim();
@@ -9295,9 +9334,9 @@ if (_presetChannel) {
 			return _dialogTimeManualSearchResults;
 		} catch (error) {
 			if (token !== _dialogTimeManualSearchToken) return [];
-			_dialogTimeManualSearchResults = [];
-			_dialogTimeManualError = _getDialogTimeFriendlyError(error);
-			return [];
+			_dialogTimeManualSearchResults = localResults;
+			_dialogTimeManualError = localResults.length ? '' : _getDialogTimeTaskSearchError(error);
+			return localResults;
 		} finally {
 			if (token === _dialogTimeManualSearchToken) {
 				_dialogTimeManualSearchLoading = false;
@@ -9310,7 +9349,7 @@ if (_presetChannel) {
 	function _scheduleDialogTimeManualSearch(query) {
 		_dialogTimeManualSearchQuery = String(query || '');
 		_dialogTimeManualSelectedTask = null;
-		_dialogTimeManualSearchResults = [];
+		_dialogTimeManualSearchResults = _getDialogTimeLocalTaskSearchResults(_dialogTimeManualSearchQuery);
 		_dialogTimeManualError = '';
 		if (_dialogTimeManualSearchTimer) clearTimeout(_dialogTimeManualSearchTimer);
 		_dialogTimeManualSearchTimer = setTimeout(() => {
@@ -9741,12 +9780,7 @@ if (_presetChannel) {
 		if (meta) {
 			meta.textContent = data
 				? `${data.taskCount} ${plural(data.taskCount, 'задача', 'задачи', 'задач')} · ${data.entryCount} ${plural(data.entryCount, 'запись', 'записи', 'записей')}`
-				: (record?.status === 'loading' ? 'Собираем данные за сегодня…' : 'Сегодня записей пока нет');
-		}
-		const error = panel.querySelector('.pena-native-time-error');
-		if (error) {
-			error.hidden = !record?.error;
-			error.textContent = record?.error || '';
+				: (record?.status === 'loading' ? 'Собираем данные за сегодня…' : (record?.error ? 'Не удалось обновить данные' : 'Сегодня записей пока нет'));
 		}
 		const refresh = panel.querySelector('.pena-native-time-refresh');
 		if (refresh) {
@@ -9832,8 +9866,9 @@ if (_presetChannel) {
 		if (manual) manual.hidden = !_dialogTimeManualExpanded;
 		if (manualToggle) manualToggle.setAttribute('aria-expanded', _dialogTimeManualExpanded ? 'true' : 'false');
 		if (manualError) {
-			manualError.hidden = !_dialogTimeManualError;
-			manualError.textContent = _dialogTimeManualError;
+			const formError = _dialogTimeManualSelectedTask ? _dialogTimeManualError : '';
+			manualError.hidden = !formError;
+			manualError.textContent = formError;
 		}
 
 		const createTaskRow = (task, options = {}) => {
@@ -10071,10 +10106,17 @@ if (_presetChannel) {
 		_captureActiveDialogTimeActivity({ passive: true });
 		const panel = document.createElement('div');
 		panel.className = 'pena-native-time-panel pena-native-command-popover';
+		const panelHeader = document.createElement('header');
+		panelHeader.className = 'pena-native-time-panel-head';
+		const panelTitle = document.createElement('strong');
+		panelTitle.className = 'pena-native-time-panel-title';
+		panelTitle.textContent = 'Учёт времени';
+		panelHeader.append(panelTitle, _createDialogControlPopoverClose('Закрыть учёт времени'));
 
 		const summary = document.createElement('div');
 		summary.className = 'pena-native-time-summary';
 		const summaryText = document.createElement('div');
+		summaryText.className = 'pena-native-time-summary-main';
 		const caption = document.createElement('span');
 		caption.className = 'pena-native-time-caption';
 		caption.textContent = 'Сегодня';
@@ -10094,17 +10136,19 @@ if (_presetChannel) {
 		refresh.addEventListener('click', event => {
 			event.preventDefault();
 			event.stopPropagation();
-			_loadDialogTimeRange(_getDialogTimeRange('today'), { force: true }).catch(() => {});
+			_loadDialogTimeRange(_getDialogTimeRange('today'), { force: true }).then(data => {
+				const visible = _filterDialogTimeDataByEligibility(data);
+				const duration = _PENA_TIME_CONTROL?.formatDuration?.(visible?.totalSeconds || 0) || '0 мин';
+				const taskCount = visible?.taskCount || 0;
+				_showDialogDockToast(`Обновлено · ${duration} · ${taskCount} ${_ruPlural(taskCount, 'задача', 'задачи', 'задач')}`, 'ok');
+			}).catch(error => {
+				_showDialogDockToast(_getDialogTimeFriendlyError(error), 'danger');
+			});
 		});
 		const summaryActions = document.createElement('div');
 		summaryActions.className = 'pena-native-time-summary-actions';
-		summaryActions.append(refresh, _createDialogControlPopoverClose('Закрыть учёт времени'));
+		summaryActions.append(refresh);
 		summary.append(summaryText, summaryActions);
-
-		const error = document.createElement('div');
-		error.className = 'pena-native-time-error';
-		error.hidden = true;
-		error.setAttribute('role', 'status');
 
 		const tracker = document.createElement('section');
 		tracker.className = 'pena-native-time-tracker';
@@ -10302,7 +10346,7 @@ if (_presetChannel) {
 		fullReport.textContent = 'Полный отчёт';
 		fullReport.innerHTML += '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M10 14l9-9M19 14v5H5V5h5"/></svg>';
 		footer.appendChild(fullReport);
-		panel.append(summary, error, suggestions, tracker, manualToggle, manual, tracked, footer);
+		panel.append(panelHeader, summary, tracker, suggestions, manualToggle, manual, tracked, footer);
 		return panel;
 	}
 

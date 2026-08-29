@@ -327,6 +327,7 @@
 	window.timeAddFailures = 0;
 	window.timeListFailures = 0;
 	window.timeListTimeoutFailures = 0;
+	window.timeTaskSearchFailures = 0;
 	window.nativeRestCalls = [];
 	window.nativeBatchCalls = 0;
 	window.nativeBatchSizes = [];
@@ -467,6 +468,15 @@
 		  const start = Math.max(0, Number(params?.start) || 0);
 		  const titleQuery = String(params?.filter?.['%TITLE'] || '').toLowerCase();
 		  const trackingOnly = String(params?.filter?.ALLOW_TIME_TRACKING || '').toUpperCase() === 'Y';
+		  if (titleQuery && window.timeTaskSearchFailures > 0) {
+			window.timeTaskSearchFailures -= 1;
+			callback({ error: () => 'TEMPORARY_ERROR', error_description: () => 'temporary task search failure' });
+			return;
+		  }
+		  if (titleQuery && trackingOnly) {
+			callback({ error: () => 'ERROR_ARGUMENT', error_description: () => 'ALLOW_TIME_TRACKING is not supported in search filter' });
+			return;
+		  }
 		  const filtered = taskCatalogEntries.filter(task =>
 			(!titleQuery || String(task.title || task.TITLE || '').toLowerCase().includes(titleQuery)) &&
 			(!trackingOnly || String(task.allowTimeTracking || task.ALLOW_TIME_TRACKING || '').toUpperCase() === 'Y')

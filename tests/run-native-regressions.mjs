@@ -275,6 +275,14 @@ try {
 	await page.waitForFunction(() => document.querySelectorAll('.pena-native-time-task-select option').length >= 2);
 	await page.evaluate(() => { window.__penaTimePanelReference = document.querySelector('.pena-native-time-panel'); });
 	assert.match(await timePanel.locator('.pena-native-time-meta').textContent(), /2 задачи · 2 записи/);
+	assert.equal(await timePanel.locator('.pena-native-time-panel-head > .pena-native-popover-close').count(), 1, `Time panel close is not attached to the window header in ${mode}`);
+	assert.equal(await timePanel.locator('.pena-native-time-summary .pena-native-popover-close').count(), 0, `Time panel close still sits under refresh in ${mode}`);
+	assert.equal(await timePanel.locator('.pena-native-time-panel-title').textContent(), 'Учёт времени');
+	assert.equal(await timePanel.evaluate(panel => {
+		const tracker = panel.querySelector('.pena-native-time-tracker');
+		const activity = panel.querySelector('.pena-native-time-suggestions');
+		return !!(tracker && activity && (tracker.compareDocumentPosition(activity) & Node.DOCUMENT_POSITION_FOLLOWING));
+	}), true, `Primary tracker is not placed before secondary activity in ${mode}`);
 	const trackerOptions = await timePanel.locator('.pena-native-time-task-select option').evaluateAll(options => options.map(option => ({ value: option.value, title: option.textContent?.trim() || '' })));
 	assert.ok(trackerOptions.every(option => /^\d+$/.test(option.value) && option.title && !/^(Выберите задачу|Сначала откройте задачу|Задача #\d+)$/.test(option.title)), `Tracker contains a placeholder instead of real tasks in ${mode}: ${JSON.stringify(trackerOptions)}`);
 	assert.equal(await timePanel.locator('input[type="date"]').count(), 0);
@@ -317,6 +325,7 @@ try {
 	await page.waitForFunction(previous => window.timeRestCalls.length >= previous + 2 && !document.querySelector('.pena-native-time-panel')?.classList.contains('--loading'), callsBeforeTimeoutRetry);
 	assert.equal(await timePanel.locator('.pena-native-time-error').isHidden(), true, `A recovered Bitrix timeout remained visible in ${mode}`);
 	assert.equal(await timePanel.locator('.pena-native-time-total-value').textContent(), '1 ч 30 мин', `A recovered Bitrix timeout broke the time summary in ${mode}`);
+	await page.waitForFunction(() => document.querySelector('.pena-native-toast.--show')?.textContent?.includes('Обновлено · 1 ч 30 мин · 2 задачи'));
 	const timeFonts = await timePanel.evaluate(panel => ({
 		ui: getComputedStyle(panel).fontFamily,
 		accent: getComputedStyle(panel.querySelector('.pena-native-time-total-value')).fontFamily,
@@ -336,12 +345,24 @@ try {
 	assert.equal(await manualToggle.getAttribute('aria-expanded'), 'true');
 	const manualSearch = timePanel.locator('.pena-native-time-manual-search');
 	assert.equal(await timePanel.locator('.pena-native-time-manual-results .pena-native-time-manual-result').count(), 0, 'Manual entry exposed recommendations before search');
+	await page.evaluate(() => { window.timeTaskSearchFailures = 2; });
+	await manualSearch.fill('Задача без совпадений');
+	await timePanel.locator('.pena-native-time-manual-search-status').getByText('Поиск недоступен. Повторите', { exact: true }).waitFor({ state: 'visible', timeout: 3000 });
+	assert.equal(await timePanel.locator('.pena-native-time-manual-error').isHidden(), true, `Task search error is duplicated below the form in ${mode}`);
 	await manualSearch.fill('Задача 405');
 	await page.waitForTimeout(400);
 	assert.equal(await timePanel.locator('.pena-native-time-manual-result').filter({ hasText: 'Задача 405' }).count(), 0, 'Manual search exposed a task with disabled time tracking');
+	await page.evaluate(() => { window.timeTaskSearchFailures = 2; });
 	await manualSearch.fill('Задача 101');
 	const manualTaskResult = timePanel.locator('.pena-native-time-manual-result').filter({ hasText: 'Задача 101' });
 	await manualTaskResult.waitFor({ state: 'visible', timeout: 3000 });
+	const searchLayout = await timePanel.evaluate(panel => {
+		const results = panel.querySelector('.pena-native-time-manual-results');
+		const fields = panel.querySelector('.pena-native-time-manual-fields');
+		return { position: getComputedStyle(results).position, resultsBottom: results.getBoundingClientRect().bottom, fieldsTop: fields.getBoundingClientRect().top };
+	});
+	assert.equal(searchLayout.position, 'static', `Task search results still float over the form in ${mode}`);
+	assert.ok(searchLayout.resultsBottom <= searchLayout.fieldsTop + 0.5, `Task search results overlap duration fields in ${mode}: ${JSON.stringify(searchLayout)}`);
 	await manualTaskResult.click();
 	assert.match(await timePanel.locator('.pena-native-time-manual-selected').textContent(), /Задача 101/);
 	await timePanel.locator('.pena-native-time-manual-hours').fill('1');
