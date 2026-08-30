@@ -106,6 +106,8 @@
 	const catalogRows = Math.max(0, Number(new URLSearchParams(location.search).get('catalogRows')) || (manyRows ? 120 : 18));
 	const lazyChunk = Math.max(1, Number(new URLSearchParams(location.search).get('lazyChunk')) || 4);
 	const lazyDelay = Math.max(0, Number(new URLSearchParams(location.search).get('lazyDelay')) || 0);
+	const postProofRows = Math.max(0, Number(new URLSearchParams(location.search).get('postProofRows')) || 0);
+	const postProofDelay = Math.max(0, Number(new URLSearchParams(location.search).get('postProofDelay')) || 0);
 	const detailDelay = Math.max(0, Number(new URLSearchParams(location.search).get('detailDelay')) || 0);
 	const restDelay = Math.max(0, Number(new URLSearchParams(location.search).get('restDelay')) || 0);
 	const deltaTimeout = new URLSearchParams(location.search).get('deltaTimeout') === '1';
@@ -225,8 +227,16 @@
 		list.closest('.bx-im-list-container-recent__scroll-container,.bx-im-list-container-task__scroll-container');
 	  if (!viewport) return;
 	  let loading = false;
+	  let postProofScheduled = false;
 	  viewport.addEventListener('scroll', () => {
-		if (loading || viewport.scrollTop + viewport.clientHeight < viewport.scrollHeight - 2 || !pending.length) return;
+		if (loading || viewport.scrollTop + viewport.clientHeight < viewport.scrollHeight - 2) return;
+		if (!pending.length) {
+		  if (!postProofScheduled && postProofRows > 0) {
+			postProofScheduled = true;
+			setTimeout(() => window.appendLateNativeRows?.(postProofRows), postProofDelay);
+		  }
+		  return;
+		}
 		const append = () => {
 		  pending.splice(0, lazyChunk).forEach(row => rowHost.appendChild(row));
 		  loading = false;
@@ -338,6 +348,36 @@
 		date: new Date(item.addedAt).toISOString()
 	  }
 	}));
+	window.nativeLateRowSeq = 0;
+	window.appendLateNativeRows = (count = 2) => {
+	  const list = document.querySelector('.test-host:not([hidden]) .bx-im-list-container-recent__elements,.test-host:not([hidden]) .bx-im-list-container-task__elements');
+	  const rowHost = getNativeRowHost(list);
+	  const modeKey = list?.classList.contains('bx-im-list-container-task__elements') ? 'tasks' : 'chats';
+	  const template = nativeFullRows.get(modeKey)?.[0] || rowHost?.querySelector('[data-id]');
+	  if (!rowHost || !template) return [];
+	  const ids = [];
+	  for (let index = 0; index < Math.max(0, Number(count) || 0); index += 1) {
+		const id = `chat${8000 + window.nativeLateRowSeq++}`;
+		const row = template.cloneNode(true);
+		row.dataset.id = id;
+		row.querySelector('.bx-im-chat-title__text').textContent = `Поздний старый диалог ${index + 1}`;
+		rowHost.appendChild(row);
+		ids.push(id);
+	  }
+	  return ids;
+	};
+	window.recycleNativeWindowWithLateRows = (start = 70, count = 24, lateCount = 2) => {
+	  const list = document.querySelector('.test-host:not([hidden]) .bx-im-list-container-recent__elements,.test-host:not([hidden]) .bx-im-list-container-task__elements');
+	  const rowHost = getNativeRowHost(list);
+	  const modeKey = list?.classList.contains('bx-im-list-container-task__elements') ? 'tasks' : 'chats';
+	  const fullRows = nativeFullRows.get(modeKey) || [];
+	  if (!rowHost || !fullRows.length) return { knownIds: [], lateIds: [] };
+	  rowHost.style.minHeight = `${Math.max(rowHost.scrollHeight, fullRows.length * 64)}px`;
+	  const knownRows = fullRows.slice(start, start + count).map(row => row.cloneNode(true));
+	  const knownIds = knownRows.map(row => row.dataset.id);
+	  rowHost.replaceChildren(...knownRows);
+	  return { knownIds, lateIds: window.appendLateNativeRows(lateCount) };
+	};
 	const apiRecentEntries = apiDeletedId ? recentEntries.concat([{
 	  dialog_id: apiDeletedId,
 	  chat_id: Number(String(apiDeletedId).replace(/^chat/, '')),

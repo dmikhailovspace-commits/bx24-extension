@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.64';
+	window.__ANITREC_RUNNING__ = '7.5.65';
 
-	const VER = '7.5.64';
+	const VER = '7.5.65';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -4798,7 +4798,14 @@
 			const existing = targetExisting && liveExisting
 				? _mergeDialogNativeExpectedAuditMeta(liveExisting, targetExisting, 0)
 				: (targetExisting || liveExisting || {});
-			if (!state.orderById.has(id)) state.orderById.set(id, state.orderById.size);
+			if (!state.orderById.has(id)) {
+				const seededNextRank = Number(state.nextNativeRank);
+				const nextRank = Number.isFinite(seededNextRank) && seededNextRank >= 0
+					? seededNextRank
+					: state.orderById.size;
+				state.orderById.set(id, nextRank);
+				if (Number.isFinite(seededNextRank) && seededNextRank >= 0) state.nextNativeRank = nextRank + 1;
+			}
 			if (firstSeen) {
 				state.seen.add(id);
 				added += 1;
@@ -5537,6 +5544,7 @@
 				let stableBottom = stopReason === 'idle' && isAtPhysicalBottom();
 				let confirmationToken = getNativeProgressToken();
 				let stableBottomSamples = 0;
+				const requiredStableBottomSamples = 7;
 				const coldExactProofRequired = !previousMaterialization?.ids?.length;
 				const getMissingExpectedIds = () => expectedCatalogIds.filter(id => !state.seen.has(id));
 				let bottomSampleCount = 0;
@@ -5551,7 +5559,7 @@
 					return true;
 				};
 				while (stableBottom && bottomConfirmationActiveMs < remainingTraversalActiveMs && (
-					stableBottomSamples < 2 || (coldExactProofRequired && expectedCatalogCurrent && getMissingExpectedIds().length > 0)
+					stableBottomSamples < requiredStableBottomSamples || (coldExactProofRequired && expectedCatalogCurrent && getMissingExpectedIds().length > 0)
 				)) {
 					if (stopStaleBottomConfirmation()) break;
 					bottomSampleCount += 1;
@@ -5618,7 +5626,7 @@
 				const unexpectedSeenIds = expectedCatalogCurrent
 					? Array.from(state.seen).map(normId).filter(id => id && !expectedCatalogIdSet.has(id))
 					: [];
-				stableBottom = stableBottom && stableBottomSamples >= 2 && isAtPhysicalBottom();
+				stableBottom = stableBottom && stableBottomSamples >= requiredStableBottomSamples && isAtPhysicalBottom();
 				window.__PENA_NATIVE_BOTTOM_DEBUG__ = {
 					mode,
 					cold: coldExactProofRequired,
@@ -5628,6 +5636,7 @@
 					wallMs: Math.round(Math.max(0, performance.now() - bottomConfirmationWallStartedAt)),
 					activeBudgetMs: Math.round(remainingTraversalActiveMs),
 					samples: stableBottomSamples,
+					requiredSamples: requiredStableBottomSamples,
 					totalSamples: bottomSampleCount,
 					stable: stableBottom,
 					seenCount: state.seen.size,
@@ -6036,7 +6045,23 @@
 		const container = findContainer();
 		if (!container || IS_OL_FRAME) return { count: _countDialogRecentMeta(), skipped: true };
 		const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
-		const state = { mode, seen: new Set(), orderById: new Map(), startedAt: Date.now() };
+		const rankedMeta = _getDialogRecentUniqueMeta().filter(meta => {
+			const id = normId(meta?.id);
+			const rank = Number(meta?.nativeRecentRank);
+			const sameMode = mode === 'tasks' ? meta?.isTask === true : meta?.isTask !== true;
+			return !!id && sameMode && Number.isFinite(rank) && rank >= 0;
+		}).sort((a, b) => Number(a.nativeRecentRank) - Number(b.nativeRecentRank));
+		const orderById = new Map();
+		let nextNativeRank = 0;
+		rankedMeta.forEach(meta => {
+			const id = normId(meta.id);
+			const rank = Math.max(0, Number(meta.nativeRecentRank) || 0);
+			if (!orderById.has(id)) orderById.set(id, rank);
+			nextNativeRank = Math.max(nextNativeRank, rank + 1);
+		});
+		// Bitrix recycles a small DOM window. A late row observed at the bottom must
+		// continue the proven global native order, not restart from local rank zero.
+		const state = { mode, seen: new Set(), orderById, nextNativeRank, startedAt: Date.now() };
 		const target = new Map(_dialogRecentMeta);
 		const beforeSignature = _getDialogRecentRenderSignature(target);
 		const captured = _captureDialogNativeWindow(container, target, state);
@@ -6708,21 +6733,30 @@
 		_dialogNativePassThroughRefreshTimer = setTimeout(() => {
 			_dialogNativePassThroughRefreshTimer = null;
 			if (document.hidden || !_isDialogControlNativePassThrough() || _dialogNativeOriginalScrollActive) return;
-			if (_dialogRecentApiLoadPromise) {
-				_scheduleDialogNativePassThroughRefresh(120);
-				return;
-			}
 			_invalidateDialogControlDomReadCache();
 			const mode = _pMode();
+			const apiLoadPromise = _dialogRecentApiLoadPromise;
 			// Visible rows may enrich a catalog only after the current document has
 			// completed its atomic traversal. Otherwise a post-timeout DOM mutation
 			// republishes the partial window that the traversal deliberately rejected.
-			if (_dialogNativePrefetchedModes.has(mode)) {
+			if (!apiLoadPromise && _dialogNativePrefetchedModes.has(mode)) {
 				_refreshDialogNativeVisibleWindow();
 			}
+			// Presentation is independent from the metadata audit. Apply the current
+			// folder/search/sort immediately instead of leaving recycled Bitrix rows raw
+			// for the whole duration of a long REST pagination pass.
 			_dialogControlNativeViewSig = '';
 			_scheduleDialogControlNativeView(findContainer(), { restoreDisplay: false });
 			_refreshDialogControlPanel(filtersHost);
+			if (apiLoadPromise && _dialogNativePassThroughApiResumePromise !== apiLoadPromise) {
+				_dialogNativePassThroughApiResumePromise = apiLoadPromise;
+				Promise.resolve(apiLoadPromise).finally(() => {
+					if (_dialogNativePassThroughApiResumePromise === apiLoadPromise) {
+						_dialogNativePassThroughApiResumePromise = null;
+					}
+					_scheduleDialogNativePassThroughRefresh(0);
+				}).catch(() => {});
+			}
 		}, Math.max(50, Number(delay) || 120));
 	}
 
@@ -7360,6 +7394,7 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogNativeModeLoadTimer = null;
 	let _dialogNativeVisibleRefreshTimer = null;
 	let _dialogNativePassThroughRefreshTimer = null;
+	let _dialogNativePassThroughApiResumePromise = null;
 	let _dialogNativePassThroughCaptureViewport = null;
 	let _dialogNativePassThroughCaptureHandler = null;
 	let _dialogNativeOriginalScrollPromise = null;

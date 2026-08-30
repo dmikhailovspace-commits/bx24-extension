@@ -1249,6 +1249,55 @@ try {
 	assert.equal(await page.locator('.recent-host .bx-im-list-container-recent__scroll-container').evaluate(viewport => viewport.scrollTop), 32,
 		'Production date sorting moved the native viewport');
 	await page.mouse.click(410, 20);
+	const lateMaterializationBefore = await page.evaluate(() => ({
+		revision: window.__PENA_NATIVE_PREFETCH__?.status?.().materializationRevisions?.chats || 0,
+		top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0
+	}));
+	const lateMaterializedWindow = await page.evaluate(() => window.recycleNativeWindowWithLateRows?.(70, 24, 2) || { knownIds: [], lateIds: [] });
+	assert.equal(lateMaterializedWindow.knownIds.length, 24, 'Late-scroll fixture did not recycle the native window');
+	assert.equal(lateMaterializedWindow.lateIds.length, 2, 'Late-scroll fixture did not append native dialogs');
+	await page.waitForFunction(({ knownIds, lateIds }) => [...knownIds, ...lateIds]
+		.every(id => document.querySelector(`.recent-host [data-id="${id}"]`)?.classList.contains('pena-native-chat-row')), lateMaterializedWindow, { timeout: 3000 });
+	await page.waitForTimeout(300);
+	const lateMaterializationAfter = await page.evaluate(ids => ({
+		visibleIds: Array.from(document.querySelectorAll('.recent-host .pena-native-chat-row'))
+			.filter(row => getComputedStyle(row).display !== 'none')
+			.map(row => row.dataset.id),
+		revision: window.__PENA_NATIVE_PREFETCH__?.status?.().materializationRevisions?.chats || 0,
+		active: window.__PENA_NATIVE_PREFETCH__?.status?.().originalActive === true,
+		top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0,
+		lateIds: ids
+	}), lateMaterializedWindow.lateIds);
+	assert.deepEqual(lateMaterializationAfter.visibleIds.slice(-2), lateMaterializedWindow.lateIds,
+		`Late dialogs were not merged into the active descending date order: ${JSON.stringify(lateMaterializationAfter)}`);
+	assert.equal(lateMaterializationAfter.revision, lateMaterializationBefore.revision,
+		`Late visible rows restarted full materialization: ${JSON.stringify(lateMaterializationAfter)}`);
+	assert.equal(lateMaterializationAfter.active, false,
+		`Late visible rows started a guarded traversal: ${JSON.stringify(lateMaterializationAfter)}`);
+	assert.equal(lateMaterializationAfter.top, lateMaterializationBefore.top,
+		`Late visible rows moved the native viewport: ${JSON.stringify(lateMaterializationAfter)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=40&lazyChunk=50&lazyDelay=20&postProofRows=2&postProofDelay=900&initialTop=24&startupBudget=6000`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.loadedModes?.includes('chats') && !status.originalActive;
+	}, null, { timeout: 8000 });
+	const postProofMaterialization = await page.evaluate(() => ({
+		rows: document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]').length,
+		ids: Array.from(document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]'), row => row.dataset.id),
+		modeCount: window.__PENA_NATIVE_PREFETCH__?.status?.().modeCounts?.chats || 0,
+		duration: Math.max(0, Number(window.__PENA_RECENT_SYNC__?.completedAt) - Number(window.__PENA_RECENT_SYNC__?.startedAt)),
+		bottom: window.__PENA_NATIVE_BOTTOM_DEBUG__ || null,
+		top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0
+	}));
+	assert.ok(postProofMaterialization.rows === 45 && postProofMaterialization.modeCount === 45 &&
+		postProofMaterialization.ids.includes('chat8000') && postProofMaterialization.ids.includes('chat8001'),
+		`Traversal certified the list before Bitrix delivered its late bottom page: ${JSON.stringify(postProofMaterialization)}`);
+	assert.ok(postProofMaterialization.duration >= 900 && postProofMaterialization.bottom?.unexpectedSeenCount === 2,
+		`Late bottom page was not included in the stable completion proof: ${JSON.stringify(postProofMaterialization)}`);
+	assert.equal(postProofMaterialization.top, 24,
+		`Late bottom confirmation moved the user's native viewport: ${JSON.stringify(postProofMaterialization)}`);
 
 	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=80&lazyChunk=100&lazyDelay=3500&initialTop=28&startupBudget=10000`);
