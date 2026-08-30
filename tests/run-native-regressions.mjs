@@ -1834,19 +1834,28 @@ try {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
 		return status?.loadedModes?.includes('chats') && !status.originalActive && (status.modeCounts?.chats || 0) >= 120;
 	}, null, { timeout: 8000 });
+	// Let every initial-mount/source-ready retry queued during the first pass run.
+	// A PENA folder collapses the presented geometry with display:none, but that
+	// presentation-only range must not invalidate the proven physical source.
+	await page.waitForTimeout(700);
 	const loadedFolderIsolation = await page.evaluate(() => {
 		const assigned = document.querySelector('.recent-host [data-id="chat225"]');
 		const foreign = document.querySelector('.recent-host [data-id="chat5"]');
 		const items = JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats') || '[]');
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
 		return {
 			assignedDisplay: assigned ? getComputedStyle(assigned).display : '',
 			foreignDisplay: foreign ? getComputedStyle(foreign).display : '',
 			traversalActive: document.querySelector('.recent-host .bx-im-list-container-recent__elements')?.classList.contains('pena-native-traversal-active') || false,
+			originalActive: !!status?.originalActive,
+			revision: status?.materializationRevisions?.chats || 0,
 			assignedFolder: items.find(item => item.id === 'chat225')?.folderId || '',
 			foreignFolder: items.find(item => item.id === 'chat5')?.folderId || ''
 		};
 	});
 	assert.equal(loadedFolderIsolation.traversalActive, false, `Traversal isolation was not cleaned up: ${JSON.stringify(loadedFolderIsolation)}`);
+	assert.equal(loadedFolderIsolation.originalActive, false, `Presentation-only folder range restarted native traversal: ${JSON.stringify(loadedFolderIsolation)}`);
+	assert.equal(loadedFolderIsolation.revision, 1, `Presentation-only folder range rematerialized the same source: ${JSON.stringify(loadedFolderIsolation)}`);
 	assert.notEqual(loadedFolderIsolation.assignedDisplay, 'none', `Assigned dialog vanished after loading: ${JSON.stringify(loadedFolderIsolation)}`);
 	assert.equal(loadedFolderIsolation.foreignDisplay, 'none', `Foreign dialog remained in the folder after loading: ${JSON.stringify(loadedFolderIsolation)}`);
 	assert.equal(loadedFolderIsolation.assignedFolder, 'folder:test', `Final catalog lost the assigned dialog: ${JSON.stringify(loadedFolderIsolation)}`);

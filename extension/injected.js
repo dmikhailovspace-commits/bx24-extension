@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.63';
+	window.__ANITREC_RUNNING__ = '7.5.64';
 
-	const VER = '7.5.63';
+	const VER = '7.5.64';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -6222,6 +6222,14 @@
 		if (previous.invalidated === true) return false;
 		if (previous.list !== current.list || previous.viewport !== current.viewport) return false;
 		if (previous.sourceGeneration !== _getDialogNativeSourceGeneration(targetMode, current.list, current.viewport)) return false;
+		if (current.list.querySelector?.('[data-pena-native-filter-display="none"]')) {
+			// PENA folders/search/unread filters collapse only the presented geometry.
+			// Do not mistake that display:none range for a collapsed Bitrix source and
+			// immediately start another full traversal. Wake recovery still runs its
+			// guarded tail probe, which temporarily reveals the rows and verifies the
+			// real physical range and saved tail IDs.
+			return true;
+		}
 		const previousRange = Math.max(0, previous.scrollHeight - previous.clientHeight);
 		const currentRange = Math.max(0, current.scrollHeight - current.clientHeight);
 		const meaningfulRange = Math.max(600, previous.clientHeight * 1.5);

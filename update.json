@@ -1,9 +1,9 @@
 {
   "schema_version": 2,
-  "version": "7.5.63",
+  "version": "7.5.64",
   "release_date": "2026-08-30",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.63",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.63",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.64",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.64",
   "extension_files": [
     "background.js",
     "content.js",
@@ -32,6 +32,6 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.63/extension/injected.js",
-  "changelog": "v7.5.63: separates dialog catalog, materialization and recovery attempts; restores native lists after sleep; and hardens repository conflict and reconnect handling"
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.64/extension/injected.js",
+  "changelog": "v7.5.64: separates dialog catalog, materialization and recovery attempts; restores native lists after sleep; and prevents filtered folders from restarting traversal"
 }
