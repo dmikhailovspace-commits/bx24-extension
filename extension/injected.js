@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.61';
+	window.__ANITREC_RUNNING__ = '7.5.62';
 
-	const VER = '7.5.61';
+	const VER = '7.5.62';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -328,17 +328,34 @@
 				let _lastPct = 0;
 				let loopCount = 0;
 				let stopReason = '';
+				let resumedFromPause = false;
 				while (!_stopped) {
 					loopCount += 1;
 					const tickAt = performance.now();
-					const elapsed = Math.max(0, tickAt - lastTickAt);
+					const rawElapsed = Math.max(0, tickAt - lastTickAt);
+					// A frozen tab or sleeping computer can resume inside an awaited frame.
+					// Do not charge that suspended wall time to the traversal timeout.
+					const elapsed = rawElapsed >= _getDialogTimerDriftMs() ? 0 : rawElapsed;
 					lastTickAt = tickAt;
 					// Background tabs heavily throttle timers. Do not turn that throttling into
 					// a false timeout; continue from the same window when the tab is active.
-					if (document.hidden) {
+					if (document.hidden || _dialogLifecycleFrozen) {
+						resumedFromPause = true;
 						await waitForMutation(mutationVersion, 250);
 						lastTickAt = performance.now();
 						continue;
+					}
+					if (resumedFromPause) {
+						// The scroll event that triggered freeze may have queued Bitrix' recycled
+						// window without rendering it. Capture that exact position before advancing,
+						// otherwise one whole virtual window can be skipped after resume.
+						await nextFrame();
+						await nextFrame();
+						try { onTick?.({ scrollTop: scrollEl.scrollTop, scrollHeight: scrollEl.scrollHeight, clientHeight: scrollEl.clientHeight }); } catch {}
+						lastProgressToken = String(getProgressToken?.() ?? '');
+						lastHeight = Number(scrollEl.scrollHeight) || 0;
+						resumedFromPause = false;
+						lastTickAt = performance.now();
 					}
 					activeElapsed += elapsed;
 					const before = scrollEl.scrollTop;
@@ -374,9 +391,12 @@
 					const progressToken = String(getProgressToken?.() ?? '');
 					const progressChanged = progressToken !== lastProgressToken;
 					lastProgressToken = progressToken;
-					const atBottom =
-						Math.abs((Number(scrollEl.scrollTop) + Number(scrollEl.clientHeight)) - heightAfter) < 2 ||
-						Number(scrollEl.scrollTop) === before;
+					const currentTop = Number(scrollEl.scrollTop) || 0;
+					const currentClientHeight = Number(scrollEl.clientHeight) || 0;
+					const currentMaxTop = Math.max(0, heightAfter - currentClientHeight);
+					// A recycled Bitrix viewport may temporarily reject a scroll assignment while
+					// it is replacing its row window. No movement is a stall, not proof of bottom.
+					const atBottom = Math.abs(currentTop - currentMaxTop) < 2;
 					if (!atBottom || heightChanged || progressChanged) {
 						idle = 0;
 					} else {
@@ -2203,6 +2223,13 @@
 		_dialogRecentRepositoryDirtyVersions.set(id, _dialogRecentRepositoryDirtySequence);
 	}
 
+	function _markDialogRecentRepositoryFullCommit(options = {}) {
+		_dialogRecentRepositoryNeedsFullCommit = true;
+		_dialogRecentRepositoryFullCommitRevision += 1;
+		if (options.invalidateConfirmation === true) _dialogRecentRepositoryConfirmedReplace = false;
+		if (options.confirmedReplace === true) _dialogRecentRepositoryConfirmedReplace = true;
+	}
+
 	function _setDialogRecentMeta(target, meta, aliases = []) {
 		if (!target || !meta) return null;
 		const id = normId(meta.id || aliases[0]);
@@ -2225,7 +2252,9 @@
 		if (_dialogRecentRepositoryReady && _dialogRecentRepositoryManifest) {
 			const previousIds = new Set(_getDialogRecentUniqueMeta(_dialogRecentMeta).map(meta => normId(meta?.id)).filter(Boolean));
 			const nextIds = new Set(_getDialogRecentUniqueMeta(target).map(meta => normId(meta?.id)).filter(Boolean));
-			if (Array.from(previousIds).some(id => !nextIds.has(id))) _dialogRecentRepositoryNeedsFullCommit = true;
+			if (Array.from(previousIds).some(id => !nextIds.has(id))) {
+				_markDialogRecentRepositoryFullCommit({ invalidateConfirmation: true });
+			}
 		}
 		_dialogRecentMeta = target;
 		_dialogRecentGeneration += 1;
@@ -2461,19 +2490,147 @@
 		};
 	}
 
+	function _getDialogRecentMetaFreshness(meta) {
+		return [
+			Math.max(
+				0,
+				Number(meta?.fetchedAt) || 0,
+				Number(meta?.recentListFetchedAt) || 0,
+				Number(meta?.detailFetchedAt) || 0,
+				Number(meta?.counterFetchedAt) || 0,
+				Number(meta?.availabilityCheckedAt) || 0,
+				Number(meta?.lastMessageTs) || 0
+			),
+			Math.max(0, Number(meta?.lastMessageTs) || 0),
+			Math.max(0, Number(meta?.lastMessageId) || 0),
+			Math.max(0, Number(meta?.counterFetchedAt) || 0)
+		];
+	}
+
+	function _compareDialogRecentFreshness(left, right) {
+		const a = Array.isArray(left) ? left : [0];
+		const b = Array.isArray(right) ? right : [0];
+		for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+			const delta = (Number(a[index]) || 0) - (Number(b[index]) || 0);
+			if (delta) return delta;
+		}
+		return 0;
+	}
+
+	function _rememberDialogRecentRepositoryBase(snapshot, currentUserId) {
+		_dialogRecentRepositoryBaseRevision = snapshot?.manifest
+			? Math.max(0, Number(snapshot.manifest.revision) || 0)
+			: 0;
+		_dialogRecentRepositoryBaseSavedAt = Math.max(0, Number(snapshot?.manifest?.savedAt) || 0);
+		_dialogRecentRepositoryBaseIds.clear();
+		_dialogRecentRepositoryBaseFreshness.clear();
+		(Array.isArray(snapshot?.records) ? snapshot.records : []).forEach(record => {
+			const meta = _dialogRecentRecordToMeta(record, currentUserId);
+			const id = normId(meta?.id);
+			if (!id) return;
+			_dialogRecentRepositoryBaseIds.add(id);
+			_dialogRecentRepositoryBaseFreshness.set(id, _getDialogRecentMetaFreshness(meta));
+		});
+	}
+
+	function _rememberDialogRecentRepositoryLiveBase(manifest) {
+		if (!manifest) return;
+		_dialogRecentRepositoryBaseRevision = Math.max(0, Number(manifest.revision) || 0);
+		_dialogRecentRepositoryBaseSavedAt = Math.max(0, Number(manifest.savedAt) || 0);
+		_dialogRecentRepositoryBaseIds.clear();
+		_dialogRecentRepositoryBaseFreshness.clear();
+		_getDialogRecentUniqueMeta().forEach(meta => {
+			const id = normId(meta?.id);
+			if (!id) return;
+			_dialogRecentRepositoryBaseIds.add(id);
+			_dialogRecentRepositoryBaseFreshness.set(id, _getDialogRecentMetaFreshness(meta));
+		});
+	}
+
+	function _mergeDialogRecentRepositoryMetas(incomingMetas, incomingManifest) {
+		const liveById = new Map(_getDialogRecentUniqueMeta().map(meta => [normId(meta?.id), meta]).filter(([id]) => !!id));
+		const incomingById = new Map((Array.isArray(incomingMetas) ? incomingMetas : [])
+			.map(meta => [normId(meta?.id), meta]).filter(([id]) => !!id));
+		const result = new Map();
+		const incomingRevision = Math.max(0, Number(incomingManifest?.revision) || 0);
+		const baseRevision = _dialogRecentRepositoryBaseRevision;
+		const incomingIsNewerThanBase = baseRevision != null && incomingRevision > baseRevision;
+		const incomingIsOlderThanBase = baseRevision != null && incomingRevision < baseRevision;
+		const exactLiveSnapshot = _dialogRecentRepositoryNeedsFullCommit && _dialogRecentRepositoryConfirmedReplace === true;
+		const materializationProofAt = Math.max(0, ...Array.from(_dialogNativeMaterializedSources.values(), source =>
+			Math.max(0, Number(source?.completedAt) || 0, Number(source?.validatedAt) || 0)
+		));
+		const liveProofAt = Math.max(
+			0,
+			Number(_dialogRecentLastFullAt) || 0,
+			Number(_dialogRecentLastSuccessAt) || 0,
+			materializationProofAt
+		);
+		const ids = new Set([...liveById.keys(), ...incomingById.keys()]);
+
+		ids.forEach(id => {
+			const live = liveById.get(id) || null;
+			const incoming = incomingById.get(id) || null;
+			const liveFreshness = live ? _getDialogRecentMetaFreshness(live) : [0];
+			const incomingFreshness = incoming ? _getDialogRecentMetaFreshness(incoming) : [0];
+			const baseFreshness = _dialogRecentRepositoryBaseFreshness.get(id) || [0];
+			const locallyDirty = _dialogRecentRepositoryDirtyIds.has(id) ||
+				(live && _compareDialogRecentFreshness(liveFreshness, baseFreshness) > 0);
+
+			if (live && incoming) {
+				const preferred = exactLiveSnapshot || locallyDirty ||
+					_compareDialogRecentFreshness(liveFreshness, incomingFreshness) >= 0
+					? live
+					: incoming;
+				_setDialogRecentMeta(result, preferred);
+				return;
+			}
+
+			if (live) {
+				const remotelyTombstoned = incomingIsNewerThanBase &&
+					_dialogRecentRepositoryBaseIds.has(id) && !locallyDirty && !exactLiveSnapshot;
+				if (!remotelyTombstoned) _setDialogRecentMeta(result, live);
+				return;
+			}
+
+			if (!incoming) return;
+			const incomingObservedAt = Math.max(0, Number(incomingFreshness[0]) || 0);
+			if (incomingIsOlderThanBase && !_dialogRecentRepositoryBaseIds.has(id) &&
+				incomingObservedAt <= _dialogRecentRepositoryBaseSavedAt) return;
+			if (exactLiveSnapshot && incomingObservedAt <= liveProofAt) return;
+			_setDialogRecentMeta(result, incoming);
+		});
+
+		return result;
+	}
+
 	function _getDialogRecentRepositoryMeta() {
 		const catalogModes = {};
 		for (const mode of ['chats', 'tasks']) {
+			const materialization = _dialogNativeMaterializedSources.get(mode);
+			const repositoryBaseline = _dialogNativeRepositoryExpectedCatalogs.get(mode);
+			const hasConfirmedMaterialization = !!(materialization?.completedAt && !materialization.invalidated && Array.isArray(materialization.ids));
+			const confirmedIds = hasConfirmedMaterialization
+				? Array.from(new Set(materialization.ids.map(normId).filter(Boolean)))
+				: (Array.isArray(repositoryBaseline?.ids) ? repositoryBaseline.ids.slice() : []);
 			catalogModes[mode] = {
-				complete: _dialogNativePrefetchedModes.has(mode) && !_dialogNativeBackgroundPendingModes.has(mode),
+				// A failed refresh attempt must not downgrade the last confirmed catalog.
+				// DOM materialization is document-local and is tracked separately below.
+				complete: _dialogNativePrefetchedModes.has(mode),
 				loadedAt: Math.max(0, Number(_dialogNativeModeLoadedAt.get(mode)) || 0),
-				count: Math.max(0, Number(_dialogNativeModeCounts.get(mode)) || 0)
+				count: hasConfirmedMaterialization
+					? confirmedIds.length
+					: Math.max(0, Number(_dialogNativeModeCounts.get(mode)) || 0),
+				confirmedIds
 			};
 		}
 		return {
 			lastSuccessAt: _dialogRecentLastSuccessAt,
 			lastFullAt: _dialogRecentLastFullAt,
 			cursorAt: _dialogRecentLastSuccessAt,
+			apiWatermarkVersion: _DIALOG_API_WATERMARK_VERSION,
+			apiCursorAt: _dialogRecentLastSuccessAt,
+			apiFullAt: _dialogRecentLastFullAt,
 			windowCount: _dialogRecentWindowCount,
 			truncated: _dialogRecentTruncated,
 			catalogVersion: _DIALOG_CATALOG_CACHE_VERSION,
@@ -2485,28 +2642,57 @@
 		};
 	}
 
-	function _restoreDialogCatalogState(cached) {
+	function _restoreDialogCatalogState(cached, options = {}) {
 		if (!cached || Number(cached.catalogVersion) !== _DIALOG_CATALOG_CACHE_VERSION) return false;
 		const now = Date.now();
 		const requiresSessionMaterialization = _isDialogControlNativePassThrough() && window.__PENA_TEST_API_CATALOG__ !== true;
+		const mergeLiveState = options.mergeLiveState === true;
+		const remoteRevision = Math.max(0, Number(cached.revision) || 0);
+		const knownRevision = Math.max(
+			0,
+			Number(options.previousManifest?.revision) || 0,
+			Number(_dialogRecentRepositoryBaseRevision) || 0
+		);
 		let restoredCompleteMode = false;
 		for (const mode of ['chats', 'tasks']) {
 			const saved = cached.catalogModes?.[mode];
 			const loadedAt = Math.min(now, Math.max(0, Number(saved?.loadedAt) || 0));
 			if (saved?.complete === true && loadedAt > 0) {
 				restoredCompleteMode = true;
+				const liveLoadedAt = Math.max(0, Number(_dialogNativeModeLoadedAt.get(mode)) || 0);
+				const liveCount = Math.max(0, Number(_dialogNativeModeCounts.get(mode)) || 0);
+				const hasLiveCatalog = liveLoadedAt > 0 || liveCount > 0 || _dialogNativePrefetchedModes.has(mode);
+				// On reconnect a repository manifest may describe an older browser document.
+				// It may replace live catalog facts only when both its CAS revision and its
+				// mode timestamp prove that it is newer. Transient DOM recovery state is
+				// document-local and is intentionally never restored from storage.
+				const remoteWins = !mergeLiveState || !hasLiveCatalog || (
+					remoteRevision > knownRevision && loadedAt >= liveLoadedAt
+				);
 				// Repository completeness survives reloads, native DOM materialization does not.
 				// In pass-through mode every document must therefore traverse each Bitrix list
 				// once. Reusing this flag made a fresh cache expose only Bitrix' initial window.
-				if (!requiresSessionMaterialization) _dialogNativePrefetchedModes.add(mode);
-				_dialogNativeModeLoadedAt.set(mode, loadedAt);
-				_dialogNativeModeCounts.set(mode, Math.max(0, Number(saved?.count) || 0));
-				_dialogNativeBackgroundPendingModes.delete(mode);
+				if (!requiresSessionMaterialization && (remoteWins || _dialogNativePrefetchedModes.has(mode))) {
+					_dialogNativePrefetchedModes.add(mode);
+				}
+				if (remoteWins) {
+					_dialogNativeModeLoadedAt.set(mode, loadedAt);
+					_dialogNativeModeCounts.set(mode, Math.max(0, Number(saved?.count) || 0));
+				} else {
+					_dialogNativeModeLoadedAt.set(mode, liveLoadedAt);
+					_dialogNativeModeCounts.set(mode, liveCount);
+				}
 			}
 		}
 		const taskFetchedAt = Math.min(now, Math.max(0, Number(cached.taskCatalog?.fetchedAt) || 0));
-		_dialogTaskCatalogComplete = cached.taskCatalog?.complete === true && taskFetchedAt > 0;
-		_dialogTaskCatalogFetchedAt = _dialogTaskCatalogComplete ? taskFetchedAt : 0;
+		const hasLiveTaskCatalog = _dialogTaskCatalogComplete || _dialogTaskCatalogFetchedAt > 0;
+		const remoteTaskWins = !mergeLiveState || !hasLiveTaskCatalog || (
+			remoteRevision > knownRevision && taskFetchedAt >= _dialogTaskCatalogFetchedAt
+		);
+		if (cached.taskCatalog?.complete === true && taskFetchedAt > 0 && remoteTaskWins) {
+			_dialogTaskCatalogComplete = true;
+			_dialogTaskCatalogFetchedAt = taskFetchedAt;
+		}
 		return restoredCompleteMode;
 	}
 
@@ -2517,12 +2703,22 @@
 		try {
 			const repository = window.__PENA_DIALOG_REPOSITORY__;
 			const full = _dialogRecentRepositoryNeedsFullCommit || !_dialogRecentRepositoryManifest;
+			const fullCommitRevision = _dialogRecentRepositoryFullCommitRevision;
+			const confirmedReplace = full && _dialogRecentRepositoryConfirmedReplace === true;
 			const capturedVersions = new Map(_dialogRecentRepositoryDirtyVersions);
 			let result;
 			if (full) {
 				const records = _getDialogRecentUniqueMeta().map(_dialogRecentMetaToRecord);
-				result = await repository.commit(_dialogRecentRepositoryScope, records, _getDialogRecentRepositoryMeta());
-				_dialogRecentRepositoryNeedsFullCommit = false;
+				result = await repository.commit(
+					_dialogRecentRepositoryScope,
+					records,
+					_getDialogRecentRepositoryMeta(),
+					{ confirmedReplace }
+				);
+				if (_dialogRecentRepositoryFullCommitRevision === fullCommitRevision) {
+					_dialogRecentRepositoryNeedsFullCommit = false;
+					_dialogRecentRepositoryConfirmedReplace = false;
+				}
 				capturedVersions.forEach((version, id) => {
 					if (_dialogRecentRepositoryDirtyVersions.get(id) !== version) return;
 					_dialogRecentRepositoryDirtyVersions.delete(id);
@@ -2540,13 +2736,22 @@
 				});
 			}
 			_dialogRecentRepositoryManifest = result?.manifest || _dialogRecentRepositoryManifest;
+			if (result?.manifest) _rememberDialogRecentRepositoryLiveBase(result.manifest);
 			_dialogRecentCacheSavedAt = Number(result?.manifest?.savedAt) || Date.now();
+			_dialogRecentRepositoryWriteRetryAttempt = 0;
 			if (_dialogRecentLegacyMigrationPending) {
 				localStorage.removeItem(_LS_DIALOG_RECENT_CACHE);
 				_dialogRecentLegacyMigrationPending = false;
 			}
+			if (_dialogRecentRepositoryNeedsFullCommit || _dialogRecentRepositoryDirtyIds.size) {
+				_scheduleDialogRecentCacheWrite(80);
+			}
 		} catch (e) {
 			warn('Не удалось сохранить каталог диалогов', e?.message || e);
+			const delays = [1000, 2000, 5000, 15000, 30000, 60000];
+			const delay = delays[Math.min(_dialogRecentRepositoryWriteRetryAttempt, delays.length - 1)];
+			_dialogRecentRepositoryWriteRetryAttempt += 1;
+			_scheduleDialogRecentCacheWrite(delay);
 		}
 	}
 
@@ -2566,10 +2771,12 @@
 		}, Math.max(0, Number(delay) || 0));
 	}
 
-	function _restoreDialogRecentPayload(cached, currentUserId) {
+	function _restoreDialogRecentPayload(cached, currentUserId, options = {}) {
 		if (!cached || !Array.isArray(cached.entries)) return 0;
 		const metas = cached.entries
-			.map(entry => entry?.state ? _dialogRecentRecordToMeta(entry, currentUserId) : _dialogRecentRecordToMeta({
+			.map(entry => (entry?.state || entry?.lastMessage || entry?.unread || entry?.mode || entry?.remoteUpdatedAt != null)
+				? _dialogRecentRecordToMeta(entry, currentUserId)
+				: _dialogRecentRecordToMeta({
 				id: entry?.id,
 				restDialogId: entry?.restDialogId,
 				mode: entry?.isTask === true ? 'tasks' : 'chats',
@@ -2583,14 +2790,35 @@
 				state: entry
 			}, currentUserId))
 			.filter(Boolean);
-		if (!metas.length) return 0;
-		_replaceDialogRecentMeta(_trimDialogRecentMap(_buildDialogRecentMap(metas), _getDialogRecentLoadLimit()));
+		if (!metas.length && options.allowEmpty !== true && options.mergeRepository !== true) return 0;
+		const restored = options.mergeRepository === true
+			? _mergeDialogRecentRepositoryMetas(metas, options.manifest)
+			: _buildDialogRecentMap(metas);
+		_replaceDialogRecentMeta(_trimDialogRecentMap(restored, _getDialogRecentLoadLimit()));
 		_dialogRecentCacheLoaded = true;
-		_dialogRecentCacheSavedAt = Math.max(0, Number(cached.savedAt) || 0);
-		_dialogRecentLastSuccessAt = Math.max(0, Number(cached.lastSuccessAt) || _dialogRecentCacheSavedAt);
-		_dialogRecentLastFullAt = Math.min(Date.now(), Math.max(0, Number(cached.lastFullAt) || 0));
-		_dialogRecentWindowCount = Math.max(0, Number(cached.windowCount) || _countDialogRecentMeta());
-		_dialogRecentTruncated = !!cached.truncated;
+		const cachedSavedAt = Math.max(0, Number(cached.savedAt) || 0);
+		// Older manifests mixed native/DOM commits into these timestamps. Only the
+		// explicit API watermark can seed an incremental cursor after a reload.
+		const hasApiWatermark = Number(cached.apiWatermarkVersion) === _DIALOG_API_WATERMARK_VERSION;
+		const cachedSuccessAt = hasApiWatermark
+			? Math.min(Date.now(), Math.max(0, Number(cached.apiCursorAt) || 0))
+			: 0;
+		const cachedFullAt = hasApiWatermark
+			? Math.min(Date.now(), Math.max(0, Number(cached.apiFullAt) || 0))
+			: 0;
+		_dialogRecentCacheSavedAt = options.mergeRepository === true
+			? Math.max(_dialogRecentCacheSavedAt, cachedSavedAt)
+			: cachedSavedAt;
+		_dialogRecentLastSuccessAt = options.mergeRepository === true
+			? Math.max(_dialogRecentLastSuccessAt, cachedSuccessAt)
+			: cachedSuccessAt;
+		_dialogRecentLastFullAt = options.mergeRepository === true
+			? Math.max(_dialogRecentLastFullAt, cachedFullAt)
+			: cachedFullAt;
+		_dialogRecentWindowCount = options.mergeRepository === true
+			? Math.max(_dialogRecentWindowCount, Number(cached.windowCount) || 0, _countDialogRecentMeta())
+			: Math.max(0, Number(cached.windowCount) || _countDialogRecentMeta());
+		if (options.mergeRepository !== true) _dialogRecentTruncated = !!cached.truncated;
 		_dialogRecentProgress = {
 			phase: 'cached', loadedCount: _dialogRecentWindowCount, expectedTotal: _dialogRecentWindowCount,
 			pagesLoaded: 0, full: false, partial: false, startedAt: 0, completedAt: _dialogRecentCacheSavedAt
@@ -2611,33 +2839,62 @@
 			if (!scope) throw new Error('Bitrix не сообщил идентификатор пользователя');
 			_dialogRecentRepositoryScope = scope;
 			const repository = window.__PENA_DIALOG_REPOSITORY__;
+			if (!repository?.get) {
+				const error = new Error('Мост репозитория диалогов ещё не подключён');
+				error.code = 'repository_unavailable';
+				error.retryable = true;
+				throw error;
+			}
 			if (repository?.get) {
+				const previousManifest = _dialogRecentRepositoryManifest;
 				const snapshot = await repository.get(scope);
+				const mergePendingCatalog = _dialogRecentRepositoryNeedsFullCommit || _dialogRecentRepositoryDirtyIds.size > 0;
+				const mergeLiveState = mergePendingCatalog || _countDialogRecentMeta() > 0 ||
+					_dialogNativeModeLoadedAt.size > 0 || _dialogNativeModeCounts.size > 0 ||
+					_dialogNativeBackgroundPendingModes.size > 0 || _dialogNativeMaterializedSources.size > 0 ||
+					_dialogNativeAttemptStates.size > 0 || _dialogNativeRecoveryRetryTimers.size > 0;
 				_dialogRecentRepositoryAvailable = true;
 				_dialogRecentRepositoryManifest = snapshot?.manifest || null;
 			if (snapshot?.manifest) {
-				_restoreDialogCatalogState(snapshot.manifest);
-				if (snapshot.records?.length) {
+				_restoreDialogCatalogState(snapshot.manifest, {
+					mergeLiveState,
+					previousManifest
+				});
+				if (snapshot.records?.length || mergeLiveState) {
 					_restoreDialogRecentPayload({
 						entries: snapshot.records,
 						savedAt: snapshot.manifest?.savedAt,
 						lastSuccessAt: snapshot.manifest?.lastSuccessAt,
 						lastFullAt: snapshot.manifest?.lastFullAt,
+						apiWatermarkVersion: snapshot.manifest?.apiWatermarkVersion,
+						apiCursorAt: snapshot.manifest?.apiCursorAt,
+						apiFullAt: snapshot.manifest?.apiFullAt,
 						windowCount: snapshot.manifest?.windowCount,
 						truncated: snapshot.manifest?.truncated,
 						catalogVersion: snapshot.manifest?.catalogVersion,
 						catalogModes: snapshot.manifest?.catalogModes,
 						taskCatalog: snapshot.manifest?.taskCatalog
-					}, scope.userId);
+					}, scope.userId, {
+						allowEmpty: true,
+						mergeRepository: mergeLiveState,
+						manifest: snapshot.manifest
+					});
 				} else {
 					_dialogRecentCacheLoaded = true;
 					_dialogRecentCacheSavedAt = Math.max(0, Number(snapshot.manifest.savedAt) || 0);
-					_dialogRecentLastSuccessAt = Math.max(0, Number(snapshot.manifest.lastSuccessAt) || _dialogRecentCacheSavedAt);
-					_dialogRecentLastFullAt = Math.max(0, Number(snapshot.manifest.lastFullAt) || 0);
+					const hasApiWatermark = Number(snapshot.manifest.apiWatermarkVersion) === _DIALOG_API_WATERMARK_VERSION;
+					_dialogRecentLastSuccessAt = hasApiWatermark
+						? Math.min(Date.now(), Math.max(0, Number(snapshot.manifest.apiCursorAt) || 0))
+						: 0;
+					_dialogRecentLastFullAt = hasApiWatermark
+						? Math.min(Date.now(), Math.max(0, Number(snapshot.manifest.apiFullAt) || 0))
+						: 0;
 					_dialogRecentWindowCount = 0;
 					_dialogRecentTruncated = !!snapshot.manifest.truncated;
 					_completeDialogRecentInteractionGate();
 				}
+				_rememberDialogRecentRepositoryBase(snapshot, scope.userId);
+				_recordDialogNativeRepositoryExpectedCatalogs(snapshot, scope);
 				}
 			}
 			let matchingLegacy = null;
@@ -2651,17 +2908,38 @@
 				if (matchingLegacy) {
 						_restoreDialogRecentPayload(matchingLegacy, scope.userId);
 						_dialogRecentLegacyMigrationPending = _dialogRecentRepositoryAvailable;
-						_dialogRecentRepositoryNeedsFullCommit = _dialogRecentRepositoryAvailable;
+						if (_dialogRecentRepositoryAvailable) {
+							_markDialogRecentRepositoryFullCommit({ invalidateConfirmation: true });
+						}
 				}
 			} else if (_dialogRecentRepositoryManifest && matchingLegacy) {
 				localStorage.removeItem(_LS_DIALOG_RECENT_CACHE);
 			}
 			_dialogRecentRepositoryReady = true;
+			_dialogRecentRepositoryReconnectAttempt = 0;
+			if (_dialogRecentRepositoryReconnectTimer) clearTimeout(_dialogRecentRepositoryReconnectTimer);
+			_dialogRecentRepositoryReconnectTimer = null;
 			if (_dialogRecentRepositoryNeedsFullCommit) await _writeDialogRecentCache();
 			return _countDialogRecentMeta();
 		})().catch(error => {
 			_dialogRecentRepositoryReady = true;
+			_dialogRecentRepositoryAvailable = false;
 			warn('Репозиторий диалогов недоступен', error?.message || error);
+			if (!_dialogRecentRepositoryReconnectTimer) {
+				const delays = [1000, 2000, 5000, 15000, 30000, 60000];
+				const delay = delays[Math.min(_dialogRecentRepositoryReconnectAttempt, delays.length - 1)];
+				_dialogRecentRepositoryReconnectAttempt += 1;
+				_dialogRecentRepositoryReconnectTimer = setTimeout(() => {
+					_dialogRecentRepositoryReconnectTimer = null;
+					_dialogRecentRepositoryReady = false;
+					_dialogRecentRepositoryBootstrapPromise = null;
+					_bootstrapDialogRecentRepository().then(() => {
+						if (_dialogRecentRepositoryNeedsFullCommit || _dialogRecentRepositoryDirtyIds.size) {
+							_scheduleDialogRecentCacheWrite(0);
+						}
+					}).catch(() => {});
+				}, delay);
+			}
 			return 0;
 		});
 		return _dialogRecentRepositoryBootstrapPromise;
@@ -2944,8 +3222,11 @@
 			const accessFresh = availabilityCheckedAt > 0 && now - availabilityCheckedAt < _DIALOG_RECENT_DETAIL_TTL_MS;
 			const avatarResolved = meta?.avatarResolved === true || !!meta?.avatarUrl;
 			const messagePreviewResolved = meta?.messagePreviewResolved === true || !!meta?.displayLastText;
-			const forceValidationRetry = options.forceAccessRetry === true &&
-				(_isDialogRecentUnavailable(meta) || _isDialogRecentPending(meta));
+			const forceValidationRetry = options.forceAccessRetry === true && (
+				options.forceAvailabilityCheck === true ||
+				_isDialogRecentUnavailable(meta) ||
+				_isDialogRecentPending(meta)
+			);
 			if (!forceValidationRetry) {
 				if (blockedUntil > now) return;
 				if (lastAttemptAt && now - lastAttemptAt < _DIALOG_RECENT_DETAIL_RETRY_MS) return;
@@ -3442,7 +3723,7 @@
 		const force = !!options.force;
 		const cursorExpired = !_dialogRecentLastSuccessAt || now - _dialogRecentLastSuccessAt >= _DIALOG_RECENT_DELTA_MAX_AGE_MS;
 		const full = options.incrementalOnly === true
-			? !_dialogRecentMeta.size
+			? (!_dialogRecentMeta.size || !_dialogRecentLastSuccessAt)
 			: (!!options.full || !_dialogRecentMeta.size || cursorExpired || (now - _dialogRecentLastFullAt) >= _DIALOG_RECENT_FULL_MS);
 		if (force && full && !options.reason && _dialogRecentLastSuccessAt > 0 && now - _dialogRecentLastSuccessAt < _DIALOG_RECENT_MIN_MS) {
 			return { count: _dialogRecentMeta.size, skipped: true, duplicate: true };
@@ -3469,6 +3750,7 @@
 			let truncated = false;
 			let catalogCompletionTrusted = !full;
 			let totalMetadataInconsistent = false;
+			let completionConfirmedWithoutTotal = false;
 			let metadataFreeStagnantPages = 0;
 			let fastPages = [];
 			const countersPromise = _fetchDialogCounterSnapshotWithRetry().catch(error => {
@@ -3490,7 +3772,7 @@
 			_publishDialogRecentSyncState();
 			try {
 				let offset = 0;
-				const deltaCursor = Math.max(0, Number(_dialogRecentLastSuccessAt) || Number(_dialogRecentCacheSavedAt) || now);
+				const deltaCursor = Math.max(0, Number(_dialogRecentLastSuccessAt) || 0);
 				while (pages < (full ? _DIALOG_RECENT_MAX_PAGES : 1)) {
 					let page;
 					let pageWasPrefetched = false;
@@ -3570,6 +3852,9 @@
 						fullPassComplete = true;
 						break;
 					}
+					// im.recent.list defines OFFSET in requested LIMIT-sized windows. The
+					// response may contain fewer unique items after server-side collapsing, so
+					// advancing by the returned row count can overlap the next API window.
 					const fallbackNext = offset + _DIALOG_RECENT_PAGE_SIZE;
 					const explicitNext = page.next != null && page.next > offset ? page.next : null;
 					const hasMore = resultRoot.hasMore === true || resultRoot.hasMorePages === true;
@@ -3587,17 +3872,23 @@
 						break;
 					}
 					if (noMore) {
-						catalogCompletionTrusted = !totalMetadataInconsistent;
+						// `hasMore: false` is an explicit end marker. Some Bitrix builds
+						// return a stale (occasionally zero) total beside otherwise valid
+						// pages; that total must neither stop pagination nor invalidate the
+						// complete response after the explicit tail was reached.
+						completionConfirmedWithoutTotal = true;
+						catalogCompletionTrusted = true;
 						fullPassComplete = true;
 						break;
 					}
-					if (expectedTotal != null && nextOffset >= expectedTotal) {
+					if (!totalMetadataInconsistent && expectedTotal != null && nextOffset >= expectedTotal) {
 						catalogCompletionTrusted = !totalMetadataInconsistent;
 						fullPassComplete = true;
 						break;
 					}
 					if (!entries.length) {
-						catalogCompletionTrusted = !totalMetadataInconsistent;
+						completionConfirmedWithoutTotal = true;
+						catalogCompletionTrusted = true;
 						fullPassComplete = true;
 						break;
 					}
@@ -3644,7 +3935,7 @@
 					fullPassComplete = true;
 					warn(`im.recent.list: каталог ограничен защитным пределом ${_DIALOG_RECENT_MAX_PAGES * _DIALOG_RECENT_PAGE_SIZE}`);
 				}
-				if (full && (!catalogCompletionTrusted || totalMetadataInconsistent)) truncated = true;
+				if (full && (!catalogCompletionTrusted || (totalMetadataInconsistent && !completionConfirmedWithoutTotal))) truncated = true;
 				if (currentWindowIds.size > 0) _dialogRecentEmptyFullPasses = 0;
 				if (full && hadPreviousCatalog && currentWindowIds.size === 0) {
 					_dialogRecentEmptyFullPasses += 1;
@@ -3652,21 +3943,43 @@
 						throw new Error('im.recent.list: пустой ответ ожидает повторного подтверждения');
 					}
 				}
+				const fullCatalogComplete = !full || (
+					!truncated && catalogCompletionTrusted && (!totalMetadataInconsistent || completionConfirmedWithoutTotal)
+				);
 				let commitTarget = nextFullMap || _dialogRecentMeta;
+				if (full && hadPreviousCatalog && !fullCatalogComplete) {
+					// An incomplete REST window is enrichment, never an authoritative
+					// replacement. Keep every last-known-good record and merge only the
+					// identities that were actually observed in this attempt.
+					commitTarget = new Map(previousFullMap);
+					const mergedIds = new Set();
+					for (const meta of nextFullMap?.values?.() || []) {
+						const id = normId(meta?.id);
+						if (!id || mergedIds.has(id)) continue;
+						mergedIds.add(id);
+						_setDialogRecentMeta(commitTarget, meta, [meta?.restDialogId]);
+					}
+				}
 				if (!full) commitTarget = _trimDialogRecentMap(commitTarget, loadLimit, mandatory);
 				_ensureDialogRecentMandatoryMeta(commitTarget, mandatory);
 				const counters = await countersPromise;
 				if (counters) _applyDialogCounterSnapshot(commitTarget, counters, mandatory);
 				_replaceDialogRecentMeta(commitTarget);
-				if (full) {
-					_dialogRecentLastFullAt = Date.now();
+				const apiCompletedAt = Date.now();
+				if (full && fullCatalogComplete) {
+					_dialogRecentLastFullAt = apiCompletedAt;
 					_dialogRecentWindowCount = currentWindowIds.size;
 					_dialogRecentControlledOutsideCount = Array.from(mandatory.keys()).filter(id => !currentWindowIds.has(id)).length;
-					_dialogRecentTruncated = truncated;
+					_dialogRecentTruncated = false;
+				} else if (full) {
+					_dialogRecentTruncated = true;
 				} else if (!_dialogRecentWindowCount) {
 					_dialogRecentWindowCount = Math.min(_countDialogRecentMeta(commitTarget), loadLimit || _countDialogRecentMeta(commitTarget));
 				}
-				_dialogRecentLastSuccessAt = Date.now();
+				_dialogRecentLastSuccessAt = Math.max(
+					_dialogRecentLastSuccessAt,
+					Math.max(0, Number(_dialogRecentProgress.startedAt) || 0)
+				);
 				_dialogRecentLastError = '';
 				_dialogRecentLastSoftError = '';
 				_dialogRecentLastSoftErrorAt = 0;
@@ -3721,7 +4034,12 @@
 					phase: 'ready',
 					completedAt: Date.now()
 				});
-				if (full) _dialogRecentRepositoryNeedsFullCommit = true;
+				if (full) {
+					_markDialogRecentRepositoryFullCommit({
+						confirmedReplace: fullCatalogComplete,
+						invalidateConfirmation: !fullCatalogComplete
+					});
+				}
 				if (dataChanged || detailResult?.updated || detailResult?.unavailable || Date.now() - _dialogRecentCacheSavedAt >= _DIALOG_RECENT_CACHE_REFRESH_MS) {
 					_scheduleDialogRecentCacheWrite();
 				}
@@ -3736,7 +4054,7 @@
 					controlledCount: currentMandatory.size,
 					verificationPending: unresolvedMandatory.length,
 					truncated,
-					catalogComplete: !full || (!truncated && catalogCompletionTrusted && !totalMetadataInconsistent),
+					catalogComplete: fullCatalogComplete,
 					totalMetadataInconsistent,
 					expectedTotal: Number.isFinite(_dialogRecentProgress.expectedTotal)
 						? Number(_dialogRecentProgress.expectedTotal)
@@ -3879,33 +4197,56 @@
 		}
 		_dialogTaskCatalogSyncPromise = (async () => {
 			const select = ['ID', 'TITLE', 'CHAT_ID', 'ALLOW_TIME_TRACKING', 'ACTIVITY', 'CHANGED_DATE'];
-			const pageSize = 50;
 			const maxPages = _DIALOG_TASK_CATALOG_MAX_PAGES;
-			const first = await _callBxRestPageWithTimeout('tasks.task.list', { select, start: 0 }, 12000);
-			let rows = _extractDialogTaskCatalogRows(first?.data);
-			let pages = 1;
-			let complete = rows.length < pageSize;
-			const total = first?.total != null && Number.isFinite(Number(first.total)) ? Math.max(0, Number(first.total)) : null;
-			if (total != null) complete = rows.length >= total;
-			let start = first?.next != null && Number.isFinite(Number(first.next)) ? Number(first.next) : pageSize;
-			while (!complete && pages < maxPages) {
-				const remainingPages = total == null ? 8 : Math.min(20, Math.ceil(Math.max(0, total - rows.length) / pageSize));
-				const waveSize = Math.max(1, Math.min(20, remainingPages));
-				const requests = Array.from({ length: waveSize }, (_, index) => ({
-					method: 'tasks.task.list',
-					params: { select, start: start + index * pageSize }
-				}));
-				const wave = await _callBxRestPagesFast(requests, 12000);
-				let shortPage = false;
-				for (const page of wave) {
-					const batch = _extractDialogTaskCatalogRows(page?.data);
-					rows.push(...batch);
-					pages += 1;
-					if (batch.length < pageSize) { shortPage = true; break; }
-					if (pages >= maxPages) break;
+			let rows = [];
+			let pages = 0;
+			let complete = false;
+			let start = 0;
+			let total = null;
+			let paginationChainValid = true;
+			let emptyConfirmationStart = null;
+			let emptyQuorumConfirmed = false;
+			let emptyNativeContradiction = false;
+			while (pages < maxPages) {
+				const page = await _callBxRestPageWithTimeout('tasks.task.list', { select, start }, 12000);
+				const batch = _extractDialogTaskCatalogRows(page?.data);
+				rows.push(...batch);
+				pages += 1;
+				if (page?.total != null && Number.isFinite(Number(page.total)) && Number(page.total) >= 0) {
+					total = Math.max(0, Number(page.total));
 				}
-				start += waveSize * pageSize;
-				complete = shortPage || (total != null && rows.length >= total);
+				const root = page?.data?.result || page?.data || {};
+				const hasMore = root.hasMore === true || root.hasMorePages === true;
+				const noMore = root.hasMore === false || root.hasMorePages === false;
+				const invalidExplicitNext = page?.next != null && Number(page.next) <= start;
+				const explicitNext = page?.next != null && Number(page.next) > start ? Number(page.next) : null;
+				if (invalidExplicitNext && !noMore) paginationChainValid = false;
+				const emptyNeedsQuorum = batch.length === 0 && (start === 0 || !noMore);
+				if (emptyNeedsQuorum && emptyConfirmationStart !== start) {
+					emptyConfirmationStart = start;
+					await new Promise(resolve => setTimeout(resolve, _DIALOG_RECENT_PAGE_DELAY_MS));
+					continue;
+				}
+				if (batch.length === 0 && emptyConfirmationStart === start) emptyQuorumConfirmed = true;
+				if (batch.length > 0) emptyConfirmationStart = null;
+				// `total` is progress metadata only. tasks.task.list uses 50-row START
+				// windows; without an explicit `next`, a short page is its documented tail.
+				if (noMore || batch.length === 0) {
+					const activeNativeContainer = findContainer();
+					emptyNativeContradiction = batch.length === 0 && start === 0 &&
+						activeNativeContainer?.matches?.('.bx-im-list-container-task__elements') === true &&
+						_getDialogNativeSourceRows(activeNativeContainer).length > 0;
+					complete = paginationChainValid && !emptyNativeContradiction;
+					break;
+				}
+				if (!paginationChainValid) break;
+				const documentedShortTail = explicitNext == null && !hasMore && batch.length < _DIALOG_TASK_CATALOG_PAGE_SIZE;
+				if (documentedShortTail) {
+					complete = paginationChainValid;
+					break;
+				}
+				start = explicitNext ?? (start + _DIALOG_TASK_CATALOG_PAGE_SIZE);
+				await new Promise(resolve => setTimeout(resolve, _DIALOG_RECENT_PAGE_DELAY_MS));
 			}
 			const unique = new Map();
 			rows.forEach(task => {
@@ -3916,7 +4257,7 @@
 			const merged = options.deferMerge === true ? 0 : _mergeDialogTaskCatalogRows(uniqueRows);
 			_dialogTaskCatalogComplete = complete;
 			_dialogTaskCatalogFetchedAt = Date.now();
-			return { count: merged, tasks: unique.size, pages, expectedTotal: total, complete, rows: uniqueRows };
+			return { count: merged, tasks: unique.size, pages, expectedTotal: total, complete, paginationChainValid, emptyQuorumConfirmed, emptyNativeContradiction, rows: uniqueRows };
 		})().finally(() => { _dialogTaskCatalogSyncPromise = null; });
 		return _dialogTaskCatalogSyncPromise;
 	}
@@ -3927,7 +4268,7 @@
 		const hydrated = _hydrateAllDialogControlModesFromRecent({ pruneMissing: false });
 		if (merged || hydrated || taskCatalog?.complete === true) {
 			_dialogRecentDataRevision += 1;
-			_dialogRecentRepositoryNeedsFullCommit = true;
+			_markDialogRecentRepositoryFullCommit();
 			_scheduleDialogRecentCacheWrite();
 			_notifyDialogRecentDataChanged();
 		}
@@ -3940,15 +4281,30 @@
 		if (!container) return { count: _countDialogRecentMeta(), skipped: true, unavailable: true };
 		const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
 		if (_dialogRecentApiLoadPromise) return _dialogRecentApiLoadPromise;
-		const showOriginalOverlay = _isDialogControlNativePassThrough() && options.silent !== true;
-		_dialogNativeBackgroundPendingModes.add('chats');
-		_dialogNativeBackgroundPendingModes.add('tasks');
+		const auditFresh = _dialogRecentLastApiResult?.complete === true && _dialogRecentLastFullAt > 0 &&
+			Date.now() - _dialogRecentLastFullAt < _getDialogAuditRefreshMs();
+		if (auditFresh && String(options.reason || '') !== 'manual') {
+			return {
+				..._dialogRecentLastApiResult,
+				count: _countDialogRecentMeta(),
+				modeCount: Math.max(0, Number(_dialogNativeModeCounts.get(mode)) || 0),
+				api: true,
+				cached: true,
+				complete: true
+			};
+		}
+		const apiOwnsMaterialization = !_isDialogControlNativePassThrough() || window.__PENA_TEST_API_CATALOG__ === true;
+		if (apiOwnsMaterialization) {
+			_dialogNativeBackgroundPendingModes.add('chats');
+			_dialogNativeBackgroundPendingModes.add('tasks');
+		}
 		_dialogRecentApiLoadActive = true;
 		_dialogRecentApiLoadSilent = options.silent === true;
 		_dialogRecentApiLoadMode = 'all';
-		if (showOriginalOverlay) {
-			_syncDialogNativeOriginalLoadUi(container);
-		}
+		// A metadata-only retry must also clear a guard left by the preceding
+		// blocking attempt. Calling the synchronizer unconditionally is safe: in
+		// silent mode it removes the guard and never creates a new one.
+		_syncDialogNativeOriginalLoadUi(container);
 		_dialogRecentApiLoadPromise = (async () => {
 			try {
 				// Both catalogs start together. tasks.task.list is kept separate from the
@@ -3996,29 +4352,33 @@
 					complete: apiComplete
 				};
 				_dialogRecentWindowCount = Math.max(_dialogRecentWindowCount, apiLoadedCount);
-				if (recentComplete) _dialogNativePrefetchedModes.add('chats');
-				else _dialogNativePrefetchedModes.delete('chats');
-				if (taskComplete) _dialogNativePrefetchedModes.add('tasks');
-				else _dialogNativePrefetchedModes.delete('tasks');
-				_dialogNativeModeCounts.set('chats', Math.max(Number(_dialogNativeModeCounts.get('chats')) || 0, chatLoadedCount));
-				_dialogNativeModeCounts.set('tasks', Math.max(Number(_dialogNativeModeCounts.get('tasks')) || 0, taskLoadedCount));
-				if (recentComplete) _dialogNativeModeLoadedAt.set('chats', Math.max(_dialogRecentLastFullAt, Date.now()));
-				else _dialogNativeModeLoadedAt.delete('chats');
-				if (taskComplete) _dialogNativeModeLoadedAt.set('tasks', Math.max(_dialogTaskCatalogFetchedAt, Date.now()));
-				else _dialogNativeModeLoadedAt.delete('tasks');
-				_dialogRecentRepositoryNeedsFullCommit = true;
+				if (apiOwnsMaterialization) {
+					if (recentComplete) _dialogNativePrefetchedModes.add('chats');
+					else _dialogNativePrefetchedModes.delete('chats');
+					if (taskComplete) _dialogNativePrefetchedModes.add('tasks');
+					else _dialogNativePrefetchedModes.delete('tasks');
+					_dialogNativeModeCounts.set('chats', Math.max(Number(_dialogNativeModeCounts.get('chats')) || 0, chatLoadedCount));
+					_dialogNativeModeCounts.set('tasks', Math.max(Number(_dialogNativeModeCounts.get('tasks')) || 0, taskLoadedCount));
+					if (recentComplete) _dialogNativeModeLoadedAt.set('chats', Math.max(_dialogRecentLastFullAt, Date.now()));
+					else _dialogNativeModeLoadedAt.delete('chats');
+					if (taskComplete) _dialogNativeModeLoadedAt.set('tasks', Math.max(_dialogTaskCatalogFetchedAt, Date.now()));
+					else _dialogNativeModeLoadedAt.delete('tasks');
+				}
+				_markDialogRecentRepositoryFullCommit();
 				_scheduleDialogRecentCacheWrite(80);
 				if (!apiComplete) {
-					if (!recentComplete) _dialogNativeBackgroundPendingModes.add('chats');
-					if (!taskComplete) _dialogNativeBackgroundPendingModes.add('tasks');
+					if (apiOwnsMaterialization && !recentComplete) _dialogNativeBackgroundPendingModes.add('chats');
+					if (apiOwnsMaterialization && !taskComplete) _dialogNativeBackgroundPendingModes.add('tasks');
 					_scheduleDialogRecentApiCompletionRetry('catalog-truncated');
 				} else {
 					_dialogRecentTruncated = false;
-					if (_dialogNativeOriginalScrollActive) {
+					if (apiOwnsMaterialization && _dialogNativeOriginalScrollActive) {
 						_dialogNativeOriginalScrollCancel?.();
 					}
-					_dialogNativeBackgroundPendingModes.delete('chats');
-					_dialogNativeBackgroundPendingModes.delete('tasks');
+					if (apiOwnsMaterialization) {
+						_dialogNativeBackgroundPendingModes.delete('chats');
+						_dialogNativeBackgroundPendingModes.delete('tasks');
+					}
 					_dialogRecentApiRetryAttempt = 0;
 					if (_dialogRecentApiRetryTimer) clearTimeout(_dialogRecentApiRetryTimer);
 					_dialogRecentApiRetryTimer = null;
@@ -4042,12 +4402,373 @@
 				_dialogRecentApiLoadActive = false;
 				_dialogRecentApiLoadSilent = false;
 				_dialogRecentApiLoadMode = '';
-				if (showOriginalOverlay) _syncDialogNativeOriginalLoadUi(container);
+				_syncDialogNativeOriginalLoadUi(container);
 				_publishDialogRecentSyncState();
 			}
 		})();
 		_publishDialogRecentSyncState();
 		return _dialogRecentApiLoadPromise;
+	}
+
+	function _getDialogNativeExpectedAuditScopeKey(mode) {
+		// Never trust the cached repository scope here: USER_ID can change while an
+		// earlier async audit is still in flight.
+		const scope = _getDialogRecentRepositoryScope();
+		if (!scope?.portalHost || !scope?.userId) return '';
+		return `${String(scope.portalHost).toLowerCase()}~${String(scope.userId)}~${mode === 'tasks' ? 'tasks' : 'chats'}`;
+	}
+
+	function _recordDialogNativeRepositoryExpectedCatalogs(snapshot, scope) {
+		const manifest = snapshot?.manifest || {};
+		if (Number(manifest.schema) !== 2 || Math.max(0, Number(manifest.revision) || 0) <= 0 ||
+			Number(manifest.catalogVersion) !== _DIALOG_CATALOG_CACHE_VERSION ||
+			String(scope?.portalHost || '').toLowerCase() !== String(location.host || '').toLowerCase() ||
+			String(scope?.userId || '') !== _getDialogRecentCacheUserId()) return false;
+		const records = Array.isArray(snapshot?.records) ? snapshot.records : [];
+		let recorded = false;
+		for (const mode of ['chats', 'tasks']) {
+			const saved = manifest.catalogModes?.[mode] || {};
+			const loadedAt = Math.min(Date.now(), Math.max(0, Number(saved.loadedAt) || 0));
+			const recordIds = Array.from(new Set(records
+				.filter(record => (record?.mode === 'tasks' ? 'tasks' : 'chats') === mode)
+				.map(record => normId(record?.id)).filter(Boolean)));
+			const count = Math.max(0, Number(saved.count) || 0);
+			if (!Array.isArray(saved.confirmedIds)) continue;
+			const savedConfirmedIds = Array.from(new Set((Array.isArray(saved.confirmedIds) ? saved.confirmedIds : [])
+				.map(normId).filter(Boolean)));
+			const ids = savedConfirmedIds;
+			// Only an explicit physical snapshot can cross documents. Record arrays may
+			// legally contain controlled/folder extras, so schema-v2 manifests without
+			// `confirmedIds` must obtain a fresh API proof instead of guessing.
+			if (saved.complete !== true || loadedAt <= 0 || ids.length !== count ||
+				ids.some(id => !recordIds.includes(id))) continue;
+			_dialogNativeRepositoryExpectedCatalogs.set(mode, {
+				complete: true,
+				kind: 'repository',
+				mode,
+				scopeKey: `${String(scope.portalHost).toLowerCase()}~${String(scope.userId)}~${mode}`,
+				catalogVersion: _DIALOG_CATALOG_CACHE_VERSION,
+				repositorySchema: 2,
+				revision: Math.max(0, Number(manifest.revision) || 0),
+				sourceGeneration: 0,
+				auditedAt: loadedAt,
+				ids,
+				count,
+				pages: 0,
+				metadata: null,
+				reason: 'repository-complete'
+			});
+			recorded = true;
+		}
+		return recorded;
+	}
+
+	function _bindDialogNativeRepositoryExpectedCatalog(mode, sourceGeneration) {
+		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
+		const baseline = _dialogNativeRepositoryExpectedCatalogs.get(targetMode);
+		if (!baseline || baseline.complete !== true || baseline.repositorySchema !== 2 ||
+			baseline.scopeKey !== _getDialogNativeExpectedAuditScopeKey(targetMode) ||
+			Number(baseline.catalogVersion) !== _DIALOG_CATALOG_CACHE_VERSION ||
+			Math.max(0, Number(baseline.revision) || 0) <= 0 ||
+			Date.now() - Math.max(0, Number(baseline.auditedAt) || 0) >= _getDialogAuditRefreshMs() ||
+			!Array.isArray(baseline.ids) || baseline.ids.length !== Math.max(0, Number(baseline.count) || 0)) return null;
+		const source = _dialogNativeSourceGenerations.get(targetMode);
+		if (!source || Number(source.generation) !== Number(sourceGeneration)) return null;
+		const proof = {
+			...baseline,
+			sourceGeneration: Number(sourceGeneration),
+			sourceContainer: source.list,
+			sourceViewport: source.viewport,
+			ids: baseline.ids.slice()
+		};
+		_dialogNativeExpectedCatalogs.set(targetMode, proof);
+		return proof;
+	}
+
+	function _isDialogNativeExpectedAuditCurrent(proof, mode, sourceGeneration) {
+		if (!proof || proof.complete !== true) return false;
+		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
+		return proof.mode === targetMode &&
+			proof.scopeKey === _getDialogNativeExpectedAuditScopeKey(targetMode) &&
+			Number(proof.catalogVersion) === _DIALOG_CATALOG_CACHE_VERSION &&
+			Number(proof.sourceGeneration) === Number(sourceGeneration) &&
+			Math.max(0, Number(proof.auditedAt) || 0) > 0 &&
+			Date.now() - Number(proof.auditedAt) < _getDialogAuditRefreshMs() &&
+			Array.isArray(proof.ids) &&
+			_isDialogNativeSourceGenerationCurrent(targetMode, proof.sourceContainer, proof.sourceViewport, sourceGeneration);
+	}
+
+	function _mergeDialogNativeExpectedAuditMeta(previous, meta, auditStartedAt = 0) {
+		const id = normId(meta?.id || previous?.id);
+		const startedAt = Math.max(0, Number(auditStartedAt) || 0);
+		const incomingMeta = _mergeDialogRecentMessageState(previous, { ...meta, id });
+		const mergedMeta = Object.assign({}, previous || {}, incomingMeta, { id });
+		const previousRecentAt = Math.max(0, Number(previous?.recentListFetchedAt) || 0);
+		if (previous && startedAt > 0 && previousRecentAt >= startedAt) {
+			// A head/delta update landed after this full audit request began. Keep the
+			// complete live record; the audit may only fill fields it did not have.
+			Object.assign(mergedMeta, incomingMeta, previous, { id });
+		}
+		for (const field of ['fetchedAt', 'recentListFetchedAt', 'detailFetchedAt', 'taskCatalogFetchedAt']) {
+			mergedMeta[field] = Math.max(0, Number(previous?.[field]) || 0, Number(incomingMeta?.[field]) || 0);
+		}
+		const previousCounterAt = Math.max(0, Number(previous?.counterFetchedAt) || 0);
+		const incomingCounterAt = Math.max(0, Number(incomingMeta?.counterFetchedAt) || 0);
+		if (previousCounterAt > 0 && (previousCounterAt >= incomingCounterAt ||
+			(startedAt > 0 && previousCounterAt >= startedAt))) {
+			for (const field of ['unreadCount', 'hasUnread', 'hasLater', 'hasMention', 'lastReadMessageId', 'counterFetchedAt', 'counterStale']) {
+				if (previous[field] !== undefined) mergedMeta[field] = previous[field];
+			}
+		}
+		const previousAvailabilityAt = Math.max(0, Number(previous?.availabilityCheckedAt) || 0);
+		const incomingAvailabilityAt = Math.max(0, Number(incomingMeta?.availabilityCheckedAt) || 0);
+		if (previous?.availability && previousAvailabilityAt > 0 && (previousAvailabilityAt >= incomingAvailabilityAt ||
+			(startedAt > 0 && previousAvailabilityAt >= startedAt))) {
+			for (const field of ['availability', 'availabilityReason', 'availabilityCheckedAt', 'detailBlockedUntil']) {
+				if (previous[field] !== undefined) mergedMeta[field] = previous[field];
+			}
+			if (previous.availability === 'unavailable') {
+				mergedMeta.unreadCount = 0;
+				mergedMeta.hasUnread = false;
+				mergedMeta.hasLater = false;
+				mergedMeta.hasMention = false;
+			}
+		}
+		return mergedMeta;
+	}
+
+	function _mergeDialogNativeExpectedAuditTarget(target, audit) {
+		if (!target || !audit?.metadata || !_isDialogNativeExpectedAuditCurrent(audit, audit.mode, audit.sourceGeneration)) return target;
+		const auditStartedAt = Math.max(0, Number(audit.startedAt) || 0);
+		for (const meta of audit.metadata.values()) {
+			const id = normId(meta?.id);
+			if (!id) continue;
+			const targetPrevious = target.get(id) || null;
+			const livePrevious = _getDialogRecentMeta(id) || null;
+			const previous = targetPrevious && livePrevious
+				? _mergeDialogNativeExpectedAuditMeta(livePrevious, targetPrevious, auditStartedAt)
+				: (targetPrevious || livePrevious);
+			// The audit is additive and freshness-aware: native rank plus any newer
+			// delta/message/counter/availability state survives its delayed response.
+			_setDialogRecentMeta(target, _mergeDialogNativeExpectedAuditMeta(previous, meta, auditStartedAt));
+		}
+		return target;
+	}
+
+	function _commitDialogNativeExpectedAuditMetadata(audit) {
+		if (!audit || !_isDialogNativeExpectedAuditCurrent(audit, audit.mode, audit.sourceGeneration)) return 0;
+		const beforeSignature = _getDialogRecentRenderSignature(_dialogRecentMeta);
+		const auditStartedAt = Math.max(0, Number(audit.startedAt) || 0);
+		let merged = 0;
+		for (const meta of (audit.metadata instanceof Map ? audit.metadata.values() : [])) {
+			const id = normId(meta?.id);
+			if (!id) continue;
+			const previous = _getDialogRecentMeta(id) || null;
+			const mergedMeta = _mergeDialogNativeExpectedAuditMeta(previous, meta, auditStartedAt);
+			_setDialogRecentMeta(_dialogRecentMeta, mergedMeta);
+			merged += 1;
+		}
+		_hydrateAllDialogControlModesFromRecent({ pruneMissing: false });
+		if (beforeSignature !== _getDialogRecentRenderSignature(_dialogRecentMeta)) {
+			_dialogRecentDataRevision += 1;
+			_notifyDialogRecentDataChanged();
+		}
+		let apiWatermarkCommitted = false;
+		if (audit.kind === 'api' && audit.complete === true &&
+			_isDialogNativeExpectedAuditCurrent(audit, audit.mode, audit.sourceGeneration)) {
+			// The audit cursor is its request start, not its completion: a delta received
+			// while pages were being collected must remain inside the next overlap window.
+			const cursorAt = Math.min(Date.now(), Math.max(0, Number(audit.startedAt) || 0));
+			const fullAt = Math.min(Date.now(), Math.max(cursorAt, Number(audit.auditedAt) || 0));
+			_dialogRecentLastSuccessAt = Math.max(_dialogRecentLastSuccessAt, cursorAt);
+			_dialogRecentLastFullAt = Math.max(_dialogRecentLastFullAt, fullAt);
+			_dialogRecentLastApiResult = {
+				count: Math.max(0, Number(audit.count) || 0),
+				received: Math.max(0, Number(audit.count) || 0),
+				expectedTotal: Math.max(0, Number(audit.count) || 0),
+				truncated: false,
+				totalMetadataInconsistent: audit.totalMetadataInconsistent === true,
+				complete: true,
+				mode: audit.mode,
+				expectedAudit: true
+			};
+			apiWatermarkCommitted = true;
+		}
+		if (merged || apiWatermarkCommitted) {
+			_markDialogRecentRepositoryFullCommit();
+			_scheduleDialogRecentCacheWrite(80);
+		}
+		return merged;
+	}
+
+	async function _runDialogNativeExpectedCatalogAudit(mode, sourceGeneration, options = {}) {
+		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
+		const scopeKey = _getDialogNativeExpectedAuditScopeKey(targetMode);
+		const source = _dialogNativeSourceGenerations.get(targetMode);
+		const sourceContainer = options.sourceContainer || source?.list || null;
+		const sourceViewport = options.sourceViewport || source?.viewport || null;
+		const auditKey = `${scopeKey}:${sourceGeneration}:${options.forceApi === true ? 'api' : 'any'}`;
+		if (!scopeKey) {
+			return { complete: false, mode: targetMode, sourceGeneration, reason: 'audit-scope-unavailable' };
+		}
+		let current = options.forceApi === true ? null : _dialogNativeExpectedCatalogs.get(targetMode);
+		if (options.forceApi !== true && !_isDialogNativeExpectedAuditCurrent(current, targetMode, sourceGeneration)) {
+			current = _bindDialogNativeRepositoryExpectedCatalog(targetMode, sourceGeneration);
+		}
+		// Persisted confirmedIds describe the last proven physical generation only.
+		// They are a useful lower bound for traversal, but cannot prove that the
+		// current cold source has no newly added dialogs. Only a fresh fenced API
+		// audit may certify this generation.
+		if (options.forceApi !== true && _isDialogNativeExpectedAuditCurrent(current, targetMode, sourceGeneration) &&
+			current?.kind === 'api') return current;
+		if (_dialogNativeExpectedAuditPromises.has(auditKey)) return _dialogNativeExpectedAuditPromises.get(auditKey);
+		const auditStartedAt = Date.now();
+
+		const promise = (async () => {
+			const metadata = new Map();
+			const recentIds = new Set();
+			let pages = 0;
+			let offset = 0;
+			let complete = false;
+			let totalMetadataInconsistent = false;
+			let paginationChainValid = true;
+			let stagnantPages = 0;
+			let lastUniqueCount = 0;
+			let emptyConfirmationOffset = null;
+			let emptyQuorumConfirmed = false;
+			let error = '';
+			try {
+				while (pages < _DIALOG_RECENT_MAX_PAGES) {
+					const page = await _callBxRestReadPage('im.recent.list', {
+						OFFSET: offset,
+						LIMIT: _DIALOG_RECENT_PAGE_SIZE,
+						SKIP_OPENLINES: 'N',
+						SKIP_DIALOG: 'N',
+						SKIP_CHAT: 'N',
+						UNREAD_ONLY: 'N',
+						PARSE_TEXT: 'Y',
+						GET_ORIGINAL_TEXT: 'N'
+					}, { attempts: 2, timeoutMs: 12000 });
+					const entries = _extractDialogRecentItems(page.data);
+					if (!Array.isArray(entries)) throw new Error('im.recent.list audit: неизвестная структура ответа');
+					_mergeDialogRecentPage(entries, metadata, 0, recentIds, new Map());
+					pages += 1;
+					const root = page.data?.result || page.data || {};
+					const reportedTotals = [page.total, root.total, root.totalCount, root.total_count]
+						.filter(value => value != null && value !== false && value !== '')
+						.map(Number)
+						.filter(value => Number.isFinite(value) && value >= 0);
+					if (entries.length > 0 && reportedTotals.some(value => value < recentIds.size)) {
+						totalMetadataInconsistent = true;
+					}
+					// im.recent.list OFFSET advances by the requested LIMIT, not by the
+					// possibly collapsed number of rows returned by the server.
+					const fallbackNext = offset + _DIALOG_RECENT_PAGE_SIZE;
+					const invalidExplicitNext = page.next != null && page.next <= offset;
+					const explicitNext = page.next != null && page.next > offset ? page.next : null;
+					const nextOffset = explicitNext ?? fallbackNext;
+					const noMore = root.hasMore === false || root.hasMorePages === false;
+					if (invalidExplicitNext && !noMore) paginationChainValid = false;
+					// A transient empty first page is common while Bitrix is rebuilding the
+					// recent index. It is never a proof on its own, even if that response also
+					// carries `hasMore=false`. A metadata-free empty tail is confirmed the same
+					// way so one stalled page cannot truncate the expected catalog.
+					const emptyNeedsQuorum = entries.length === 0 && (offset === 0 || !noMore);
+					if (emptyNeedsQuorum && emptyConfirmationOffset !== offset) {
+						emptyConfirmationOffset = offset;
+						await new Promise(resolve => setTimeout(resolve, _DIALOG_RECENT_PAGE_DELAY_MS));
+						continue;
+					}
+					if (entries.length === 0 && emptyConfirmationOffset === offset) emptyQuorumConfirmed = true;
+					if (entries.length > 0) emptyConfirmationOffset = null;
+					// A reported total is only progress metadata. Duplicate/overlapping pages can
+					// reach it without reaching the real tail, so only a server end marker or an
+					// actually empty page on a monotonic chain proves audit completeness.
+					if (noMore || !entries.length) {
+						complete = paginationChainValid;
+						break;
+					}
+					if (!paginationChainValid) break;
+					stagnantPages = recentIds.size === lastUniqueCount ? stagnantPages + 1 : 0;
+					lastUniqueCount = recentIds.size;
+					if (stagnantPages >= _DIALOG_RECENT_METADATA_FREE_STAGNANT_MAX) break;
+					offset = nextOffset;
+					await new Promise(resolve => setTimeout(resolve, _DIALOG_RECENT_PAGE_DELAY_MS));
+				}
+			} catch (auditError) {
+				error = String(auditError?.message || auditError || 'metadata-audit-failed');
+			}
+
+			let taskCatalog = null;
+			try {
+				const taskOutcome = await options.taskCatalogOutcomePromise;
+				if (!taskOutcome?.error) taskCatalog = taskOutcome?.value || null;
+			} catch {}
+			const taskChatIds = new Set(_getDialogRecentUniqueMeta().filter(meta => meta?.isTask === true).map(meta => normId(meta?.id)).filter(Boolean));
+			if (taskCatalog?.complete === true) {
+				for (const task of taskCatalog.rows || []) {
+					const rawChatId = String(task?.CHAT_ID ?? task?.chatId ?? task?.chat?.id ?? '').trim();
+					const id = normId(/^chat/i.test(rawChatId) ? rawChatId : (/^\d+$/.test(rawChatId) ? `chat${rawChatId}` : ''));
+					if (id) taskChatIds.add(id);
+				}
+			}
+			let classificationComplete = true;
+			const ids = [];
+			for (const id of recentIds) {
+				const meta = metadata.get(id) || {};
+				const explicitlyClassified = meta.isTask === true || meta.isTask === false;
+				if (!explicitlyClassified && taskCatalog?.complete !== true) classificationComplete = false;
+				const isTask = meta.isTask === true || taskChatIds.has(id);
+				if ((targetMode === 'tasks') === isTask) ids.push(id);
+			}
+			const emptyNativeContradiction = complete && classificationComplete && ids.length === 0 &&
+				_isDialogNativeSourceGenerationCurrent(targetMode, sourceContainer, sourceViewport, sourceGeneration) &&
+				_getDialogNativeSourceRows(sourceContainer).length > 0;
+			const proof = {
+				complete: complete && classificationComplete && !emptyNativeContradiction,
+				mode: targetMode,
+				scopeKey,
+				catalogVersion: _DIALOG_CATALOG_CACHE_VERSION,
+				sourceGeneration: Number(sourceGeneration),
+				sourceContainer,
+				sourceViewport,
+				auditedAt: Date.now(),
+				ids: Array.from(new Set(ids.map(normId).filter(Boolean))),
+				count: new Set(ids.map(normId).filter(Boolean)).size,
+				pages,
+				metadata,
+				kind: 'api',
+				startedAt: auditStartedAt,
+				emptyQuorumConfirmed,
+				emptyNativeContradiction,
+				totalMetadataInconsistent,
+				paginationChainValid,
+				reason: error || (!complete ? 'audit-incomplete' : (!classificationComplete
+					? 'audit-mode-unclassified'
+					: (emptyNativeContradiction ? 'audit-empty-native-contradiction' : 'complete'))),
+				error
+			};
+			const fenceCurrent = proof.scopeKey === _getDialogNativeExpectedAuditScopeKey(targetMode) &&
+				_isDialogNativeSourceGenerationCurrent(targetMode, sourceContainer, sourceViewport, sourceGeneration);
+			if (!fenceCurrent) {
+				_dialogNativeExpectedAuditDiscardCount += 1;
+				return {
+					...proof,
+					complete: false,
+					discarded: true,
+					ids: [],
+					count: 0,
+					metadata: new Map(),
+					reason: 'audit-fenced'
+				};
+			}
+			if (proof.complete) _dialogNativeExpectedCatalogs.set(targetMode, proof);
+			return proof;
+		})().finally(() => {
+			_dialogNativeExpectedAuditPromises.delete(auditKey);
+		});
+		_dialogNativeExpectedAuditPromises.set(auditKey, promise);
+		return promise;
 	}
 
 	function _getDialogNativeSourceRows(container) {
@@ -4072,7 +4793,11 @@
 			if (!id) return;
 			const firstSeen = !state.seen.has(id);
 			if (firstSeen && maxCount > 0 && state.seen.size >= maxCount) return;
-			const existing = target.get(id) || _dialogRecentMeta.get(id) || {};
+			const targetExisting = target.get(id) || null;
+			const liveExisting = _dialogRecentMeta.get(id) || null;
+			const existing = targetExisting && liveExisting
+				? _mergeDialogNativeExpectedAuditMeta(liveExisting, targetExisting, 0)
+				: (targetExisting || liveExisting || {});
 			if (!state.orderById.has(id)) state.orderById.set(id, state.orderById.size);
 			if (firstSeen) {
 				state.seen.add(id);
@@ -4106,6 +4831,8 @@
 			const lastMessageTsSource = existing.lastMessageTsSource || (existingDate && Number(existing.lastMessageId) > 0
 				? 'bitrix'
 				: 'native-order');
+			const existingCounterIsPostStart = Math.max(0, Number(existing.counterFetchedAt) || 0) >=
+				Math.max(0, Number(state.startedAt) || 0);
 			const merged = Object.assign({}, existing, {
 				id,
 				restDialogId: restDialogId || id,
@@ -4138,6 +4865,14 @@
 				fetchedAt,
 				catalogSource: 'native-scroll'
 			});
+			if (existingCounterIsPostStart) {
+				// The DOM badge belongs to an older recycled row snapshot. A counter API or
+				// live head update received during this pass is authoritative even when the
+				// final counter recheck is temporarily unavailable.
+				for (const field of ['unreadCount', 'hasUnread', 'hasLater', 'hasMention', 'counterFetchedAt', 'counterStale']) {
+					if (existing[field] !== undefined) merged[field] = existing[field];
+				}
+			}
 			_setDialogRecentMeta(target, merged, [restDialogId]);
 		});
 		return { rows: rows.length, added, nativeAdded };
@@ -4146,9 +4881,32 @@
 	function _commitDialogNativeCatalog(target, state, options = {}) {
 		const mandatory = _getDialogRecentMandatoryItems();
 		_ensureDialogRecentMandatoryMeta(target, mandatory);
+		// `target` is cloned before the guarded walk. Merge it with the live catalog
+		// one last time so deltas/messages/counters/tombstones received mid-pass win
+		// the atomic replacement while native-only rank fields remain available.
+		const passStartedAt = Math.max(0, Number(state?.startedAt) || 0);
+		for (const liveMeta of _getDialogRecentUniqueMeta(_dialogRecentMeta)) {
+			const id = normId(liveMeta?.id);
+			if (!id || target.has(id)) continue;
+			const liveChangedAt = Math.max(
+				0,
+				Number(liveMeta?.recentListFetchedAt) || 0,
+				Number(liveMeta?.counterFetchedAt) || 0,
+				Number(liveMeta?.availabilityCheckedAt) || 0
+			);
+			if (passStartedAt > 0 && liveChangedAt >= passStartedAt) {
+				// Metadata-only union: do not add this identity to state.seen. The current
+				// physical generation and persisted confirmedIds remain exact native IDs.
+				_setDialogRecentMeta(target, { ...liveMeta, id }, [liveMeta?.restDialogId]);
+			}
+		}
+		for (const targetMeta of _getDialogRecentUniqueMeta(target)) {
+			const id = normId(targetMeta?.id);
+			const liveMeta = id ? _getDialogRecentMeta(id) : null;
+			if (!id || !liveMeta || liveMeta === targetMeta) continue;
+			_setDialogRecentMeta(target, _mergeDialogNativeExpectedAuditMeta(liveMeta, targetMeta, passStartedAt));
+		}
 		_replaceDialogRecentMeta(target);
-		_dialogRecentLastFullAt = Date.now();
-		_dialogRecentLastSuccessAt = Date.now();
 		_dialogRecentWindowCount = Math.max(_dialogRecentWindowCount, state.seen.size);
 		_dialogRecentTruncated = !!options.truncated;
 		// Native scrolling can legitimately stop before an old dialog stored in a
@@ -4169,7 +4927,7 @@
 		_dialogRecentLastSoftErrorAt = 0;
 		const changed = _hydrateDialogControlItemsFromRecent(state.mode || _pMode(), { pruneMissing: false });
 		_dialogRecentDataRevision += 1;
-		_dialogRecentRepositoryNeedsFullCommit = true;
+		_markDialogRecentRepositoryFullCommit();
 		_notifyDialogRecentDataChanged();
 		if (changed) _dialogControlLastSig = '';
 		if (!options.initial) _scheduleDialogRecentCacheWrite(80);
@@ -4334,7 +5092,7 @@
 					_dialogNativePrefetchedModes.add(mode);
 					_dialogNativeModeCounts.set(mode, state.seen.size);
 					_dialogNativeModeLoadedAt.set(mode, Date.now());
-					_dialogRecentRepositoryNeedsFullCommit = true;
+					_markDialogRecentRepositoryFullCommit();
 					_scheduleDialogRecentCacheWrite(80);
 				}
 				_publishDialogRecentSyncState();
@@ -4416,7 +5174,7 @@
 		let overlay = host.querySelector(':scope > .pena-native-original-load-guard');
 		const silentBackgroundLoad = (_dialogNativeOriginalScrollActive && _dialogNativeOriginalScrollSilent) ||
 			(_dialogRecentApiLoadActive && _dialogRecentApiLoadSilent);
-		if (silentBackgroundLoad) {
+		if (silentBackgroundLoad && !_dialogNativeHealthProbeActive) {
 			overlay?.remove();
 			host.classList.remove('pena-native-original-loading-host');
 			return null;
@@ -4424,7 +5182,7 @@
 		const apiCatalogBlocking = _dialogRecentApiLoadActive && (
 			_dialogRecentProgress.phase === 'full-sync' || !!_dialogTaskCatalogSyncPromise
 		);
-		if (!_dialogNativeOriginalScrollActive && !apiCatalogBlocking) {
+		if (!_dialogNativeOriginalScrollActive && !_dialogNativeHealthProbeActive && !apiCatalogBlocking) {
 			const completed = overlay && _dialogRecentProgress.phase === 'ready' && !_dialogRecentLastError;
 			const shownAt = Number(overlay?.dataset?.penaShownAt) || 0;
 			const remaining = completed ? Math.max(0, 320 - (Date.now() - shownAt)) : 0;
@@ -4462,7 +5220,7 @@
 			overlay,
 			Math.max(0, Number(_dialogRecentProgress.loadedCount) || 0),
 			expectedTotal,
-			!taskCatalogTail ? window.__PENA_RECENT_SYNC__?.percent : 96
+			_dialogNativeHealthProbeActive ? 8 : (!taskCatalogTail ? window.__PENA_RECENT_SYNC__?.percent : 96)
 		);
 		return overlay;
 	}
@@ -4481,17 +5239,33 @@
 			return { count: _countDialogRecentMeta(), skipped: true, unavailable: true };
 		}
 		const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
+		const sourceGeneration = _getDialogNativeSourceGeneration(mode, container, sourceViewport);
+		const previousMaterialization = _dialogNativeMaterializedSources.get(mode) || null;
+		const coldTaskCatalogOutcomePromise = !previousMaterialization?.ids?.length
+			? (options.taskCatalogOutcomePromise || _syncDialogTaskCatalog({ force: true, deferMerge: true }).then(
+				value => ({ value, error: null }),
+				error => ({ value: null, error })
+			))
+			: null;
+		const expectedCatalogPromise = !previousMaterialization?.ids?.length
+			? (options.expectedCatalogPromise || _runDialogNativeExpectedCatalogAudit(mode, sourceGeneration, {
+				taskCatalogOutcomePromise: coldTaskCatalogOutcomePromise
+			}))
+			: null;
 		if (options.reason === 'manual' || options.reason === 'mode-switch') {
-			_dialogNativeTraversalFailedModes.delete(mode);
-			_dialogNativeTraversalFailedAt.delete(mode);
+			_clearDialogNativeRecoveryRetry(mode);
 		}
 		if (!options.force && _dialogNativePrefetchedModes.has(mode)) {
 			return { count: _countDialogRecentMeta(), skipped: true, native: true, cached: true };
 		}
 		let cancelled = false;
+		let cancellationReason = '';
 		let runner = null;
-		_dialogNativeOriginalScrollCancel = () => {
+		let materializationSucceeded = false;
+		let materializationSuccessReason = 'complete';
+		_dialogNativeOriginalScrollCancel = reason => {
 			cancelled = true;
+			cancellationReason = String(reason || cancellationReason || 'cancelled');
 			runner?.cancel?.();
 		};
 		_dialogNativeOriginalScrollPromise = (async () => {
@@ -4499,6 +5273,20 @@
 			const requestedLeft = Number(options.restoreLeft);
 			const originalTop = Number.isFinite(requestedTop) ? Math.max(0, requestedTop) : (Number(sourceViewport.scrollTop) || 0);
 			const originalLeft = Number.isFinite(requestedLeft) ? Math.max(0, requestedLeft) : (Number(sourceViewport.scrollLeft) || 0);
+			const capturedScrollSnapshot = _captureDialogControlNativeScroll();
+			// A trusted per-mode restoreTop belongs to the user, while the live viewport
+			// may currently expose Chromium's hidden clamp at zero. Do not let the later
+			// ID-anchor restoration reapply that stale physical snapshot over restoreTop.
+			const userScrollSnapshot = capturedScrollSnapshot && Number.isFinite(requestedTop)
+				? Object.assign({}, capturedScrollSnapshot, {
+					top: originalTop,
+					left: originalLeft,
+					anchorRow: null,
+					anchorId: '',
+					anchorTitle: '',
+					anchorOffset: 0
+				})
+				: capturedScrollSnapshot;
 			const originalOverflowAnchor = {
 				value: sourceViewport.style.getPropertyValue('overflow-anchor'),
 				priority: sourceViewport.style.getPropertyPriority('overflow-anchor')
@@ -4517,12 +5305,18 @@
 				Number(window.__PENA_TEST_NATIVE_SCROLL_MAX_MS__) || _DIALOG_NATIVE_TRAVERSAL_HARD_TIMEOUT_MS
 			));
 			const state = { mode, seen: new Set(), orderById: new Map(), startedAt: Date.now() };
+			const ownsAttemptState = () => Number(_dialogNativeAttemptStates.get(mode)?.startedAt) === state.startedAt;
 			const target = new Map(_dialogRecentMeta);
 			_dialogNativeBackgroundPendingModes.delete(mode);
 			_dialogRecentDetailUiSilent = false;
 			_dialogNativeOriginalScrollActive = true;
-			_dialogNativeOriginalScrollSilent = options.silent === true;
+			// Scrolling the real Bitrix viewport is never a silent background action.
+			_dialogNativeOriginalScrollSilent = false;
 			_dialogNativeOriginalScrollMode = mode;
+			_setDialogNativeAttemptState(mode, {
+				state: 'loading', reason: String(options.reason || 'native-load'), startedAt: state.startedAt,
+				completedAt: 0, retryAt: 0
+			});
 			_dialogRecentProgress = {
 				phase: 'native-scroll', loadedCount: 0, expectedTotal: null,
 				pagesLoaded: 0, full: true, partial: false, startedAt: state.startedAt, completedAt: 0
@@ -4549,21 +5343,36 @@
 				};
 				_dialogRecentProgress.expectedTotal = estimateExpectedTotal();
 				_syncDialogNativeOriginalLoadUi(container);
+				const getNativeTraversalStep = clientHeight => {
+					// When Bitrix retains several screens of rows in DOM, crossing them one
+					// viewport at a time only wastes frames. A small recycled pool keeps the
+					// overlapping step that guarantees every virtual window is captured.
+					const multiplier = nativeWindowRows >= 80 ? 4 : nativeWindowRows >= 40 ? 2 : nativeWindowRows >= 24 ? 1.6 : .86;
+					return Math.max(160, Math.floor((Number(clientHeight) || 480) * multiplier));
+				};
+				const getNativeProgressToken = () => {
+					const height = Number(sourceViewport.scrollHeight) || 0;
+					const clientHeight = Number(sourceViewport.clientHeight) || 0;
+					return `${state.seen.size}:${height}:${clientHeight}:${Math.max(0, height - clientHeight)}`;
+				};
 				runner = autoScrollWithObserver({
 					scrollEl: sourceViewport,
 					observeEl: container,
 					tick: 36,
-					idleLimit: 1100,
+					// The observer already requires stable progress tokens; two explicit lower
+					// confirmations run afterwards. A long 1.1s mutation quiet-period only made
+					// recycled Bitrix pools slow without adding evidence of completeness.
+					idleLimit: 300,
 					maxTime: traversalMaxTimeMs,
-					getStep: ({ clientHeight }) => {
-						// When Bitrix retains several screens of rows in DOM, crossing them one
-						// viewport at a time only wastes frames. A small recycled pool keeps the
-						// overlapping step that guarantees every virtual window is captured.
-						const multiplier = nativeWindowRows >= 80 ? 4 : nativeWindowRows >= 40 ? 2 : nativeWindowRows >= 24 ? 1.2 : .86;
-						return Math.max(160, Math.floor((Number(clientHeight) || 480) * multiplier));
-					},
-					getProgressToken: () => `${state.seen.size}:${Number(sourceViewport.scrollHeight) || 0}`,
+					getStep: ({ clientHeight }) => getNativeTraversalStep(clientHeight),
+					getProgressToken: getNativeProgressToken,
 					onTick: () => {
+						if (!_isDialogNativeSourceGenerationCurrent(mode, container, sourceViewport, sourceGeneration)) {
+							cancellationReason = 'source-generation-changed';
+							cancelled = true;
+							runner?.cancel?.();
+							return;
+						}
 						nativeWindowRows = _captureDialogNativeWindow(container, target, state, loadLimit).rows;
 						_syncDialogNativeTraversalRows(container);
 						_dialogRecentProgress.loadedCount = state.seen.size;
@@ -4577,12 +5386,127 @@
 				_captureDialogNativeWindow(container, target, state, loadLimit);
 				_dialogRecentProgress.loadedCount = state.seen.size;
 				_dialogRecentProgress.expectedTotal = estimateExpectedTotal();
+				let expectedCatalog = previousMaterialization?.ids?.length ? null : _dialogNativeExpectedCatalogs.get(mode);
+				let expectedApiAuditReason = '';
+				if (expectedCatalogPromise) {
+					try {
+						expectedCatalog = await expectedCatalogPromise;
+						expectedApiAuditReason = expectedCatalog?.kind === 'api' && expectedCatalog?.complete !== true
+							? String(expectedCatalog?.reason || expectedCatalog?.error || 'api-audit-incomplete')
+							: '';
+					}
+					catch (auditError) {
+						expectedApiAuditReason = String(auditError?.message || auditError || 'metadata-audit-failed');
+						expectedCatalog = {
+							complete: false,
+							mode,
+							sourceGeneration,
+							reason: expectedApiAuditReason
+						};
+					}
+				}
+				if (!_isDialogNativeExpectedAuditCurrent(expectedCatalog, mode, sourceGeneration)) {
+					expectedCatalog = _bindDialogNativeRepositoryExpectedCatalog(mode, sourceGeneration) || expectedCatalog;
+				}
+				_mergeDialogNativeExpectedAuditTarget(target, expectedCatalog);
+				let expectedCatalogCurrent = _isDialogNativeExpectedAuditCurrent(expectedCatalog, mode, sourceGeneration);
+				let expectedCatalogExact = expectedCatalogCurrent && expectedCatalog?.kind === 'api';
+				let expectedCatalogIds = expectedCatalogCurrent
+					? Array.from(new Set(expectedCatalog.ids.map(normId).filter(Boolean)))
+					: [];
+				let expectedCatalogIdSet = new Set(expectedCatalogIds);
+				let proofMissingIds = expectedCatalogCurrent
+					? expectedCatalogIds.filter(id => !state.seen.has(id))
+					: [];
+				// Every complete proof is only a baseline for this physical generation. A
+				// cached API audit can become stale after deletion/revocation just like a
+				// repository manifest, so reconcile missing IDs regardless of proof kind.
+				if (proofMissingIds.length > _DIALOG_NATIVE_MISSING_VERIFY_LIMIT && !expectedCatalogExact) {
+					try {
+						const freshExpectedCatalog = await _runDialogNativeExpectedCatalogAudit(mode, sourceGeneration, {
+							forceApi: true,
+							sourceContainer: container,
+							sourceViewport,
+							taskCatalogOutcomePromise: coldTaskCatalogOutcomePromise
+						});
+						if (_isDialogNativeExpectedAuditCurrent(freshExpectedCatalog, mode, sourceGeneration)) {
+							expectedCatalog = freshExpectedCatalog;
+							expectedCatalogCurrent = true;
+							expectedCatalogExact = freshExpectedCatalog?.kind === 'api';
+							expectedApiAuditReason = '';
+							expectedCatalogIds = Array.from(new Set(freshExpectedCatalog.ids.map(normId).filter(Boolean)));
+							expectedCatalogIdSet = new Set(expectedCatalogIds);
+							_mergeDialogNativeExpectedAuditTarget(target, freshExpectedCatalog);
+							proofMissingIds = expectedCatalogIds.filter(id => !state.seen.has(id));
+						}
+					} catch {}
+				}
+				if (proofMissingIds.length > 0 && proofMissingIds.length <= _DIALOG_NATIVE_MISSING_VERIFY_LIMIT) {
+					const verified = await _verifyDialogNativeMissingIds(mode, proofMissingIds);
+					if (cancelled || !_isDialogNativeSourceGenerationCurrent(mode, container, sourceViewport, sourceGeneration)) {
+						cancelled = true;
+						cancellationReason = cancellationReason || 'source-generation-changed';
+					}
+					const unavailableIds = new Set(verified.unavailable.map(normId).filter(Boolean));
+					if (!cancelled && unavailableIds.size && _isDialogNativeExpectedAuditCurrent(expectedCatalog, mode, sourceGeneration)) {
+						const proofKind = expectedCatalog?.kind === 'repository' ? 'repository' : 'api';
+						// The outer audit promise may commit after this native pass finishes. Its
+						// pre-verification `available` metadata must not resurrect tombstones.
+						if (expectedCatalog?.metadata instanceof Map) {
+							unavailableIds.forEach(id => expectedCatalog.metadata.delete(id));
+						}
+						expectedCatalog = {
+							...expectedCatalog,
+							ids: expectedCatalogIds.filter(id => !unavailableIds.has(id)),
+							count: expectedCatalogIds.length - unavailableIds.size,
+							reason: `${proofKind}-tombstones-reconciled`
+						};
+							expectedCatalogCurrent = _isDialogNativeExpectedAuditCurrent(expectedCatalog, mode, sourceGeneration);
+							expectedCatalogExact = expectedCatalogCurrent && expectedCatalog?.kind === 'api';
+						expectedCatalogIds = expectedCatalog.ids.slice();
+						expectedCatalogIdSet = new Set(expectedCatalogIds);
+						_dialogNativeExpectedCatalogs.set(mode, expectedCatalog);
+						if (proofKind === 'repository') {
+							const storedRepositoryProof = _dialogNativeRepositoryExpectedCatalogs.get(mode);
+							if (storedRepositoryProof?.scopeKey === expectedCatalog.scopeKey) {
+								_dialogNativeRepositoryExpectedCatalogs.set(mode, {
+									...storedRepositoryProof,
+									ids: expectedCatalogIds.slice(),
+									count: expectedCatalogIds.length,
+									reason: expectedCatalog.reason
+								});
+							}
+						}
+						unavailableIds.forEach(id => {
+							const verifiedMeta = _getDialogRecentMeta(id);
+							if (verifiedMeta) _setDialogRecentMeta(target, { ...verifiedMeta });
+						});
+						_markDialogRecentRepositoryFullCommit();
+					}
+				}
+				if (expectedCatalogCurrent && expectedCatalogIds.length === 0 && state.seen.size > 0 &&
+					_isDialogNativeSourceGenerationCurrent(mode, container, sourceViewport, sourceGeneration)) {
+					// An empty API/repository subset cannot prove a non-empty physical source.
+					// Drop it so the scheduled retry performs a fresh fenced audit instead of
+					// reusing the contradictory 24-hour proof.
+					if (_dialogNativeExpectedCatalogs.get(mode)?.sourceGeneration === sourceGeneration) {
+						_dialogNativeExpectedCatalogs.delete(mode);
+					}
+					if (expectedCatalog?.kind === 'repository') _dialogNativeRepositoryExpectedCatalogs.delete(mode);
+					expectedCatalog = {
+						...expectedCatalog,
+						complete: false,
+						reason: 'audit-empty-native-contradiction'
+					};
+					expectedCatalogCurrent = false;
+					expectedCatalogExact = false;
+				}
 				const newerApiCount = Math.max(
 					0,
 					Number(_dialogRecentLastApiResult?.count) || 0,
 					Number(_dialogRecentLastApiResult?.received) || 0
 				);
-				const supersededByApi = _dialogRecentLastApiResult?.complete === true
+				const supersededByApi = window.__PENA_TEST_API_CATALOG__ === true && _dialogRecentLastApiResult?.complete === true
 					&& _dialogRecentLastSuccessAt >= state.startedAt
 					&& newerApiCount > state.seen.size;
 				if (supersededByApi) {
@@ -4593,47 +5517,232 @@
 					_dialogNativeModeCounts.set(mode, Math.max(Number(_dialogNativeModeCounts.get(mode)) || 0, newerApiCount));
 					_dialogNativeModeLoadedAt.set(mode, Math.max(_dialogRecentLastFullAt, Date.now()));
 					_dialogRecentWindowCount = Math.max(_dialogRecentWindowCount, newerApiCount);
-					_dialogRecentRepositoryNeedsFullCommit = true;
+					_markDialogRecentRepositoryFullCommit();
 					_scheduleDialogRecentCacheWrite(80);
 					_dialogRecentProgress = Object.assign({}, _dialogRecentProgress, {
 						phase: 'ready', loadedCount: newerApiCount, expectedTotal: newerApiCount,
 						full: true, partial: false, completedAt: Date.now()
 					});
+					materializationSucceeded = true;
+					materializationSuccessReason = 'api-superseded';
 					_publishDialogRecentSyncState();
 					return { count: _countDialogRecentMeta(), received: state.seen.size, native: true, superseded: true };
 				}
-				const stopReason = String(scrollResult?.reason || '');
-				const traversalComplete = !cancelled && !['cancelled', 'timeout', 'unavailable'].includes(stopReason);
+				let stopReason = String(scrollResult?.reason || '');
+				const isAtPhysicalBottom = () => {
+					const top = Number(sourceViewport.scrollTop) || 0;
+					const maxTop = Math.max(0, Number(sourceViewport.scrollHeight) - Number(sourceViewport.clientHeight));
+					return Math.abs(top - maxTop) < 2;
+				};
+				let stableBottom = stopReason === 'idle' && isAtPhysicalBottom();
+				let confirmationToken = getNativeProgressToken();
+				let stableBottomSamples = 0;
+				const coldExactProofRequired = !previousMaterialization?.ids?.length;
+				const getMissingExpectedIds = () => expectedCatalogIds.filter(id => !state.seen.has(id));
+				let bottomSampleCount = 0;
+				const remainingTraversalActiveMs = Math.max(0,
+					traversalMaxTimeMs - Math.max(0, Number(scrollResult?.activeElapsed) || 0));
+				const bottomConfirmationWallStartedAt = performance.now();
+				let bottomConfirmationActiveMs = 0;
+				const stopStaleBottomConfirmation = () => {
+					if (!cancelled && _isDialogNativeSourceGenerationCurrent(mode, container, sourceViewport, sourceGeneration)) return false;
+					stopReason = cancellationReason || 'source-generation-changed';
+					stableBottom = false;
+					return true;
+				};
+				while (stableBottom && bottomConfirmationActiveMs < remainingTraversalActiveMs && (
+					stableBottomSamples < 2 || (coldExactProofRequired && expectedCatalogCurrent && getMissingExpectedIds().length > 0)
+				)) {
+					if (stopStaleBottomConfirmation()) break;
+					bottomSampleCount += 1;
+					if (document.hidden || _dialogLifecycleFrozen) {
+						await new Promise(resolve => setTimeout(resolve, 160));
+						if (stopStaleBottomConfirmation()) break;
+						continue;
+					}
+					const sampleStartedAt = performance.now();
+					if (!isAtPhysicalBottom()) {
+						const beforeTop = Number(sourceViewport.scrollTop) || 0;
+						const maxTop = Math.max(0, Number(sourceViewport.scrollHeight) - Number(sourceViewport.clientHeight));
+						sourceViewport.scrollTop = Math.min(maxTop, beforeTop + getNativeTraversalStep(sourceViewport.clientHeight));
+						sourceViewport.dispatchEvent(new Event('scroll'));
+						await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+						await new Promise(resolve => setTimeout(resolve, 36));
+						if (stopStaleBottomConfirmation()) break;
+						nativeWindowRows = _captureDialogNativeWindow(container, target, state, loadLimit).rows;
+						_dialogRecentProgress.loadedCount = state.seen.size;
+						_dialogRecentProgress.expectedTotal = estimateExpectedTotal();
+						_syncDialogNativeOriginalLoadUi(container);
+						confirmationToken = getNativeProgressToken();
+						stableBottomSamples = 0;
+						const elapsed = Math.max(0, performance.now() - sampleStartedAt);
+						if (!document.hidden && !_dialogLifecycleFrozen && elapsed < _getDialogTimerDriftMs()) {
+							bottomConfirmationActiveMs += elapsed;
+						}
+						continue;
+					}
+					sourceViewport.dispatchEvent(new Event('scroll'));
+					await new Promise(resolve => setTimeout(resolve, 160));
+					await new Promise(resolve => requestAnimationFrame(resolve));
+					if (stopStaleBottomConfirmation()) break;
+					_captureDialogNativeWindow(container, target, state, loadLimit);
+					const nextToken = getNativeProgressToken();
+					if (!isAtPhysicalBottom()) {
+						const maxTop = Math.max(0, Number(sourceViewport.scrollHeight) - Number(sourceViewport.clientHeight));
+						const beforeTop = Number(sourceViewport.scrollTop) || 0;
+						sourceViewport.scrollTop = Math.min(maxTop, beforeTop + getNativeTraversalStep(sourceViewport.clientHeight));
+						confirmationToken = nextToken;
+						stableBottomSamples = 0;
+						const elapsed = Math.max(0, performance.now() - sampleStartedAt);
+						if (!document.hidden && !_dialogLifecycleFrozen && elapsed < _getDialogTimerDriftMs()) {
+							bottomConfirmationActiveMs += elapsed;
+						}
+						continue;
+					}
+					if (nextToken !== confirmationToken) {
+						confirmationToken = nextToken;
+						stableBottomSamples = 0;
+						const elapsed = Math.max(0, performance.now() - sampleStartedAt);
+						if (!document.hidden && !_dialogLifecycleFrozen && elapsed < _getDialogTimerDriftMs()) {
+							bottomConfirmationActiveMs += elapsed;
+						}
+						continue;
+					}
+					const elapsed = Math.max(0, performance.now() - sampleStartedAt);
+					if (!document.hidden && !_dialogLifecycleFrozen && elapsed < _getDialogTimerDriftMs()) {
+						bottomConfirmationActiveMs += elapsed;
+					}
+					stableBottomSamples += 1;
+				}
+				const missingExpectedIds = expectedCatalogCurrent ? getMissingExpectedIds() : [];
+				const unexpectedSeenIds = expectedCatalogCurrent
+					? Array.from(state.seen).map(normId).filter(id => id && !expectedCatalogIdSet.has(id))
+					: [];
+				stableBottom = stableBottom && stableBottomSamples >= 2 && isAtPhysicalBottom();
+				window.__PENA_NATIVE_BOTTOM_DEBUG__ = {
+					mode,
+					cold: coldExactProofRequired,
+					requiredQuietMs: 0,
+					quietMs: 0,
+					activeMs: Math.round(bottomConfirmationActiveMs),
+					wallMs: Math.round(Math.max(0, performance.now() - bottomConfirmationWallStartedAt)),
+					activeBudgetMs: Math.round(remainingTraversalActiveMs),
+					samples: stableBottomSamples,
+					totalSamples: bottomSampleCount,
+					stable: stableBottom,
+					seenCount: state.seen.size,
+					expectedProof: expectedCatalogExact,
+					expectedBaseline: expectedCatalogCurrent,
+					expectedKind: String(expectedCatalog?.kind || ''),
+					expectedCount: expectedCatalogIds.length,
+					missingExpectedCount: missingExpectedIds.length,
+					unexpectedSeenCount: unexpectedSeenIds.length,
+					auditReason: String(expectedCatalog?.reason || ''),
+					scrollTop: Number(sourceViewport.scrollTop) || 0,
+					maxTop: Math.max(0, Number(sourceViewport.scrollHeight) - Number(sourceViewport.clientHeight))
+				};
+				let missingAvailable = [];
+				if (stableBottom && previousMaterialization?.ids?.length) {
+					const missingIds = previousMaterialization.ids.filter(id => !state.seen.has(normId(id)));
+					if (missingIds.length > _DIALOG_NATIVE_MISSING_VERIFY_LIMIT) {
+						missingAvailable = missingIds;
+					} else if (missingIds.length) {
+						missingAvailable = (await _verifyDialogNativeMissingIds(mode, missingIds)).available;
+					}
+				}
+				const sourceCurrent = _isDialogNativeSourceGenerationCurrent(mode, container, sourceViewport, sourceGeneration);
+				const networkAvailable = _isDialogNetworkAvailable();
+				const bitrixBusy = _isDialogNativeBitrixBusy(container);
+				const traversalComplete = !cancelled && stableBottom && sourceCurrent && networkAvailable &&
+					!bitrixBusy && missingAvailable.length === 0 &&
+					(!coldExactProofRequired || (expectedCatalogExact && missingExpectedIds.length === 0)) &&
+					!['cancelled', 'timeout', 'unavailable'].includes(stopReason);
 				if (!traversalComplete) {
-					_dialogNativeBackgroundPendingModes.delete(mode);
-					_dialogNativePrefetchedModes.delete(mode);
-					_dialogNativeModeLoadedAt.delete(mode);
+					window.__PENA_NATIVE_FAILURE_DEBUG__ = {
+						at: Date.now(), mode, stopReason, stableBottom, sourceCurrent,
+						networkAvailable, bitrixBusy, seenCount: state.seen.size,
+						missingAvailable: missingAvailable.slice(),
+						expectedProof: expectedCatalogExact,
+						expectedBaseline: expectedCatalogCurrent,
+						expectedKind: String(expectedCatalog?.kind || ''),
+						expectedCount: expectedCatalogIds.length,
+						missingExpected: missingExpectedIds.slice(0, _DIALOG_NATIVE_MISSING_VERIFY_LIMIT),
+						unexpectedSeen: unexpectedSeenIds.slice(0, _DIALOG_NATIVE_MISSING_VERIFY_LIMIT),
+						previousCount: previousMaterialization?.ids?.length || 0
+					};
+					_dialogNativeBackgroundPendingModes.add(mode);
 					if (!cancelled) {
 						_dialogNativeTraversalFailedModes.add(mode);
 						_dialogNativeTraversalFailedAt.set(mode, Date.now());
 					}
-					_dialogRecentLastError = cancelled
-						? ''
-						: 'Не удалось подтвердить конец списка диалогов';
+					if (previousMaterialization) {
+						previousMaterialization.invalidated = !sourceCurrent || missingAvailable.length > 0;
+						previousMaterialization.invalidatedReason = !sourceCurrent
+							? 'source-generation-changed'
+							: (missingAvailable.length ? 'previous-dialogs-missing' : 'native-incomplete');
+					}
+					const failureReason = cancellationReason ||
+						(!sourceCurrent ? 'source-generation-changed' : '') ||
+						(!networkAvailable ? 'offline' : '') ||
+						(bitrixBusy ? 'bitrix-loader-active' : '') ||
+						(coldExactProofRequired && !expectedCatalogExact ? `api-proof-unavailable:${expectedApiAuditReason || String(expectedCatalog?.reason || 'incomplete')}` : '') ||
+						(missingExpectedIds.length ? `expected-dialogs-missing:${missingExpectedIds.length}` : '') ||
+						(missingAvailable.length ? `previous-dialogs-missing:${missingAvailable.length}` : '') ||
+						(!stableBottom || ['cancelled', 'timeout', 'unavailable'].includes(stopReason) ? (stopReason || 'bottom-unconfirmed') : '') ||
+						'native-incomplete';
+					_dialogRecentLastError = _dialogNativePrefetchedModes.has(mode) ? '' : 'Не удалось подтвердить конец списка диалогов';
+					_dialogRecentLastSoftError = _dialogNativePrefetchedModes.has(mode) ? 'Полная лента будет проверена повторно' : '';
 					_dialogRecentProgress = Object.assign({}, _dialogRecentProgress, {
-						phase: cancelled ? 'cached' : 'error',
+						phase: _dialogNativePrefetchedModes.has(mode) || cancelled ? 'cached' : 'error',
 						loadedCount: _dialogRecentWindowCount,
 						expectedTotal: _dialogRecentWindowCount || null,
 						partial: false,
 						completedAt: Date.now()
 					});
+					if (ownsAttemptState()) {
+						_setDialogNativeAttemptState(mode, {
+							state: 'retry', reason: failureReason, completedAt: Date.now()
+						});
+						_scheduleDialogNativeRecoveryRetry(mode, failureReason);
+					}
 					_publishDialogRecentSyncState();
 					return {
 						count: _countDialogRecentMeta(), received: state.seen.size, native: true,
-						cancelled, incomplete: true, reason: stopReason || (cancelled ? 'cancelled' : 'unknown')
+						cancelled, incomplete: true, reason: failureReason
+					};
+				}
+				// No asynchronous work is allowed between this fence and the atomic commit.
+				// A remounted list or a mode/source switch must make the old pass read-only.
+				if (cancelled || !_isDialogNativeSourceGenerationCurrent(mode, container, sourceViewport, sourceGeneration)) {
+					const failureReason = cancellationReason || 'source-generation-changed';
+					_dialogNativeBackgroundPendingModes.add(mode);
+					if (ownsAttemptState()) {
+						_setDialogNativeAttemptState(mode, {
+							state: 'retry', reason: failureReason, completedAt: Date.now()
+						});
+						_scheduleDialogNativeRecoveryRetry(mode, failureReason);
+					}
+					return {
+						count: _countDialogRecentMeta(), received: state.seen.size, native: true,
+						cancelled, incomplete: true, reason: failureReason
+					};
+				}
+				const finalCommit = _commitDialogNativeCatalog(target, state, {
+					truncated: false
+				});
+				const recorded = _recordDialogNativeMaterialization(
+					mode, container, sourceViewport, state.seen.size, state.seen, sourceGeneration
+				);
+				if (!recorded) {
+					_dialogNativeBackgroundPendingModes.add(mode);
+					return {
+						count: _countDialogRecentMeta(), received: state.seen.size, native: true,
+						incomplete: true, reason: 'source-generation-changed'
 					};
 				}
 				_dialogNativeTraversalFailedModes.delete(mode);
 				_dialogNativeTraversalFailedAt.delete(mode);
 				_dialogNativeBackgroundPendingModes.delete(mode);
-				const finalCommit = _commitDialogNativeCatalog(target, state, {
-					truncated: false
-				});
 				if (finalCommit?.detailsPromise) {
 					_dialogRecentDetailUiSilent = true;
 					finalCommit.detailsPromise.finally(() => {
@@ -4644,41 +5753,63 @@
 				_dialogNativePrefetchedModes.add(mode);
 				_dialogNativeModeCounts.set(mode, state.seen.size);
 				_dialogNativeModeLoadedAt.set(mode, Date.now());
-				_recordDialogNativeMaterialization(mode, container, sourceViewport, state.seen.size);
-				_dialogNativeScrollPositions.set(mode, { top: originalTop, left: originalLeft });
-				_dialogRecentRepositoryNeedsFullCommit = true;
+				_dialogNativeScrollPositions.set(mode, { top: originalTop, left: originalLeft, trusted: true });
+				_clearDialogNativeRecoveryRetry(mode);
+				materializationSucceeded = true;
+				_markDialogRecentRepositoryFullCommit();
 				_scheduleDialogRecentCacheWrite(80);
 				_dialogRecentProgress = Object.assign({}, _dialogRecentProgress, {
 					phase: 'ready', loadedCount: state.seen.size, expectedTotal: state.seen.size,
 					partial: false, completedAt: Date.now()
 				});
 				_publishDialogRecentSyncState();
+				// Counter reconciliation is supplemental. Capture/atomic freshness guards are
+				// the correctness boundary, so a slow service call never holds materialization
+				// open and a stale source can never receive its result.
+				void _fetchDialogCounterSnapshotWithRetry(1).then(counters => {
+					if (!counters || !_isDialogNativeSourceGenerationCurrent(mode, container, sourceViewport, sourceGeneration)) return;
+					_applyDialogCounterSnapshot(_dialogRecentMeta, counters, _getDialogRecentMandatoryItems());
+					_dialogRecentDataRevision += 1;
+					_notifyDialogRecentDataChanged();
+					_scheduleDialogRecentCacheWrite(80);
+				}).catch(() => {});
 				return { count: _countDialogRecentMeta(), received: state.seen.size, native: true, cancelled };
 			} finally {
 				_clearDialogNativeTraversalRows(container);
-				sourceViewport.scrollTop = originalTop;
-				sourceViewport.scrollLeft = originalLeft;
-				sourceViewport.dispatchEvent(new Event('scroll'));
-				_dialogNativeOriginalScrollActive = false;
-				_dialogNativeOriginalScrollSilent = false;
 				_dialogNativeOriginalScrollFinishing = true;
-				_dialogNativeOriginalScrollMode = '';
-				_dialogNativeOriginalScrollCancel = null;
-				_dialogNativeOriginalScrollPromise = null;
-				// Apply the saved order only after traversal stops. During traversal rows may
-				// be recycled by Bitrix, so sorting them earlier corrupts the native loader.
-				applyFilters();
-				sourceViewport.scrollTop = originalTop;
-				sourceViewport.scrollLeft = originalLeft;
-				await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-				sourceViewport.scrollTop = originalTop;
-				sourceViewport.scrollLeft = originalLeft;
 				try {
+					sourceViewport.scrollTop = originalTop;
+					sourceViewport.scrollLeft = originalLeft;
+					sourceViewport.dispatchEvent(new Event('scroll'));
+					// Apply the saved order only after traversal stops. During traversal rows may
+					// be recycled by Bitrix, so sorting them earlier corrupts the native loader.
+					applyFilters();
+					sourceViewport.scrollTop = originalTop;
+					sourceViewport.scrollLeft = originalLeft;
+					await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+					_restoreDialogControlNativeScroll(userScrollSnapshot);
+					await new Promise(resolve => requestAnimationFrame(resolve));
+					_restoreDialogControlNativeScroll(userScrollSnapshot);
+					// Chromium may deliver the programmatic restore scroll asynchronously.
+					// Keep the visual guard through that final paint as well.
+					await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+					if (materializationSucceeded && ownsAttemptState() &&
+						_isDialogNativeSourceGenerationCurrent(mode, container, sourceViewport, sourceGeneration)) {
+						_setDialogNativeAttemptState(mode, {
+							state: 'idle', reason: materializationSuccessReason,
+							retryAttempt: 0, retryAt: 0, completedAt: Date.now()
+						});
+					}
+				} finally {
+					_dialogNativeOriginalScrollActive = false;
+					_dialogNativeOriginalScrollSilent = false;
+					_dialogNativeOriginalScrollMode = '';
+					_dialogNativeOriginalScrollCancel = null;
+					_dialogNativeOriginalScrollPromise = null;
 					restoreInlineProperty('overflow-anchor', originalOverflowAnchor);
 					restoreInlineProperty('scroll-behavior', originalScrollBehavior);
 					_syncDialogNativeOriginalLoadUi(container);
 					_publishDialogRecentSyncState();
-				} finally {
 					_dialogNativeOriginalScrollFinishing = false;
 				}
 			}
@@ -4705,19 +5836,37 @@
 		) {
 			// Production keeps Bitrix' own rows and scrollbar. REST metadata alone
 			// cannot make older rows appear in that native list, so the visible result
-			// is driven by the proven hidden-scroll traversal. Task metadata is fetched
-			// in parallel and committed only after traversal to avoid overwriting either map.
-			const refreshTaskCatalog = options.force === true || !_isDialogTaskCatalogMetadataFresh();
+			// is driven by the proven hidden-scroll traversal. A cold source also starts a
+			// complete metadata audit: its exact IDs are a baseline, never DOM-ready state.
+			const nativeContainer = findContainer();
+			const nativeViewport = nativeContainer ? findInternalScrollContainer(nativeContainer) : null;
+			const nativeMode = nativeContainer?.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
+			const nativeGeneration = nativeContainer && nativeViewport
+				? _getDialogNativeSourceGeneration(nativeMode, nativeContainer, nativeViewport)
+				: 0;
+			const coldMaterialization = !_dialogNativeMaterializedSources.get(nativeMode)?.ids?.length;
+			const refreshTaskCatalog = coldMaterialization || options.force === true || !_isDialogTaskCatalogMetadataFresh();
 			const taskCatalogOutcomePromise = refreshTaskCatalog
 				? _syncDialogTaskCatalog({ force: true, deferMerge: true }).then(
 					value => ({ value, error: null }),
 					error => ({ value: null, error })
 				)
 				: Promise.resolve({ value: null, error: null });
+			const expectedCatalogPromise = coldMaterialization && nativeGeneration > 0
+				? _runDialogNativeExpectedCatalogAudit(nativeMode, nativeGeneration, { taskCatalogOutcomePromise })
+				: null;
 			let nativeResult;
 			try {
-				nativeResult = await _runDialogNativeOriginalScrollLoad(options);
+				nativeResult = await _runDialogNativeOriginalScrollLoad({
+					...options,
+					taskCatalogOutcomePromise,
+					expectedCatalogPromise
+				});
 			} finally {
+				expectedCatalogPromise?.then(audit => {
+					_commitDialogNativeExpectedAuditMetadata(audit);
+					_publishDialogRecentSyncState();
+				}).catch(() => {});
 				taskCatalogOutcomePromise.then(outcome => {
 					if (outcome.error) {
 						warn('Не удалось обновить индекс task-чатов', outcome.error?.message || outcome.error);
@@ -4774,6 +5923,44 @@
 		return _syncDialogRecentData({ ...options, completeCatalog: true });
 	}
 
+	if (window.__PENA_TEST_NATIVE_META_EVENTS__ === true) {
+		window.addEventListener('pena:test-native-meta', event => {
+			const checkedAt = Date.now();
+			const normalized = event?.detail?.entry && typeof event.detail.entry === 'object'
+				? _normalizeDialogRecentMeta(event.detail.entry, checkedAt, { messagePreviewResolved: true })
+				: null;
+			const id = normId(event?.detail?.id || normalized?.meta?.id);
+			const previous = id ? _getDialogRecentMeta(id) : null;
+			if (!id || (!previous && !normalized?.meta)) return;
+			const availability = event?.detail?.availability === 'unavailable' ? 'unavailable' : 'available';
+			let next = {
+				...(previous || {}),
+				...(normalized?.meta || {}),
+				id,
+				availability,
+				availabilityReason: String(event?.detail?.reason || ''),
+				availabilityCheckedAt: checkedAt
+			};
+			if (normalized?.meta) {
+				next.fetchedAt = checkedAt;
+				next.recentListFetchedAt = checkedAt;
+				next.counterFetchedAt = checkedAt;
+				if (previous) next = _mergeDialogRecentMessageState(previous, next);
+			}
+			if (availability === 'unavailable') {
+				next.unreadCount = 0;
+				next.hasUnread = false;
+				next.hasLater = false;
+				next.hasMention = false;
+			}
+			_setDialogRecentMeta(_dialogRecentMeta, next, normalized?.keys || []);
+			_dialogRecentDataRevision += 1;
+			_markDialogRecentRepositoryDirty(id);
+			_scheduleDialogRecentCacheWrite(80);
+			_notifyDialogRecentDataChanged();
+		});
+	}
+
 	window.__PENA_NATIVE_PREFETCH__ = Object.freeze({
 		run: options => _runDialogNativeSilentPrefetch({ ...(options || {}), force: true }),
 		runOriginal: options => _runDialogNativeOriginalScrollLoad({ ...(options || {}), force: true }),
@@ -4783,7 +5970,7 @@
 		cancel: () => _dialogNativePrefetchCancel?.(),
 		status: () => ({
 			active: _dialogNativePrefetchActive,
-			originalActive: _dialogNativeOriginalScrollActive || _dialogNativeOriginalScrollFinishing || (_dialogRecentApiLoadActive && _dialogRecentProgress.phase === 'full-sync'),
+			originalActive: _dialogNativeOriginalScrollActive || _dialogNativeOriginalScrollFinishing || _dialogNativeHealthProbeActive || (_dialogRecentApiLoadActive && !_dialogRecentApiLoadSilent && _dialogRecentProgress.phase === 'full-sync'),
 			apiActive: _dialogRecentApiLoadActive,
 			apiMode: _dialogRecentApiLoadMode,
 			taskCatalogComplete: _dialogTaskCatalogComplete,
@@ -4796,10 +5983,50 @@
 			loadedModes: [..._dialogNativePrefetchedModes],
 			modeCounts: Object.fromEntries(_dialogNativeModeCounts),
 			modeLoadedAt: Object.fromEntries(_dialogNativeModeLoadedAt),
+			expectedCatalogs: Object.fromEntries(Array.from(_dialogNativeExpectedCatalogs, ([mode, proof]) => [mode, {
+				complete: proof?.complete === true,
+				kind: String(proof?.kind || ''),
+				count: Math.max(0, Number(proof?.count) || 0),
+				auditedAt: Math.max(0, Number(proof?.auditedAt) || 0),
+				sourceGeneration: Math.max(0, Number(proof?.sourceGeneration) || 0),
+				reason: String(proof?.reason || '')
+			}])),
+			expectedAuditDiscards: _dialogNativeExpectedAuditDiscardCount,
 			materializationRevisions: Object.fromEntries(Array.from(_dialogNativeMaterializedSources, ([mode, state]) => [mode, state.revision])),
+			modeStates: Object.fromEntries(['chats', 'tasks'].map(mode => {
+				const materialization = _dialogNativeMaterializedSources.get(mode) || {};
+				const expectedCatalog = _dialogNativeExpectedCatalogs.get(mode) || {};
+				return [mode, {
+					catalog: {
+						fresh: _isDialogModeCatalogFresh(mode),
+						lastSuccessAt: Math.max(0, Number(_dialogRecentLastSuccessAt) || 0),
+						lastFullAt: Math.max(0, Number(_dialogRecentLastFullAt) || 0)
+					},
+					materialization: {
+						state: materialization.invalidated ? 'stale' : (materialization.completedAt ? 'ready' : 'missing'),
+						sourceGeneration: Math.max(0, Number(materialization.sourceGeneration) || 0),
+						validatedAt: Math.max(0, Number(materialization.validatedAt) || 0),
+						count: Math.max(0, Number(materialization.count) || 0)
+					},
+					expectedCatalog: {
+						complete: expectedCatalog.complete === true,
+						kind: String(expectedCatalog.kind || ''),
+						count: Math.max(0, Number(expectedCatalog.count) || 0),
+						auditedAt: Math.max(0, Number(expectedCatalog.auditedAt) || 0),
+						sourceGeneration: Math.max(0, Number(expectedCatalog.sourceGeneration) || 0)
+					},
+					attempt: { ...(_dialogNativeAttemptStates.get(mode) || { state: 'idle', reason: '', retryAttempt: 0, retryAt: 0 }) }
+				}];
+			})),
+			reconcile: {
+				active: !!(_dialogWakeReconcileTimer || _dialogWakeReconcilePromise),
+				count: _dialogWakeReconcileCount,
+				lastAt: _dialogWakeReconcileLastAt,
+				lastReason: _dialogWakeReconcileLastReason
+			},
 			backgroundModes: [..._dialogNativeBackgroundPendingModes],
 			failedModes: [..._dialogNativeTraversalFailedModes],
-			retryPending: !!_dialogRecentApiRetryTimer,
+			retryPending: !!_dialogRecentApiRetryTimer || _dialogNativeRecoveryRetryTimers.size > 0,
 			retryAttempt: _dialogRecentApiRetryAttempt,
 			lastApiResult: _dialogRecentLastApiResult
 		})
@@ -4868,6 +6095,44 @@
 			: _DIALOG_RECENT_REFRESH_STALE_MS;
 	}
 
+	function _getDialogTaskCatalogRefreshMs() {
+		const testTtl = Number(window.__PENA_TEST_DIALOG_TASK_TTL_MS__);
+		return Number.isFinite(testTtl) && testTtl >= 50
+			? testTtl
+			: _DIALOG_TASK_CATALOG_REFRESH_MS;
+	}
+
+	function _getDialogAuditRefreshMs() {
+		const testTtl = Number(window.__PENA_TEST_DIALOG_AUDIT_TTL_MS__);
+		return Number.isFinite(testTtl) && testTtl >= 50
+			? testTtl
+			: _DIALOG_RECENT_FULL_REFRESH_MS;
+	}
+
+	function _getDialogTimerDriftMs() {
+		const testMs = Number(window.__PENA_TEST_TIMER_JUMP_MS__);
+		return Number.isFinite(testMs) && testMs >= 50 ? testMs : _DIALOG_TIMER_DRIFT_MS;
+	}
+
+	function _getDialogLongHiddenMs() {
+		const testMs = Number(window.__PENA_TEST_LONG_HIDDEN_MS__);
+		return Number.isFinite(testMs) && testMs >= 50 ? testMs : _DIALOG_LONG_HIDDEN_MS;
+	}
+
+	function _getDialogReconcileDebounceMs() {
+		const testMs = Number(window.__PENA_TEST_RECONCILE_DEBOUNCE_MS__);
+		return Number.isFinite(testMs) && testMs >= 0 ? testMs : 100;
+	}
+
+	function _getDialogNativeRecoveryDelays() {
+		const testDelays = window.__PENA_TEST_RECOVERY_RETRY_MS__;
+		if (Array.isArray(testDelays)) {
+			const normalized = testDelays.map(Number).filter(value => Number.isFinite(value) && value >= 20);
+			if (normalized.length) return normalized;
+		}
+		return _DIALOG_NATIVE_RETRY_DELAYS_MS;
+	}
+
 	function _getDialogTaskCatalogTtlMs() {
 		const testTtl = Number(window.__PENA_TEST_DIALOG_CATALOG_TTL_MS__);
 		return Number.isFinite(testTtl) && testTtl >= 50
@@ -4877,7 +6142,7 @@
 
 	function _isDialogTaskCatalogMetadataFresh(now = Date.now()) {
 		return _dialogTaskCatalogComplete && _dialogTaskCatalogFetchedAt > 0 &&
-			Math.max(0, Number(now) || Date.now()) - _dialogTaskCatalogFetchedAt < _getDialogTaskCatalogTtlMs();
+			Math.max(0, Number(now) || Date.now()) - _dialogTaskCatalogFetchedAt < _getDialogTaskCatalogRefreshMs();
 	}
 
 	function _isDialogModeCatalogFresh(mode, now = Date.now()) {
@@ -4886,7 +6151,9 @@
 		const productionNativeFirst = _isDialogControlNativePassThrough() && window.__PENA_TEST_API_CATALOG__ !== true;
 		if (productionNativeFirst) {
 			const materializedAt = Math.max(0, Number(_dialogNativeModeLoadedAt.get(targetMode)) || 0);
-			return materializedAt > 0 && Math.max(0, Number(now) || Date.now()) - materializedAt < _getDialogCompleteCatalogTtlMs();
+			// A concrete native source does not expire by time. Metadata does; the DOM
+			// is invalidated only by a source generation change or a failed health probe.
+			return materializedAt > 0;
 		}
 		const completedAt = Math.max(0, Number(_dialogNativeModeLoadedAt.get(targetMode)) || 0) ||
 			(targetMode === 'tasks' ? _dialogTaskCatalogFetchedAt : _dialogRecentLastFullAt);
@@ -4905,16 +6172,44 @@
 		};
 	}
 
-	function _recordDialogNativeMaterialization(mode, container, viewport, count) {
+	function _getDialogNativeSourceGeneration(mode, container, viewport) {
+		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
+		const current = _dialogNativeSourceGenerations.get(targetMode);
+		if (current?.list === container && current?.viewport === viewport) return current.generation;
+		const generation = Math.max(0, Number(current?.generation) || 0) + 1;
+		_dialogNativeSourceGenerations.set(targetMode, { list: container, viewport, generation });
+		return generation;
+	}
+
+	function _isDialogNativeSourceGenerationCurrent(mode, container, viewport, generation) {
+		if (!container?.isConnected || !viewport?.isConnected) return false;
+		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
+		const current = _dialogNativeSourceGenerations.get(targetMode);
+		const active = window.__PENA_ACTIVE_LIST_CONTEXT__;
+		return current?.list === container && current?.viewport === viewport && current?.generation === generation &&
+			(!active || (active.mode === targetMode && active.list === container));
+	}
+
+	function _recordDialogNativeMaterialization(mode, container, viewport, count, ids = [], expectedGeneration = 0) {
 		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
 		const previous = _dialogNativeMaterializedSources.get(targetMode);
+		const currentSource = _dialogNativeSourceGenerations.get(targetMode);
+		const generation = Math.max(0, Number(expectedGeneration) || Number(currentSource?.generation) || 0);
+		if (!generation || !_isDialogNativeSourceGenerationCurrent(targetMode, container, viewport, generation)) return false;
 		const snapshot = _getDialogNativeMaterializationSnapshot(container);
-		if (!snapshot || snapshot.viewport !== viewport) return false;
+		if (!snapshot || snapshot.viewport !== viewport ||
+			!_isDialogNativeSourceGenerationCurrent(targetMode, container, viewport, generation)) return false;
+		const orderedIds = Array.from(new Set(Array.from(ids || []).map(normId).filter(Boolean)));
 		_dialogNativeMaterializedSources.set(targetMode, {
 			...snapshot,
 			count: Math.max(0, Number(count) || 0),
+			ids: orderedIds,
+			headIds: orderedIds.slice(0, _DIALOG_NATIVE_TAIL_ANCHOR_COUNT),
+			tailIds: orderedIds.slice(-_DIALOG_NATIVE_TAIL_ANCHOR_COUNT),
+			sourceGeneration: generation,
 			revision: Math.max(0, Number(previous?.revision) || 0) + 1,
-			completedAt: Date.now()
+			completedAt: Date.now(),
+			validatedAt: Date.now()
 		});
 		return true;
 	}
@@ -4924,18 +6219,309 @@
 		const previous = _dialogNativeMaterializedSources.get(targetMode);
 		const current = _getDialogNativeMaterializationSnapshot(container);
 		if (!previous || !current) return false;
+		if (previous.invalidated === true) return false;
 		if (previous.list !== current.list || previous.viewport !== current.viewport) return false;
+		if (previous.sourceGeneration !== _getDialogNativeSourceGeneration(targetMode, current.list, current.viewport)) return false;
 		const previousRange = Math.max(0, previous.scrollHeight - previous.clientHeight);
 		const currentRange = Math.max(0, current.scrollHeight - current.clientHeight);
 		const meaningfulRange = Math.max(600, previous.clientHeight * 1.5);
-		return previousRange < meaningfulRange || currentRange >= previousRange * .6;
+		return previousRange < meaningfulRange || currentRange >= previousRange * .8;
+	}
+
+	function _setDialogNativeAttemptState(mode, patch = {}) {
+		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
+		const previous = _dialogNativeAttemptStates.get(targetMode) || {
+			state: 'idle', reason: '', retryAttempt: 0, retryAt: 0, startedAt: 0, completedAt: 0
+		};
+		const next = { ...previous, ...patch };
+		_dialogNativeAttemptStates.set(targetMode, next);
+		_publishDialogRecentSyncState();
+		return next;
+	}
+
+	function _clearDialogNativeRecoveryRetry(mode) {
+		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
+		const timer = _dialogNativeRecoveryRetryTimers.get(targetMode);
+		if (timer) clearTimeout(timer);
+		_dialogNativeRecoveryRetryTimers.delete(targetMode);
+		_dialogNativeRecoveryRetryAttempts.delete(targetMode);
+		_dialogNativeTraversalFailedModes.delete(targetMode);
+		_dialogNativeTraversalFailedAt.delete(targetMode);
+	}
+
+	function _isDialogNetworkAvailable() {
+		if (window.__PENA_TEST_DIALOG_OFFLINE__ === true) return false;
+		return typeof navigator === 'undefined' || navigator.onLine !== false;
+	}
+
+	function _isDialogNativeRecoveryDeferred(mode) {
+		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
+		if (_dialogNativeRecoveryRetryTimers.has(targetMode)) return true;
+		const attempt = _dialogNativeAttemptStates.get(targetMode);
+		return String(attempt?.state || '') === 'retry' &&
+			Math.max(0, Number(attempt?.retryAt) || 0) > Date.now();
+	}
+
+	function _canBypassDialogNativeRecoveryDelay(reason) {
+		return /^(?:retry:|online-recovery|manual|mode-switch|source-remount)/i.test(String(reason || ''));
+	}
+
+	function _scheduleDialogNativeRecoveryRetry(mode, reason = 'native-retry') {
+		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
+		if (_dialogNativeRecoveryRetryTimers.has(targetMode)) return;
+		const attempt = Math.max(0, Number(_dialogNativeRecoveryRetryAttempts.get(targetMode)) || 0);
+		const delays = _getDialogNativeRecoveryDelays();
+		const delay = delays[Math.min(attempt, delays.length - 1)];
+		const retryAt = Date.now() + delay;
+		_dialogNativeRecoveryRetryAttempts.set(targetMode, attempt + 1);
+		_setDialogNativeAttemptState(targetMode, {
+			state: 'retry', reason, retryAttempt: attempt + 1, retryAt, completedAt: Date.now()
+		});
+		const timer = setTimeout(() => {
+			_dialogNativeRecoveryRetryTimers.delete(targetMode);
+			if (!_isDialogNetworkAvailable() || document.hidden || !isInternalChatsDOM() || _pMode() !== targetMode) {
+				_scheduleDialogNativeRecoveryRetry(targetMode, reason);
+				return;
+			}
+			_scheduleDialogWakeReconcile(`retry:${reason}`, { tailProbe: true, delay: 0 });
+		}, delay);
+		_dialogNativeRecoveryRetryTimers.set(targetMode, timer);
+	}
+
+	function _isDialogNativeBitrixBusy(container) {
+		if (!container) return false;
+		return Array.from(container.querySelectorAll?.('[aria-busy="true"],[data-loading="true"],.bx-im-loader,.ui-loader') || [])
+			.some(node => !node.closest?.('.pena-native-load-guard,.pena-native-original-load-guard') && isVisibleElement(node));
+	}
+
+	async function _verifyDialogNativeMissingIds(mode, ids = []) {
+		const candidates = Array.from(new Set(ids.map(normId).filter(Boolean))).slice(0, _DIALOG_NATIVE_MISSING_VERIFY_LIMIT);
+		if (!candidates.length || !_isDialogNetworkAvailable()) return { available: candidates, unavailable: [] };
+		const mandatory = new Map(candidates.map(id => {
+			const meta = _getDialogRecentMeta(id) || {};
+			return [id, {
+				item: { id, dialogId: meta.restDialogId || id, title: meta.displayTitle || meta.title || '' },
+				mode
+			}];
+		}));
+		await _refreshDialogRecentMandatoryDetails(_dialogRecentMeta, new Set(), mandatory, {
+			forceAccessRetry: true,
+			forceAvailabilityCheck: true
+		});
+		return {
+			available: candidates.filter(id => !_isDialogRecentUnavailable(_getDialogRecentMeta(id))),
+			unavailable: candidates.filter(id => _isDialogRecentUnavailable(_getDialogRecentMeta(id)))
+		};
+	}
+
+	async function _probeDialogNativeTail(mode, container = findContainer()) {
+		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
+		const previous = _dialogNativeMaterializedSources.get(targetMode);
+		const viewport = container ? findInternalScrollContainer(container) : null;
+		if (!previous?.tailIds?.length || !viewport || _dialogNativeOriginalScrollActive || _dialogNativeHealthProbeActive) {
+			return { healthy: false, reason: 'tail-baseline-unavailable' };
+		}
+		const generation = _getDialogNativeSourceGeneration(targetMode, container, viewport);
+		if (!_isDialogNativeSourceGenerationCurrent(targetMode, container, viewport, generation)) {
+			return { healthy: false, reason: 'source-generation-changed' };
+		}
+		const scrollSnapshot = _captureDialogControlNativeScroll();
+		const probeStartedAt = Date.now();
+		const probeFenceCurrent = () => _dialogNativeMaterializedSources.get(targetMode) === previous &&
+			_isDialogNativeSourceGenerationCurrent(targetMode, container, viewport, generation);
+		const originalOverflowAnchor = viewport.style.getPropertyValue('overflow-anchor');
+		const originalOverflowAnchorPriority = viewport.style.getPropertyPriority('overflow-anchor');
+		const originalScrollBehavior = viewport.style.getPropertyValue('scroll-behavior');
+		const originalScrollBehaviorPriority = viewport.style.getPropertyPriority('scroll-behavior');
+		_dialogNativeHealthProbeActive = true;
+		_dialogNativeHealthProbeMode = targetMode;
+		_setDialogNativeAttemptState(targetMode, {
+			state: 'probing', reason: 'resume-tail', startedAt: probeStartedAt, completedAt: 0, retryAt: 0
+		});
+		_syncDialogNativeOriginalLoadUi(container);
+		let observedTailIds = [];
+		let probeSucceeded = false;
+		let probeFailureReason = 'tail-probe-incomplete';
+		try {
+			viewport.style.setProperty('overflow-anchor', 'none', 'important');
+			viewport.style.setProperty('scroll-behavior', 'auto', 'important');
+			_syncDialogNativeTraversalRows(container);
+			for (let sample = 0; sample < 2; sample += 1) {
+				if (sample === 0) {
+					const maxTop = Math.max(0, Number(viewport.scrollHeight) - Number(viewport.clientHeight));
+					viewport.scrollTop = maxTop;
+					viewport.dispatchEvent(new Event('scroll'));
+				}
+				await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+				await new Promise(resolve => setTimeout(resolve, 120));
+				if (!_isDialogNativeSourceGenerationCurrent(targetMode, container, viewport, generation)) {
+					probeFailureReason = 'source-generation-changed';
+					return { healthy: false, reason: 'source-generation-changed' };
+				}
+				const ids = _getDialogControlNativeRows(container)
+					.map(row => normId(getChatIdFromElement(row) || row.dataset?.penaNativeDialogId))
+					.filter(Boolean);
+				// Native rows may be reordered visually by the active PENA sort while Bitrix
+				// still recycles the same bottom window. Tail anchors therefore need to be
+				// found anywhere in that window, not in its last five DOM children.
+				observedTailIds = Array.from(new Set(ids));
+			}
+			const expectedTail = Array.from(new Set(previous.tailIds.map(normId).filter(Boolean)));
+			const currentRange = Math.max(0, Number(viewport.scrollHeight) - Number(viewport.clientHeight));
+			const previousRange = Math.max(0, Number(previous.scrollHeight) - Number(previous.clientHeight));
+			let missing = expectedTail.filter(id => !observedTailIds.includes(id));
+			let healthy = missing.length === 0 && currentRange >= previousRange * .8 &&
+				!_isDialogNativeBitrixBusy(container);
+			if (missing.length && missing.length <= _DIALOG_NATIVE_MISSING_VERIFY_LIMIT) {
+				const verified = await _verifyDialogNativeMissingIds(targetMode, missing);
+				if (!probeFenceCurrent()) {
+					probeFailureReason = 'source-generation-changed';
+					return { healthy: false, reason: probeFailureReason };
+				}
+				// Every saved tail anchor is mandatory. A missing anchor stops blocking the
+				// probe only when an explicit availability request proves it unavailable.
+				missing = verified.available;
+				healthy = missing.length === 0 && observedTailIds.length > 0 &&
+					currentRange >= previousRange * .8 && !_isDialogNativeBitrixBusy(container);
+			}
+			if (!probeFenceCurrent()) {
+				probeFailureReason = 'source-generation-changed';
+				return { healthy: false, reason: probeFailureReason };
+			}
+			if (healthy) {
+				previous.invalidated = false;
+				previous.validatedAt = Date.now();
+				previous.scrollHeight = Math.max(0, Number(viewport.scrollHeight) || 0);
+				previous.clientHeight = Math.max(0, Number(viewport.clientHeight) || 0);
+				previous.tailIds = expectedTail.slice(-_DIALOG_NATIVE_TAIL_ANCHOR_COUNT);
+				probeSucceeded = true;
+				_dialogNativeBackgroundPendingModes.delete(targetMode);
+				_clearDialogNativeRecoveryRetry(targetMode);
+				return { healthy: true, observedTailIds };
+			}
+			previous.invalidated = true;
+			previous.invalidatedReason = missing.length ? 'tail-anchor-missing' : 'tail-range-collapsed';
+			probeFailureReason = previous.invalidatedReason;
+			return { healthy: false, reason: previous.invalidatedReason, missing };
+		} finally {
+			_clearDialogNativeTraversalRows(container);
+			if (originalOverflowAnchor) viewport.style.setProperty('overflow-anchor', originalOverflowAnchor, originalOverflowAnchorPriority);
+			else viewport.style.removeProperty('overflow-anchor');
+			if (originalScrollBehavior) viewport.style.setProperty('scroll-behavior', originalScrollBehavior, originalScrollBehaviorPriority);
+			else viewport.style.removeProperty('scroll-behavior');
+			applyFilters();
+			viewport.scrollTop = Math.max(0, Number(scrollSnapshot?.top) || 0);
+			viewport.scrollLeft = Math.max(0, Number(scrollSnapshot?.left) || 0);
+			viewport.dispatchEvent(new Event('scroll'));
+			await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+			_restoreDialogControlNativeScroll(scrollSnapshot);
+			await new Promise(resolve => requestAnimationFrame(resolve));
+			_restoreDialogControlNativeScroll(scrollSnapshot);
+			await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+			_dialogNativeHealthProbeActive = false;
+			_dialogNativeHealthProbeMode = '';
+			const ownsProbeAttempt = Number(_dialogNativeAttemptStates.get(targetMode)?.startedAt) === probeStartedAt;
+			if (probeSucceeded && ownsProbeAttempt) {
+				_setDialogNativeAttemptState(targetMode, {
+					state: 'idle', reason: 'tail-confirmed', completedAt: Date.now(), retryAttempt: 0, retryAt: 0
+				});
+			} else if (ownsProbeAttempt) {
+				_setDialogNativeAttemptState(targetMode, {
+					state: 'loading', reason: probeFailureReason, completedAt: 0
+				});
+			}
+			_syncDialogNativeOriginalLoadUi(container);
+			_publishDialogRecentSyncState();
+		}
+	}
+
+	async function _runDialogWakeReconcile(reason = 'wake', options = {}) {
+		if (document.hidden || !isInternalChatsDOM()) return { skipped: true };
+		_dialogWakeReconcileCount += 1;
+		_dialogWakeReconcileLastAt = Date.now();
+		_dialogWakeReconcileLastReason = reason;
+		const container = findContainer();
+		const viewport = container ? findInternalScrollContainer(container) : null;
+		if (!container || !viewport) {
+			_scheduleDialogNativeModeLoad('wake-source-ready', 80);
+			return { unavailable: true };
+		}
+		const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
+		_getDialogNativeSourceGeneration(mode, container, viewport);
+		if (options.tailProbe === true) {
+			_setDialogNativeAttemptState(mode, {
+				state: 'probing', reason: String(reason || 'wake-tail'), startedAt: Date.now(), completedAt: 0, retryAt: 0
+			});
+		}
+		await new Promise(resolve => setTimeout(resolve, 120));
+		if (!_isDialogModeCatalogFresh(mode) || !_isDialogNativeMaterializationCurrent(mode, container)) {
+			_scheduleDialogNativeModeLoad('wake-repair', 0);
+			return { repair: true, reason: 'source-invalid' };
+		}
+		if (options.tailProbe === true) {
+			const probe = await _probeDialogNativeTail(mode, container);
+			if (!probe.healthy) {
+				_dialogNativeBackgroundPendingModes.add(mode);
+				_scheduleDialogNativeModeLoad('wake-repair', 0);
+				return { repair: true, reason: probe.reason };
+			}
+		}
+		const now = Date.now();
+		const headStale = !_dialogRecentLastSuccessAt || now - _dialogRecentLastSuccessAt >= _getDialogRecentHeadRefreshMs();
+		if (headStale) {
+			let deltaResult = null;
+			try {
+				deltaResult = await _syncDialogRecentData({
+					full: false, incrementalOnly: true, silent: true, reason: `${reason}-delta`
+				});
+			} catch (error) {
+				deltaResult = { backgroundFailed: true, error: String(error?.message || error || 'metadata-refresh-failed') };
+			}
+			if (deltaResult?.backgroundFailed) {
+				_scheduleDialogNativeRecoveryRetry(mode, /offline/i.test(String(deltaResult.error || '')) ? 'offline' : 'metadata-retry');
+				return { healthy: true, metadataDeferred: true, error: deltaResult.error || '' };
+			}
+		}
+		if (!_isDialogTaskCatalogMetadataFresh(now)) _scheduleDialogTaskCatalogRefresh(`${reason}-tasks`, 0);
+		if (!_dialogRecentLastFullAt || now - _dialogRecentLastFullAt >= _getDialogAuditRefreshMs()) {
+			_scheduleDialogDeepRefresh(`${reason}-metadata`);
+		}
+		_refreshDialogNativeVisibleWindow();
+		return { healthy: true };
+	}
+
+	function _scheduleDialogWakeReconcile(reason = 'wake', options = {}) {
+		// A lifecycle burst may accompany thawing the exact traversal that is already
+		// proving this source. Let that fenced attempt resume; a second reconcile would
+		// only race its completion and start a duplicate walk.
+		if (_dialogNativeOriginalScrollActive || _dialogNativeOriginalScrollPromise) return;
+		if (_isDialogNativeRecoveryDeferred(_pMode()) && !_canBypassDialogNativeRecoveryDelay(reason)) return;
+		_dialogWakeReconcileNeedsTailProbe = _dialogWakeReconcileNeedsTailProbe || options.tailProbe === true;
+		_dialogWakeReconcileLastReason = reason;
+		if (_dialogWakeReconcileTimer || _dialogWakeReconcilePromise) return;
+		_dialogWakeReconcileTimer = setTimeout(() => {
+			_dialogWakeReconcileTimer = null;
+			const reconcileReason = _dialogWakeReconcileLastReason || reason;
+			if (_isDialogNativeRecoveryDeferred(_pMode()) && !_canBypassDialogNativeRecoveryDelay(reconcileReason)) {
+				_dialogWakeReconcileNeedsTailProbe = false;
+				return;
+			}
+			const tailProbe = _dialogWakeReconcileNeedsTailProbe;
+			_dialogWakeReconcileNeedsTailProbe = false;
+			_dialogWakeReconcilePromise = _runDialogWakeReconcile(reconcileReason, { tailProbe })
+				.catch(error => warn('Не удалось сверить ленту после паузы', error?.message || error))
+				.finally(() => {
+					_dialogWakeReconcilePromise = null;
+					if (_dialogWakeReconcileNeedsTailProbe) _scheduleDialogWakeReconcile('coalesced-wake', { tailProbe: true });
+				});
+		}, options.delay === 0 ? 0 : Math.max(0, Number(options.delay) || _getDialogReconcileDebounceMs()));
 	}
 
 	async function _refreshDialogTaskCatalogMetadata(options = {}) {
 		if (!options.force && _isDialogTaskCatalogMetadataFresh()) return { cached: true, complete: true };
 		const taskCatalog = await _syncDialogTaskCatalog({ force: true, deferMerge: true });
 		_commitDialogTaskCatalogResult(taskCatalog);
-		_dialogRecentRepositoryNeedsFullCommit = true;
+		_markDialogRecentRepositoryFullCommit();
 		_scheduleDialogRecentCacheWrite(120);
 		_publishDialogRecentSyncState();
 		return taskCatalog;
@@ -4970,28 +6556,28 @@
 				_scheduleDialogDeepRefresh(reason, _DIALOG_DEEP_REFRESH_USER_IDLE_MS - idleFor + 250);
 				return;
 			}
-			const activeMode = _pMode();
-			if (_dialogNativeTraversalFailedModes.has(activeMode)) return;
-			const activeModeStale = !_isDialogModeCatalogFresh(activeMode);
-			const activeModePending = _dialogNativeBackgroundPendingModes.has(activeMode);
-			if (!activeModeStale && !activeModePending) return;
+			const metadataStale = !_dialogRecentLastFullAt || Date.now() - _dialogRecentLastFullAt >= _getDialogAuditRefreshMs();
+			if (!metadataStale) return;
 			const start = () => {
 				_dialogDeepRefreshIdleHandle = null;
 				if (Date.now() - _dialogNativeLastUserActivityAt < _DIALOG_DEEP_REFRESH_USER_IDLE_MS) {
 					_scheduleDialogDeepRefresh(reason, _DIALOG_DEEP_REFRESH_USER_IDLE_MS);
 					return;
 				}
-				_dialogDeepRefreshPromise = _refreshDialogRecentCatalog({
+				// Full background work is metadata-only. Moving the real Bitrix viewport
+				// without an overlay is never silent and was the main source of wake lag.
+				_dialogDeepRefreshPromise = _runDialogRecentApiCatalogLoad({
 					full: true,
 					force: true,
-					preferApi: false,
 					silent: true,
 					reason
 				}).catch(error => {
 					warn('Не удалось фоново обновить полный каталог', error?.message || error);
 				}).finally(() => {
 					_dialogDeepRefreshPromise = null;
-					if (_dialogNativeBackgroundPendingModes.has(_pMode())) _scheduleDialogDeepRefresh('deep-cache-retry', 60000);
+					if (!_dialogRecentLastFullAt || Date.now() - _dialogRecentLastFullAt >= _getDialogAuditRefreshMs()) {
+						_scheduleDialogDeepRefresh('deep-metadata-retry', 60000);
+					}
 				});
 			};
 			if (typeof requestIdleCallback === 'function') {
@@ -5012,28 +6598,32 @@
 	function _scheduleDialogNativeModeLoad(reason = 'mode-enter', delay = 80) {
 		if (IS_OL_FRAME || window.__PENA_FORCE_REST_CATALOG__ === true) return;
 		if (_isDialogControlNativePassThrough()) {
+			if (_isDialogNativeRecoveryDeferred(_pMode()) && !_canBypassDialogNativeRecoveryDelay(reason)) return;
 			if (_dialogNativeModeLoadTimer) clearTimeout(_dialogNativeModeLoadTimer);
 			_dialogNativeModeLoadTimer = setTimeout(() => {
 				_dialogNativeModeLoadTimer = null;
 				const container = findContainer();
 				if (!container || !isInternalChatsDOM()) return;
 				const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
-				if (_dialogNativeTraversalFailedModes.has(mode)) {
-					const failedAgo = Date.now() - (Number(_dialogNativeTraversalFailedAt.get(mode)) || 0);
-					if (reason !== 'mode-switch' || failedAgo < 2000) return;
-					_dialogNativeTraversalFailedModes.delete(mode);
-					_dialogNativeTraversalFailedAt.delete(mode);
-				}
+				if (_isDialogNativeRecoveryDeferred(mode) && !_canBypassDialogNativeRecoveryDelay(reason)) return;
+				_dialogNativeTraversalFailedModes.delete(mode);
+				_dialogNativeTraversalFailedAt.delete(mode);
 				const catalogFresh = _isDialogModeCatalogFresh(mode);
 				const nativeMaterializationFresh = catalogFresh && _isDialogNativeMaterializationCurrent(mode, container);
 				if (catalogFresh && nativeMaterializationFresh) {
+					const savedPosition = _dialogNativeScrollPositions.get(mode);
+					const viewport = findInternalScrollContainer(container);
+					if (savedPosition && viewport?.isConnected) {
+						viewport.scrollTop = Math.max(0, Number(savedPosition.top) || 0);
+						viewport.scrollLeft = Math.max(0, Number(savedPosition.left) || 0);
+						viewport.dispatchEvent(new Event('scroll'));
+					}
 					if (mode === 'tasks') _scheduleDialogTaskCatalogRefresh('mode-task-metadata');
 					return;
 				}
 				// A complete repository does not keep Bitrix' virtual list alive. When the
 				// native list instance is replaced or its scroll range collapses, repeat the
 				// original one-shot traversal for this source only. Never replace its DOM.
-				_dialogNativePrefetchedModes.delete(mode);
 				if (_dialogRecentRuntimeStarting) {
 					_scheduleDialogNativeModeLoad(reason, 140);
 					return;
@@ -5043,9 +6633,15 @@
 					_scheduleDialogNativeModeLoad(reason, 140);
 					return;
 				}
-				const savedPosition = _dialogNativeScrollPositions.get(mode);
+				// A cold source may reuse only a position sampled while that source was
+				// visible. Hidden Chromium geometry is clamped and never marked trusted.
+				const cachedPosition = _dialogNativeScrollPositions.get(mode);
+				const savedPosition = _dialogNativeMaterializedSources.has(mode) || cachedPosition?.trusted === true
+					? cachedPosition
+					: null;
 				_refreshDialogRecentCatalog({
 					full: true,
+					force: true,
 					reason,
 					...(savedPosition ? { restoreTop: savedPosition.top, restoreLeft: savedPosition.left } : {})
 				}).then(result => {
@@ -5113,7 +6709,7 @@
 			// Visible rows may enrich a catalog only after the current document has
 			// completed its atomic traversal. Otherwise a post-timeout DOM mutation
 			// republishes the partial window that the traversal deliberately rejected.
-			if (_dialogNativePrefetchedModes.has(mode) && !_dialogNativeTraversalFailedModes.has(mode)) {
+			if (_dialogNativePrefetchedModes.has(mode)) {
 				_refreshDialogNativeVisibleWindow();
 			}
 			_dialogControlNativeViewSig = '';
@@ -5137,26 +6733,52 @@
 				if (!document.hidden) _scheduleDialogRecentSync({ delay: 150 });
 			});
 		} else {
-			const scheduleFreshCatalog = reason => {
-				if (document.hidden || !isInternalChatsDOM()) return;
-				const now = Date.now();
-				const headStale = !_dialogRecentLastSuccessAt || now - _dialogRecentLastSuccessAt >= _getDialogRecentHeadRefreshMs();
-				const activeMode = _pMode();
-				const completeCatalogStale = !_isDialogModeCatalogFresh(activeMode, now);
-				const needsCompletion = _dialogNativeBackgroundPendingModes.has(activeMode);
-				if (headStale) {
-					_scheduleDialogRecentSync({ delay: 120, full: false, incrementalOnly: true, silent: true, reason: `${reason}-delta` });
-				}
-				if (!_isDialogTaskCatalogMetadataFresh(now)) _scheduleDialogTaskCatalogRefresh(`${reason}-tasks`);
-				if (completeCatalogStale || needsCompletion) _scheduleDialogDeepRefresh(`${reason}-deep`);
-			};
 			['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(type => {
 				document.addEventListener(type, _noteDialogCatalogUserActivity, { capture: true, passive: true });
 			});
-			_dialogRecentSyncTimer = setInterval(() => scheduleFreshCatalog('periodic-freshness'), _getDialogRecentHeadRefreshMs());
-			window.addEventListener('focus', () => scheduleFreshCatalog('focus-freshness'));
+			_dialogLifecycleLastHeartbeatAt = Date.now();
+			_dialogRecentSyncTimer = setInterval(() => {
+				const now = Date.now();
+				const drifted = now - _dialogLifecycleLastHeartbeatAt >= _getDialogTimerDriftMs();
+				_dialogLifecycleLastHeartbeatAt = now;
+				_scheduleDialogWakeReconcile(drifted ? 'timer-resume' : 'periodic-freshness', { tailProbe: drifted });
+			}, _DIALOG_RECENT_REFRESH_STALE_MS);
+			window.addEventListener('focus', () => _scheduleDialogWakeReconcile('focus-freshness'));
 			document.addEventListener('visibilitychange', () => {
-				if (!document.hidden) scheduleFreshCatalog('visibility-freshness');
+				if (document.hidden) {
+					_dialogLifecycleHiddenAt = Date.now();
+					return;
+				}
+				const hiddenFor = _dialogLifecycleHiddenAt ? Date.now() - _dialogLifecycleHiddenAt : 0;
+				_dialogLifecycleHiddenAt = 0;
+				_dialogLifecycleLastHeartbeatAt = Date.now();
+				_scheduleDialogWakeReconcile('visibility-freshness', { tailProbe: hiddenFor >= _getDialogLongHiddenMs() });
+			});
+			document.addEventListener('freeze', () => {
+				_dialogLifecycleFrozen = true;
+				if (!_dialogLifecycleHiddenAt) _dialogLifecycleHiddenAt = Date.now();
+				if (_dialogNativeOriginalScrollActive && _dialogNativeOriginalScrollMode) {
+					_setDialogNativeAttemptState(_dialogNativeOriginalScrollMode, {
+						state: 'paused', reason: 'page-frozen'
+					});
+				}
+			});
+			document.addEventListener('resume', () => {
+				_dialogLifecycleFrozen = false;
+				_dialogLifecycleLastHeartbeatAt = Date.now();
+				if (_dialogNativeOriginalScrollActive && _dialogNativeOriginalScrollMode) {
+					_setDialogNativeAttemptState(_dialogNativeOriginalScrollMode, {
+						state: 'loading', reason: 'page-resumed'
+					});
+				}
+				_scheduleDialogWakeReconcile('page-resume', { tailProbe: true });
+			});
+			window.addEventListener('pageshow', event => {
+				if (event?.persisted) _scheduleDialogWakeReconcile('pageshow-persisted', { tailProbe: true });
+			});
+			window.addEventListener('online', () => {
+				for (const mode of ['chats', 'tasks']) _clearDialogNativeRecoveryRetry(mode);
+				_scheduleDialogWakeReconcile('online-recovery', { tailProbe: true, delay: 0 });
 			});
 		}
 		_publishDialogRecentSyncState();
@@ -5645,10 +7267,17 @@ let _dialogControlTitleLastSyncAt = 0;
 	const _DIALOG_NATIVE_TRAVERSAL_HARD_TIMEOUT_MS = 120000;
 	const _DIALOG_RECENT_REFRESH_STALE_MS = 60 * 1000;
 	const _DIALOG_CATALOG_CACHE_VERSION = 1;
+	const _DIALOG_API_WATERMARK_VERSION = 1;
 	const _DIALOG_RECENT_FULL_REFRESH_MS = 24 * 60 * 60 * 1000;
 	const _DIALOG_TASK_CATALOG_REFRESH_MS = 15 * 60 * 1000;
 	const _DIALOG_DEEP_REFRESH_IDLE_MS = 10 * 1000;
 	const _DIALOG_DEEP_REFRESH_USER_IDLE_MS = 5 * 1000;
+	const _DIALOG_LONG_HIDDEN_MS = 15 * 60 * 1000;
+	const _DIALOG_TIMER_DRIFT_MS = 2 * 60 * 1000;
+	const _DIALOG_NATIVE_TAIL_ANCHOR_COUNT = 5;
+	const _DIALOG_NATIVE_MISSING_VERIFY_LIMIT = 20;
+	const _DIALOG_NATIVE_RETRY_DELAYS_MS = Object.freeze([1000, 2000, 5000, 15000, 30000, 60000]);
+	const _DIALOG_TASK_CATALOG_PAGE_SIZE = 50;
 	const _DIALOG_TASK_CATALOG_MAX_PAGES = 500;
 	const _DIALOG_RECENT_DELTA_OVERLAP_MS = 60 * 1000;
 	const _DIALOG_RECENT_FULL_MS = 24 * 60 * 60 * 1000;
@@ -5681,7 +7310,16 @@ let _dialogControlTitleLastSyncAt = 0;
 	const _dialogRecentRepositoryDirtyVersions = new Map();
 	let _dialogRecentRepositoryDirtySequence = 0;
 	let _dialogRecentRepositoryNeedsFullCommit = false;
+	let _dialogRecentRepositoryConfirmedReplace = false;
+	let _dialogRecentRepositoryFullCommitRevision = 0;
+	let _dialogRecentRepositoryBaseRevision = null;
+	let _dialogRecentRepositoryBaseSavedAt = 0;
+	const _dialogRecentRepositoryBaseIds = new Set();
+	const _dialogRecentRepositoryBaseFreshness = new Map();
 	let _dialogRecentLegacyMigrationPending = false;
+	let _dialogRecentRepositoryReconnectTimer = null;
+	let _dialogRecentRepositoryReconnectAttempt = 0;
+	let _dialogRecentRepositoryWriteRetryAttempt = 0;
 	const _dialogRecentRepositoryOwnerToken = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 	let _dialogRecentWindowCount = 0;
 	let _dialogRecentControlledOutsideCount = 0;
@@ -5722,11 +7360,21 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogNativeOriginalScrollSilent = false;
 	let _dialogNativeOriginalScrollFinishing = false;
 	let _dialogNativeOriginalScrollMode = '';
+	let _dialogNativeHealthProbeActive = false;
+	let _dialogNativeHealthProbeMode = '';
 	// Every Bitrix page loads each mode once, then the catalog goes idle.
 	const _dialogNativePrefetchedModes = new Set();
 	const _dialogNativeModeCounts = new Map();
 	const _dialogNativeModeLoadedAt = new Map();
 	const _dialogNativeMaterializedSources = new Map();
+	const _dialogNativeExpectedCatalogs = new Map();
+	const _dialogNativeRepositoryExpectedCatalogs = new Map();
+	const _dialogNativeExpectedAuditPromises = new Map();
+	let _dialogNativeExpectedAuditDiscardCount = 0;
+	const _dialogNativeSourceGenerations = new Map();
+	const _dialogNativeAttemptStates = new Map();
+	const _dialogNativeRecoveryRetryTimers = new Map();
+	const _dialogNativeRecoveryRetryAttempts = new Map();
 	const _dialogNativeScrollPositions = new Map();
 	const _dialogNativeModeLoadUnavailableRetries = new Map();
 	const _dialogNativeBackgroundPendingModes = new Set();
@@ -5748,6 +7396,15 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogDeepRefreshIdleHandle = null;
 	let _dialogDeepRefreshPromise = null;
 	let _dialogNativeLastUserActivityAt = 0;
+	let _dialogWakeReconcileTimer = null;
+	let _dialogWakeReconcilePromise = null;
+	let _dialogWakeReconcileCount = 0;
+	let _dialogWakeReconcileLastAt = 0;
+	let _dialogWakeReconcileLastReason = '';
+	let _dialogWakeReconcileNeedsTailProbe = false;
+	let _dialogLifecycleHiddenAt = 0;
+	let _dialogLifecycleLastHeartbeatAt = Date.now();
+	let _dialogLifecycleFrozen = false;
 	let _dialogRecentLastAttemptAt = 0;
 	let _dialogRecentLastSuccessAt = 0;
 	let _dialogRecentLastFullAt = 0;
@@ -8591,35 +10248,51 @@ if (_presetChannel) {
 		const anchor = rows.find(row => {
 			const rect = row.getBoundingClientRect();
 			return rect.bottom > scrollRect.top + 1 && rect.top < scrollRect.bottom - 1;
-		}) || rows[0] || null;
+		}) || null;
 		const anchorRect = anchor?.getBoundingClientRect?.();
-		return {
+		const snapshot = {
 			container,
 			scrollEl,
+			mode: container?.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats',
+			sourceGeneration: (() => {
+				const targetMode = container?.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
+				const source = _dialogNativeSourceGenerations.get(targetMode);
+				return source?.list === container && source?.viewport === scrollEl
+					? Math.max(0, Number(source.generation) || 0)
+					: 0;
+			})(),
 			rowCount: rows.length,
 			top: scrollEl.scrollTop || 0,
 			left: scrollEl.scrollLeft || 0,
 			anchorRow: anchor,
-			anchorId: anchor ? normId(anchor.dataset?.penaNativeDialogId || getChatIdFromElement(anchor)) : '',
+			anchorId: anchor ? normId(getChatIdFromElement(anchor) || anchor.dataset?.penaNativeDialogId) : '',
 			anchorTitle: anchor ? _normalizeDialogControlTitle(getChatTitleFromElement(anchor)) : '',
 			anchorOffset: anchorRect ? anchorRect.top - scrollRect.top : 0
 		};
+		return snapshot;
 	}
 
 	function _restoreDialogControlNativeScroll(snapshot) {
-		if (!snapshot) return;
-		const container = snapshot.container?.isConnected ? snapshot.container : findContainer();
-		const scrollEl = snapshot.scrollEl?.isConnected ? snapshot.scrollEl : _getDialogControlNativeScrollElement(container);
-		if (!scrollEl) return;
+		if (!snapshot) return false;
+		const container = snapshot.container;
+		const scrollEl = snapshot.scrollEl;
+		if (!container?.isConnected || !scrollEl?.isConnected ||
+			_getDialogControlNativeScrollElement(container) !== scrollEl) return false;
+		const targetMode = snapshot.mode === 'tasks' ? 'tasks' : 'chats';
+		const active = window.__PENA_ACTIVE_LIST_CONTEXT__;
+		if (active && (active.mode !== targetMode || active.list !== container)) return false;
+		const snapshotGeneration = Math.max(0, Number(snapshot.sourceGeneration) || 0);
+		if (snapshotGeneration > 0 &&
+			!_isDialogNativeSourceGenerationCurrent(targetMode, container, scrollEl, snapshotGeneration)) return false;
 		const rows = _getDialogControlNativeRows(container)
 			.filter(row => row.style.display !== 'none' && isVisibleElement(row));
 		const canRestoreAnchor = rows.length === Number(snapshot.rowCount);
-		const anchor = canRestoreAnchor && ((snapshot.anchorRow?.isConnected && container?.contains?.(snapshot.anchorRow) ? snapshot.anchorRow : null) || rows.find(row => {
-			const id = normId(row.dataset?.penaNativeDialogId || getChatIdFromElement(row));
+		const anchor = canRestoreAnchor && rows.find(row => {
+			const id = normId(getChatIdFromElement(row) || row.dataset?.penaNativeDialogId);
 			if (snapshot.anchorId && id === snapshot.anchorId) return true;
 			const title = _normalizeDialogControlTitle(getChatTitleFromElement(row));
 			return snapshot.anchorTitle && title === snapshot.anchorTitle;
-		}));
+		});
 		const maxTop = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
 		const originalTop = Math.max(0, Math.min(Number(snapshot.top) || 0, maxTop));
 		let nextTop = originalTop;
@@ -8634,6 +10307,7 @@ if (_presetChannel) {
 		}
 		scrollEl.scrollTop = nextTop;
 		scrollEl.scrollLeft = Math.max(0, Math.min(Number(snapshot.left) || 0, Math.max(0, scrollEl.scrollWidth - scrollEl.clientWidth)));
+		return true;
 	}
 
 	function _resolveDialogControlNativeMount(container = findContainer(), options = {}) {
@@ -11958,11 +13632,15 @@ if (_presetChannel) {
 
 	function _ensureDialogControlManagedList(container, items) {
 		const dialogs = (Array.isArray(items) ? items : []).filter(item => !_isDialogControlFolder(item));
+		const managedMode = container?.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
+		const managedNativeCatalogReady = !_isDialogControlNativePassThrough() && _dialogRecentMeta.size > 0 && (
+			_dialogNativePrefetchActive || _dialogNativePrefetchedModes.has(managedMode)
+		);
 		const ready = _isDialogRecentInteractionBlocked() || _dialogRecentLastFullAt > 0 || (_dialogRecentCacheLoaded && _dialogRecentMeta.size > 0) || (
 			_dialogRecentProgress.phase === 'full-sync' &&
 			_dialogRecentProgress.partial &&
 			_dialogRecentMeta.size > 0
-		);
+		) || managedNativeCatalogReady;
 		const managedTransform = _hasDialogControlManagedTransform();
 		container?.querySelectorAll?.('.pena-native-remote-row').forEach(row => row.remove());
 		if (!container || !ready || !managedTransform) {
@@ -11975,6 +13653,7 @@ if (_presetChannel) {
 				dialogs: dialogs.length,
 				recent: _dialogRecentMeta.size,
 				lastFullAt: _dialogRecentLastFullAt,
+				managedNativeCatalogReady,
 				managedTransform
 			};
 			_clearDialogControlManagedList();
@@ -22027,10 +23706,12 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 			const passThroughMode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
 			_dialogNativePassThroughCaptureHandler = passThroughViewport
 				? () => {
-					if (!_dialogNativeOriginalScrollActive && !_dialogNativeOriginalScrollFinishing) {
+					if (!_dialogNativeOriginalScrollActive && !_dialogNativeOriginalScrollFinishing && !_dialogNativeHealthProbeActive &&
+						isVisibleElement(container) && window.__PENA_ACTIVE_LIST_CONTEXT__?.mode === passThroughMode) {
 						_dialogNativeScrollPositions.set(passThroughMode, {
 							top: Math.max(0, Number(passThroughViewport.scrollTop) || 0),
-							left: Math.max(0, Number(passThroughViewport.scrollLeft) || 0)
+							left: Math.max(0, Number(passThroughViewport.scrollLeft) || 0),
+							trusted: true
 						});
 					}
 					_scheduleDialogNativePassThroughRefresh(180);
@@ -22279,16 +23960,37 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 				onTransition(next, previous) {
 					if (previous?.mode && previous.viewport) {
 						const previousMode = previous.mode === 'tasks' ? 'tasks' : 'chats';
-						const previousVisible = _nativeLifecycleVisibilityResolver(previous.viewport)?.visible === true;
-						const savedPosition = _dialogNativeScrollPositions.get(previousMode);
-						if (previousVisible || !savedPosition) {
+						const previousViewport = findInternalScrollContainer(previous.list) || previous.viewport;
+						const previousVisible = _nativeLifecycleVisibilityResolver(previousViewport)?.visible === true;
+						// Chromium clamps scrollTop through display:none. Never let that hidden
+						// geometry become the first per-mode anchor merely because no cache exists.
+						if (previousVisible) {
 							_dialogNativeScrollPositions.set(previousMode, {
-								top: Math.max(0, Number(previous.viewport.scrollTop) || 0),
-								left: Math.max(0, Number(previous.viewport.scrollLeft) || 0)
+								top: Math.max(0, Number(previousViewport.scrollTop) || 0),
+								left: Math.max(0, Number(previousViewport.scrollLeft) || 0),
+								trusted: true
 							});
 						}
 					}
 				window.__PENA_ACTIVE_LIST_CONTEXT__ = next;
+					if (next?.mode && next?.list && next?.viewport) {
+						const nextMode = next.mode === 'tasks' ? 'tasks' : 'chats';
+						const nextViewport = findInternalScrollContainer(next.list) || next.viewport;
+						_getDialogNativeSourceGeneration(nextMode, next.list, nextViewport);
+						if (_nativeLifecycleVisibilityResolver(nextViewport)?.visible === true &&
+							!_dialogNativeScrollPositions.has(nextMode)) {
+							_dialogNativeScrollPositions.set(nextMode, {
+								top: Math.max(0, Number(nextViewport.scrollTop) || 0),
+								left: Math.max(0, Number(nextViewport.scrollLeft) || 0),
+								trusted: true
+							});
+						}
+					}
+					if (_dialogNativeOriginalScrollActive && previous && (
+						previous.mode !== next?.mode || previous.list !== next?.list || previous.viewport !== next?.viewport
+					)) {
+						_dialogNativeOriginalScrollCancel?.('source-generation-changed');
+					}
 				window.__PENA_INTERACTIONS__?.reset?.('route');
 					_dialogControlEyedropperClickToken = null;
 					if (previous?.list && previous.list !== next.list) {

@@ -61,7 +61,7 @@ page.on('pageerror', error => pageErrors.push(String(error)));
 
 try {
 	await page.goto(`${base}/tests/native-color-regression-harness.html`);
-  await page.locator('.pena-native-folder-switcher').waitFor({ state: 'visible' });
+	await page.locator('.pena-native-folder-switcher').waitFor({ state: 'visible' });
   const target = page.locator('.pena-native-managed-row[data-id="chat225"]');
   const source = page.locator('.pena-native-managed-row[data-id="chat5"]');
 	const plainTarget = page.locator('.pena-native-managed-row[data-id="chat300"]');
@@ -750,7 +750,7 @@ try {
 	assert.equal(warmCacheMaterialization.loadedModes.includes('chats'), false, `Persisted completeness was mistaken for current-document materialization: ${JSON.stringify(warmCacheMaterialization)}`);
 	assert.equal(warmCacheMaterialization.originalActive, true, `Fresh metadata cache skipped the required one-time native materialization: ${JSON.stringify(warmCacheMaterialization)}`);
 	assert.equal(warmCacheMaterialization.overlays, 1, `One-time native materialization has no visible progress state: ${JSON.stringify(warmCacheMaterialization)}`);
-	assert.equal(warmCacheMaterialization.recentCalls, 0, `Native materialization repeated REST recent pagination: ${JSON.stringify(warmCacheMaterialization)}`);
+	assert.equal(warmCacheMaterialization.recentCalls, 1, `Cold document did not run exactly one complete metadata audit: ${JSON.stringify(warmCacheMaterialization)}`);
 	await page.waitForFunction(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
 		return status?.loadedModes?.includes('chats') && !status.originalActive;
@@ -1232,7 +1232,7 @@ try {
 	assert.ok(nativeFirstChats.rows >= 120 && nativeFirstChats.modeCount >= 120,
 		`Native-first loading did not materialize old chat rows: ${JSON.stringify(nativeFirstChats)}`);
 	assert.equal(nativeFirstChats.sourceTop, 32, `Native-first loading moved the user's chat scroll position: ${JSON.stringify(nativeFirstChats)}`);
-	assert.equal(nativeFirstChats.imRecentCalls, 0, `Native-first loading waited for the metadata-only recent API: ${JSON.stringify(nativeFirstChats)}`);
+	assert.ok(nativeFirstChats.imRecentCalls > 0, `Cold native source did not obtain its complete metadata baseline: ${JSON.stringify(nativeFirstChats)}`);
 	assert.ok(nativeFirstChats.taskCalls > 0 && nativeFirstChats.duration < 6000,
 		`Native-first loading missed the fast startup path: ${JSON.stringify(nativeFirstChats)}`);
 	const nativeFirstDateBaseline = await visibleIds(page);
@@ -1251,6 +1251,544 @@ try {
 	await page.mouse.click(410, 20);
 
 	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=80&lazyChunk=100&lazyDelay=3500&initialTop=28&startupBudget=10000`);
+	await page.locator('.recent-host .pena-native-original-load-guard').waitFor({ state: 'visible', timeout: 3000 });
+	await page.waitForTimeout(2400);
+	const delayedColdInterim = await page.evaluate(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.() || {};
+		return {
+			rows: document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]').length,
+			modeCount: status.modeCounts?.chats || 0,
+			loaded: status.loadedModes?.includes('chats') === true,
+			active: status.originalActive === true
+		};
+	});
+	assert.equal(delayedColdInterim.loaded, false,
+		`Cold delayed page was certified before it arrived: ${JSON.stringify(delayedColdInterim)}`);
+	assert.equal(delayedColdInterim.active, true,
+		`Cold delayed page lost its guarded traversal: ${JSON.stringify(delayedColdInterim)}`);
+	assert.ok(delayedColdInterim.rows < 83 && delayedColdInterim.modeCount < 83,
+		`Cold delayed fixture completed before its 3500ms page: ${JSON.stringify(delayedColdInterim)}`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		const rows = document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]').length;
+		return status?.loadedModes?.includes('chats') && !status.originalActive && rows === 83 && status.modeCounts?.chats === 83;
+	}, null, { timeout: 10000 });
+	const delayedColdFinal = await page.evaluate(() => ({
+		rows: document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]').length,
+		ids: Array.from(document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]'), row => row.dataset.id).sort(),
+		modeCount: window.__PENA_NATIVE_PREFETCH__?.status?.().modeCounts?.chats || 0,
+		expectedCatalog: window.__PENA_NATIVE_PREFETCH__?.status?.().modeStates?.chats?.expectedCatalog || null,
+		sourceTop: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0,
+		duration: Math.max(0, Number(window.__PENA_RECENT_SYNC__?.completedAt) - Number(window.__PENA_RECENT_SYNC__?.startedAt)),
+		bottom: window.__PENA_NATIVE_BOTTOM_DEBUG__ || null
+	}));
+	assert.equal(delayedColdFinal.rows, 83, `Cold delayed page lost native IDs: ${JSON.stringify(delayedColdFinal)}`);
+	assert.deepEqual(delayedColdFinal.ids, ['chat225', 'chat5', 'chat77', ...Array.from({ length: 80 }, (_, index) => `chat${1000 + index}`)].sort(),
+		`Cold delayed page did not materialize the exact native ID set: ${JSON.stringify(delayedColdFinal)}`);
+	assert.equal(delayedColdFinal.modeCount, 83, `Cold delayed page published a partial generation: ${JSON.stringify(delayedColdFinal)}`);
+	assert.ok(delayedColdFinal.expectedCatalog?.complete && delayedColdFinal.expectedCatalog?.count === 83 &&
+		Number(delayedColdFinal.expectedCatalog?.auditedAt) > 0 && Number(delayedColdFinal.expectedCatalog?.sourceGeneration) > 0,
+		`Cold delayed page lacked a scoped complete baseline: ${JSON.stringify(delayedColdFinal)}`);
+	assert.equal(delayedColdFinal.sourceTop, 28, `Cold delayed page moved the user anchor: ${JSON.stringify(delayedColdFinal)}`);
+	assert.ok(delayedColdFinal.duration < 10000, `Cold delayed page exceeded the startup target: ${JSON.stringify(delayedColdFinal)}`);
+	assert.ok(delayedColdFinal.bottom?.cold && delayedColdFinal.bottom?.stable && delayedColdFinal.bottom?.expectedProof &&
+		delayedColdFinal.bottom?.expectedCount === 83 && delayedColdFinal.bottom?.missingExpectedCount === 0 &&
+		delayedColdFinal.bottom?.seenCount === 83,
+	`Cold delayed page lacked conservative bottom proof: ${JSON.stringify(delayedColdFinal)}`);
+	const delayedColdSearch = page.locator('.recent-host input[type="search"]');
+	await delayedColdSearch.fill('Заполнитель 80');
+	await page.waitForFunction(() => {
+		const row = document.querySelector('.recent-host [data-id="chat1079"]');
+		return row && getComputedStyle(row).display !== 'none';
+	});
+	await delayedColdSearch.fill('');
+	await page.getByRole('button', { name: /Фильтры/ }).click();
+	const delayedColdFilterPanel = page.locator('.recent-host .pena-native-filter-panel');
+	await delayedColdFilterPanel.getByRole('button', { name: 'Дата', exact: true }).click();
+	await delayedColdFilterPanel.getByRole('button', { name: 'По возрастанию', exact: true }).click();
+	await page.waitForTimeout(180);
+	assert.equal((await visibleIds(page))[0], 'chat1079', 'Oldest delayed dialog is not reachable through chronological sorting');
+	await page.mouse.click(410, 20);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=80&lazyChunk=100&lazyDelay=3500&restDelay=1200&counterFailAfterLive=1&repositoryCache=1&repositorySchema2NoProof=1&repositoryEmpty=1&initialTop=28&startupBudget=10000`);
+	await page.waitForFunction(() => window.__PENA_NATIVE_PREFETCH__?.status?.().originalActive === true);
+	await page.waitForTimeout(1550);
+	assert.equal(await page.evaluate(() => window.applyNativeLiveRecentUpdate('chat1079')), true,
+		'Delayed-audit fixture could not publish its live head update');
+	try {
+		await page.waitForFunction(() => {
+			const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+			return status?.loadedModes?.includes('chats') && !status.originalActive && status.modeCounts?.chats === 83;
+		}, null, { timeout: 10000 });
+	} catch (error) {
+		const diagnostic = await page.evaluate(() => ({
+			status: window.__PENA_NATIVE_PREFETCH__?.status?.() || null,
+			sync: window.__PENA_RECENT_SYNC__ || null,
+			bottom: window.__PENA_NATIVE_BOTTOM_DEBUG__ || null,
+			failure: window.__PENA_NATIVE_FAILURE_DEBUG__ || null,
+			counterFailures: window.nativeCounterFailures || 0,
+			rest: window.nativeRestCalls || []
+		}));
+		throw new Error(`Live union recovery did not finish: ${JSON.stringify(diagnostic)}`, { cause: error });
+	}
+	const liveAuditSearch = page.locator('.recent-host input[type="search"]');
+	await liveAuditSearch.fill('Живое сообщение после старта аудита');
+	await page.waitForTimeout(120);
+	assert.deepEqual(await visibleIds(page), ['chat1079'],
+		'Delayed full audit rolled back the newer live message preview');
+	await liveAuditSearch.fill('');
+	await page.getByRole('button', { name: /Фильтры/ }).click();
+	const liveAuditFilterPanel = page.locator('.recent-host .pena-native-filter-panel');
+	await liveAuditFilterPanel.getByRole('button', { name: 'Дата', exact: true }).click();
+	await liveAuditFilterPanel.getByRole('button', { name: 'По убыванию', exact: true }).click();
+	await page.waitForTimeout(150);
+	assert.equal((await visibleIds(page))[0], 'chat1079',
+		'Delayed full audit rolled back the live message date sort order');
+	await liveAuditFilterPanel.locator('.pena-native-unread-filter').click();
+	await page.waitForTimeout(120);
+	const liveUnreadState = await page.evaluate(() => {
+		const snapshot = window.getNativeRepositorySnapshot?.() || null;
+		const byId = new Map((snapshot?.records || []).map(record => [record.id, record]));
+		return {
+			checked: document.querySelector('.recent-host .pena-native-unread-filter input')?.checked === true,
+			counterFailures: window.nativeCounterFailures || 0,
+			visible: Array.from(document.querySelectorAll('.recent-host [data-id]')).filter(row => getComputedStyle(row).display !== 'none').map(row => row.dataset.id),
+			row: (() => {
+				const row = document.querySelector('.recent-host [data-id="chat1079"]');
+				return row ? { className: row.className, hidden: row.hidden, display: getComputedStyle(row).display } : null;
+			})(),
+			newLiveStored: byId.has('chat8800'),
+			tombstoneAvailability: byId.get('chat8801')?.state?.availability || '',
+			confirmedIds: snapshot?.manifest?.catalogModes?.chats?.confirmedIds || [],
+			catalogCount: window.__PENA_NATIVE_PREFETCH__?.status?.().modeCounts?.chats || 0,
+			materializedCount: window.__PENA_NATIVE_PREFETCH__?.status?.().modeStates?.chats?.materialization?.count || 0,
+			replacementRows: document.querySelectorAll('.pena-native-managed-row,.pena-native-remote-row').length
+		};
+	});
+	assert.ok(liveUnreadState.counterFailures > 0 && liveUnreadState.visible.includes('chat1079'),
+		`Delayed full audit rolled back the live unread counter: ${JSON.stringify(liveUnreadState)}`);
+	const exactLiveRacePhysicalIds = ['chat225', 'chat5', 'chat77', ...Array.from({ length: 80 }, (_, index) => `chat${1000 + index}`)].sort();
+	assert.ok(liveUnreadState.newLiveStored && liveUnreadState.tombstoneAvailability === 'unavailable',
+		`Atomic native commit dropped a mid-pass identity or tombstone: ${JSON.stringify(liveUnreadState)}`);
+	assert.deepEqual(liveUnreadState.confirmedIds.slice().sort(), exactLiveRacePhysicalIds,
+		`Metadata union contaminated physical confirmedIds: ${JSON.stringify(liveUnreadState)}`);
+	assert.equal(liveUnreadState.materializedCount, 83,
+		`Metadata union changed the physical materialization count: ${JSON.stringify(liveUnreadState)}`);
+	assert.equal(liveUnreadState.replacementRows, 0, `Metadata union created replacement rows: ${JSON.stringify(liveUnreadState)}`);
+	await page.mouse.click(410, 20);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&repositoryCache=1&repositoryFullProof=1&restFailCount=20&catalogRows=80&initialTop=28&headTtl=120`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		const manifest = window.getNativeRepositorySnapshot?.()?.manifest;
+		return status?.modeStates?.chats?.attempt?.state === 'retry' && !status.originalActive &&
+			manifest?.apiWatermarkVersion === 1 && manifest.apiCursorAt === 0 && manifest.apiFullAt === 0;
+	}, null, { timeout: 12000 });
+	const nativeOnlyWatermark = await page.evaluate(() => ({
+		manifest: window.getNativeRepositorySnapshot().manifest,
+		sync: window.__PENA_RECENT_SYNC__,
+		recentCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list' || call.method === 'im.recent.get').length
+	}));
+	assert.deepEqual(
+		{
+			version: nativeOnlyWatermark.manifest.apiWatermarkVersion,
+			cursor: nativeOnlyWatermark.manifest.apiCursorAt,
+			full: nativeOnlyWatermark.manifest.apiFullAt,
+			syncCursor: nativeOnlyWatermark.sync.lastSuccessAt,
+			syncFull: nativeOnlyWatermark.sync.lastFullAt
+		},
+		{ version: 1, cursor: 0, full: 0, syncCursor: 0, syncFull: 0 },
+		`Native/repository materialization invented API freshness: ${JSON.stringify(nativeOnlyWatermark)}`
+	);
+	assert.ok(nativeOnlyWatermark.recentCalls > 0,
+		`Cold repository bootstrap did not attempt its mandatory fresh API proof: ${JSON.stringify(nativeOnlyWatermark)}`);
+	await page.evaluate(() => {
+		window.setNativeRecentFailures(0);
+		window.dispatchEvent(new Event('focus'));
+	});
+	try {
+		await page.waitForFunction(previousCalls => {
+			const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+			const manifest = window.getNativeRepositorySnapshot?.()?.manifest;
+			const recentCalls = window.nativeRestCalls.filter(call => call.method === 'im.recent.list' || call.method === 'im.recent.get');
+			return status?.loadedModes?.includes('chats') && !status.originalActive &&
+				status.modeStates?.chats?.materialization?.state === 'ready' && recentCalls.length > previousCalls &&
+				Number(manifest?.apiCursorAt) > 0 && Number(manifest?.apiFullAt) > 0;
+		}, nativeOnlyWatermark.recentCalls, { timeout: 12000 });
+	} catch (error) {
+		const diagnostic = await page.evaluate(() => ({
+			status: window.__PENA_NATIVE_PREFETCH__?.status?.() || null,
+			manifest: window.getNativeRepositorySnapshot?.()?.manifest || null,
+			calls: window.nativeRestCalls,
+			bottom: window.__PENA_NATIVE_BOTTOM_DEBUG__ || null,
+			failure: window.__PENA_NATIVE_FAILURE_DEBUG__ || null
+		}));
+		throw new Error(`Offline cold recovery did not obtain a fresh API proof: ${JSON.stringify(diagnostic)}`, { cause: error });
+	}
+	const initialApiRecovery = await page.evaluate(previousCalls => {
+		const snapshot = window.getNativeRepositorySnapshot();
+		return {
+			calls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list' || call.method === 'im.recent.get').slice(previousCalls),
+			manifest: snapshot.manifest
+		};
+	}, nativeOnlyWatermark.recentCalls);
+	assert.equal(initialApiRecovery.calls[0]?.method, 'im.recent.list',
+		`Legacy/native-only cache used a fabricated delta cursor: ${JSON.stringify(initialApiRecovery)}`);
+	assert.equal(initialApiRecovery.calls.some(call => call.method === 'im.recent.get'), false,
+		`Legacy/native-only cache attempted incremental sync without a proven cursor: ${JSON.stringify(initialApiRecovery)}`);
+	assert.ok(initialApiRecovery.manifest.apiCursorAt <= initialApiRecovery.calls[0].at &&
+		initialApiRecovery.manifest.apiFullAt >= initialApiRecovery.manifest.apiCursorAt,
+		`Complete API recovery persisted an unsafe cursor watermark: ${JSON.stringify(initialApiRecovery)}`);
+
+	await page.waitForTimeout(220);
+	const staleWakeMark = await page.evaluate(() => {
+		const recentCalls = window.nativeRestCalls.filter(call => call.method === 'im.recent.list' || call.method === 'im.recent.get').length;
+		const reconcileCount = window.__PENA_NATIVE_PREFETCH__?.status?.().reconcile?.count || 0;
+		const before = window.getNativeRepositorySnapshot().manifest;
+		window.addNativeOffscreenDelta('chat9900');
+		window.mutateNativeVisibleRow();
+		return { recentCalls, reconcileCount, before };
+	});
+	await page.waitForTimeout(180);
+	const afterVisibleMutationWatermark = await page.evaluate(() => window.getNativeRepositorySnapshot().manifest);
+	assert.deepEqual(
+		{
+			cursor: afterVisibleMutationWatermark.apiCursorAt,
+			full: afterVisibleMutationWatermark.apiFullAt
+		},
+		{ cursor: staleWakeMark.before.apiCursorAt, full: staleWakeMark.before.apiFullAt },
+		`Visible native merge advanced the API watermark: ${JSON.stringify(afterVisibleMutationWatermark)}`
+	);
+	await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+	await page.waitForFunction(mark => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		const snapshot = window.getNativeRepositorySnapshot?.();
+		const recentCalls = (window.nativeRestCalls || []).filter(call => call.method === 'im.recent.list' || call.method === 'im.recent.get');
+		return Number(status?.reconcile?.count) > mark.reconcileCount && !status.apiActive &&
+			recentCalls.length > mark.recentCalls && snapshot?.records?.some(record => record.id === 'chat9900') &&
+			Number(snapshot?.manifest?.apiCursorAt) > 0 && Number(snapshot?.manifest?.apiFullAt) > 0;
+	}, staleWakeMark, { timeout: 12000 });
+	const recoveredApiWatermark = await page.evaluate(mark => {
+		const recentCalls = window.nativeRestCalls.filter(call => call.method === 'im.recent.list' || call.method === 'im.recent.get').slice(mark.recentCalls);
+		const snapshot = window.getNativeRepositorySnapshot();
+		return {
+			recentCalls,
+			manifest: snapshot.manifest,
+			confirmedIds: snapshot.manifest.catalogModes?.chats?.confirmedIds || [],
+			materializedCount: window.__PENA_NATIVE_PREFETCH__?.status?.().modeStates?.chats?.materialization?.count || 0,
+			replacementRows: document.querySelectorAll('.pena-native-managed-row,.pena-native-remote-row').length
+		};
+	}, staleWakeMark);
+	assert.ok(recoveredApiWatermark.recentCalls.some(call => call.method === 'im.recent.get'),
+		`Stale API head did not refresh after visible native mutation: ${JSON.stringify(recoveredApiWatermark)}`);
+	assert.ok(recoveredApiWatermark.manifest.apiCursorAt >= staleWakeMark.before.apiCursorAt &&
+		recoveredApiWatermark.manifest.apiFullAt >= staleWakeMark.before.apiFullAt &&
+		recoveredApiWatermark.manifest.apiFullAt <= recoveredApiWatermark.manifest.apiCursorAt,
+		`Lifecycle API refresh regressed its proven watermark: ${JSON.stringify(recoveredApiWatermark)}`);
+	assert.deepEqual(recoveredApiWatermark.confirmedIds.slice().sort(), exactLiveRacePhysicalIds,
+		`Offscreen API delta contaminated the exact native baseline: ${JSON.stringify(recoveredApiWatermark)}`);
+	assert.equal(recoveredApiWatermark.materializedCount, 83,
+		`Offscreen API delta changed physical materialization: ${JSON.stringify(recoveredApiWatermark)}`);
+	assert.equal(recoveredApiWatermark.replacementRows, 0,
+		`Watermark recovery created replacement rows: ${JSON.stringify(recoveredApiWatermark)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	const staleSubsetStartedAt = Date.now();
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&repositoryCache=1&repositoryFullProof=1&repositoryProofCount=10&lazy=1&catalogRows=80&lazyChunk=100&lazyDelay=3500&initialTop=28&startupBudget=10000`);
+	await page.waitForFunction(() => window.__PENA_NATIVE_PREFETCH__?.status?.().originalActive === true);
+	await page.waitForTimeout(900);
+	const staleSubsetInterim = await page.evaluate(() => ({
+		loaded: window.__PENA_NATIVE_PREFETCH__?.status?.().loadedModes?.includes('chats') === true,
+		materialization: window.__PENA_NATIVE_PREFETCH__?.status?.().modeStates?.chats?.materialization || null,
+		physicalRows: document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]').length,
+		recentCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').map(call => call.offset)
+	}));
+	assert.equal(staleSubsetInterim.loaded, false,
+		`Stale repository subset certified a cold source before its delayed range opened: ${JSON.stringify(staleSubsetInterim)}`);
+	assert.equal(staleSubsetInterim.physicalRows, 10,
+		`Delayed-range fixture did not retain its temporary 10-row physical maximum: ${JSON.stringify(staleSubsetInterim)}`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		const rows = document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]').length;
+		return status?.loadedModes?.includes('chats') && !status.originalActive && rows === 83 && status.modeCounts?.chats === 83;
+	}, null, { timeout: 10000 });
+	const staleSubsetFinal = await page.evaluate(startedAt => ({
+		elapsed: Date.now() - startedAt,
+		ids: Array.from(document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]'), row => row.dataset.id).sort(),
+		top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0,
+		proof: window.__PENA_NATIVE_PREFETCH__?.status?.().expectedCatalogs?.chats || null,
+		revision: window.__PENA_NATIVE_PREFETCH__?.status?.().materializationRevisions?.chats || 0,
+		recentCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').map(call => call.offset),
+		unguardedScrolls: window.nativeScrollAudit.filter(entry =>
+			!entry.loader && Math.abs(Number(entry.top) - Number(window.nativeScrollbarBaseline?.chats?.top)) > .5
+		).length,
+		replacementRows: document.querySelectorAll('.pena-native-managed-row,.pena-native-remote-row').length
+	}), staleSubsetStartedAt);
+	const exactColdPhysicalIds = ['chat225', 'chat5', 'chat77', ...Array.from({ length: 80 }, (_, index) => `chat${1000 + index}`)].sort();
+	assert.deepEqual(staleSubsetFinal.ids, exactColdPhysicalIds,
+		`Fresh API proof did not drive the delayed cold source to its exact full set: ${JSON.stringify(staleSubsetFinal)}`);
+	assert.ok(staleSubsetFinal.proof?.complete && staleSubsetFinal.proof?.kind === 'api' && staleSubsetFinal.proof?.count === 83,
+		`Cold source was not certified by a fresh fenced API audit: ${JSON.stringify(staleSubsetFinal)}`);
+	assert.deepEqual(staleSubsetFinal.recentCalls, [0],
+		`Complete cold API proof was fetched more than once while physical rows were delayed: ${JSON.stringify(staleSubsetFinal)}`);
+	assert.ok(staleSubsetFinal.elapsed < 10000 && staleSubsetFinal.revision === 1,
+		`Delayed cold materialization missed its startup budget or ran more than one pass: ${JSON.stringify(staleSubsetFinal)}`);
+	assert.equal(staleSubsetFinal.top, 28, `Delayed cold recovery moved the scroll anchor: ${JSON.stringify(staleSubsetFinal)}`);
+	assert.equal(staleSubsetFinal.unguardedScrolls, 0, `Delayed cold recovery leaked viewport scroll outside its guard: ${JSON.stringify(staleSubsetFinal)}`);
+	assert.equal(staleSubsetFinal.replacementRows, 0, `Delayed cold recovery created replacement rows: ${JSON.stringify(staleSubsetFinal)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&repositoryCache=1&repositoryFullProof=1&repositoryControlledExtra=1&restFailCount=20&lazy=1&catalogRows=80&lazyChunk=100&lazyDelay=2200&initialTop=28&startupBudget=10000`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.modeStates?.chats?.attempt?.state === 'retry' &&
+			Number(status.modeStates.chats.attempt.retryAt) > Date.now() && !status.originalActive;
+	}, null, { timeout: 10000 });
+	const repositoryCold = await page.evaluate(() => ({
+		loaded: window.__PENA_NATIVE_PREFETCH__?.status?.().loadedModes?.includes('chats') === true,
+		materialization: window.__PENA_NATIVE_PREFETCH__?.status?.().modeStates?.chats?.materialization || null,
+		attempt: window.__PENA_NATIVE_PREFETCH__?.status?.().modeStates?.chats?.attempt || null,
+		ids: Array.from(document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]'), row => row.dataset.id).sort(),
+		top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0,
+		baseline: window.__PENA_NATIVE_PREFETCH__?.status?.().expectedCatalogs?.chats || null,
+		imRecentCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').length,
+		cachedConfirmedIds: window.getNativeRepositorySnapshot?.().manifest?.catalogModes?.chats?.confirmedIds || [],
+		replacementRows: document.querySelectorAll('.pena-native-managed-row,.pena-native-remote-row').length
+	}));
+	assert.deepEqual(repositoryCold.ids, ['chat225', 'chat5', 'chat77', ...Array.from({ length: 80 }, (_, index) => `chat${1000 + index}`)].sort(),
+		`Repository cold recovery lost the exact physical source: ${JSON.stringify(repositoryCold)}`);
+	assert.equal(repositoryCold.loaded, false,
+		`Repository baseline incorrectly certified the current cold DOM while API was unavailable: ${JSON.stringify(repositoryCold)}`);
+	assert.notEqual(repositoryCold.materialization?.state, 'ready',
+		`Offline repository bootstrap wrote a current materialization: ${JSON.stringify(repositoryCold)}`);
+	assert.ok(repositoryCold.baseline?.complete && repositoryCold.baseline?.kind === 'repository' &&
+		repositoryCold.baseline?.count === 83 && repositoryCold.baseline?.reason === 'repository-complete' &&
+		String(repositoryCold.attempt?.reason || '').startsWith('api-proof-unavailable:'),
+		`Schema-v2 repository lower bound was not retained with an API retry: ${JSON.stringify(repositoryCold)}`);
+	assert.deepEqual(repositoryCold.cachedConfirmedIds.slice().sort(), exactColdPhysicalIds,
+		`Failed cold API audit destroyed the last confirmed repository catalog: ${JSON.stringify(repositoryCold)}`);
+	assert.equal(repositoryCold.top, 28, `Repository cold recovery moved the scroll anchor: ${JSON.stringify(repositoryCold)}`);
+	assert.equal(repositoryCold.replacementRows, 0, `Repository controlled extra leaked a replacement row: ${JSON.stringify(repositoryCold)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&catalogRows=80&restShortCap=17&startupBudget=10000`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.loadedModes?.includes('chats') && !status.originalActive && status.modeCounts?.chats === 83;
+	}, null, { timeout: 10000 });
+	const explicitNextAudit = await page.evaluate(() => ({
+		baseline: window.__PENA_NATIVE_PREFETCH__?.status?.().expectedCatalogs?.chats || null,
+		offsets: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').map(call => call.offset),
+		ids: Array.from(document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]'), row => row.dataset.id).sort()
+	}));
+	assert.ok(explicitNextAudit.baseline?.complete && explicitNextAudit.baseline?.count === 83,
+		`Valid short explicit-next pages produced an incomplete proof: ${JSON.stringify(explicitNextAudit)}`);
+	assert.deepEqual(explicitNextAudit.offsets, [0, 17, 34, 51, 68],
+		`Valid recent.next offsets were not followed exactly: ${JSON.stringify(explicitNextAudit)}`);
+	assert.deepEqual(explicitNextAudit.ids,
+		['chat225', 'chat5', 'chat77', ...Array.from({ length: 80 }, (_, index) => `chat${1000 + index}`)].sort(),
+		`Explicit-next REST proof did not preserve the exact native source: ${JSON.stringify(explicitNextAudit)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&catalogRows=430&restCollapsedPages=1&restNoNext=1&startupBudget=10000`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.loadedModes?.includes('chats') && !status.originalActive && status.modeCounts?.chats === 433;
+	}, null, { timeout: 10000 });
+	const collapsedAudit = await page.evaluate(() => ({
+		baseline: window.__PENA_NATIVE_PREFETCH__?.status?.().expectedCatalogs?.chats || null,
+		offsets: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').map(call => call.offset),
+		ids: Array.from(document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]'), row => row.dataset.id).sort()
+	}));
+	assert.ok(collapsedAudit.baseline?.complete && collapsedAudit.baseline?.count === 433,
+		`Collapsed REST pages produced an incomplete proof: ${JSON.stringify(collapsedAudit)}`);
+	assert.deepEqual(collapsedAudit.offsets, [0, 200, 400],
+		`Collapsed no-next recent pages did not follow canonical LIMIT offsets: ${JSON.stringify(collapsedAudit)}`);
+	assert.deepEqual(collapsedAudit.ids, ['chat225', 'chat5', 'chat77', ...Array.from({ length: 430 }, (_, index) => `chat${1000 + index}`)].sort(),
+		`Collapsed REST proof did not preserve the exact native source: ${JSON.stringify(collapsedAudit)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&catalogRows=430&restNoNext=1&startupBudget=10000`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.loadedModes?.includes('chats') && !status.originalActive && status.modeCounts?.chats === 433;
+	}, null, { timeout: 10000 });
+	const canonicalRecentOffsets = await page.evaluate(() => ({
+		baseline: window.__PENA_NATIVE_PREFETCH__?.status?.().expectedCatalogs?.chats || null,
+		offsets: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').map(call => call.offset),
+		ids: Array.from(document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]'), row => row.dataset.id).sort()
+	}));
+	assert.deepEqual(canonicalRecentOffsets.offsets, [0, 200, 400],
+		`im.recent.list did not advance OFFSET by the requested LIMIT: ${JSON.stringify(canonicalRecentOffsets.offsets)}`);
+	assert.ok(canonicalRecentOffsets.baseline?.complete && canonicalRecentOffsets.baseline?.count === 433,
+		`Canonical no-next recent audit did not prove all pages: ${JSON.stringify(canonicalRecentOffsets)}`);
+	assert.deepEqual(canonicalRecentOffsets.ids,
+		['chat225', 'chat5', 'chat77', ...Array.from({ length: 430 }, (_, index) => `chat${1000 + index}`)].sort(),
+		`Canonical no-next recent audit lost the exact native IDs: ${JSON.stringify(canonicalRecentOffsets)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&catalogRows=30&taskCatalogRows=85&taskBogusTotal=1`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.loadedModes?.includes('chats') && !status.originalActive && status.taskCatalogComplete === true;
+	}, null, { timeout: 10000 });
+	const explicitTaskPages = await page.evaluate(() => window.nativeRestCalls
+		.filter(call => call.method === 'tasks.task.list').map(call => call.start));
+	assert.deepEqual(explicitTaskPages, [0, 50],
+		`Task audit trusted bogus total or skipped an explicit next page: ${JSON.stringify(explicitTaskPages)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&catalogRows=30&taskCatalogRows=85&taskNoNext=1&taskBogusTotal=1&taskNoEndMarker=1`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.loadedModes?.includes('chats') && !status.originalActive && status.taskCatalogComplete === true;
+	}, null, { timeout: 10000 });
+	const metadataFreeTaskPages = await page.evaluate(() => window.nativeRestCalls
+		.filter(call => call.method === 'tasks.task.list').map(call => call.start));
+	assert.deepEqual(metadataFreeTaskPages, [0, 50],
+		`Metadata-free task pagination did not use 50-row START windows and the documented short tail: ${JSON.stringify(metadataFreeTaskPages)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&catalogRows=80&restTransientEmptyMs=180&startupBudget=10000`);
+	await page.waitForFunction(() => window.__PENA_NATIVE_PREFETCH__?.status?.().originalActive === true);
+	await page.waitForTimeout(320);
+	const transientEmptyInterim = await page.evaluate(() => ({
+		loaded: window.__PENA_NATIVE_PREFETCH__?.status?.().loadedModes?.includes('chats') === true,
+		proof: window.__PENA_NATIVE_PREFETCH__?.status?.().expectedCatalogs?.chats || null,
+		calls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').length
+	}));
+	assert.equal(transientEmptyInterim.loaded, false,
+		`Transient empty recent page certified a non-empty native source: ${JSON.stringify(transientEmptyInterim)}`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.loadedModes?.includes('chats') && !status.originalActive && status.modeCounts?.chats === 83;
+	}, null, { timeout: 10000 });
+	const transientEmptyFinal = await page.evaluate(() => ({
+		proof: window.__PENA_NATIVE_PREFETCH__?.status?.().expectedCatalogs?.chats || null,
+		calls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').map(call => call.offset),
+		ids: Array.from(document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]'), row => row.dataset.id).sort()
+	}));
+	assert.ok(transientEmptyFinal.proof?.complete && transientEmptyFinal.proof?.count === 83 && transientEmptyFinal.calls.length >= 3,
+		`Transient empty recent audit did not recover with a fresh proof: ${JSON.stringify(transientEmptyFinal)}`);
+	assert.deepEqual(transientEmptyFinal.ids,
+		['chat225', 'chat5', 'chat77', ...Array.from({ length: 80 }, (_, index) => `chat${1000 + index}`)].sort(),
+		`Transient empty recovery lost the exact native IDs: ${JSON.stringify(transientEmptyFinal)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=tasks&nativeCatalog=1&nativeFirst=1&passThrough=1&catalogRows=30&taskCatalogRows=85&taskFirstEmpty=1&startupBudget=10000`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.loadedModes?.includes('tasks') && !status.originalActive && status.taskCatalogComplete === true;
+	}, null, { timeout: 10000 });
+	const transientTaskCatalog = await page.evaluate(() => ({
+		starts: window.nativeRestCalls.filter(call => call.method === 'tasks.task.list').map(call => call.start),
+		proof: window.__PENA_NATIVE_PREFETCH__?.status?.().expectedCatalogs?.tasks || null,
+		ids: Array.from(document.querySelectorAll('.task-host .bx-im-list-container-task__elements > [data-id]'), row => row.dataset.id).sort()
+	}));
+	assert.deepEqual(transientTaskCatalog.starts, [0, 0, 50],
+		`Task catalog accepted its first transient empty page: ${JSON.stringify(transientTaskCatalog)}`);
+	assert.ok(transientTaskCatalog.proof?.complete && transientTaskCatalog.proof?.count === 33,
+		`Task first-empty recovery did not produce a complete fenced proof: ${JSON.stringify(transientTaskCatalog)}`);
+	assert.deepEqual(transientTaskCatalog.ids,
+		['chat225', 'chat5', 'chat77', ...Array.from({ length: 30 }, (_, index) => `chat${1000 + index}`)].sort(),
+		`Task first-empty recovery lost physical IDs: ${JSON.stringify(transientTaskCatalog)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&repositoryCache=1&repositorySchema2NoProof=1&repositoryControlledExtra=1&catalogRows=30`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.loadedModes?.includes('chats') && !status.originalActive && status.modeCounts?.chats === 33;
+	}, null, { timeout: 10000 });
+	const legacyV2Proof = await page.evaluate(() => ({
+		baseline: window.__PENA_NATIVE_PREFETCH__?.status?.().expectedCatalogs?.chats || null,
+		recentCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').length,
+		replacementRows: document.querySelectorAll('.pena-native-managed-row,.pena-native-remote-row').length
+	}));
+	assert.ok(legacyV2Proof.baseline?.reason === 'complete' && legacyV2Proof.baseline?.count === 33 && legacyV2Proof.recentCalls > 0,
+		`Schema-v2 records without confirmedIds were incorrectly trusted: ${JSON.stringify(legacyV2Proof)}`);
+	assert.equal(legacyV2Proof.replacementRows, 0, `Legacy repository extra leaked into native DOM: ${JSON.stringify(legacyV2Proof)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&catalogRows=30&restDelay=1200&startupBudget=10000`);
+	await page.waitForFunction(() => window.__PENA_NATIVE_PREFETCH__?.status?.().originalActive === true);
+	await page.waitForTimeout(180);
+	await page.evaluate(() => window.replaceNativeAuditSource('8'));
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.loadedModes?.includes('chats') && !status.originalActive && status.modeCounts?.chats === 33 && status.expectedAuditDiscards >= 1;
+	}, null, { timeout: 10000 });
+	const fencedAudit = await page.evaluate(() => ({
+		discards: window.__PENA_NATIVE_PREFETCH__?.status?.().expectedAuditDiscards || 0,
+		baseline: window.__PENA_NATIVE_PREFETCH__?.status?.().expectedCatalogs?.chats || null,
+		users: Array.from(new Set(window.nativeRestCalls.filter(call => call.method === 'im.recent.list').map(call => call.userId)))
+	}));
+	assert.ok(fencedAudit.discards >= 1 && fencedAudit.baseline?.complete && fencedAudit.baseline?.sourceGeneration >= 2,
+		`Late audit crossed its user/source fence: ${JSON.stringify(fencedAudit)}`);
+	assert.deepEqual(fencedAudit.users.sort(), ['7', '8'], `Replacement source did not issue a fresh user-scoped audit: ${JSON.stringify(fencedAudit)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&repositoryCache=1&repositoryFullProof=1&repositoryDeletedId=chat9999&restFailCount=20&catalogRows=80&startupBudget=10000`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.modeStates?.chats?.attempt?.state === 'retry' && !status.originalActive;
+	}, null, { timeout: 10000 });
+	await page.waitForTimeout(260);
+	const tombstoneRecovery = await page.evaluate(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return {
+			loaded: status?.loadedModes?.includes('chats') === true,
+			materialization: status?.modeStates?.chats?.materialization || null,
+			attempt: status?.modeStates?.chats?.attempt || null,
+			baseline: status?.expectedCatalogs?.chats || null,
+			verified: window.nativeRestCalls.some(call => call.method === 'im.dialog.get' && call.dialogId === 'chat9999'),
+			confirmedIds: window.getNativeRepositorySnapshot?.().manifest?.catalogModes?.chats?.confirmedIds || [],
+			ids: Array.from(document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]'), row => row.dataset.id).sort()
+		};
+	});
+	assert.ok(!tombstoneRecovery.loaded && tombstoneRecovery.materialization?.state !== 'ready' &&
+		tombstoneRecovery.baseline?.kind === 'repository' &&
+		tombstoneRecovery.baseline?.reason === 'repository-tombstones-reconciled' &&
+		tombstoneRecovery.baseline?.count === 83 && tombstoneRecovery.verified &&
+		String(tombstoneRecovery.attempt?.reason || '').startsWith('api-proof-unavailable:'),
+		`Repository tombstone reconciliation incorrectly certified an offline cold source: ${JSON.stringify(tombstoneRecovery)}`);
+	assert.deepEqual(tombstoneRecovery.confirmedIds.slice().sort(), exactColdPhysicalIds,
+		`Repository tombstone was not persisted while API proof remained pending: ${JSON.stringify(tombstoneRecovery)}`);
+	assert.equal(tombstoneRecovery.ids.includes('chat9999'), false, `Deleted confirmed ID leaked into native rows: ${JSON.stringify(tombstoneRecovery)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&repositoryCache=1&repositorySchema2NoProof=1&apiDeletedId=chat9999&catalogRows=80&startupBudget=10000`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.loadedModes?.includes('chats') && !status.originalActive && status.modeCounts?.chats === 83;
+	}, null, { timeout: 10000 });
+	await page.waitForTimeout(260);
+	const apiTombstoneRecovery = await page.evaluate(() => {
+		const snapshot = window.getNativeRepositorySnapshot?.() || null;
+		const deletedRecord = snapshot?.records?.find(record => record.id === 'chat9999') || null;
+		return {
+			baseline: window.__PENA_NATIVE_PREFETCH__?.status?.().expectedCatalogs?.chats || null,
+			verified: window.nativeRestCalls.some(call => call.method === 'im.dialog.get' && call.dialogId === 'chat9999'),
+			unavailableCount: window.__PENA_RECENT_SYNC__?.unavailableCount || 0,
+			confirmedIds: snapshot?.manifest?.catalogModes?.chats?.confirmedIds || [],
+			deletedAvailability: deletedRecord?.state?.availability || '',
+			ids: Array.from(document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]'), row => row.dataset.id).sort()
+		};
+	});
+	const exactApiTombstoneIds = ['chat225', 'chat5', 'chat77', ...Array.from({ length: 80 }, (_, index) => `chat${1000 + index}`)].sort();
+	assert.ok(apiTombstoneRecovery.baseline?.reason === 'api-tombstones-reconciled' &&
+		apiTombstoneRecovery.baseline?.count === 83 && apiTombstoneRecovery.verified,
+		`Deleted ID in a cached API proof kept the cold generation blocked: ${JSON.stringify(apiTombstoneRecovery)}`);
+	assert.deepEqual(apiTombstoneRecovery.ids, exactApiTombstoneIds,
+		`API-proof tombstone changed the exact physical IDs: ${JSON.stringify(apiTombstoneRecovery)}`);
+	assert.ok(apiTombstoneRecovery.unavailableCount >= 1 && apiTombstoneRecovery.deletedAvailability === 'unavailable',
+		`Late audit metadata resurrected the deleted dialog globally: ${JSON.stringify(apiTombstoneRecovery)}`);
+	assert.deepEqual(apiTombstoneRecovery.confirmedIds.slice().sort(), exactApiTombstoneIds,
+		`Repository confirmedIds retained the deleted API-proof dialog: ${JSON.stringify(apiTombstoneRecovery)}`);
+
+	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=80&lazyChunk=8&lazyDelay=20&initialTop=28&skipRuntime=1&sourceUnavailable=1`);
 	await page.waitForFunction(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
@@ -1267,15 +1805,10 @@ try {
 		managed: document.querySelectorAll('.pena-native-managed-viewport,.pena-native-managed-row,.pena-native-remote-row').length,
 		imRecentCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').length
 	}));
-	assert.deepEqual(initialMountRecovery, {
-		rows: 83,
-		revision: 1,
-		unavailableLeft: 0,
-		sourceTop: initialMountRecovery.baselineTop,
-		baselineTop: initialMountRecovery.baselineTop,
-		managed: 0,
-		imRecentCalls: 0
-	}, `First messenger mount did not recover the native list: ${JSON.stringify(initialMountRecovery)}`);
+	assert.ok(initialMountRecovery.rows === 83 && initialMountRecovery.revision === 1 &&
+		initialMountRecovery.unavailableLeft === 0 && initialMountRecovery.sourceTop === initialMountRecovery.baselineTop &&
+		initialMountRecovery.managed === 0 && initialMountRecovery.imRecentCalls > 0,
+		`First messenger mount did not recover the native list: ${JSON.stringify(initialMountRecovery)}`);
 
 	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=120&lazyChunk=8&lazyDelay=20&initialTop=32&activeFolder=1`);
@@ -1330,7 +1863,7 @@ try {
 		baselineTop: window.nativeScrollbarBaseline?.tasks?.top || 0,
 		imRecentCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').length
 	}));
-	assert.ok(nativeFirstTasks.rows >= 120 && nativeFirstTasks.sourceTop === nativeFirstTasks.baselineTop && nativeFirstTasks.imRecentCalls === 0,
+	assert.ok(nativeFirstTasks.rows >= 120 && nativeFirstTasks.sourceTop === nativeFirstTasks.baselineTop && nativeFirstTasks.imRecentCalls > 0,
 		`Task-mode switch did not complete the native list without a scroll jump: ${JSON.stringify(nativeFirstTasks)}`);
 
 	await page.evaluate(() => localStorage.clear());
@@ -1460,14 +1993,18 @@ try {
 		loaded: window.__PENA_NATIVE_PREFETCH__?.status?.().loadedModes?.includes('chats') || false,
 		modeCount: window.__PENA_NATIVE_PREFETCH__?.status?.().modeCounts?.chats || 0,
 		syncCount: window.__PENA_RECENT_SYNC__?.count || 0,
+		attempt: window.__PENA_NATIVE_PREFETCH__?.status?.().modeStates?.chats?.attempt || null,
 		error: window.__PENA_RECENT_SYNC__?.error || ''
 	}));
 	assert.ok(timedOutNativeTraversal.detailCalls < 10, `Timed-out native loading started a per-dialog REST storm: ${JSON.stringify(timedOutNativeTraversal)}`);
-	assert.equal(timedOutNativeTraversal.background, false, `Timed-out traversal scheduled an invisible continuation: ${JSON.stringify(timedOutNativeTraversal)}`);
+	assert.equal(timedOutNativeTraversal.background, true, `Timed-out traversal did not retain a bounded recovery attempt: ${JSON.stringify(timedOutNativeTraversal)}`);
 	assert.equal(timedOutNativeTraversal.loaded, false, `Timed-out traversal was marked complete: ${JSON.stringify(timedOutNativeTraversal)}`);
 	assert.equal(timedOutNativeTraversal.modeCount, timedOutBaseline.modeCount, `Timed-out traversal published a partial mode count: ${JSON.stringify({ timedOutBaseline, timedOutNativeTraversal })}`);
-	assert.equal(timedOutNativeTraversal.syncCount, timedOutBaseline.syncCount, `Timed-out traversal replaced the atomic catalog: ${JSON.stringify({ timedOutBaseline, timedOutNativeTraversal })}`);
+	assert.ok(timedOutNativeTraversal.syncCount >= timedOutBaseline.syncCount,
+		`Timed-out traversal deleted last-known-good metadata: ${JSON.stringify({ timedOutBaseline, timedOutNativeTraversal })}`);
 	assert.match(timedOutNativeTraversal.error, /конец списка/i, `Timed-out traversal has no recoverable error state: ${JSON.stringify(timedOutNativeTraversal)}`);
+	assert.match(String(timedOutNativeTraversal.attempt?.state || ''), /retry/i, `Timed-out traversal did not enter retry state: ${JSON.stringify(timedOutNativeTraversal)}`);
+	assert.ok(Number(timedOutNativeTraversal.attempt?.retryAt) > Date.now(), `Timed-out traversal has no bounded retry deadline: ${JSON.stringify(timedOutNativeTraversal)}`);
 
 	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=30&lazyChunk=10&lazyDelay=10&initialTop=16&catalogTtl=120&deepIdle=50`);
@@ -1477,20 +2014,20 @@ try {
 	}, null, { timeout: 6000 });
 	const nativeFirstBeforeTtl = await page.evaluate(() => ({
 		loadedAt: window.__PENA_NATIVE_PREFETCH__.status().modeLoadedAt.chats,
-		top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0
-	}));
-	await page.waitForTimeout(180);
-	await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-	await page.waitForFunction(before => {
-		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
-		return !status.originalActive && Number(status.modeLoadedAt?.chats) > before.loadedAt;
-	}, nativeFirstBeforeTtl, { timeout: 6000 });
-	const nativeFirstAfterTtl = await page.evaluate(() => ({
 		top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0,
 		imRecentCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').length
 	}));
+	await page.waitForTimeout(180);
+	await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+	await page.waitForTimeout(420);
+	const nativeFirstAfterTtl = await page.evaluate(() => ({
+		loadedAt: window.__PENA_NATIVE_PREFETCH__.status().modeLoadedAt.chats,
+		top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0,
+		imRecentCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').length
+	}));
+	assert.equal(nativeFirstAfterTtl.loadedAt, nativeFirstBeforeTtl.loadedAt, 'Focus incorrectly expired a proven native materialization');
 	assert.equal(nativeFirstAfterTtl.top, nativeFirstBeforeTtl.top, 'TTL refresh moved the native chat viewport');
-	assert.equal(nativeFirstAfterTtl.imRecentCalls, 0, 'Idle TTL refresh regressed to the metadata-only recent catalog');
+	assert.equal(nativeFirstAfterTtl.imRecentCalls, nativeFirstBeforeTtl.imRecentCalls, 'Idle TTL refresh repeated the full metadata baseline');
 	assert.equal(await page.locator('.recent-host .pena-native-original-load-guard').count(), 0, 'Idle TTL refresh showed a blocking loader');
 
 	await page.evaluate(() => localStorage.clear());
@@ -1801,36 +2338,58 @@ try {
 		const tasks = JSON.parse(localStorage.getItem('pena.dialogControl.v1.tasks') || '[]').filter(item => item.type !== 'folder');
 		return {
 			stored: tasks.length,
+			ids: tasks.map(item => item.id).sort(),
 			oldTask: tasks.find(item => item.id === 'chat404') || null,
 			taskListCalls: window.nativeRestCalls.filter(call => call.method === 'tasks.task.list').length,
-			batchSizes: window.nativeBatchSizes.slice()
+			taskStarts: window.nativeRestCalls.filter(call => call.method === 'tasks.task.list').map(call => call.start)
 		};
 	});
-	assert.ok(deepTaskCatalog.stored >= 265 && deepTaskCatalog.taskListCalls > 0 && deepTaskCatalog.batchSizes.some(size => size >= 5),
+	const exactDeepTaskIds = [
+		'chat225', 'chat5', 'chat77',
+		...Array.from({ length: 260 }, (_, index) => `chat${1000 + index}`),
+		...Array.from({ length: 260 }, (_, index) => `chat${50000 + index}`),
+		'chat101', 'chat102', 'chat303', 'chat404', 'chat405'
+	].sort();
+	assert.equal(deepTaskCatalog.stored, exactDeepTaskIds.length,
 		`Multi-page task catalog stopped before all available tasks: ${JSON.stringify(deepTaskCatalog)}`);
+	assert.deepEqual(deepTaskCatalog.taskStarts, [0, 50, 100, 150, 200, 250],
+		`Task catalog did not follow canonical 50-row START windows: ${JSON.stringify(deepTaskCatalog)}`);
+	assert.deepEqual(deepTaskCatalog.ids, exactDeepTaskIds,
+		`Multi-page task catalog lost or invented task identities: ${JSON.stringify(deepTaskCatalog)}`);
 	assert.equal(deepTaskCatalog.oldTask?.addedAt, Date.parse('2024-01-15T09:00:00.000Z'),
 		`Old task lost its real activity date and cannot be sorted chronologically: ${JSON.stringify(deepTaskCatalog.oldTask)}`);
 
 	await page.evaluate(() => localStorage.clear());
-	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&catalogTtl=120&deepIdle=50`);
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&headTtl=120&taskTtl=120&deepIdle=50`);
 	await page.waitForFunction(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
-		return status?.freshModes?.length === 2 && status.taskCatalogComplete === true && !status.apiActive;
+		return status?.freshModes?.includes('chats') && status.taskCatalogComplete === true && !status.apiActive;
 	}, null, { timeout: 8000 });
 	const beforeTtlRefresh = await page.evaluate(() => ({
 		taskCalls: window.nativeRestCalls.filter(call => call.method === 'tasks.task.list').length,
-		recentCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').length,
+		recentCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list' || call.method === 'im.recent.get').length,
 		taskFetchedAt: window.__PENA_NATIVE_PREFETCH__.status().taskCatalogFetchedAt
 	}));
 	await page.waitForTimeout(180);
 	await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-	await page.waitForFunction(before => {
-		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
-		const taskCalls = window.nativeRestCalls.filter(call => call.method === 'tasks.task.list').length;
-		const recentCalls = window.nativeRestCalls.filter(call => call.method === 'im.recent.list').length;
-		return !status.apiActive && status.freshModes.length === 2 && status.taskCatalogFetchedAt > before.taskFetchedAt &&
-			taskCalls > before.taskCalls && recentCalls > before.recentCalls;
-	}, beforeTtlRefresh, { timeout: 8000 });
+	try {
+		await page.waitForFunction(before => {
+			const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+			const taskCalls = window.nativeRestCalls.filter(call => call.method === 'tasks.task.list').length;
+			const recentCalls = window.nativeRestCalls.filter(call => call.method === 'im.recent.list' || call.method === 'im.recent.get').length;
+			return !status.apiActive && status.freshModes.includes('chats') && status.taskCatalogFetchedAt > before.taskFetchedAt &&
+				taskCalls > before.taskCalls && recentCalls > before.recentCalls;
+		}, beforeTtlRefresh, { timeout: 8000 });
+	} catch (error) {
+		const diagnostic = await page.evaluate(before => ({
+			before,
+			status: window.__PENA_NATIVE_PREFETCH__?.status?.() || null,
+			taskCalls: window.nativeRestCalls.filter(call => call.method === 'tasks.task.list').length,
+			recentCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list' || call.method === 'im.recent.get').length,
+			restCalls: window.nativeRestCalls
+		}), beforeTtlRefresh);
+		throw new Error(`Metadata TTL reconcile did not refresh head/task indexes without rematerializing: ${JSON.stringify(diagnostic)}`, { cause: error });
+	}
 
   await page.goto(`${base}/tests/native-route-harness.html`);
 	await page.locator('.pena-native-folder-switcher').waitFor({ state: 'visible', timeout: 3000 });

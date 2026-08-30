@@ -49,6 +49,7 @@ const suites = [
   'native-cold-start-layout-regression.mjs',
   'native-lifecycle-stress-regression.mjs',
   'native-virtualization-regression.mjs',
+  'native-resume-recovery-regression.mjs',
   'release-integrity.mjs'
 ];
 const requested = new Set(String(process.env.PENA_TEST_SUITES || '').split(',').map(value => value.trim()).filter(Boolean));

@@ -1,0 +1,975 @@
+<!doctype html>
+<html lang="ru" data-user-id="101">
+<head>
+  <meta charset="utf-8">
+  <title>PENA native resume recovery harness</title>
+  <link rel="stylesheet" href="../extension/injected.css">
+  <style>
+    html, body { margin: 0; width: 430px; height: 780px; overflow: hidden; background: #f5f7fa; }
+    body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+    .test-host { width: 390px; height: 740px; display: flex; flex-direction: column; background: #fff; }
+    .test-host[hidden] { display: none; }
+    .test-header { height: 46px; flex: 0 0 46px; padding: 7px 8px; box-sizing: border-box; }
+    .test-header input { width: 100%; height: 32px; box-sizing: border-box; }
+    .test-feed-slot { min-height: 0; flex: 1 1 auto; display: flex; flex-direction: column; }
+    .bx-im-list-container-recent__container,
+    .bx-im-list-container-task__container { width: 390px; min-height: 0; flex: 1 1 auto; display: flex; flex-direction: column; }
+    .bx-im-list-container-recent__scroll-container,
+    .bx-im-list-container-task__scroll-container { width: 390px; min-height: 0; flex: 1 1 auto; overflow-y: scroll; overflow-x: hidden; position: relative; scrollbar-gutter: stable; }
+    .bx-im-list-container-recent__elements,
+    .bx-im-list-container-task__elements { position: relative; width: 370px; flex: 0 0 auto; overflow: hidden; contain: strict; }
+    .bx-im-list-recent-item__wrap,
+    .bx-im-list-item { position: absolute; inset: 0 auto auto 0; width: 370px; height: 58px; box-sizing: border-box; background: #fff; }
+    .bx-im-list-recent-item__container,
+    .bx-im-list-item__container { display: flex; align-items: center; height: 58px; padding: 0 9px; box-sizing: border-box; border-bottom: 1px solid #edf1f5; }
+    .bx-im-list-recent-item__avatar { width: 38px; height: 38px; flex: 0 0 38px; margin-right: 9px; }
+    .bx-im-avatar__container, .test-avatar { display: block; width: 38px; height: 38px; border-radius: 50%; background: #dbe4ee; }
+    .test-copy { min-width: 0; display: flex; flex-direction: column; }
+    .bx-im-chat-title__text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .test-preview { color: #8290a1; font-size: 12px; }
+    #anit-filters, #anit-dialog-control-dock { display: none !important; }
+  </style>
+</head>
+<body>
+  <section class="test-host recent-host" data-mode="chats">
+    <div class="test-header bx-im-list-container-recent__header_container">
+      <input type="search" placeholder="Найти чат">
+    </div>
+    <div class="test-feed-slot"></div>
+  </section>
+  <section class="test-host task-host" data-mode="tasks" hidden>
+    <div class="test-header bx-im-list-container-task__header_container">
+      <input type="search" placeholder="Найти задачу">
+    </div>
+    <div class="test-feed-slot"></div>
+  </section>
+  <script>
+  (() => {
+    const ROW_HEIGHT = 58;
+    const POOL_SIZE = 24;
+    const LONG_PAUSE_MS = 16 * 60 * 1000;
+    const params = new URLSearchParams(location.search);
+    const chatCount = Math.max(72, Number(params.get('chatCount')) || 108);
+    const taskCount = Math.max(72, Number(params.get('taskCount')) || 92);
+    const coldStallMs = Math.max(0, Number(params.get('coldStallMs')) || 0);
+    const coldRangeDelayMs = Math.max(0, Number(params.get('coldRangeDelayMs')) || 0);
+    const coldRangeRows = Math.max(POOL_SIZE, Number(params.get('coldRangeRows')) || 72);
+    const coldBottomFreezeMs = Math.max(0, Number(params.get('coldBottomFreezeMs')) || 0);
+    let dialogDetailDelayMs = Math.max(0, Number(params.get('dialogDetailDelayMs')) || 0);
+    let dialogDetailRequestsStarted = 0;
+    const realDateNow = Date.now.bind(Date);
+    let clockOffset = 0;
+    let lifecycleHidden = false;
+    let lifecycleFrozen = false;
+    let networkOnline = true;
+
+    Date.now = () => realDateNow() + clockOffset;
+    try {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => lifecycleHidden });
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => lifecycleHidden ? 'hidden' : 'visible' });
+    } catch {}
+    try {
+      Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => networkOnline });
+    } catch {}
+
+    window.__PENA_FORCE_REST_CATALOG__ = false;
+    window.__PENA_TEST_API_CATALOG__ = false;
+    window.__PENA_TEST_MANAGED_CATALOG__ = false;
+    window.__PENA_TEST_NATIVE_SCROLL__ = false;
+    window.__PENA_TEST_NATIVE_SCROLL_MAX_MS__ = 10000;
+    window.__PENA_TEST_RECONCILE_DEBOUNCE_MS__ = 35;
+    window.__PENA_TEST_RECOVERY_RETRY_MS__ = [1000, 2000, 5000, 15000, 30000, 60000];
+    window.__PENA_TEST_DIALOG_HEAD_TTL_MS__ = 60 * 1000;
+    window.__PENA_TEST_DIALOG_TASK_TTL_MS__ = 15 * 60 * 1000;
+    window.__PENA_TEST_DIALOG_AUDIT_TTL_MS__ = 24 * 60 * 60 * 1000;
+    window.__PENA_TEST_TIMER_JUMP_MS__ = 2 * 60 * 1000;
+    window.__PENA_TEST_LONG_HIDDEN_MS__ = 15 * 60 * 1000;
+
+    const makeRecords = (mode, count, base) => {
+      const needleIndex = mode === 'tasks' ? 42 : 58;
+      return Array.from({ length: count }, (_, index) => {
+        const numericId = base + index;
+        const id = `chat${numericId}`;
+        const oldest = index === count - 1;
+        const needle = index === needleIndex;
+        return {
+          id,
+          numericId,
+          taskId: mode === 'tasks' ? 90000 + index : 0,
+          title: oldest
+            ? `Самый старый needle ${mode}`
+            : needle
+              ? `Якорный needle ${mode}`
+              : `${mode === 'tasks' ? 'Задача' : 'Диалог'} ${String(index + 1).padStart(3, '0')}`,
+          preview: `Сообщение ${String(index + 1).padStart(3, '0')}`,
+          timestamp: Date.now() - index * 60000,
+          color: index === needleIndex ? '#22c55e' : (oldest ? '#f59e0b' : '')
+        };
+      });
+    };
+
+    const recordsByMode = {
+      chats: makeRecords('chats', chatCount, 1000),
+      tasks: makeRecords('tasks', taskCount, 5000)
+    };
+    const anchorIndexByMode = { chats: 58, tasks: 42 };
+    const anchorOffsetByMode = { chats: 13, tasks: 17 };
+    const folderIdByMode = { chats: 'folder:resume-chats', tasks: 'folder:resume-tasks' };
+    const sources = {};
+    const sourceGenerations = { chats: 0, tasks: 0 };
+    const modeMarks = { chats: null, tasks: null };
+    const restCalls = [];
+    let guardWasVisible = false;
+
+    const modeHost = mode => document.querySelector(mode === 'tasks' ? '.task-host' : '.recent-host');
+    const activeMode = () => document.querySelector('.test-host:not([hidden])')?.dataset.mode || 'chats';
+    const guardVisible = () => Array.from(document.querySelectorAll('[class*="load-guard"],.pena-native-original-load-guard')).some(node => {
+      if (node.hidden) return false;
+      const style = getComputedStyle(node);
+      const rect = node.getBoundingClientRect();
+      return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0 && rect.width > 0 && rect.height > 0;
+    });
+
+    const baseRowMarkup = () => `
+      <div class="bx-im-list-recent-item__container">
+        <span class="bx-im-list-recent-item__avatar"><span class="bx-im-avatar__container"><span class="test-avatar"></span></span></span>
+        <span class="test-copy"><span class="bx-im-chat-title__text"></span><span class="test-preview"></span></span>
+      </div>`;
+
+    const getMaxTop = source => Math.max(0, source.viewport.scrollHeight - source.viewport.clientHeight);
+    const currentEpochKey = source => `${source.generation}:${source.epoch}`;
+    const currentObserved = source => {
+      const key = currentEpochKey(source);
+      if (!source.stats.observedByEpoch.has(key)) source.stats.observedByEpoch.set(key, new Set());
+      return source.stats.observedByEpoch.get(key);
+    };
+
+    const createSource = (mode, options = {}) => {
+      const generation = ++sourceGenerations[mode];
+      const host = modeHost(mode);
+      const slot = host.querySelector('.test-feed-slot');
+      const task = mode === 'tasks';
+      const container = document.createElement('div');
+      container.className = task ? 'bx-im-list-container-task__container' : 'bx-im-list-container-recent__container';
+      container.dataset.sourceGeneration = String(generation);
+      const viewport = document.createElement('div');
+      viewport.className = task ? 'bx-im-list-container-task__scroll-container' : 'bx-im-list-container-recent__scroll-container';
+      viewport.dataset.sourceGeneration = String(generation);
+      const list = document.createElement('div');
+      list.className = task ? 'bx-im-list-container-task__elements' : 'bx-im-list-container-recent__elements';
+      list.dataset.sourceGeneration = String(generation);
+      const initialPhysicalCount = mode === 'chats' && generation === 1 && coldRangeDelayMs > 0
+        ? Math.min(recordsByMode[mode].length, coldRangeRows)
+        : recordsByMode[mode].length;
+      list.style.height = `${initialPhysicalCount * ROW_HEIGHT}px`;
+      viewport.appendChild(list);
+      container.appendChild(viewport);
+      slot.replaceChildren(container);
+
+      const source = {
+        mode,
+        generation,
+        epoch: 0,
+        container,
+        viewport,
+        list,
+        pool: [],
+        renderedStart: -1,
+        renderScheduled: false,
+        renderPendingWhileFrozen: false,
+        everActivated: !host.hidden,
+        desiredTop: Number.isFinite(options.scrollTop)
+          ? Math.max(0, Number(options.scrollTop))
+          : anchorIndexByMode[mode] * ROW_HEIGHT + anchorOffsetByMode[mode],
+        collapsed: false,
+        partialTailLossCount: 0,
+        physicalCount: initialPhysicalCount,
+        probeBottomSeen: false,
+        fullWalkStarted: false,
+        fullWalkSteps: 0,
+        lastWalkTop: 0,
+        materializedThrough: recordsByMode[mode].length - 1,
+        materializationBlocked: false,
+        autoFreezeArmed: false,
+        autoFreezeTriggered: false,
+        suppressInitialAudit: true,
+        stats: {
+          renderPasses: 0,
+          reusePasses: 0,
+          renderAudit: [],
+          scrollAudit: [],
+          heightValues: new Set(),
+          observedByEpoch: new Map(),
+          guardActivations: 0,
+          recoveries: 0,
+          maxConnectedPool: 0,
+          coldStall: {
+            configuredMs: mode === 'chats' && generation === 1 ? coldStallMs : 0,
+            supported: false,
+            consumed: false,
+            startedAt: 0,
+            releasedAt: 0,
+            rejectedWrites: 0
+          },
+          coldRange: {
+            configuredMs: mode === 'chats' && generation === 1 ? coldRangeDelayMs : 0,
+            initialCount: initialPhysicalCount,
+            scheduledAt: 0,
+            releasedAt: 0,
+            bottomFreezeMs: mode === 'chats' && generation === 1 ? coldBottomFreezeMs : 0,
+            freezeStartedAt: 0,
+            thawedAt: 0
+          }
+        }
+      };
+
+      const scrollTopOwner = [Element.prototype, HTMLElement.prototype]
+        .map(owner => ({ owner, descriptor: Object.getOwnPropertyDescriptor(owner, 'scrollTop') }))
+        .find(entry => entry.descriptor?.get && entry.descriptor?.set);
+      if (source.stats.coldStall.configuredMs > 0 && scrollTopOwner) {
+        const nativeScrollTop = scrollTopOwner.descriptor;
+        source.stats.coldStall.supported = true;
+        Object.defineProperty(viewport, 'scrollTop', {
+          configurable: true,
+          get() { return nativeScrollTop.get.call(this); },
+          set(value) {
+            const before = Number(nativeScrollTop.get.call(this)) || 0;
+            const next = Math.max(0, Number(value) || 0);
+            const stall = source.stats.coldStall;
+            const now = performance.now();
+            if (!stall.consumed && next <= 1 && before > 1) {
+              stall.consumed = true;
+              stall.startedAt = now;
+              nativeScrollTop.set.call(this, next);
+              return;
+            }
+            if (stall.startedAt > 0 && !stall.releasedAt && next > before + .5) {
+              if (now - stall.startedAt < stall.configuredMs) {
+                stall.rejectedWrites += 1;
+                return;
+              }
+              stall.releasedAt = now;
+            }
+            nativeScrollTop.set.call(this, next);
+          }
+        });
+      }
+
+      source.pool = Array.from({ length: POOL_SIZE }, (_, slotIndex) => {
+        const row = document.createElement('div');
+        row.className = task ? 'virtual-row bx-im-list-item bx-im-list-recent-item__wrap' : 'virtual-row bx-im-list-recent-item__wrap';
+        row.dataset.poolSlot = String(slotIndex);
+        row.innerHTML = baseRowMarkup();
+        if (task) row.querySelector('.bx-im-list-recent-item__container').className = 'bx-im-list-item__container';
+        list.appendChild(row);
+        return row;
+      });
+
+      const resolveRecord = logicalIndex => {
+        const records = recordsByMode[mode];
+        if (source.collapsed && source.partialTailLossCount > 0 &&
+            logicalIndex >= records.length - source.partialTailLossCount) {
+          return records[logicalIndex - (records.length - source.partialTailLossCount)];
+        }
+        if (!source.collapsed || logicalIndex <= source.materializedThrough) return records[logicalIndex];
+        return records[logicalIndex % Math.min(POOL_SIZE, records.length)];
+      };
+
+      const render = () => {
+        source.renderScheduled = false;
+        if (!source.viewport.isConnected) return;
+        if (lifecycleFrozen) {
+          source.renderPendingWhileFrozen = true;
+          return;
+        }
+        source.renderPendingWhileFrozen = false;
+        const records = recordsByMode[mode];
+        const nextStart = Math.max(0, Math.min(records.length - POOL_SIZE, Math.floor(viewport.scrollTop / ROW_HEIGHT) - 3));
+        if (source.renderedStart >= 0 && source.renderedStart !== nextStart) source.stats.reusePasses += 1;
+        source.renderedStart = nextStart;
+        const observed = currentObserved(source);
+        const renderedIds = [];
+        source.pool.forEach((row, slotIndex) => {
+          const logicalIndex = nextStart + slotIndex;
+          const record = resolveRecord(logicalIndex);
+          row.dataset.id = record.id;
+          row.dataset.dialogId = record.id;
+          row.dataset.logicalIndex = String(logicalIndex);
+          if (task) row.dataset.taskId = String(record.taskId);
+          row.style.transform = `translateY(${logicalIndex * ROW_HEIGHT}px)`;
+          row.querySelector('.bx-im-chat-title__text').textContent = record.title;
+          row.querySelector('.test-preview').textContent = record.preview;
+          observed.add(record.id);
+          renderedIds.push(record.id);
+        });
+        source.stats.renderAudit.push({
+          at: Date.now(),
+          start: nextStart,
+          ids: renderedIds,
+          collapsed: source.collapsed,
+          generation: source.generation,
+          epoch: source.epoch
+        });
+        source.stats.renderPasses += 1;
+        if (viewport.scrollHeight > 0) source.stats.heightValues.add(viewport.scrollHeight);
+        source.stats.maxConnectedPool = Math.max(source.stats.maxConnectedPool, source.pool.filter(row => row.isConnected && row.parentElement === list).length);
+      };
+
+      const scheduleRender = () => {
+        if (source.renderScheduled) return;
+        source.renderScheduled = true;
+        requestAnimationFrame(render);
+      };
+
+      viewport.addEventListener('scroll', () => {
+        const top = Number(viewport.scrollTop) || 0;
+        const maxTop = getMaxTop(source);
+        if (source.suppressInitialAudit && Math.abs(top - source.desiredTop) < 0.6) {
+          source.suppressInitialAudit = false;
+          scheduleRender();
+          return;
+        }
+        source.suppressInitialAudit = false;
+        // Chromium reports zero geometry through a display:none ancestor. That is
+        // not a source-range collapse; only active, measurable samples participate
+        // in the constant-scrollHeight invariant.
+        if (viewport.scrollHeight > 0) source.stats.heightValues.add(viewport.scrollHeight);
+        source.stats.scrollAudit.push({
+          at: Date.now(),
+          top,
+          maxTop,
+          guard: guardVisible(),
+          hidden: lifecycleHidden,
+          frozen: lifecycleFrozen,
+          generation,
+          epoch: source.epoch,
+          origin: String(new Error().stack || '').split('\n').slice(1, 6).map(line => line.trim()).join(' | ')
+        });
+
+        const coldRange = source.stats.coldRange;
+        if (coldRange.configuredMs > 0 && !coldRange.scheduledAt && top >= maxTop - 2) {
+          coldRange.scheduledAt = performance.now();
+          setTimeout(() => {
+            source.physicalCount = recordsByMode[mode].length;
+            list.style.height = `${source.physicalCount * ROW_HEIGHT}px`;
+            coldRange.releasedAt = performance.now();
+          }, coldRange.configuredMs);
+        }
+        if (coldRange.bottomFreezeMs > 0 && coldRange.releasedAt > 0 && !coldRange.freezeStartedAt &&
+            source.physicalCount === recordsByMode[mode].length && top >= maxTop - 2) {
+          coldRange.freezeStartedAt = performance.now();
+          queueMicrotask(() => {
+            setFrozen(true);
+            setTimeout(() => {
+              coldRange.thawedAt = performance.now();
+              setFrozen(false);
+            }, coldRange.bottomFreezeMs);
+          });
+        }
+
+        if (source.collapsed) {
+          if (!source.probeBottomSeen && top >= maxTop - 2) {
+            source.probeBottomSeen = true;
+          } else if (source.probeBottomSeen && !source.fullWalkStarted && top <= 2) {
+            source.fullWalkStarted = true;
+            source.lastWalkTop = top;
+            source.materializedThrough = Math.max(source.materializedThrough, Math.ceil(viewport.clientHeight / ROW_HEIGHT) + 3);
+          } else if (source.fullWalkStarted && top <= 2) {
+            source.lastWalkTop = top;
+            source.fullWalkSteps = 0;
+          } else if (source.fullWalkStarted && top > source.lastWalkTop + 1 && top - source.lastWalkTop <= viewport.clientHeight * 1.6) {
+            source.fullWalkSteps += 1;
+            source.lastWalkTop = top;
+            if (!source.materializationBlocked) {
+              source.materializedThrough = Math.max(
+                source.materializedThrough,
+                Math.min(recordsByMode[mode].length - 1, Math.ceil((top + viewport.clientHeight) / ROW_HEIGHT) + 3)
+              );
+            }
+            if (source.autoFreezeArmed && !source.autoFreezeTriggered && source.fullWalkSteps >= 2) {
+              source.autoFreezeTriggered = true;
+              queueMicrotask(() => setFrozen(true));
+            }
+          }
+          if (source.fullWalkStarted && top >= maxTop - 2 && source.materializedThrough >= recordsByMode[mode].length - 1) {
+            source.partialTailLossCount = 0;
+            source.collapsed = false;
+            source.stats.recoveries += 1;
+          }
+        }
+        scheduleRender();
+      }, { passive: true });
+
+      source.renderNow = render;
+      source.scheduleRender = scheduleRender;
+      sources[mode] = source;
+      viewport.scrollTop = source.desiredTop;
+      render();
+      return source;
+    };
+
+    const seedMode = mode => {
+      const records = recordsByMode[mode];
+      const folderId = folderIdByMode[mode];
+      const anchor = records[anchorIndexByMode[mode]];
+      const oldest = records.at(-1);
+      const stored = [
+        { id: folderId, type: 'folder', title: `Recovery ${mode}`, color: '#f59e0b', icon: 'folder', addedAt: Date.now() },
+        { id: anchor.id, title: anchor.title, folderId, color: anchor.color, addedAt: anchor.timestamp },
+        { id: oldest.id, title: oldest.title, folderId, color: oldest.color, addedAt: oldest.timestamp }
+      ];
+      localStorage.setItem(`pena.dialogControl.v1.${mode}`, JSON.stringify(stored));
+      localStorage.setItem(`pena.dialogControlNative.v1.${mode}`, '1');
+      localStorage.setItem(`pena.dialogControlView.${mode}`, JSON.stringify({ sortMode: 'color', sortDirection: 'asc', unreadOnly: false }));
+      localStorage.setItem(`pena.dialogControlNativeFolder.v1.${mode}`, folderId);
+      localStorage.setItem(`pena.nativeSearchQuery.v1.${mode}`, 'needle');
+      localStorage.setItem(`pena.filters.${mode === 'tasks' ? 'tasks' : 'internal'}`, JSON.stringify({ sortMode: 'native', sortDirection: 'desc', unreadOnly: false }));
+    };
+
+    seedMode('chats');
+    seedMode('tasks');
+    createSource('chats');
+    createSource('tasks');
+
+    const apiEntry = record => ({
+      id: record.id,
+      dialog_id: record.id,
+      chat_id: record.numericId,
+      type: 'chat',
+      title: record.title,
+      avatar: { url: '', color: '#dbe4ee' },
+      counter: 0,
+      message: { id: 500000 - record.numericId, text: record.preview, date: new Date(record.timestamp).toISOString() }
+    });
+    const chatEntries = recordsByMode.chats.map(apiEntry);
+	const taskRecentEntries = recordsByMode.tasks.map(record => ({
+	  ...apiEntry(record),
+	  chat: { type: 'taskstask', entity_type: 'TASKS_TASK', entity_id: String(record.taskId) },
+	  entity_link: { type: 'TASKS', id: String(record.taskId) }
+	}));
+    const taskEntries = recordsByMode.tasks.map(record => ({
+      id: String(record.taskId),
+      title: record.title,
+      chatId: String(record.numericId),
+      allowTimeTracking: 'Y',
+      activityDate: new Date(record.timestamp).toISOString(),
+      changedDate: new Date(record.timestamp).toISOString()
+    }));
+    const success = (data, options = {}) => ({
+      error: () => null,
+      error_description: () => '',
+      data: () => data,
+      next: () => options.next ?? null,
+      total: () => options.total ?? 0
+    });
+    const failure = message => ({
+      error: () => 'NETWORK_ERROR',
+      error_description: () => message,
+      data: () => null,
+      next: () => null,
+      total: () => 0
+    });
+
+    const restResult = (method, callParams = {}) => {
+      restCalls.push({ at: Date.now(), method, online: networkOnline, params: JSON.parse(JSON.stringify(callParams || {})) });
+      if (!networkOnline) return failure('offline');
+      if (method === 'im.recent.list') {
+		const recentEntries = activeMode() === 'tasks' ? taskRecentEntries : chatEntries;
+        const offset = Math.max(0, Number(callParams.OFFSET) || 0);
+        const limit = Math.max(1, Number(callParams.LIMIT) || 200);
+		const page = recentEntries.slice(offset, offset + limit);
+		return success({ items: page, hasMore: offset + page.length < recentEntries.length }, {
+		  next: offset + page.length < recentEntries.length ? offset + page.length : null,
+		  total: recentEntries.length
+        });
+      }
+      if (method === 'im.recent.get') return success({ items: chatEntries.slice(0, 50) }, { total: chatEntries.length });
+      if (method === 'im.counters.get') return success({ CHAT: {}, DIALOG: {}, CHAT_UNREAD: [], DIALOG_UNREAD: [] });
+      if (method === 'tasks.task.list') {
+        const start = Math.max(0, Number(callParams.start) || 0);
+        const page = taskEntries.slice(start, start + 50);
+        return success({ tasks: page }, { next: start + page.length < taskEntries.length ? start + page.length : null, total: taskEntries.length });
+      }
+      if (method === 'tasks.task.get') {
+        const task = taskEntries.find(item => String(item.id) === String(callParams.taskId)) || null;
+        return success({ task });
+      }
+      if (method === 'im.dialog.get') {
+        const wanted = String(callParams.DIALOG_ID || callParams.dialogId || callParams.ID || '');
+        const record = [...recordsByMode.chats, ...recordsByMode.tasks].find(item => item.id === wanted);
+        return success(record ? { dialog: apiEntry(record) } : {});
+      }
+      return success({});
+    };
+
+    window.BX = { rest: { callMethod(method, callParams, callback) {
+      if (method === 'im.dialog.get') dialogDetailRequestsStarted += 1;
+      const respond = () => callback(restResult(method, callParams));
+      setTimeout(respond, method === 'im.dialog.get' ? dialogDetailDelayMs : 18);
+    } } };
+    window.BX24 = { callBatch(calls, callback) {
+      const detailCount = Object.values(calls || {}).filter(call => call?.method === 'im.dialog.get').length;
+      dialogDetailRequestsStarted += detailCount;
+      const respond = () => callback(Object.fromEntries(Object.entries(calls || {}).map(([key, call]) => [
+        key,
+        restResult(call?.method || '', call?.params || {})
+      ])));
+      setTimeout(respond, detailCount > 0 ? dialogDetailDelayMs : 18);
+    } };
+
+    const dispatchPageShow = persisted => {
+      const event = new Event('pageshow');
+      try { Object.defineProperty(event, 'persisted', { configurable: true, value: !!persisted }); } catch {}
+      window.dispatchEvent(event);
+    };
+    const dispatchVisibility = () => document.dispatchEvent(new Event('visibilitychange'));
+    const setHidden = hidden => {
+      lifecycleHidden = !!hidden;
+      dispatchVisibility();
+    };
+    function setFrozen(frozen) {
+      if (frozen) {
+        lifecycleFrozen = true;
+        setHidden(true);
+        document.dispatchEvent(new Event('freeze'));
+        return;
+      }
+      lifecycleFrozen = false;
+      lifecycleHidden = false;
+      document.dispatchEvent(new Event('resume'));
+      dispatchVisibility();
+      sources.chats?.scheduleRender();
+      sources.tasks?.scheduleRender();
+      window.dispatchEvent(new Event('focus'));
+    }
+
+    const getStatus = () => {
+      try { return JSON.parse(JSON.stringify(window.__PENA_NATIVE_PREFETCH__?.status?.() || {})); } catch { return {}; }
+    };
+    const catalogIds = mode => {
+      try {
+        const items = JSON.parse(localStorage.getItem(`pena.dialogControl.v1.${mode}`) || '[]');
+        return items.filter(item => item?.type !== 'folder' && !String(item?.id || '').startsWith('folder:')).map(item => String(item.id)).filter(Boolean).sort();
+      } catch { return []; }
+    };
+    const expectedIds = mode => recordsByMode[mode].map(record => record.id).sort();
+    const arraysEqual = (left, right) => left.length === right.length && left.every((value, index) => value === right[index]);
+    const observedIds = mode => Array.from(currentObserved(sources[mode])).sort();
+    const sourceComplete = mode => arraysEqual(observedIds(mode), expectedIds(mode));
+    const catalogComplete = mode => {
+      const catalog = new Set(catalogIds(mode));
+      return expectedIds(mode).every(id => catalog.has(id));
+    };
+    const attemptSettled = state => !/running|loading|probing|scrolling|verifying|paused|retry|failed|timeout|waiting|scheduled|reconciling/i.test(String(state || ''));
+    const ready = mode => {
+      const modeState = getStatus()?.modeStates?.[mode];
+      const materializationReady = /ready|complete|valid/i.test(String(modeState?.materialization?.state || ''));
+      return materializationReady && attemptSettled(modeState?.attempt?.state) && sourceComplete(mode) && catalogComplete(mode);
+    };
+    const anchor = mode => {
+      const source = sources[mode];
+      const index = Math.max(0, Math.min(recordsByMode[mode].length - 1, Math.floor(source.viewport.scrollTop / ROW_HEIGHT)));
+      return {
+        id: recordsByMode[mode][index].id,
+        index,
+        offset: source.viewport.scrollTop - index * ROW_HEIGHT,
+        scrollTop: source.viewport.scrollTop
+      };
+    };
+    const uiState = mode => {
+      let view = {};
+      try { view = JSON.parse(localStorage.getItem(`pena.dialogControlView.${mode}`) || '{}'); } catch {}
+      return {
+        query: localStorage.getItem(`pena.nativeSearchQuery.v1.${mode}`) || '',
+        inputValue: modeHost(mode).querySelector('input[type="search"]')?.value || '',
+        folderId: localStorage.getItem(`pena.dialogControlNativeFolder.v1.${mode}`) || '',
+        sortMode: view.sortMode || '',
+        sortDirection: view.sortDirection || ''
+      };
+    };
+    const movementSummary = (mode, from = 0) => {
+      const source = sources[mode];
+      const entries = source.stats.scrollAudit.slice(Math.max(0, Number(from) || 0));
+      const positions = entries.map(entry => Math.round(entry.top));
+      let previousTop = from > 0 && source.stats.scrollAudit[from - 1]
+        ? Number(source.stats.scrollAudit[from - 1].top) || 0
+        : source.desiredTop;
+      const changedEntries = entries.filter(entry => {
+        const changed = Math.abs((Number(entry.top) || 0) - previousTop) > .5;
+        previousTop = Number(entry.top) || 0;
+        return changed;
+      });
+      let fullWalks = 0;
+      let collecting = false;
+      let distinct = new Set();
+      for (const entry of entries) {
+        if (entry.top <= 2) {
+          collecting = true;
+          distinct = new Set([Math.round(entry.top)]);
+          continue;
+        }
+        if (!collecting) continue;
+        distinct.add(Math.round(entry.top));
+        if (entry.top >= entry.maxTop - 2) {
+          if (distinct.size >= 5) fullWalks += 1;
+          collecting = false;
+          distinct = new Set();
+        }
+      }
+      let bottomVisits = 0;
+      let previousBottom = false;
+      entries.forEach(entry => {
+        const bottom = entry.top >= entry.maxTop - 2;
+        if (bottom && !previousBottom) bottomVisits += 1;
+        previousBottom = bottom;
+      });
+      return {
+        events: entries.length,
+        movements: changedEntries.length,
+        positions,
+        changedPositions: changedEntries.map(entry => Math.round(entry.top)),
+        uniquePositions: new Set(positions).size,
+        fullWalks,
+        bottomVisits,
+        unguarded: changedEntries.filter(entry => !entry.guard).length,
+        unguardedEvents: entries.filter(entry => !entry.guard).length,
+        unguardedEntries: changedEntries.filter(entry => !entry.guard).map(entry => ({
+          at: entry.at,
+          top: Math.round(entry.top),
+          maxTop: Math.round(entry.maxTop),
+          hidden: entry.hidden,
+          frozen: entry.frozen
+        })),
+        rawUnguardedEntries: entries.filter(entry => !entry.guard).map(entry => ({
+          at: entry.at,
+          top: Math.round(entry.top),
+          maxTop: Math.round(entry.maxTop),
+          hidden: entry.hidden,
+          frozen: entry.frozen
+        })),
+        hiddenMoves: changedEntries.filter(entry => entry.hidden || entry.frozen).length,
+        minTop: positions.length ? Math.min(...positions) : null,
+        maxTop: positions.length ? Math.max(...positions) : null
+      };
+    };
+    const markerGeometry = mode => {
+      const source = sources[mode];
+      const wanted = recordsByMode[mode][anchorIndexByMode[mode]].id;
+      const row = source.pool.find(candidate => candidate.dataset.id === wanted);
+      const avatar = row?.querySelector('.bx-im-avatar__container,.test-avatar');
+      const marker = row?.querySelector('.pena-native-avatar-ring');
+      const avatarRect = avatar?.getBoundingClientRect();
+      const markerRect = marker?.getBoundingClientRect();
+      return {
+        rowFound: !!row,
+        markerFound: !!marker,
+        aligned: !!(avatarRect && markerRect && Math.abs(avatarRect.left - markerRect.left) < 0.2 && Math.abs(avatarRect.right - markerRect.right) < 0.2)
+      };
+    };
+    const sourceState = mode => {
+      const source = sources[mode];
+      return {
+        generation: source.generation,
+        epoch: source.epoch,
+        poolSize: source.pool.length,
+        connectedPool: source.pool.filter(row => row.isConnected && row.parentElement === source.list).length,
+        uniquePoolSlots: new Set(source.pool.map(row => row.dataset.poolSlot)).size,
+        renderedStart: source.renderedStart,
+        renderPasses: source.stats.renderPasses,
+        reusePasses: source.stats.reusePasses,
+        scrollTop: source.viewport.scrollTop,
+        scrollHeight: source.viewport.scrollHeight,
+        clientHeight: source.viewport.clientHeight,
+        expectedScrollHeight: recordsByMode[mode].length * ROW_HEIGHT,
+        heightValues: Array.from(source.stats.heightValues),
+        observedIds: observedIds(mode),
+        expectedIds: expectedIds(mode),
+        catalogIds: catalogIds(mode),
+        sourceComplete: sourceComplete(mode),
+        catalogComplete: catalogComplete(mode),
+        collapsed: source.collapsed,
+        partialTailLossCount: source.partialTailLossCount,
+        physicalCount: source.physicalCount,
+        materializedThrough: source.materializedThrough,
+        materializationBlocked: source.materializationBlocked,
+        fullWalkStarted: source.fullWalkStarted,
+        fullWalkSteps: source.fullWalkSteps,
+        autoFreezeTriggered: source.autoFreezeTriggered,
+        recoveries: source.stats.recoveries,
+        scrollAuditLength: source.stats.scrollAudit.length,
+        scrollAuditTail: source.stats.scrollAudit.slice(-12),
+        coldStall: {
+          ...source.stats.coldStall,
+          elapsedMs: source.stats.coldStall.releasedAt > 0
+            ? source.stats.coldStall.releasedAt - source.stats.coldStall.startedAt
+            : 0
+        },
+        coldRange: {
+          ...source.stats.coldRange,
+          elapsedMs: source.stats.coldRange.releasedAt > 0
+            ? source.stats.coldRange.releasedAt - source.stats.coldRange.scheduledAt
+            : 0,
+          freezeElapsedMs: source.stats.coldRange.thawedAt > 0
+            ? source.stats.coldRange.thawedAt - source.stats.coldRange.freezeStartedAt
+            : 0
+        },
+        guardActivations: source.stats.guardActivations,
+        anchor: anchor(mode),
+        ui: uiState(mode),
+        overflowY: getComputedStyle(source.viewport).overflowY,
+        replacementRows: modeHost(mode).querySelectorAll('.pena-native-managed-row,.pena-native-remote-row,.pena-native-managed-list').length,
+        nativeRows: source.list.querySelectorAll('.virtual-row').length
+      };
+    };
+
+    const sampleGuard = () => {
+      const visible = guardVisible();
+      if (visible && !guardWasVisible) sources[activeMode()]?.stats && (sources[activeMode()].stats.guardActivations += 1);
+      guardWasVisible = visible;
+      Object.values(sources).forEach(source => {
+        if (source.viewport.scrollHeight > 0) source.stats.heightValues.add(source.viewport.scrollHeight);
+        source.stats.maxConnectedPool = Math.max(source.stats.maxConnectedPool, source.pool.filter(row => row.isConnected && row.parentElement === source.list).length);
+      });
+    };
+    setInterval(sampleGuard, 16);
+
+    window.__resumeHarness = Object.freeze({
+      constants: Object.freeze({ rowHeight: ROW_HEIGHT, poolSize: POOL_SIZE, longPauseMs: LONG_PAUSE_MS }),
+      state() {
+        return {
+          now: Date.now(),
+          activeMode: activeMode(),
+          hidden: lifecycleHidden,
+          frozen: lifecycleFrozen,
+          online: networkOnline,
+          status: getStatus(),
+          guardVisible: guardVisible(),
+          nativeScrollDebug: JSON.parse(JSON.stringify(window.__PENA_NATIVE_SCROLL_DEBUG__ || {})),
+          nativeBottomDebug: JSON.parse(JSON.stringify(window.__PENA_NATIVE_BOTTOM_DEBUG__ || {})),
+          dialogDetailRequestsStarted,
+          restCalls: restCalls.map(call => ({ at: call.at, method: call.method, online: call.online })),
+          modes: { chats: sourceState('chats'), tasks: sourceState('tasks') },
+          visibleSwitchers: Array.from(document.querySelectorAll('.pena-native-folder-switcher')).filter(node => {
+            const rect = node.getBoundingClientRect();
+            const style = getComputedStyle(node);
+            return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+          }).length,
+          switchers: document.querySelectorAll('.pena-native-folder-switcher').length
+        };
+      },
+      ready,
+      sourceComplete,
+      catalogComplete,
+      movementSummary,
+      mark(mode = activeMode()) {
+        const source = sources[mode];
+        const mark = {
+          mode,
+          generation: source.generation,
+          audit: source.stats.scrollAudit.length,
+          renders: source.stats.renderAudit.length,
+          recoveries: source.stats.recoveries,
+          guardActivations: source.stats.guardActivations,
+          restCalls: restCalls.length,
+          reconcileCount: Number(getStatus()?.reconcile?.count) || 0,
+          anchor: anchor(mode)
+        };
+        modeMarks[mode] = mark;
+        return mark;
+      },
+      delta(mode = activeMode(), mark = modeMarks[mode]) {
+        const source = sources[mode];
+        const expectedTail = recordsByMode[mode].slice(-5).map(record => record.id);
+        const bottomStart = Math.max(0, recordsByMode[mode].length - POOL_SIZE);
+        const renders = source.stats.renderAudit.slice(mark?.renders || 0);
+        const bottomRenders = renders.filter(entry => entry.start === bottomStart);
+        let renderFullWalks = 0;
+        let collectingRenderWalk = false;
+        let renderStarts = new Set();
+        renders.forEach(entry => {
+          if (entry.start === 0) {
+            collectingRenderWalk = true;
+            renderStarts = new Set([0]);
+            return;
+          }
+          if (!collectingRenderWalk) return;
+          renderStarts.add(entry.start);
+          if (entry.start === bottomStart) {
+            if (renderStarts.size >= 5) renderFullWalks += 1;
+            collectingRenderWalk = false;
+            renderStarts = new Set();
+          }
+        });
+        return {
+          movement: movementSummary(mode, mark?.audit || 0),
+          materialization: {
+            renders: renders.length,
+            uniqueStarts: new Set(renders.map(entry => entry.start)).size,
+            fullWalks: renderFullWalks
+          },
+          tail: {
+            expected: expectedTail,
+            bottomRenders: bottomRenders.length,
+            confirmedRenders: bottomRenders.filter(entry => expectedTail.every(id => entry.ids.includes(id))).length,
+            missingRenders: bottomRenders.filter(entry => !expectedTail.every(id => entry.ids.includes(id))).length,
+            verificationIds: restCalls.slice(mark?.restCalls || 0)
+              .filter(call => call.method === 'im.dialog.get')
+              .map(call => String(call.params?.DIALOG_ID || call.params?.dialogId || ''))
+              .filter(Boolean)
+          },
+          guards: source.stats.guardActivations - (mark?.guardActivations || 0),
+          recoveries: source.stats.recoveries - (mark?.recoveries || 0),
+          restCalls: restCalls.length - (mark?.restCalls || 0),
+          reconcileCount: (Number(getStatus()?.reconcile?.count) || 0) - (mark?.reconcileCount || 0),
+          anchor: anchor(mode)
+        };
+      },
+      setUserAnchor(mode, index = anchorIndexByMode[mode], offset = anchorOffsetByMode[mode]) {
+        const source = sources[mode];
+        source.viewport.scrollTop = Math.max(0, Number(index) * ROW_HEIGHT + Number(offset));
+        source.viewport.dispatchEvent(new Event('scroll'));
+        source.renderNow();
+        return anchor(mode);
+      },
+      ordinaryEventBurst() {
+        window.dispatchEvent(new Event('focus'));
+        window.dispatchEvent(new Event('resize'));
+        setHidden(true);
+        clockOffset += 100;
+        setHidden(false);
+        window.dispatchEvent(new Event('focus'));
+        window.dispatchEvent(new Event('resize'));
+      },
+      longPauseBurst() {
+        setHidden(true);
+        clockOffset += LONG_PAUSE_MS;
+        lifecycleHidden = false;
+        document.dispatchEvent(new Event('resume'));
+        dispatchPageShow(true);
+        dispatchVisibility();
+        window.dispatchEvent(new Event('focus'));
+        window.dispatchEvent(new Event('resize'));
+      },
+      collapseSameNode(mode = activeMode(), options = {}) {
+        const source = sources[mode];
+        source.epoch += 1;
+        source.collapsed = true;
+        source.probeBottomSeen = false;
+        source.fullWalkStarted = false;
+        source.fullWalkSteps = 0;
+        source.lastWalkTop = 0;
+        source.materializedThrough = POOL_SIZE - 1;
+        source.partialTailLossCount = 0;
+        source.autoFreezeArmed = options.autoFreeze === true;
+        source.autoFreezeTriggered = false;
+        currentObserved(source).clear();
+        source.renderNow();
+        return sourceState(mode);
+      },
+      partialTailLoss(mode = activeMode(), count = 1) {
+        const source = sources[mode];
+        const lossCount = Math.max(1, Math.min(2, Math.floor(Number(count) || 1)));
+        source.epoch += 1;
+        source.collapsed = true;
+        source.partialTailLossCount = lossCount;
+        source.probeBottomSeen = false;
+        source.fullWalkStarted = false;
+        source.fullWalkSteps = 0;
+        source.lastWalkTop = 0;
+        source.materializedThrough = recordsByMode[mode].length - 1;
+        source.autoFreezeArmed = false;
+        source.autoFreezeTriggered = false;
+        currentObserved(source).clear();
+        source.renderNow();
+        return {
+          count: lossCount,
+          missingIds: recordsByMode[mode].slice(-lossCount).map(record => record.id)
+        };
+      },
+      replaceSource(mode = activeMode(), options = {}) {
+        const previous = sources[mode];
+        const top = Number.isFinite(options.scrollTop) ? Number(options.scrollTop) : previous.viewport.scrollTop;
+        return sourceState(createSource(mode, { scrollTop: top }).mode);
+      },
+      blockMaterialization(mode = activeMode(), blocked = true) {
+        sources[mode].materializationBlocked = !!blocked;
+        return sources[mode].materializationBlocked;
+      },
+      setTraversalTimeout(ms) {
+        window.__PENA_TEST_NATIVE_SCROLL_MAX_MS__ = Math.max(250, Number(ms) || 10000);
+        return window.__PENA_TEST_NATIVE_SCROLL_MAX_MS__;
+      },
+      setDialogDetailDelay(ms) {
+        dialogDetailDelayMs = Math.max(0, Number(ms) || 0);
+        return dialogDetailDelayMs;
+      },
+      freeze() { setFrozen(true); },
+      thaw() { setFrozen(false); },
+      goOffline() {
+        networkOnline = false;
+        window.dispatchEvent(new Event('offline'));
+      },
+      goOnline() {
+        networkOnline = true;
+        window.dispatchEvent(new Event('online'));
+      },
+      switchMode(mode) {
+        const next = mode === 'tasks' ? 'tasks' : 'chats';
+        const previous = activeMode();
+        modeHost('chats').hidden = next !== 'chats';
+        modeHost('tasks').hidden = next !== 'tasks';
+        // Make Chromium's display:none clamp deterministic for the cold task
+        // bounce. Production must restore the trusted 2453px mode anchor under
+        // the full-load guard, never the hidden physical zero captured later.
+        if (previous === 'tasks' && next === 'chats' && !sourceComplete('tasks')) {
+          sources.tasks.viewport.scrollTop = 0;
+          sources.tasks.viewport.dispatchEvent(new Event('scroll'));
+        }
+        const source = sources[next];
+        if (source && !source.everActivated) {
+          source.everActivated = true;
+          source.viewport.scrollTop = source.desiredTop;
+          source.viewport.dispatchEvent(new Event('scroll'));
+          source.renderNow();
+        }
+        return next;
+      },
+      setSearch(mode, value) {
+        const input = modeHost(mode).querySelector('input[type="search"]');
+        input.focus();
+        input.value = String(value || '');
+        input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: String(value || '') }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        return uiState(mode);
+      },
+      oldest(mode = activeMode()) {
+        const record = recordsByMode[mode].at(-1);
+        return { id: record.id, title: record.title };
+      },
+      revealOldest(mode = activeMode()) {
+        const oldest = recordsByMode[mode].at(-1);
+        const source = sources[mode];
+        source.viewport.scrollTop = getMaxTop(source);
+        source.viewport.dispatchEvent(new Event('scroll'));
+        source.renderNow();
+        return oldest.id;
+      },
+      oldestVisible(mode = activeMode()) {
+        const id = recordsByMode[mode].at(-1).id;
+        const row = sources[mode].pool.find(candidate => candidate.dataset.id === id);
+        if (!row) return false;
+        const style = getComputedStyle(row);
+        return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0;
+      },
+      markerGeometry,
+      advanceClock(ms) { clockOffset += Math.max(0, Number(ms) || 0); return Date.now(); }
+    });
+  })();
+  </script>
+  <script src="../extension/native-catalog.js"></script>
+  <script src="../extension/native-interaction-state.js"></script>
+  <script src="../extension/native-time-control.js"></script>
+  <script src="../extension/native-lifecycle.js"></script>
+  <script src="../extension/injected.js"></script>
+</body>
+</html>

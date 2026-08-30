@@ -167,6 +167,11 @@ const runCacheFallbackScenario = async () => {
     await page.evaluate(() => {
 	  const cache = window.__recentHarness.repositoryCache();
 	  cache.manifest.savedAt = Date.now();
+	  // Simulate a pre-watermark manifest: its records remain a usable fallback,
+	  // but its legacy timestamps cannot suppress the mandatory full API audit.
+	  delete cache.manifest.apiWatermarkVersion;
+	  delete cache.manifest.apiCursorAt;
+	  delete cache.manifest.apiFullAt;
 	  cache.records.forEach(record => {
 		record.unread = { count: 99, marked: true, mention: true, fetchedAt: Date.now() - 3600000 };
 		record.state = { ...(record.state || {}), unreadCount: 99, hasUnread: true, hasLater: true, hasMention: true, counterFetchedAt: Date.now() - 3600000 };
@@ -175,10 +180,25 @@ const runCacheFallbackScenario = async () => {
     });
     await page.goto(`${server.baseUrl}/tests/recent-sync-harness.html?initialerror=1&countererror=1`);
     await page.locator('.pena-native-folder-switcher').waitFor({ state: 'visible', timeout: 5000 });
-    await page.waitForFunction(() => {
-      const sync = window.__PENA_RECENT_SYNC__;
-      return sync && !sync.inFlight && !sync.error && !!sync.backgroundError && sync.count === 401 && sync.ready;
-    }, null, { timeout: 10000 });
+    try {
+      await page.waitForFunction(() => {
+        const sync = window.__PENA_RECENT_SYNC__;
+        return sync && !sync.inFlight && sync.phase === 'error' && !!sync.error && sync.count === 401 && sync.ready;
+      }, null, { timeout: 10000 });
+    } catch (error) {
+      const diagnostic = await page.evaluate(() => ({
+        sync: window.__PENA_RECENT_SYNC__ || null,
+        calls: window.__recentHarness.calls(),
+        repositoryManifest: window.__recentHarness.repositoryCache()?.manifest || null,
+        managed: window.__recentHarness.managedItems().length
+      }));
+      throw new Error(`Legacy repository fallback did not settle after mandatory full API failure: ${JSON.stringify(diagnostic)}`, { cause: error });
+    }
+    const legacyRecentCalls = await page.evaluate(() => window.__recentHarness.calls().filter(call => ['im.recent.list', 'im.recent.get'].includes(call.method)));
+    assert.ok(
+      legacyRecentCalls.some(call => call.method === 'im.recent.list' && Number(call.offset || 0) === 0),
+      `Legacy manifest suppressed its mandatory full API audit: ${JSON.stringify(legacyRecentCalls)}`
+    );
     assertExactIds(await managedIds(page), expectedIds(1, 401), 'Cached catalog was not restored after REST failure');
     await activateAscending(page);
     const avatar = page.locator('.pena-native-remote-row[data-id="chat9"] .pena-native-remote-avatar');
@@ -197,7 +217,8 @@ const runCacheFallbackScenario = async () => {
 	const cachedAvatar = await avatarState(avatar);
 	assert.match(cachedAvatar.src, /avatar-9\.png/);
 	assert.equal(cachedAvatar.imageHidden && cachedAvatar.initialsHidden && !cachedAvatar.loading, false, 'Broken cached avatar left an empty circle');
-	assert.equal(await page.locator('.pena-native-sync-chip').isHidden(), true, 'Background cache refresh failure exposed a blocking retry chip');
+	assert.equal(await page.locator('.pena-native-load-guard').isHidden(), true, 'Legacy full-audit failure blocked the usable cached catalog');
+	assert.equal(await page.evaluate(() => !!document.querySelector('.pena-native-managed-list')?.inert), false, 'Legacy full-audit failure left the cached catalog inert');
 	await page.waitForFunction(() => {
 		const counter = document.querySelector('.pena-native-remote-row[data-id="chat9"] .pena-native-remote-counter');
 		return counter?.textContent === '99' && !counter.hidden;
@@ -318,7 +339,8 @@ const runCacheFirstFolderScenario = async () => {
 	await waitForInitialSync(page);
 	await page.waitForFunction(() => {
 	  const cache = window.__recentHarness.repositoryCache();
-	  return cache?.manifest?.schema === 1 && cache.manifest.lastFullAt > 0 && cache.records?.length === 401;
+	  return cache?.manifest?.schema === 2 && cache.manifest.revision > 0 &&
+		cache.manifest.apiWatermarkVersion === 1 && cache.manifest.apiFullAt > 0 && cache.records?.length === 401;
 	});
 	await page.locator('.pena-native-folder-tab[title="Сохранить"]').click();
 	await page.waitForFunction(() => document.querySelector('.pena-native-managed-list')?._penaManagedState?.view?.length === 1);
@@ -376,6 +398,135 @@ const runUserScopedCacheScenario = async () => {
   }
 };
 
+const runRepositoryReconnectMergeScenario = async () => {
+  if (onlyScenario && !'repository reconnect preserves live dirty catalog'.includes(onlyScenario)) return;
+  const context = await browser.newContext({ viewport: { width: 420, height: 760 } });
+  const page = await context.newPage();
+  const pageErrors = collectPageErrors(page);
+  try {
+	await page.goto(`${server.baseUrl}/tests/recent-sync-harness.html?repositoryreconnect=1`);
+	await page.locator('.pena-native-folder-switcher').waitFor({ state: 'visible', timeout: 5000 });
+	await waitForInitialSync(page);
+	assertExactIds(await managedIds(page), expectedIds(1, 401), 'Offline catalog was incomplete before repository reconnect');
+	await page.waitForFunction(() => {
+	  const cache = window.__recentHarness.repositoryCache();
+	  return cache?.manifest?.revision === 3 && cache.records?.length === 402;
+	}, null, { timeout: 10000 });
+	const state = await page.evaluate(() => ({
+	  repository: window.__recentHarness.repositoryCache(),
+	  events: window.__recentHarness.repositoryEvents(),
+	  managed: window.__recentHarness.managedItems()
+	}));
+	const repositoryIds = state.repository.records.map(record => String(record.id)).sort();
+	assertExactIds(repositoryIds, [...expectedIds(1, 401), 'chat8000'].sort(), 'Reconnect/CAS merge lost live or concurrent records');
+	assert.equal(repositoryIds.includes('chat9999'), false, 'Reconnect restored a stale record tombstoned by the newer revision');
+	assert.equal(state.repository.records.find(record => record.id === 'chat9')?.title, 'Начальный 09', 'Older repository metadata replaced the fresher live record');
+	assertExactIds(state.managed.map(item => String(item.id)).sort(), expectedIds(1, 401), 'Repository reconnect replaced the live managed catalog');
+	const commits = state.events.filter(event => event.command === 'catalog.commit');
+	assert.deepEqual(commits.map(event => event.baseRevision), [1, 2], 'The production bridge did not resolve the reconnect revision conflict');
+	assert.ok(commits.every(event => event.confirmedReplace && event.recordCount === 401), `Reconnect weakened the exact snapshot: ${JSON.stringify(commits)}`);
+	assert.deepEqual(pageErrors, [], 'repository reconnect: uncaught browser errors');
+	console.log('PASS recent sync: repository reconnect preserves live dirty catalog');
+  } catch (error) {
+	failures.push(`repository reconnect preserves live dirty catalog: ${error?.message || error}`);
+	console.error(`FAIL recent sync: repository reconnect preserves live dirty catalog\n  ${error?.stack || error}`);
+  } finally {
+	await context.close();
+  }
+  if (onlyScenario) process.exit(failures.length ? 1 : 0);
+};
+
+const runRepositoryManifestMonotonicMergeScenario = async () => {
+  if (onlyScenario && !'repository reconnect keeps live lifecycle state'.includes(onlyScenario)) return;
+  const context = await browser.newContext({ viewport: { width: 420, height: 760 } });
+  const page = await context.newPage();
+  const pageErrors = collectPageErrors(page);
+  try {
+	await page.goto(`${server.baseUrl}/tests/recent-sync-harness.html?repositorymanifestreconnect=1`);
+	await page.locator('.pena-native-folder-switcher').waitFor({ state: 'visible', timeout: 5000 });
+	await waitForInitialSync(page);
+	await page.evaluate(() => { window.__PENA_FORCE_REST_CATALOG__ = false; });
+	const filters = await openFilters(page);
+	await filters.locator('.pena-native-sync-refresh').click();
+	await page.waitForFunction(() => {
+	  const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+	  return status?.modeCounts?.chats === 401 && !status.apiActive;
+	}, null, { timeout: 10000 });
+	const materialized = await page.evaluate(async () => {
+	  window.__PENA_TEST_NATIVE_COLD_BOTTOM_SETTLE_MS__ = 1000;
+	  const result = await window.__PENA_NATIVE_PREFETCH__.runOriginal({
+		force: true,
+		reason: 'manifest-reconnect-baseline'
+	  });
+	  return { result, status: window.__PENA_NATIVE_PREFETCH__.status() };
+	});
+	assert.equal(materialized.result.incomplete, undefined, `Baseline native materialization failed: ${JSON.stringify(materialized.result)}`);
+	assert.equal(materialized.status.modeStates.chats.materialization.state, 'ready', 'Baseline native materialization was not recorded');
+	assert.equal(materialized.status.modeStates.chats.materialization.count, 401, 'Baseline native materialization has the wrong count');
+	assert.ok(Number(materialized.status.materializationRevisions.chats) > 0, 'Baseline native materialization has no revision');
+	const liveCatalog = await page.evaluate(() => window.__PENA_NATIVE_PREFETCH__.status());
+	assert.equal(liveCatalog.modeCounts.chats, 401, 'Live catalog did not reach 401 dialogs before reconnect');
+	assert.ok(Number(liveCatalog.modeLoadedAt.chats) > 0, 'Live catalog has no completion timestamp before reconnect');
+
+	const failed = await page.evaluate(async () => {
+	  window.__PENA_TEST_DIALOG_OFFLINE__ = true;
+	  window.__PENA_TEST_NATIVE_SCROLL_MAX_MS__ = 250;
+	  window.__PENA_TEST_NATIVE_COLD_BOTTOM_SETTLE_MS__ = 1000;
+	  const result = await window.__PENA_NATIVE_PREFETCH__.runOriginal({
+		force: true,
+		reason: 'manifest-reconnect-failure'
+	  });
+	  return { result, status: window.__PENA_NATIVE_PREFETCH__.status() };
+	});
+	assert.equal(failed.result.incomplete, true, `Failed native materialization unexpectedly completed: ${JSON.stringify(failed.result)}`);
+	assert.ok(failed.status.backgroundModes.includes('chats'), 'Failed materialization did not leave chats pending');
+	assert.ok(failed.status.failedModes.includes('chats'), 'Failed materialization marker was not retained');
+	assert.equal(failed.status.modeStates.chats.attempt.state, 'retry', 'Failed materialization did not retain its retry attempt');
+	assert.equal(failed.status.modeCounts.chats, 401, 'Failed materialization weakened the live catalog count');
+	assert.equal(failed.status.modeStates.chats.materialization.state, 'ready', 'Failed attempt erased the last valid materialization');
+	assert.equal(failed.status.materializationRevisions.chats, liveCatalog.materializationRevisions.chats, 'Failed attempt replaced the last valid materialization');
+	const failedAttempt = failed.status.modeStates.chats.attempt;
+
+	assert.equal(await page.evaluate(() => window.__recentHarness.connectRepository()), true, 'Repository bridge was already connected');
+	await page.waitForFunction(() => {
+	  const cache = window.__recentHarness.repositoryCache();
+	  return cache?.manifest?.revision === 3 && cache.records?.length === 402;
+	}, null, { timeout: 10000 });
+	const state = await page.evaluate(() => ({
+	  repository: window.__recentHarness.repositoryCache(),
+	  events: window.__recentHarness.repositoryEvents(),
+	  managed: window.__recentHarness.managedItems(),
+	  lifecycle: window.__PENA_NATIVE_PREFETCH__.status()
+	}));
+	assert.equal(state.lifecycle.modeCounts.chats, 401, 'Old manifest count=350 replaced the newer live count=401');
+	assert.ok(Number(state.lifecycle.modeLoadedAt.chats) >= Number(liveCatalog.modeLoadedAt.chats), 'Old manifest lowered the live loadedAt');
+	assert.ok(state.lifecycle.backgroundModes.includes('chats'), 'Repository reconnect cleared current backgroundPending');
+	assert.ok(state.lifecycle.failedModes.includes('chats'), 'Repository reconnect cleared the current failed materialization');
+	assert.equal(state.lifecycle.modeStates.chats.attempt.state, 'retry', 'Repository reconnect cleared the current retry state');
+	assert.ok(Number(state.lifecycle.modeStates.chats.attempt.retryAt) >= Number(failedAttempt.retryAt), 'Repository reconnect rewound the current retry attempt');
+	assert.equal(state.lifecycle.modeStates.chats.materialization.state, 'ready', 'Repository reconnect cleared the last valid materialization');
+	assert.equal(state.lifecycle.modeStates.chats.materialization.count, 401, 'Repository reconnect weakened the materialized catalog');
+	assert.equal(state.lifecycle.materializationRevisions.chats, liveCatalog.materializationRevisions.chats, 'Repository reconnect replaced the current materialization revision');
+	assert.equal(state.repository.manifest.catalogModes.chats.count, 401, 'CAS commit persisted the stale repository mode count');
+	assert.ok(Number(state.repository.manifest.catalogModes.chats.loadedAt) >= Number(liveCatalog.modeLoadedAt.chats), 'CAS commit persisted the stale repository loadedAt');
+	const repositoryIds = state.repository.records.map(record => String(record.id)).sort();
+	assertExactIds(repositoryIds, [...expectedIds(1, 401), 'chat8000'].sort(), 'Monotonic manifest merge lost live or concurrent records');
+	assert.equal(repositoryIds.includes('chat9999'), false, 'Monotonic manifest merge restored the stale tombstone');
+	assertExactIds(state.managed.map(item => String(item.id)).sort(), expectedIds(1, 401), 'Repository reconnect replaced the live managed catalog');
+	const commits = state.events.filter(event => event.command === 'catalog.commit');
+	assert.deepEqual(commits.map(event => event.baseRevision), [1, 2], 'Monotonic manifest merge did not complete the production CAS retry');
+	assert.ok(commits.every(event => event.confirmedReplace && event.recordCount === 401), `Reconnect weakened the exact live snapshot: ${JSON.stringify(commits)}`);
+	assert.deepEqual(pageErrors, [], 'repository manifest reconnect: uncaught browser errors');
+	console.log('PASS recent sync: repository reconnect keeps live lifecycle state');
+  } catch (error) {
+	failures.push(`repository reconnect keeps live lifecycle state: ${error?.message || error}`);
+	console.error(`FAIL recent sync: repository reconnect keeps live lifecycle state\n  ${error?.stack || error}`);
+  } finally {
+	await context.close();
+  }
+  if (onlyScenario) process.exit(failures.length ? 1 : 0);
+};
+
 try {
   await runInitialProgressScenario();
   await runCacheFallbackScenario();
@@ -384,6 +535,8 @@ try {
 	await runMandatoryPageTailScenario();
 	await runCacheFirstFolderScenario();
 	await runUserScopedCacheScenario();
+	await runRepositoryManifestMonotonicMergeScenario();
+	await runRepositoryReconnectMergeScenario();
 	await runScenario('inaccessible controlled page-tail dialog is quarantined', async page => {
 	  await page.waitForFunction(() => window.__PENA_RECENT_SYNC__?.unavailableCount === 1 && !window.__PENA_RECENT_SYNC__?.detailsInFlight);
 	  const calls = await page.evaluate(() => window.__recentHarness.calls());

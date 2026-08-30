@@ -7,9 +7,12 @@
   const _logoUrl = chrome.runtime.getURL('icons/logo.png');
   const _releaseVersion = chrome.runtime.getManifest().version;
   const _enabledKey = 'pena.extension.enabled';
-  const _repositoryChannel = 'pena.dialog.repository.v1';
+  const _repositoryChannel = 'pena.dialog.repository.v2';
   const _repositoryRequestEvent = 'pena-dialog-repository-request';
   const _repositoryResponseEvent = 'pena-dialog-repository-response';
+  const _repositoryChangedEvent = 'pena-dialog-repository-changed';
+  const _repositoryConnectionEvent = 'pena-dialog-repository-connection';
+  const _repositoryManifestPattern = /^pena\.dialog\.catalog\.v1\.([^~]+)~([^.]*)\.manifest$/;
   let _rootPromise = null;
   let _pendingEnabled = true;
   const _waitForRoot = () => {
@@ -47,6 +50,32 @@
     }));
   };
 
+  const _publishRepositoryConnection = connected => {
+    document.dispatchEvent(new CustomEvent(_repositoryConnectionEvent, {
+      detail: JSON.stringify({ connected: connected === true, at: Date.now() })
+    }));
+  };
+
+  const _publishRepositoryChange = (key, change) => {
+    const match = String(key || '').match(_repositoryManifestPattern);
+    if (!match || !change?.newValue) return;
+    let portalHost = '';
+    let userId = '';
+    try {
+      portalHost = decodeURIComponent(match[1]).toLowerCase();
+      userId = decodeURIComponent(match[2]);
+    } catch { return; }
+    if (!portalHost || portalHost !== String(location.hostname || '').toLowerCase()) return;
+    document.dispatchEvent(new CustomEvent(_repositoryChangedEvent, {
+      detail: JSON.stringify({
+        scope: { portalHost, userId },
+        revision: Math.max(0, Number(change.newValue.revision) || 0),
+        operationId: String(change.newValue.operationId || ''),
+        savedAt: Math.max(0, Number(change.newValue.savedAt) || 0)
+      })
+    }));
+  };
+
   document.addEventListener(_repositoryRequestEvent, event => {
     let request = null;
     try { request = JSON.parse(String(event.detail || '')); } catch {}
@@ -69,18 +98,38 @@
     }, response => {
       const runtimeError = chrome.runtime.lastError;
       if (runtimeError) {
+        _publishRepositoryConnection(false);
         _publishRepositoryResponse({
           requestId: request.requestId,
           ok: false,
-          error: runtimeError.message || 'Extension service worker is unavailable'
+          error: runtimeError.message || 'Extension service worker is unavailable',
+          code: 'repository_unavailable',
+          retryable: true,
+          details: {}
         });
         return;
       }
+      if (!response || typeof response.ok !== 'boolean') {
+        _publishRepositoryConnection(false);
+        _publishRepositoryResponse({
+          requestId: request.requestId,
+          ok: false,
+          error: 'Extension service worker returned no response',
+          code: 'repository_unavailable',
+          retryable: true,
+          details: {}
+        });
+        return;
+      }
+      _publishRepositoryConnection(true);
       _publishRepositoryResponse({
         requestId: request.requestId,
         ok: response?.ok === true,
         result: response?.result,
-        error: response?.error || ''
+        error: response?.error || '',
+        code: response?.code || '',
+        retryable: response?.retryable === true,
+        details: response?.details || {}
       });
     });
   });
@@ -101,10 +150,13 @@
   });
 
   chrome.storage.onChanged.addListener(async (changes, areaName) => {
-    if (areaName !== 'local' || !changes[_enabledKey]) return;
-    const enabled = changes[_enabledKey].newValue !== '0';
-    await _setPageEnabled(enabled);
-    if (window === window.top) location.reload();
+    if (areaName !== 'local') return;
+    Object.entries(changes || {}).forEach(([key, change]) => _publishRepositoryChange(key, change));
+    if (changes[_enabledKey]) {
+      const enabled = changes[_enabledKey].newValue !== '0';
+      await _setPageEnabled(enabled);
+      if (window === window.top) location.reload();
+    }
   });
 
   const inject = (path, configure) => new Promise((resolve, reject) => {

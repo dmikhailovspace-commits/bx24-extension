@@ -84,7 +84,10 @@
 	window.__PENA_TEST_DIALOG_CATALOG_TTL_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('catalogTtl')) || 0);
 	window.__PENA_TEST_DIALOG_DEEP_IDLE_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('deepIdle')) || 0);
 	window.__PENA_TEST_DIALOG_HEAD_TTL_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('headTtl')) || 0);
+	window.__PENA_TEST_DIALOG_TASK_TTL_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('taskTtl')) || 0);
+	window.__PENA_TEST_DIALOG_AUDIT_TTL_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('auditTtl')) || 0);
 	window.__PENA_TEST_DIALOG_HEAD_TIMEOUT_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('headTimeout')) || 0);
+	window.__PENA_TEST_NATIVE_META_EVENTS__ = true;
 	window.__PENA_TEST_MANAGED_CATALOG__ = !nativePassThrough;
 	window.__PENA_TEST_NATIVE_SCROLL__ = !nativePassThrough &&
 		new URLSearchParams(location.search).get('nativeCatalog') === '1' &&
@@ -108,7 +111,25 @@
 	const deltaTimeout = new URLSearchParams(location.search).get('deltaTimeout') === '1';
 	const restIncompleteZero = new URLSearchParams(location.search).get('restIncompleteZero') === '1';
 	const restUnknownTotal = new URLSearchParams(location.search).get('restUnknownTotal') === '1';
+	const restShortCap = Math.max(0, Number(new URLSearchParams(location.search).get('restShortCap')) || 0);
+	const restCollapsedPages = new URLSearchParams(location.search).get('restCollapsedPages') === '1';
+	const restNoNext = new URLSearchParams(location.search).get('restNoNext') === '1';
+	const restTransientEmptyMs = Math.max(0, Number(new URLSearchParams(location.search).get('restTransientEmptyMs')) || 0);
+	const counterFailAfterLive = new URLSearchParams(location.search).get('counterFailAfterLive') === '1';
 	let recentListFailuresRemaining = Math.max(0, Number(new URLSearchParams(location.search).get('restFailCount')) || 0);
+	window.setNativeRecentFailures = value => { recentListFailuresRemaining = Math.max(0, Number(value) || 0); };
+	const repositoryFullProof = new URLSearchParams(location.search).get('repositoryFullProof') === '1';
+	const repositoryProofCount = Math.max(0, Number(new URLSearchParams(location.search).get('repositoryProofCount')) || 0);
+	const repositoryControlledExtra = new URLSearchParams(location.search).get('repositoryControlledExtra') === '1';
+	const repositorySchema2NoProof = new URLSearchParams(location.search).get('repositorySchema2NoProof') === '1';
+	const repositoryEmpty = new URLSearchParams(location.search).get('repositoryEmpty') === '1';
+	const repositoryDeletedId = String(new URLSearchParams(location.search).get('repositoryDeletedId') || '');
+	const apiDeletedId = String(new URLSearchParams(location.search).get('apiDeletedId') || '');
+	const taskPageCap = Math.max(0, Number(new URLSearchParams(location.search).get('taskPageCap')) || 0);
+	const taskNoNext = new URLSearchParams(location.search).get('taskNoNext') === '1';
+	const taskBogusTotal = new URLSearchParams(location.search).get('taskBogusTotal') === '1';
+	const taskNoEndMarker = new URLSearchParams(location.search).get('taskNoEndMarker') === '1';
+	let taskFirstEmptyRemaining = new URLSearchParams(location.search).get('taskFirstEmpty') === '1' ? 1 : 0;
 	const generatedManaged = new URLSearchParams(location.search).get('generatedManaged') === '1';
 	const wideParent = new URLSearchParams(location.search).get('wide') === '1';
 	const nestedViewport = new URLSearchParams(location.search).get('nestedViewport') === '1';
@@ -317,6 +338,70 @@
 		date: new Date(item.addedAt).toISOString()
 	  }
 	}));
+	const apiRecentEntries = apiDeletedId ? recentEntries.concat([{
+	  dialog_id: apiDeletedId,
+	  chat_id: Number(String(apiDeletedId).replace(/^chat/, '')),
+	  type: 'chat',
+	  title: 'Удалённый API-диалог',
+	  avatar: { url: `https://cdn.example.test/${apiDeletedId}.png`, color: '#dbeafe' },
+	  counter: 0,
+	  message: { id: 1, text: 'Устаревшая запись API', date: '2024-01-01T00:00:00.000Z' }
+	}]) : recentEntries;
+	window.addNativeOffscreenDelta = (dialogId = 'chat9900') => {
+	  const id = String(dialogId || 'chat9900');
+	  if (recentEntries.some(entry => entry.dialog_id === id)) return false;
+	  recentEntries.unshift({
+		dialog_id: id,
+		chat_id: Number(id.replace(/^chat/, '')),
+		type: 'chat',
+		title: 'Новый offscreen delta',
+		avatar: { url: `https://cdn.example.test/${id}.png`, color: '#dbeafe' },
+		counter: 1,
+		message: { id: 990000, text: 'Offscreen delta после сна', date: new Date().toISOString() }
+	  });
+	  return true;
+	};
+	window.mutateNativeVisibleRow = () => {
+	  const row = document.querySelector('.test-host:not([hidden]) [data-id]');
+	  const preview = row?.querySelector('.test-preview,.bx-im-list-recent-item__message_text');
+	  if (!row || !preview) return false;
+	  preview.append(document.createTextNode(' '));
+	  return true;
+	};
+	window.applyNativeLiveRecentUpdate = async (dialogId = 'chat1079') => {
+	  const entry = recentEntries.find(candidate => candidate.dialog_id === dialogId);
+	  if (!entry) return false;
+	  entry.message = {
+		id: 999999,
+		text: 'Живое сообщение после старта аудита',
+		date: '2035-12-31T23:59:59.000Z'
+	  };
+	  entry.counter = 9;
+	  await window.__PENA_NATIVE_PREFETCH__?.refreshHead?.();
+	  window.nativeLiveRecentUpdated = true;
+	  for (const [id, title, counter, availability] of [
+		['chat8800', 'Новый live-диалог во время прохода', 1, 'available'],
+		['chat8801', 'Удалённый live-диалог во время прохода', 0, 'unavailable']
+	  ]) {
+		window.dispatchEvent(new CustomEvent('pena:test-native-meta', {
+		  detail: {
+			id,
+			availability,
+			reason: availability === 'unavailable' ? 'ACCESS_DENIED' : '',
+			entry: {
+			  dialog_id: id,
+			  chat_id: Number(id.replace(/^chat/, '')),
+			  type: 'chat',
+			  title,
+			  avatar: { url: `https://cdn.example.test/${id}.png`, color: '#dbeafe' },
+			  counter,
+			  message: { id: 880000 + Number(id.slice(-1)), text: title, date: '2035-12-30T23:59:59.000Z' }
+			}
+		  }
+		}));
+	  }
+	  return true;
+	};
 	const taskRecentGeneric = new URLSearchParams(location.search).get('taskRecentGeneric') === '1';
 	const taskCatalogRows = Math.max(0, Number(new URLSearchParams(location.search).get('taskCatalogRows')) || 24);
 	const taskCatalogEntries = Array.from({ length: taskCatalogRows }, (_, index) => {
@@ -347,12 +432,21 @@
 	window.nativeRestCalls = [];
 	window.nativeBatchCalls = 0;
 	window.nativeBatchSizes = [];
+	window.nativeCounterFailures = 0;
+	window.nativeLiveRecentUpdated = false;
+	let recentTransientEmptyStartedAt = 0;
 	const recentPageResult = params => {
 	  const offset = Math.max(0, Number(params?.OFFSET) || 0);
-	  const limit = Math.max(1, Number(params?.LIMIT) || 50);
+	  const requestedLimit = Math.max(1, Number(params?.LIMIT) || 50);
+	  const limit = restShortCap > 0 ? Math.min(requestedLimit, restShortCap) : requestedLimit;
 	  const taskMode = !document.querySelector('.task-host')?.hidden;
-	  const availableEntries = restIncompleteZero ? recentEntries.slice(0, 164) : recentEntries;
-	  const pageItems = availableEntries.slice(offset, offset + limit).map(entry => taskMode && !taskRecentGeneric ? {
+	  const availableEntries = restIncompleteZero ? apiRecentEntries.slice(0, 164) : apiRecentEntries;
+	  const collapsedPageSize = 150;
+	  const pageStart = restCollapsedPages
+		? Math.floor(offset / requestedLimit) * collapsedPageSize
+		: offset;
+	  const pageEnd = restCollapsedPages ? pageStart + collapsedPageSize : pageStart + limit;
+	  let pageItems = availableEntries.slice(pageStart, pageEnd).map(entry => taskMode && !taskRecentGeneric ? {
 		...entry,
 		chat: {
 		  ...(entry.chat || {}),
@@ -362,12 +456,40 @@
 		},
 		entity_link: { type: 'TASKS', id: String(entry.chat_id) }
 	  } : entry);
-	  const next = offset + limit < availableEntries.length ? offset + limit : null;
+	  if (restTransientEmptyMs > 0 && offset === 0) {
+		if (!recentTransientEmptyStartedAt) recentTransientEmptyStartedAt = performance.now();
+		if (performance.now() - recentTransientEmptyStartedAt < restTransientEmptyMs) pageItems = [];
+	  }
+	  const consumedUnique = restCollapsedPages ? pageStart + pageItems.length : offset + pageItems.length;
+	  const next = pageItems.length > 0 && consumedUnique < availableEntries.length
+		? (restCollapsedPages ? offset + requestedLimit : offset + pageItems.length)
+		: null;
 	  return {
 		error: () => null,
 		data: () => ({ items: pageItems, hasMore: next != null, hasMorePages: next != null }),
 		total: () => restUnknownTotal ? -1 : (restIncompleteZero ? 0 : availableEntries.length),
-		next: () => restUnknownTotal ? false : next
+		next: () => restUnknownTotal || restNoNext ? false : next
+	  };
+	};
+	const taskCatalogPageResult = startValue => {
+	  const start = Math.max(0, Number(startValue) || 0);
+	  if (start === 0 && taskFirstEmptyRemaining > 0) {
+		taskFirstEmptyRemaining -= 1;
+		return {
+		  error: () => null,
+		  data: () => ({ tasks: [] }),
+		  total: () => taskBogusTotal ? 0 : taskCatalogEntries.length,
+		  next: () => false
+		};
+	  }
+	  const limit = taskPageCap > 0 ? taskPageCap : 50;
+	  const page = taskCatalogEntries.slice(start, start + limit);
+	  const hasMore = start + page.length < taskCatalogEntries.length;
+	  return {
+		error: () => null,
+		data: () => ({ tasks: page, ...(taskNoEndMarker ? {} : { hasMore, hasMorePages: hasMore }) }),
+		total: () => taskBogusTotal ? 0 : taskCatalogEntries.length,
+		next: () => taskNoNext ? false : (hasMore ? start + page.length : null)
 	  };
 	};
 	window.nativeCustomEventHandlers = new Map();
@@ -386,16 +508,31 @@
 		}));
 	  }
 	};
+	window.currentBitrixUserId = '7';
 	window.BX = {
-	  message(key) { return key === 'USER_ID' ? '7' : ''; },
+	  message(key) { return key === 'USER_ID' ? window.currentBitrixUserId : ''; },
 	  addCustomEvent(name, handler) {
 		const handlers = window.nativeCustomEventHandlers.get(name) || [];
 		handlers.push(handler);
 		window.nativeCustomEventHandlers.set(name, handlers);
 	  },
 	  rest: { callMethod(method, params, callback) {
-		window.nativeRestCalls.push({ method, dialogId: String(params?.DIALOG_ID || params?.ID || '') });
+		window.nativeRestCalls.push({
+		  at: Date.now(),
+		  method,
+		  dialogId: String(params?.DIALOG_ID || params?.ID || ''),
+		  offset: Math.max(0, Number(params?.OFFSET) || 0),
+		  start: Math.max(0, Number(params?.start) || 0),
+		  limit: Math.max(0, Number(params?.LIMIT) || 0),
+		  userId: window.currentBitrixUserId,
+		  lastSyncDate: String(params?.LAST_SYNC_DATE || '')
+		});
 		if (method === 'im.counters.get') {
+		  if (counterFailAfterLive && window.nativeLiveRecentUpdated) {
+			window.nativeCounterFailures += 1;
+			callback({ error: () => 'TEMPORARY_ERROR', error_description: () => 'counter snapshot unavailable after live head' });
+			return;
+		  }
 		  callback({ error: () => null, data: () => ({
 			CHAT: Object.fromEntries(recentEntries.filter(entry => entry.counter > 0).map(entry => [String(entry.chat_id), entry.counter])),
 			DIALOG: {}, CHAT_UNREAD: [], DIALOG_UNREAD: []
@@ -404,6 +541,10 @@
 		}
 		if (method === 'im.dialog.get') {
 		  const dialogId = String(params?.DIALOG_ID || '');
+		  if ((repositoryDeletedId && dialogId === repositoryDeletedId) || (apiDeletedId && dialogId === apiDeletedId)) {
+			callback({ error: () => 'ACCESS_DENIED', error_description: () => 'dialog was deleted' });
+			return;
+		  }
 		  const entry = recentEntries.find(candidate => candidate.dialog_id === dialogId);
 		  const respond = () => callback({ error: () => null, data: () => ({ chat: {
 			  id: Number(dialogId.replace(/^chat/, '')),
@@ -497,6 +638,10 @@
 			(!titleQuery || String(task.title || task.TITLE || '').toLowerCase().includes(titleQuery)) &&
 			(!trackingOnly || String(task.allowTimeTracking || task.ALLOW_TIME_TRACKING || '').toUpperCase() === 'Y')
 		  );
+		  if (!titleQuery && !trackingOnly) {
+			callback(taskCatalogPageResult(start));
+			return;
+		  }
 		  const page = filtered.slice(start, start + 50);
 		  callback({ error: () => null, data: () => ({ tasks: page }), total: () => filtered.length, next: () => start + 50 < filtered.length ? start + 50 : null });
 		  return;
@@ -529,7 +674,7 @@
 			: call?.method === 'tasks.task.get'
 			  ? { error: () => null, data: () => ({ task: { id: String(call.params?.taskId || ''), title: `Задача ${call.params?.taskId || ''}`, chatId: String(call.params?.taskId || ''), allowTimeTracking: String(call.params?.taskId || '') === '405' ? 'N' : 'Y' } }) }
 			  : call?.method === 'tasks.task.list'
-				? (() => { const start = Math.max(0, Number(call.params?.start) || 0); const page = taskCatalogEntries.slice(start, start + 50); return { error: () => null, data: () => ({ tasks: page }), total: () => taskCatalogEntries.length, next: () => start + 50 < taskCatalogEntries.length ? start + 50 : null }; })()
+				? taskCatalogPageResult(call.params?.start)
 				: call?.method === 'task.elapseditem.delete'
 				  ? (() => { const itemId = String(call.params?.ITEMID || ''); window.timeDeletedItems.push({ TASKID: call.params?.TASKID, ITEMID: call.params?.ITEMID }); window.timeSeedItems = (window.timeSeedItems || []).filter(item => String(item.ID) !== itemId); window.timeAddedItems = window.timeAddedItems.filter(item => String(item.ID) !== itemId); return { error: () => null, data: () => true }; })()
 			  : { error: () => null, data: () => ({}) }
@@ -542,24 +687,49 @@
 	if (new URLSearchParams(location.search).get('repositoryCache') === '1') {
 	  const seededAt = Date.now() - 1000;
 	  window.__repositorySeedLoadedAt = seededAt;
-	  let repositorySnapshot = {
-		records: [
+	  const repositoryProofEntries = repositoryProofCount > 0
+		? recentEntries.slice(0, repositoryProofCount)
+		: recentEntries;
+	  const confirmedRepositoryIds = repositoryProofEntries.map(entry => entry.dialog_id);
+	  if (repositoryDeletedId && !confirmedRepositoryIds.includes(repositoryDeletedId)) confirmedRepositoryIds.push(repositoryDeletedId);
+	  const seededRecords = repositoryEmpty ? [] : (repositoryFullProof
+		? repositoryProofEntries.map(entry => ({
+			id: entry.dialog_id,
+			restDialogId: entry.dialog_id,
+			mode: mode === 'tasks' ? 'tasks' : 'chats',
+			title: entry.title,
+			lastMessage: { id: entry.message?.id || 0, text: entry.message?.text || '', date: entry.message?.date || seededAt },
+			remoteUpdatedAt: seededAt
+		}))
+		: [
 		  { id: 'chat225', restDialogId: 'chat225', mode: 'chats', title: 'Чат 225', lastMessage: { id: 225, text: 'Из кэша', date: seededAt }, remoteUpdatedAt: seededAt },
 		  { id: 'chat5', restDialogId: 'chat5', mode: 'chats', title: 'Чат 5', lastMessage: { id: 5, text: 'Из кэша', date: seededAt - 1000 }, remoteUpdatedAt: seededAt },
 		  { id: 'chat404', restDialogId: 'chat404', mode: 'tasks', title: 'Старая задача', task: { id: '404', url: '/company/personal/user/101/tasks/task/view/404/' }, lastMessage: { id: 404, text: 'Из кэша', date: seededAt - 2000 }, remoteUpdatedAt: seededAt }
-		],
+		]);
+	  if ((repositoryFullProof || repositorySchema2NoProof) && repositoryControlledExtra) seededRecords.push({
+		id: 'chat9000', restDialogId: 'chat9000', mode, title: 'Контролируемый extra',
+		lastMessage: { id: 9000, text: 'Только в сохранённом каталоге', date: seededAt - 5000 }, remoteUpdatedAt: seededAt
+	  });
+	  if (repositoryFullProof && repositoryDeletedId) seededRecords.push({
+		id: repositoryDeletedId, restDialogId: repositoryDeletedId, mode, title: 'Удалённый подтверждённый диалог',
+		lastMessage: { id: 9999, text: 'Удалён после прошлого поколения', date: seededAt - 9000 }, remoteUpdatedAt: seededAt
+	  });
+	  let repositorySnapshot = {
+		records: seededRecords,
 		manifest: {
-		  schema: 1, generation: 'seed', chunkCount: 1, count: 3, savedAt: seededAt,
+		  schema: repositoryFullProof || repositorySchema2NoProof ? 2 : 1, revision: repositoryFullProof || repositorySchema2NoProof ? 7 : 0, generation: 'seed', chunkCount: 1, count: seededRecords.length, savedAt: seededAt,
 		  lastSuccessAt: seededAt, lastFullAt: seededAt, cursorAt: seededAt, windowCount: 3,
+		  ...(repositoryFullProof || repositorySchema2NoProof ? { apiWatermarkVersion: 1, apiCursorAt: 0, apiFullAt: 0 } : {}),
 		  truncated: false, catalogVersion: 1,
 		  catalogModes: {
-			chats: { complete: true, loadedAt: seededAt, count: 2 },
-			tasks: { complete: true, loadedAt: seededAt, count: 1 }
+			chats: { complete: true, loadedAt: seededAt, count: repositoryEmpty ? 0 : (repositoryFullProof && mode === 'chats' ? confirmedRepositoryIds.length : 2), ...(repositoryFullProof && mode === 'chats' ? { confirmedIds: confirmedRepositoryIds } : {}) },
+			tasks: { complete: true, loadedAt: seededAt, count: repositoryEmpty ? 0 : (repositoryFullProof && mode === 'tasks' ? confirmedRepositoryIds.length : 1), ...(repositoryFullProof && mode === 'tasks' ? { confirmedIds: confirmedRepositoryIds } : {}) }
 		  },
 		  taskCatalog: { complete: true, fetchedAt: seededAt }, patches: []
 		}
 	  };
 	  const clone = value => JSON.parse(JSON.stringify(value));
+	  window.getNativeRepositorySnapshot = () => clone(repositorySnapshot);
 	  window.__PENA_DIALOG_REPOSITORY__ = Object.freeze({
 		get: async () => clone(repositorySnapshot),
 		commit: async (_scope, records, meta) => {
@@ -587,6 +757,15 @@
 	if (new URLSearchParams(location.search).get('autofocus') === '1') {
 		document.querySelector('.test-host:not([hidden]) input[type="search"]')?.focus();
 	}
+	window.replaceNativeAuditSource = (nextUserId = window.currentBitrixUserId) => {
+	  window.currentBitrixUserId = String(nextUserId || window.currentBitrixUserId);
+	  const oldList = document.querySelector('.test-host:not([hidden]) .bx-im-list-container-recent__elements,.test-host:not([hidden]) .bx-im-list-container-task__elements');
+	  if (!oldList) return false;
+	  const replacement = oldList.cloneNode(true);
+	  oldList.replaceWith(replacement);
+	  window.dispatchEvent(new Event('focus'));
+	  return true;
+	};
   </script>
 	<script src="../extension/native-catalog.js"></script>
 	<script src="../extension/native-interaction-state.js"></script>

@@ -39,6 +39,66 @@
       window.setTimeout = (handler, delay, ...args) => nativeSetTimeout(handler, Number(delay) === 12000 ? 1000 : delay, ...args);
 
 	  const repositoryKey = scope => `__pena_test_repository__:${String(scope?.portalHost || '')}:${String(scope?.userId || '')}`;
+	  const normalizeRepositoryIds = ids => Array.from(new Set((Array.isArray(ids) ? ids : [])
+		.map(id => String(id || '').trim().toLowerCase()).filter(Boolean)));
+	  const repositoryTestParams = new URLSearchParams(location.search);
+	  const repositoryManifestReconnectScenario = repositoryTestParams.get('repositorymanifestreconnect') === '1';
+	  const repositoryReconnectScenario = repositoryTestParams.get('repositoryreconnect') === '1' || repositoryManifestReconnectScenario;
+	  const repositoryEvents = [];
+	  let repositoryConflictIssued = false;
+	  let repositoryBridgeConnected = false;
+	  const connectRepositoryBridge = () => {
+		if (repositoryBridgeConnected || window.__PENA_DIALOG_REPOSITORY__) return false;
+		repositoryBridgeConnected = true;
+		const script = document.createElement('script');
+		script.src = '../extension/dialog-repository.js';
+		document.head.appendChild(script);
+		return true;
+	  };
+	  const makeRepositoryRecord = (id, title, updatedAt) => ({
+		id,
+		restDialogId: id,
+		mode: 'chats',
+		title,
+		avatar: { url: '', color: '', source: 'none', resolved: false },
+		lastMessage: { id: Number(String(id).replace(/\D/g, '')) || 0, text: title, date: updatedAt, status: '', resolved: true },
+		author: { id: '', name: '', avatar: '', own: false, system: false, resolved: true },
+		unread: { count: 0, marked: false, mention: false, fetchedAt: updatedAt },
+		task: { id: '', url: '' },
+		remoteUpdatedAt: updatedAt,
+		state: { id, displayTitle: title, fetchedAt: updatedAt, lastMessageTs: updatedAt }
+	  });
+	  if (repositoryReconnectScenario) {
+		const oldAt = Date.now() - 60 * 60 * 1000;
+		const scope = { portalHost: location.host, userId: repositoryTestParams.get('userid') || '101' };
+		const records = repositoryManifestReconnectScenario
+		  ? [
+			  ...Array.from({ length: 349 }, (_, index) => makeRepositoryRecord(
+				`chat${index + 1}`,
+				index === 8 ? 'Старое имя из repository' : `Старый диалог ${index + 1}`,
+				oldAt
+			  )),
+			  makeRepositoryRecord('chat9999', 'Уже удалённый диалог', oldAt)
+			]
+		  : [
+			  makeRepositoryRecord('chat9', 'Старое имя из repository', oldAt),
+			  makeRepositoryRecord('chat9999', 'Уже удалённый диалог', oldAt)
+			];
+		localStorage.setItem(repositoryKey(scope), JSON.stringify({
+		  records,
+		  manifest: {
+			schema: 2, revision: 1, baseRevision: 0, operationId: 'seed-old',
+			generation: 'seed-old', chunkCount: 1, count: records.length, savedAt: oldAt,
+			lastSuccessAt: oldAt, lastFullAt: oldAt, cursorAt: oldAt, windowCount: records.length,
+			truncated: false, catalogVersion: 1,
+			catalogModes: repositoryManifestReconnectScenario
+			  ? { chats: { complete: true, loadedAt: oldAt, count: 350 } }
+			  : {},
+			taskCatalog: {}, patches: []
+		  },
+		  recovered: false
+		}));
+	  }
 	  document.documentElement.dataset.penaDialogRepositoryBridge = '1';
 	  document.addEventListener('pena-dialog-repository-request', event => {
 		let request = null;
@@ -48,46 +108,111 @@
 		let result = null;
 		let snapshot = null;
 		try { snapshot = JSON.parse(localStorage.getItem(key) || 'null'); } catch {}
+		repositoryEvents.push({
+		  command: request.command,
+		  baseRevision: Math.max(0, Number(request.payload?.baseRevision) || 0),
+		  confirmedReplace: request.payload?.confirmedReplace === true,
+		  recordCount: Array.isArray(request.payload?.records) ? request.payload.records.length : 0
+		});
 		if (request.command === 'catalog.get') {
 		  result = snapshot || { records: [], manifest: null, recovered: false };
 		} else if (request.command === 'catalog.commit') {
+		  if (repositoryReconnectScenario && !repositoryConflictIssued) {
+			repositoryConflictIssued = true;
+			const now = Date.now();
+			const concurrentRecords = (snapshot?.records || [])
+			  .filter(record => String(record?.id || '').toLowerCase() !== 'chat9999');
+			concurrentRecords.push(makeRepositoryRecord('chat8000', 'Новый диалог другой вкладки', now));
+			snapshot = {
+			  records: concurrentRecords,
+			  manifest: {
+				...(snapshot?.manifest || {}), schema: 2, revision: 2, baseRevision: 1,
+				operationId: 'foreign-write', generation: 'foreign-write', count: concurrentRecords.length,
+				savedAt: now, lastSuccessAt: now, cursorAt: now
+			  },
+			  recovered: false
+			};
+			localStorage.setItem(key, JSON.stringify(snapshot));
+			nativeSetTimeout(() => document.dispatchEvent(new CustomEvent('pena-dialog-repository-response', {
+			  detail: JSON.stringify({
+				requestId: request.requestId,
+				ok: false,
+				error: 'Catalog revision conflict',
+				code: 'revision_conflict',
+				retryable: true,
+				details: { currentRevision: 2 }
+			  })
+			})), 0);
+			return;
+		  }
 		  const now = Date.now();
 		  const meta = request.payload?.meta || {};
 		  const sourceRecords = Array.isArray(request.payload?.records) ? request.payload.records : [];
-		  const storedRecords = sourceRecords.length > 1000
-			? sourceRecords.map(({ state, ...record }) => record)
-			: sourceRecords;
+		  const byId = new Map((snapshot?.records || []).map(record => [String(record.id || '').toLowerCase(), record]));
+		  if (request.payload?.confirmedReplace === true) {
+			normalizeRepositoryIds(request.payload?.deletedIds).forEach(id => byId.delete(id));
+		  }
+		  sourceRecords.forEach(record => byId.set(String(record.id || '').toLowerCase(), record));
+		  const mergedRecords = Array.from(byId.values());
+		  const storedRecords = mergedRecords.length > 1000
+			? mergedRecords.map(({ state, ...record }) => record)
+			: mergedRecords;
+		  const revision = Math.max(0, Number(snapshot?.manifest?.revision) || 0) + 1;
+		  const apiWatermarkVersion = Number(meta.apiWatermarkVersion) === 1 ? 1 : 0;
 		  snapshot = {
 			records: storedRecords,
 			manifest: {
-			  schema: 1, generation: String(now), chunkCount: Math.ceil(sourceRecords.length / 250),
-			  count: sourceRecords.length, savedAt: now,
-			  lastSuccessAt: meta.lastSuccessAt || now, lastFullAt: meta.lastFullAt || now,
-			  cursorAt: meta.cursorAt || meta.lastSuccessAt || now, windowCount: meta.windowCount || sourceRecords.length,
+			  schema: 2, revision, baseRevision: revision - 1,
+			  operationId: String(request.payload?.operationId || ''),
+			  generation: String(now), chunkCount: Math.ceil(storedRecords.length / 250),
+			  count: storedRecords.length, savedAt: now,
+			  lastSuccessAt: Math.max(0, Number(meta.lastSuccessAt) || 0),
+			  lastFullAt: Math.max(0, Number(meta.lastFullAt) || 0),
+			  cursorAt: Math.max(0, Number(meta.cursorAt) || Number(meta.lastSuccessAt) || 0),
+			  apiWatermarkVersion,
+			  apiCursorAt: apiWatermarkVersion ? Math.max(0, Number(meta.apiCursorAt) || 0) : 0,
+			  apiFullAt: apiWatermarkVersion ? Math.max(0, Number(meta.apiFullAt) || 0) : 0,
+			  windowCount: meta.windowCount || storedRecords.length,
 			  truncated: !!meta.truncated, catalogVersion: Number(meta.catalogVersion) || 0,
 			  catalogModes: meta.catalogModes || {}, taskCatalog: meta.taskCatalog || {}, patches: []
 			}
 		  };
 		  localStorage.setItem(key, JSON.stringify(snapshot));
-		  result = { manifest: snapshot.manifest, count: snapshot.records.length };
+		  result = { manifest: snapshot.manifest, count: snapshot.records.length, operationRevision: revision };
 		} else if (request.command === 'catalog.patch') {
 		  const byId = new Map((snapshot?.records || []).map(record => [record.id, record]));
 		  (request.payload?.deletedIds || []).forEach(id => byId.delete(id));
 		  (request.payload?.records || []).forEach(record => byId.set(record.id, record));
-		  snapshot = snapshot || { records: [], manifest: { schema: 1, generation: String(Date.now()), patches: [] } };
+		  snapshot = snapshot || { records: [], manifest: { schema: 2, revision: 0, generation: String(Date.now()), patches: [] } };
 		  snapshot.records = Array.from(byId.values());
 		  const meta = request.payload?.meta || {};
+		  const savedApiWatermarkVersion = Number(snapshot.manifest.apiWatermarkVersion) === 1 ? 1 : 0;
+		  const incomingApiWatermarkVersion = Number(meta.apiWatermarkVersion) === 1 ? 1 : 0;
+		  const apiWatermarkVersion = incomingApiWatermarkVersion || savedApiWatermarkVersion;
 		  snapshot.manifest = {
 			...snapshot.manifest,
+			schema: 2,
+			revision: Math.max(0, Number(snapshot.manifest.revision) || 0) + 1,
+			baseRevision: Math.max(0, Number(snapshot.manifest.revision) || 0),
+			operationId: String(request.payload?.operationId || ''),
 			savedAt: Date.now(),
 			count: snapshot.records.length,
 			lastFullAt: Math.max(Number(snapshot.manifest.lastFullAt) || 0, Number(meta.lastFullAt) || 0),
+			apiWatermarkVersion,
+			apiCursorAt: apiWatermarkVersion ? Math.max(
+			  incomingApiWatermarkVersion ? Number(meta.apiCursorAt) || 0 : 0,
+			  savedApiWatermarkVersion ? Number(snapshot.manifest.apiCursorAt) || 0 : 0
+			) : 0,
+			apiFullAt: apiWatermarkVersion ? Math.max(
+			  incomingApiWatermarkVersion ? Number(meta.apiFullAt) || 0 : 0,
+			  savedApiWatermarkVersion ? Number(snapshot.manifest.apiFullAt) || 0 : 0
+			) : 0,
 			catalogVersion: Number(meta.catalogVersion) || Number(snapshot.manifest.catalogVersion) || 0,
 			catalogModes: meta.catalogModes || snapshot.manifest.catalogModes || {},
 			taskCatalog: meta.taskCatalog || snapshot.manifest.taskCatalog || {}
 		  };
 		  localStorage.setItem(key, JSON.stringify(snapshot));
-		  result = { manifest: snapshot.manifest, count: snapshot.records.length, patched: request.payload?.records?.length || 0 };
+		  result = { manifest: snapshot.manifest, count: snapshot.records.length, patched: request.payload?.records?.length || 0, operationRevision: snapshot.manifest.revision };
 		} else if (request.command === 'sync.acquire') {
 		  result = { acquired: true, expiresAt: Date.now() + 30000, retryAfterMs: 0 };
 		}
@@ -414,7 +539,7 @@
         delayMs: Math.max(0, Number(queryParams.get('initialdelay')) || 8)
       });
       const list = document.getElementById('recent-list');
-      initialEntries.slice(0, 8).forEach(entry => {
+      initialEntries.slice(0, repositoryManifestReconnectScenario ? initialEntries.length : 8).forEach(entry => {
         const row = document.createElement('div');
         row.className = 'bx-im-list-recent-item__wrap';
         row.dataset.id = entry.dialog_id;
@@ -584,6 +709,8 @@
         latestComplete: () => latestComplete.slice(),
 		repositoryCache: (userId = queryParams.get('userid') || '101') => JSON.parse(localStorage.getItem(repositoryKey({ portalHost: location.host, userId })) || 'null'),
 		setRepositoryCache: (value, userId = queryParams.get('userid') || '101') => localStorage.setItem(repositoryKey({ portalHost: location.host, userId }), JSON.stringify(value)),
+		repositoryEvents: () => repositoryEvents.slice(),
+		connectRepository: connectRepositoryBridge,
         cache: () => JSON.parse(localStorage.getItem('pena.dialogRecentCache.v2') || 'null'),
         nativeState() {
           const currentRows = Array.from(list.children);
@@ -725,7 +852,15 @@
   <script src="../extension/native-interaction-state.js"></script>
   <script src="../extension/native-time-control.js"></script>
   <script src="../extension/native-lifecycle.js"></script>
-  <script src="../extension/dialog-repository.js"></script>
+  <script>
+	if (new URLSearchParams(location.search).get('repositoryreconnect') === '1') {
+	  setTimeout(() => {
+		window.__recentHarness?.connectRepository?.();
+	  }, 300);
+	} else if (new URLSearchParams(location.search).get('repositorymanifestreconnect') !== '1') {
+	  document.write('<script src="../extension/dialog-repository.js"><\/script>');
+	}
+  </script>
   <script src="../extension/injected.js"></script>
 </body>
 </html>

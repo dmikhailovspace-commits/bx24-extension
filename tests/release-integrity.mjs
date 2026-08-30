@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = path => readFileSync(join(root, path), 'utf8');
@@ -14,11 +15,14 @@ const setup = read('installers/windows/setup.iss');
 const content = read('extension/content.js');
 const injected = read('extension/injected.js');
 const injectedCss = read('extension/injected.css');
+const distDir = join(root, 'dist');
 const windowsUpdater = join(root, 'installers/windows/updater.ps1');
 const macInstaller = read('installers/macos/install-gui.sh');
 const macUpdater = read('installers/macos/updater.sh');
 const macBuilder = read('installers/macos/build.sh');
 const macLauncher = read('installers/macos/launcher/main.go');
+const macLauncherInfo = read('installers/macos/launcher-Info.plist');
+const releaseWorkflow = read('.github/workflows/build-macos.yml');
 
 const requiredRuntime = [
   'background.js',
@@ -47,6 +51,39 @@ assert.equal(update.schema_version, 2);
 assert.equal(update.version, manifest.version);
 assert.equal(setupVersion, manifest.version);
 assert.equal(injectedVersion, manifest.version);
+
+const expectedReleaseArtifacts = [
+  `PENA_Agency_Windows_v${manifest.version}.exe`,
+  `PENA_Agency_Windows_v${manifest.version}.exe.sha256`,
+  `PENA_Agency_macOS_Universal_v${manifest.version}.dmg`,
+  `PENA_Agency_macOS_Universal_v${manifest.version}.dmg.sha256`
+];
+const presentReleaseArtifacts = existsSync(distDir)
+  ? readdirSync(distDir, { withFileTypes: true })
+      .filter(entry => entry.isFile())
+      .map(entry => entry.name)
+      .sort()
+  : [];
+assert.deepEqual(
+  presentReleaseArtifacts,
+  presentReleaseArtifacts.filter(name => expectedReleaseArtifacts.includes(name)),
+  'dist/ contains stale or unexpected release artifacts'
+);
+if (process.env.PENA_REQUIRE_RELEASE_ARTIFACTS === '1') {
+  assert.deepEqual(
+    presentReleaseArtifacts,
+    expectedReleaseArtifacts.slice().sort(),
+    'current Windows and macOS installers with SHA-256 sidecars are required'
+  );
+  for (const artifactName of expectedReleaseArtifacts.filter(name => !name.endsWith('.sha256'))) {
+    const artifactPath = join(distDir, artifactName);
+    const sidecarPath = `${artifactPath}.sha256`;
+    const expectedHash = readFileSync(sidecarPath, 'utf8').trim().split(/\s+/)[0]?.toLowerCase();
+    assert.match(expectedHash || '', /^[a-f0-9]{64}$/, `invalid SHA-256 sidecar: ${artifactName}.sha256`);
+    const actualHash = createHash('sha256').update(readFileSync(artifactPath)).digest('hex');
+    assert.equal(actualHash, expectedHash, `SHA-256 mismatch: ${artifactName}`);
+  }
+}
 assert.match(setup, /extension\\fonts\\\*";\s+DestDir:\s+"\{#StageDir\}\\fonts"/i, 'Windows installer omits bundled fonts');
 const nativeRowCssBlock = source => {
   const start = source.indexOf('.bx-im-list-recent-item__wrap.pena-native-chat-row');
@@ -140,11 +177,69 @@ assert.match(macBuilder, /GOARCH=amd64/);
 assert.match(macBuilder, /GOARCH=arm64/);
 assert.match(macBuilder, /lipo -create/);
 assert.match(macBuilder, /pena-launcher-universal/);
+assert.match(macBuilder, /LSMinimumSystemVersion<\/key><string>12\.0<\/string>/);
 assert.match(macLauncher, /syscall\.Exec/);
 assert.match(macLauncher, /install-gui\.sh/);
 assert.match(macLauncher, /bitrix-executable\.path/);
+assert.match(macLauncherInfo, /LSMinimumSystemVersion<\/key><string>12\.0<\/string>/);
 assert.match(setup, /Extension\.staged-installer/);
 assert.match(setup, /-InstallFrom/);
+assert.match(releaseWorkflow, /push:\s*\n\s*tags:\s*\n\s*- 'v\*'/, 'tag push does not start the installer release');
+assert.match(releaseWorkflow, /runs-on:\s*windows-2025/, 'release workflow does not build Windows on Windows');
+assert.match(releaseWorkflow, /runs-on:\s*macos-15/, 'release workflow does not build macOS on macOS');
+assert.equal((releaseWorkflow.match(/actions\/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1/g) || []).length, 3, 'all release jobs must checkout the tagged source with pinned checkout v7.0.1');
+assert.match(releaseWorkflow, /actions\/setup-node@820762786026740c76f36085b0efc47a31fe5020/);
+assert.match(releaseWorkflow, /node-version:\s*24\.19\.0/);
+assert.match(releaseWorkflow, /pnpm install --frozen-lockfile/);
+assert.match(releaseWorkflow, /playwright install chromium/);
+assert.match(releaseWorkflow, /pnpm test/);
+assert.match(releaseWorkflow, /update-project-context\.ps1 -Check/);
+assert.equal((releaseWorkflow.match(/needs:\s*verify-source/g) || []).length, 2, 'both installer builds must depend on the source gate');
+assert.match(releaseWorkflow, /needs:\s*\[build-windows, build-macos\]/, 'publication must depend on both installer builds');
+assert.match(releaseWorkflow, /actions\/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e/);
+assert.match(releaseWorkflow, /go-version:\s*1\.26\.7/, 'macOS launcher toolchain is not pinned');
+assert.equal((releaseWorkflow.match(/actions\/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a/g) || []).length, 2, 'both installers must be uploaded with pinned upload-artifact v7.0.1');
+assert.match(releaseWorkflow, /hdiutil verify/);
+assert.match(releaseWorkflow, /hdiutil attach/);
+assert.match(releaseWorkflow, /plutil -lint "\$launcher_info"/);
+assert.match(releaseWorkflow, /Print :CFBundleShortVersionString/);
+assert.equal((releaseWorkflow.match(/Print :LSMinimumSystemVersion/g) || []).length, 2, 'both macOS application plists must verify minimum OS');
+assert.match(releaseWorkflow, /= "12\.0"/);
+assert.match(releaseWorkflow, /= "__VERSION__"/);
+assert.match(releaseWorkflow, /lipo -archs/);
+assert.match(releaseWorkflow, /launcher_archs/);
+assert.match(releaseWorkflow, /x86_64/);
+assert.match(releaseWorkflow, /arm64/);
+assert.match(releaseWorkflow, /LSMinimumSystemVersion/);
+assert.match(releaseWorkflow, /CRLF found in macOS runtime files/);
+assert.match(releaseWorkflow, /actions\/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c/);
+assert.match(releaseWorkflow, /merge-multiple:\s*true/);
+assert.match(releaseWorkflow, /GITHUB_REF_NAME.*v\$version/, 'Windows tag/version gate is missing');
+assert.match(releaseWorkflow, /GITHUB_REF_NAME.*v\$\{version\}/, 'macOS tag/version gate is missing');
+assert.match(releaseWorkflow, /choco install innosetup/);
+assert.match(releaseWorkflow, /ProgramFiles\(x86\)/);
+assert.match(releaseWorkflow, /Inno Setup 6\\ISCC\.exe/);
+assert.match(releaseWorkflow, /Get-FileHash[^\n]*SHA256/);
+assert.match(releaseWorkflow, /find dist -maxdepth 1 -type f/);
+assert.match(releaseWorkflow, /find dist[^\n]*\n?[^\n]*= "4"/);
+assert.match(releaseWorkflow, /expected=.*awk[^\n]*artifact\.sha256/);
+assert.match(releaseWorkflow, /actual=.*sha256sum/);
+assert.match(releaseWorkflow, /permissions:\s*\n\s*contents:\s*write/, 'release job cannot publish assets');
+assert.match(releaseWorkflow, /GH_TOKEN:\s*\$\{\{ github\.token \}\}/);
+assert.match(releaseWorkflow, /gh release upload[^\n]*--clobber/);
+assert.match(releaseWorkflow, /gh release create[^\n]*--verify-tag/);
+assert.match(releaseWorkflow, /PENA_Agency_Windows_v/);
+assert.match(releaseWorkflow, /PENA_Agency_macOS_Universal_v/);
+const publishStep = releaseWorkflow.split('- name: Publish installers')[1] || '';
+for (const artifact of [
+  'PENA_Agency_Windows_v${GITHUB_REF_NAME#v}.exe',
+  'PENA_Agency_Windows_v${GITHUB_REF_NAME#v}.exe.sha256',
+  'PENA_Agency_macOS_Universal_v${GITHUB_REF_NAME#v}.dmg',
+  'PENA_Agency_macOS_Universal_v${GITHUB_REF_NAME#v}.dmg.sha256'
+]) {
+  assert.equal(publishStep.split(`${artifact}"`).length - 1, 2, `publish step must upload and create exact artifact: ${artifact}`);
+}
+assert.doesNotMatch(publishStep, /dist\/\*/);
 
 async function runLoader({ diskVersion = manifest.version, failAt = '' } = {}) {
   const appended = [];
