@@ -347,6 +347,13 @@ try {
     mkdirSync(dirname(target), { recursive: true });
     cpSync(source, target);
   }
+  for (const artifactName of expectedReleaseArtifacts) {
+    const source = join(distDir, artifactName);
+    if (!existsSync(source)) continue;
+    const target = join(contextProject, 'dist', artifactName);
+    mkdirSync(dirname(target), { recursive: true });
+    cpSync(source, target);
+  }
   writeFileSync(
     join(contextProject, 'PROJECT_CONTEXT.md'),
     read('PROJECT_CONTEXT.md').replace(/\r\n/g, '\n'),
