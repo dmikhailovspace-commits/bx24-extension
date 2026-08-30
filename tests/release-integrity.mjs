@@ -332,6 +332,49 @@ function runWindowsInstall(localAppData, stageDir, scriptPath) {
 
 const tempRoot = mkdtempSync(join(tmpdir(), 'pena-release-test-'));
 try {
+  const contextProject = join(tempRoot, 'context-lf');
+  for (const relativePath of [
+    'PROJECT_CONTEXT.md',
+    'update.json',
+    'extension/manifest.json',
+    'extension/injected.js',
+    'installers/windows/setup.iss',
+    'tests/run-all-regressions.mjs',
+    'tools/update-project-context.ps1'
+  ]) {
+    const source = join(root, relativePath);
+    const target = join(contextProject, relativePath);
+    mkdirSync(dirname(target), { recursive: true });
+    cpSync(source, target);
+  }
+  writeFileSync(
+    join(contextProject, 'PROJECT_CONTEXT.md'),
+    read('PROJECT_CONTEXT.md').replace(/\r\n/g, '\n'),
+    'utf8'
+  );
+  const contextCheck = spawnSync(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      join(contextProject, 'tools/update-project-context.ps1'),
+      '-Check'
+    ],
+    {
+      cwd: contextProject,
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 30_000
+    }
+  );
+  assert.equal(
+    contextCheck.status,
+    0,
+    `LF checkout makes PROJECT_CONTEXT.md stale: ${contextCheck.stderr || contextCheck.stdout}`
+  );
+
   const localAppData = join(tempRoot, 'LocalAppData');
   const installDir = join(localAppData, 'PENA Agency', 'Extension');
   const validStage = join(localAppData, 'PENA Agency', 'Extension.staged-valid');

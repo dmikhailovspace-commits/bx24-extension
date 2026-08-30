@@ -5,7 +5,7 @@
 <!-- AUTO:BEGIN -->
 ## Current release facts (generated)
 
-- Version: **7.5.62**
+- Version: **7.5.63**
 - Release date: **2026-08-30**
 - Runtime files: **18**
 - Regression suites: **15**

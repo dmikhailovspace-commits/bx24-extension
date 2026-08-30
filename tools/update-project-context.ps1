@@ -47,20 +47,21 @@ $MacValue = if (Test-Path -LiteralPath $MacPath) {
     "``dist/$MacName`` - SHA-256: ``$Hash``"
 } else { '_not built_' }
 
-$Generated = @"
-<!-- AUTO:BEGIN -->
-## Current release facts (generated)
-
-- Version: **$Version**
-- Release date: **$($Update.release_date)**
-- Runtime files: **$RuntimeCount**
-- Regression suites: **$SuiteCount**
-- Windows artifact: $WindowsValue
-- macOS artifact: $MacValue
-<!-- AUTO:END -->
-"@.Trim()
-
 $Context = Get-Content -LiteralPath $ContextPath -Raw -Encoding UTF8
+$Newline = if ($Context.Contains("`r`n")) { "`r`n" } else { "`n" }
+$Generated = @(
+    '<!-- AUTO:BEGIN -->'
+    '## Current release facts (generated)'
+    ''
+    "- Version: **$Version**"
+    "- Release date: **$($Update.release_date)**"
+    "- Runtime files: **$RuntimeCount**"
+    "- Regression suites: **$SuiteCount**"
+    "- Windows artifact: $WindowsValue"
+    "- macOS artifact: $MacValue"
+    '<!-- AUTO:END -->'
+) -join $Newline
+
 $Pattern = '(?s)<!-- AUTO:BEGIN -->.*?<!-- AUTO:END -->'
 if (-not [regex]::IsMatch($Context, $Pattern)) {
     throw 'PROJECT_CONTEXT.md has no AUTO:BEGIN/AUTO:END markers.'
