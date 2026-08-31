@@ -1276,6 +1276,69 @@ try {
 		`Late visible rows started a guarded traversal: ${JSON.stringify(lateMaterializationAfter)}`);
 	assert.equal(lateMaterializationAfter.top, lateMaterializationBefore.top,
 		`Late visible rows moved the native viewport: ${JSON.stringify(lateMaterializationAfter)}`);
+	const stressFilterPanel = page.locator('.recent-host .pena-native-filter-panel');
+	await page.getByRole('button', { name: /Фильтры/ }).click();
+	await stressFilterPanel.getByRole('button', { name: 'По возрастанию', exact: true }).click();
+	for (const [index, start] of [42, 64, 86].entries()) {
+		const recycled = await page.evaluate(({ start }) => window.retargetNativePoolWithLateRows?.(start, 24, 2) || { knownIds: [], lateIds: [] }, { start });
+		assert.equal(recycled.knownIds.length, 22, `Same-node recycled batch ${index + 1} lost known rows`);
+		assert.equal(recycled.lateIds.length, 2, `Same-node recycled batch ${index + 1} lost late rows`);
+		await page.waitForFunction(({ knownIds, lateIds }) => [...knownIds, ...lateIds]
+			.every(id => document.querySelector(`.recent-host [data-id="${id}"]`)?.classList.contains('pena-native-chat-row')), recycled, { timeout: 3000 });
+		await page.waitForTimeout(260);
+		const batchState = await page.evaluate(ids => ({
+			ids: Array.from(document.querySelectorAll('.recent-host .pena-native-chat-row'))
+				.filter(row => getComputedStyle(row).display !== 'none')
+				.map(row => row.dataset.id),
+			top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0,
+			active: window.__PENA_NATIVE_PREFETCH__?.status?.().originalActive === true,
+			lateIds: ids
+		}), recycled.lateIds);
+		assert.deepEqual([...batchState.ids.slice(0, 2)].sort(), [...recycled.lateIds].sort(),
+			`Same-node recycled batch ${index + 1} ignored ascending date sort: ${JSON.stringify(batchState)}`);
+		assert.equal(batchState.top, lateMaterializationBefore.top,
+			`Same-node recycled batch ${index + 1} moved the native viewport: ${JSON.stringify(batchState)}`);
+		assert.equal(batchState.active, false,
+			`Same-node recycled batch ${index + 1} restarted full traversal: ${JSON.stringify(batchState)}`);
+	}
+	await stressFilterPanel.getByRole('button', { name: 'По убыванию', exact: true }).click();
+	await page.waitForTimeout(220);
+	const stressDescending = await page.evaluate(() => Array.from(document.querySelectorAll('.recent-host .pena-native-chat-row'))
+		.filter(row => getComputedStyle(row).display !== 'none')
+		.map(row => row.dataset.id));
+	assert.deepEqual([...stressDescending.slice(-2)].sort(), ['chat8006', 'chat8007'],
+		`Repeated recycled batches ignored descending date sort: ${JSON.stringify(stressDescending)}`);
+	await stressFilterPanel.getByRole('button', { name: 'По возрастанию', exact: true }).click();
+	await page.evaluate(() => {
+		window.setNativeRestDelay?.(1200);
+		window.__PENA_TEST_DIALOG_AUDIT_TTL_MS__ = 50;
+		window.__PENA_TEST_DIALOG_DEEP_IDLE_MS__ = 20;
+	});
+	await page.waitForTimeout(5300);
+	await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+	await page.waitForFunction(() => window.__PENA_NATIVE_PREFETCH__?.status?.().apiActive === true, null, { timeout: 3000 });
+	const auditRecycled = await page.evaluate(() => window.retargetNativePoolWithLateRows?.(18, 24, 2) || { knownIds: [], lateIds: [] });
+	await page.waitForFunction(({ knownIds, lateIds }) => [...knownIds, ...lateIds]
+		.every(id => document.querySelector(`.recent-host [data-id="${id}"]`)?.classList.contains('pena-native-chat-row')), auditRecycled, { timeout: 800 });
+	await page.waitForTimeout(260);
+	const auditInterim = await page.evaluate(() => ({
+		ids: Array.from(document.querySelectorAll('.recent-host .pena-native-chat-row'))
+			.filter(row => getComputedStyle(row).display !== 'none')
+			.map(row => row.dataset.id),
+		apiActive: window.__PENA_NATIVE_PREFETCH__?.status?.().apiActive === true,
+		top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0
+	}));
+	assert.equal(auditInterim.apiActive, true, `REST audit finished before the late-row presentation check: ${JSON.stringify(auditInterim)}`);
+	assert.deepEqual([...auditInterim.ids.slice(0, 2)].sort(), [...auditRecycled.lateIds].sort(),
+		`Late recycled rows stayed unsorted while REST audit was active: ${JSON.stringify({ auditInterim, auditRecycled })}`);
+	assert.equal(auditInterim.top, lateMaterializationBefore.top,
+		`Late rows during REST audit moved the native viewport: ${JSON.stringify(auditInterim)}`);
+	await page.waitForFunction(() => window.__PENA_NATIVE_PREFETCH__?.status?.().apiActive === false, null, { timeout: 4000 });
+	await page.waitForTimeout(220);
+	const auditFinalIds = await visibleIds(page);
+	assert.deepEqual([...auditFinalIds.slice(0, 2)].sort(), [...auditRecycled.lateIds].sort(),
+		`Late recycled rows lost date sort after REST audit completed: ${JSON.stringify({ auditFinalIds, auditRecycled })}`);
+	await page.mouse.click(410, 20);
 
 	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=40&lazyChunk=50&lazyDelay=20&postProofRows=2&postProofDelay=900&initialTop=24&startupBudget=6000`);

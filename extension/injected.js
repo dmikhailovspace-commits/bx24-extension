@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.65';
+	window.__ANITREC_RUNNING__ = '7.5.66';
 
-	const VER = '7.5.65';
+	const VER = '7.5.66';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -1837,6 +1837,15 @@
 
 	function _mergeDialogRecentMessageState(previous, incoming) {
 		if (!previous || !incoming) return incoming;
+		const previousNativeRank = Number(previous.nativeRecentRank);
+		const incomingNativeRank = Number(incoming.nativeRecentRank);
+		// REST and detail payloads do not know the physical position proven by the
+		// native Bitrix list. Keep that rank across atomic metadata replacement so a
+		// late recycled row cannot fall out of the active date sort when an audit ends.
+		if (Number.isFinite(previousNativeRank) && previousNativeRank >= 0 &&
+			!(Number.isFinite(incomingNativeRank) && incomingNativeRank >= 0)) {
+			incoming.nativeRecentRank = previousNativeRank;
+		}
 		const previousId = Math.max(0, Number(previous.lastMessageId) || 0);
 		const incomingId = Math.max(0, Number(incoming.lastMessageId) || 0);
 		const previousTs = Math.max(0, Number(previous.lastMessageTs) || 0);

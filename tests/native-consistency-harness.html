@@ -109,7 +109,8 @@
 	const postProofRows = Math.max(0, Number(new URLSearchParams(location.search).get('postProofRows')) || 0);
 	const postProofDelay = Math.max(0, Number(new URLSearchParams(location.search).get('postProofDelay')) || 0);
 	const detailDelay = Math.max(0, Number(new URLSearchParams(location.search).get('detailDelay')) || 0);
-	const restDelay = Math.max(0, Number(new URLSearchParams(location.search).get('restDelay')) || 0);
+	let restDelay = Math.max(0, Number(new URLSearchParams(location.search).get('restDelay')) || 0);
+	window.setNativeRestDelay = value => { restDelay = Math.max(0, Number(value) || 0); };
 	const deltaTimeout = new URLSearchParams(location.search).get('deltaTimeout') === '1';
 	const restIncompleteZero = new URLSearchParams(location.search).get('restIncompleteZero') === '1';
 	const restUnknownTotal = new URLSearchParams(location.search).get('restUnknownTotal') === '1';
@@ -377,6 +378,32 @@
 	  const knownIds = knownRows.map(row => row.dataset.id);
 	  rowHost.replaceChildren(...knownRows);
 	  return { knownIds, lateIds: window.appendLateNativeRows(lateCount) };
+	};
+	window.retargetNativePoolWithLateRows = (start = 70, poolSize = 24, lateCount = 2) => {
+	  const list = document.querySelector('.test-host:not([hidden]) .bx-im-list-container-recent__elements,.test-host:not([hidden]) .bx-im-list-container-task__elements');
+	  const rowHost = getNativeRowHost(list);
+	  const modeKey = list?.classList.contains('bx-im-list-container-task__elements') ? 'tasks' : 'chats';
+	  const fullRows = nativeFullRows.get(modeKey) || [];
+	  const pool = Array.from(rowHost?.querySelectorAll(':scope > [data-id]') || []).slice(0, poolSize);
+	  if (!rowHost || pool.length < poolSize || !fullRows.length) return { knownIds: [], lateIds: [] };
+	  rowHost.style.minHeight = `${Math.max(rowHost.scrollHeight, fullRows.length * 64)}px`;
+	  const knownCount = Math.max(0, poolSize - Math.max(0, lateCount));
+	  const knownRows = fullRows.slice(start, start + knownCount);
+	  const knownIds = [];
+	  const lateIds = [];
+	  pool.forEach((row, index) => {
+		const source = knownRows[index] || fullRows[0];
+		const id = index < knownCount ? source.dataset.id : `chat${8000 + window.nativeLateRowSeq++}`;
+		const sourceTitle = source.querySelector('.bx-im-chat-title__text')?.textContent || `Диалог ${id}`;
+		row.dataset.id = id;
+		row.querySelector('.bx-im-chat-title__text').textContent = index < knownCount
+		  ? sourceTitle
+		  : `Поздний старый диалог ${lateIds.length + 1}`;
+		if (index < knownCount) knownIds.push(id);
+		else lateIds.push(id);
+	  });
+	  Array.from(rowHost.children).slice(poolSize).forEach(row => row.remove());
+	  return { knownIds, lateIds };
 	};
 	const apiRecentEntries = apiDeletedId ? recentEntries.concat([{
 	  dialog_id: apiDeletedId,
