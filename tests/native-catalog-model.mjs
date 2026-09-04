@@ -426,3 +426,28 @@ for (const [name, test] of tests) {
 const performanceResult = testTenThousandItems();
 console.log(`ok - 10000 items (${performanceResult.mergeDuration.toFixed(1)} ms merge, ${performanceResult.selectionDuration.toFixed(1)} ms select)`);
 console.log('native catalog model: all checks passed');
+
+// A stale alias from a recycled DOM row must not redirect a mandatory tail
+// access check to another dialog, even when the cached metadata looks valid.
+const accessSource = readFileSync(new URL('../extension/injected.js', import.meta.url), 'utf8');
+const accessStart = accessSource.indexOf('async function _verifyDialogNativeMissingIds(');
+const accessEnd = accessSource.indexOf('\n\tasync function _probeDialogNativeTail(', accessStart);
+assert.ok(accessStart >= 0 && accessEnd > accessStart);
+const accessMeta = new Map([
+  ['chat1106', { restDialogId: 'chat1058', displayTitle: 'Recycled alias' }],
+  ['chat1107', { restDialogId: 'chat1107' }]
+]);
+let checkedDialogIds;
+const verifyMissing = Function('normId', '_DIALOG_NATIVE_MISSING_VERIFY_LIMIT',
+  '_isDialogNetworkAvailable', '_getDialogRecentMeta', '_normalizeDialogControlRestDialogId',
+  '_refreshDialogRecentMandatoryDetails', '_dialogRecentMeta', '_isDialogRecentUnavailable',
+  `${accessSource.slice(accessStart, accessEnd)}; return _verifyDialogNativeMissingIds;`
+)(value => String(value), 12, () => true, id => accessMeta.get(id), value => String(value),
+  async (_target, _visible, mandatory, options) => {
+    assert.equal(options.forceAvailabilityCheck, true);
+    checkedDialogIds = [...mandatory.values()].map(record => record.item.dialogId);
+  }, accessMeta, () => false);
+const verifiedMissing = await verifyMissing('chats', ['chat1106', 'chat1107']);
+assert.deepEqual(checkedDialogIds, ['chat1106', 'chat1107']);
+assert.deepEqual(verifiedMissing.available, ['chat1106', 'chat1107']);
+console.log('ok - tail access checks ignore stale recycled REST aliases');

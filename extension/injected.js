@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.86';
+	window.__ANITREC_RUNNING__ = '7.5.87';
 
-	const VER = '7.5.86';
+	const VER = '7.5.87';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -7152,6 +7152,7 @@
 						validatedAt: Math.max(0, Number(materialization.validatedAt) || 0),
 						lastTailProofAt: Math.max(0, Number(materialization.lastTailProofAt) || 0),
 						count: Math.max(0, Number(materialization.count) || 0),
+						tailIds: Array.from(materialization.tailIds || []),
 						nativePassCount: Math.max(0, Number(materialization.nativePassCount) || 0),
 						apiConfirmed: materialization.apiConfirmed === true,
 						apiProjectionExtraCount: Math.max(0, Number(materialization.apiProjectionExtraCount) || 0),
@@ -7664,7 +7665,9 @@
 		const mandatory = new Map(candidates.map(id => {
 			const meta = _getDialogRecentMeta(id) || {};
 			return [id, {
-				item: { id, dialogId: meta.restDialogId || id, title: meta.displayTitle || meta.title || '' },
+				// The saved proof identifies the exact dialog. A recycled row can leave
+				// a stale REST alias in metadata; it must never redirect an access check.
+				item: { id, dialogId: _normalizeDialogControlRestDialogId(id), title: meta.displayTitle || meta.title || '' },
 				mode
 			}];
 		}));

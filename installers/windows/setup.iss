@@ -14,7 +14,7 @@
 ; ================================================================
 
 #define AppName      "BX24 Chat Sorter"
-#define AppVersion   "7.5.86"
+#define AppVersion   "7.5.87"
 #define AppPublisher "PENA Agency"
 #define AppURL       "https://github.com/dmikhailovspace-commits/bx24-extension"
 #define TaskName     "PENAAgencyUpdater"
@@ -64,7 +64,7 @@ english.FinishedLabel=BX24 Chat Sorter is installed.%nLaunch Bitrix24 via "Bitri
 ; Полный release сначала распаковывается в staging-каталог. updater.ps1
 ; проверяет его и публикует одним переключением каталогов.
 Source: "..\..\extension\background.js";                DestDir: "{#StageDir}"; Flags: ignoreversion
-Source: "..\..\extension\worker-v7_5_86.js";             DestDir: "{#StageDir}"; Flags: ignoreversion
+Source: "..\..\extension\worker-v7_5_87.js";             DestDir: "{#StageDir}"; Flags: ignoreversion
 Source: "..\..\extension\content.js";                   DestDir: "{#StageDir}"; Flags: ignoreversion
 Source: "..\..\extension\native-catalog.js";            DestDir: "{#StageDir}"; Flags: ignoreversion
 Source: "..\..\extension\native-interaction-state.js";  DestDir: "{#StageDir}"; Flags: ignoreversion

@@ -68,8 +68,9 @@ let activeScenario = null;
 const finishScenario = async (error = null) => {
 	if (!activeScenario) return;
 	const rest = await page.evaluate(() => window.__PENA_REST_DIAGNOSTICS__?.snapshot()).catch(() => null);
+	const nativeState = error ? await page.evaluate(() => window.__PENA_NATIVE_PREFETCH__?.status()).catch(() => null) : null;
 	scenarioTimings.push({ ...activeScenario, durationMs: Date.now() - activeScenario.startedAt,
-		status: error ? 'FAIL' : 'PASS', ...(error ? { error: String(error) } : {}), rest });
+		status: error ? 'FAIL' : 'PASS', ...(error ? { error: String(error), nativeState } : {}), rest });
 	activeScenario = null;
 	mkdirSync(join(root, 'tests/artifacts'), { recursive: true });
 	writeFileSync(join(root, 'tests/artifacts/native-scenarios.json'), JSON.stringify({ scenarios: scenarioTimings, pageErrors }, null, 2));
@@ -2775,11 +2776,14 @@ try {
 	assert.equal(repositoryCold.replacementRows, 0, `Repository controlled extra leaked a replacement row: ${JSON.stringify(repositoryCold)}`);
 
 	await page.evaluate(() => localStorage.clear());
-	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&catalogRows=80&restShortCap=17&startupBudget=10000`);
+	// Pagination correctness includes the deliberately conservative two-pass DOM
+	// confirmation. Its wait budget must include both passes on hosted runners;
+	// interaction/render latency has its own independent performance suites.
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&catalogRows=80&restShortCap=17&startupBudget=20000`);
 	await page.waitForFunction(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
 		return status?.loadedModes?.includes('chats') && !status.originalActive && status.modeCounts?.chats === 83;
-	}, null, { timeout: 10000 });
+	}, null, { timeout: 20000 });
 	const explicitNextAudit = await page.evaluate(() => ({
 		baseline: window.__PENA_NATIVE_PREFETCH__?.status?.().expectedCatalogs?.chats || null,
 		offsets: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').map(call => call.offset),
