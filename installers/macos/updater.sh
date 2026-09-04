@@ -21,7 +21,7 @@ SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SO
 # ──────────────────────────────────────────────────────────────
 
 CYAN='\033[0;36m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
-REQUIRED_EXTENSION_FILES="worker-v7_5_87.js
+REQUIRED_EXTENSION_FILES="worker-v7_5_88.js
 background.js
 content.js
 native-catalog.js

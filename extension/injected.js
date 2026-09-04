@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.87';
+	window.__ANITREC_RUNNING__ = '7.5.88';
 
-	const VER = '7.5.87';
+	const VER = '7.5.88';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -6604,6 +6604,9 @@
 						_isDialogNativeSourceGenerationCurrent(mode, container, sourceViewport, sourceGeneration);
 					if (exactPhysicalCatalogProof) setNativeWorkProgress('head-fence', 99, true);
 				}
+				// Snapshot before metadata commits or access checks can restore the user's
+				// viewport and recycle its rows away from the proven physical bottom.
+				const physicalTailIds = stableBottom ? _getDialogNativePhysicalTailIds(container) : [];
 				const missingExpectedIds = expectedCatalogCurrent ? getMissingExpectedIds() : [];
 				const blockingExpectedIds = expectedCatalog?.kind === 'repository' ? missingExpectedIds : [];
 				const apiProjectionExtraIds = expectedCatalog?.kind === 'api' ? missingExpectedIds : [];
@@ -6795,7 +6798,7 @@
 				});
 				const recorded = _recordDialogNativeMaterialization(
 					mode, container, sourceViewport, state.seen.size, state.seen, sourceGeneration,
-					{ exactPhysicalCatalogProof, physicalExpansionObserved }
+					{ exactPhysicalCatalogProof, physicalExpansionObserved, physicalTailIds }
 				);
 				if (!recorded) {
 					_dialogNativeBackgroundPendingModes.add(mode);
@@ -7382,6 +7385,29 @@
 			(!active || (active.mode === targetMode && active.list === container));
 	}
 
+	function _getDialogNativePhysicalTailIds(container) {
+		// The DOM child order and cached ranks can reflect PENA's color/date sort.
+		// At the proven physical bottom, Bitrix's row coordinates identify the tail,
+		// including a recycled pool whose absolute transforms differ from DOM order.
+		return _getDialogNativeSourceRows(container).map((row, index) => {
+			const style = getComputedStyle(row);
+			let top = Number(row.getBoundingClientRect().top);
+			if (style.position === 'absolute' || style.position === 'fixed') {
+				// Filtered virtual rows have a zero rectangle but retain Bitrix's
+				// logical top/translateY. Read that position without revealing them.
+				try {
+					const nativeTransform = row.style?.transform || style.transform;
+					const matrix = nativeTransform && nativeTransform !== 'none' ? new DOMMatrixReadOnly(nativeTransform) : null;
+					top = (parseFloat(style.top) || 0) + (matrix?.m42 || 0);
+				} catch {}
+			}
+			return { id: normId(getChatIdFromElement(row)), top, index };
+		}).filter(row => row.id && Number.isFinite(row.top))
+			.sort((left, right) => left.top - right.top || left.index - right.index)
+			.map(row => row.id).filter((id, index, all) => all.indexOf(id) === index)
+			.slice(-_DIALOG_NATIVE_TAIL_ANCHOR_COUNT);
+	}
+
 	function _recordDialogNativeMaterialization(mode, container, viewport, count, ids = [], expectedGeneration = 0, options = {}) {
 		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
 		const previous = _dialogNativeMaterializedSources.get(targetMode);
@@ -7413,7 +7439,7 @@
 			count: Math.max(0, Number(count) || 0),
 			ids: orderedIds,
 			headIds: orderedIds.slice(0, _DIALOG_NATIVE_TAIL_ANCHOR_COUNT),
-			tailIds: orderedIds.slice(-_DIALOG_NATIVE_TAIL_ANCHOR_COUNT),
+			tailIds: Array.from(options.physicalTailIds || []).filter(id => insertionIndex.has(id)),
 			sourceGeneration: generation,
 			revision: Math.max(0, Number(previous?.revision) || 0) + 1,
 			nativePassCount,

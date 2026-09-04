@@ -128,6 +128,8 @@ const assertStableNativeSource = (snapshot, mode, label, options = {}) => {
   assertModeDiagnostics(snapshot, mode, label);
   assert.equal(Number(snapshot.status.modeStates[mode].materialization.count), actual.expectedIds.length,
     `${label}: materialization count belongs to a different source generation`);
+  assert.deepEqual(snapshot.status.modeStates[mode].materialization.tailIds.slice().sort(), actual.expectedIds.slice(-5).sort(),
+    `${label}: saved tail anchors came from presentation order instead of the physical bottom`);
 };
 
 const assertNoForeignIds = (snapshot, label) => {

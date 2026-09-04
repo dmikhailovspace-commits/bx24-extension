@@ -5,7 +5,7 @@
 <!-- AUTO:BEGIN -->
 ## Current release facts (generated)
 
-- Version: **7.5.87**
+- Version: **7.5.88**
 - Release date: **2026-09-05**
 - Runtime files: **19**
 - Regression suites: **27**
@@ -23,7 +23,7 @@
 - `extension/injected.js` управляет интерфейсом, загрузкой диалогов, сортировкой, папками, поиском и интеграцией с нативным DOM Bitrix24.
 - `extension/native-*.js` содержат изолированные модели каталога, состояния взаимодействия, времени и жизненного цикла.
 - `extension/dialog-repository.js` — клиентский мост к хранилищу.
-- `extension/worker-v7_5_87.js` — release-specific MV3 entry с явными build/protocol-маркерами; новое имя worker обязательно при каждом patch-релизе, потому что Chromium-оболочка Bitrix24 может сохранить регистрацию и ScriptCache старого unpacked worker после замены файлов.
+- `extension/worker-v7_5_88.js` — release-specific MV3 entry с явными build/protocol-маркерами; новое имя worker обязательно при каждом patch-релизе, потому что Chromium-оболочка Bitrix24 может сохранить регистрацию и ScriptCache старого unpacked worker после замены файлов.
 - `extension/background.js` — импортируемое ядро service worker с каталогом диалогов в `chrome.storage.local`.
 - Windows-updater всегда собирает пустой staging строго по `update.extension_files`, сверяет полный набор файлов и оба встроенных шрифта, а имя worker берёт из `manifest.background.service_worker`. Старые generic/versioned worker и любой лишний runtime не переносятся в новую установку; до атомарной замены сохраняется рабочий rollback.
 - `.github/workflows/build-macos.yml` — единственный удалённый путь выпуска macOS DMG: сборка и проверка выполняются на GitHub-hosted `macos-15`.
@@ -130,3 +130,4 @@ update.json         состав и адрес неизменяемого рел
 - tests/artifacts/native-scenarios.json содержит отдельные сценарии большого нативного набора с длительностями и REST-диагностикой; recent-failure-*.json содержит снимок упавшего сценария синхронизации.
 - Релизный workflow сохраняет JSON/PNG-диагностику и при падении тестов. Сценарий resume пишет resume-failure.json; после закрытия панели отдельно проверяет восстановленный scroll-anchor и отрисовку переиспользуемой строки.
 - Проверка доступности исчезнувшего tail-anchor использует сам сохранённый ID, а не REST-alias из метаданных переиспользованной строки. Диагностика materialization показывает tailIds; упавший нативный сценарий сохраняет полное состояние загрузки вместе с REST-замерами.
+- Tail-anchors фиксируются непосредственно на подтверждённом физическом дне до commit/восстановления viewport. Для абсолютных виртуальных строк используются их native inline-transform/top: CSS-фильтр может обнулить bounding rect и computed transform, а порядок DOM/сохранённые ранги отражать сортировку PENA. Тесты проверяют все пять физически последних ID после каждого восстановления и переключения режима.

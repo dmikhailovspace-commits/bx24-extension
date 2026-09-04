@@ -451,3 +451,16 @@ const verifiedMissing = await verifyMissing('chats', ['chat1106', 'chat1107']);
 assert.deepEqual(checkedDialogIds, ['chat1106', 'chat1107']);
 assert.deepEqual(verifiedMissing.available, ['chat1106', 'chat1107']);
 console.log('ok - tail access checks ignore stale recycled REST aliases');
+
+const tailRows = [1107, 1098, 1101, 1106, 1099, 1103, 1100, 1104, 1102, 1105]
+  .map(id => ({ id: `chat${id}`, style: { transform: String((id - 1098) * 58) }, getBoundingClientRect: () => ({ top: 0 }) }));
+const physicalTail = Function('_getDialogNativeSourceRows', 'normId', 'getChatIdFromElement', 'getComputedStyle', 'DOMMatrixReadOnly',
+  '_DIALOG_NATIVE_TAIL_ANCHOR_COUNT',
+  `${extractInjectedFunction(accessSource, '_getDialogNativePhysicalTailIds', '_recordDialogNativeMaterialization')}; return _getDialogNativePhysicalTailIds;`
+)(() => tailRows, value => String(value), row => row.id,
+  () => ({ position: 'absolute', top: '0px', transform: 'none' }),
+  class { constructor(value) { this.m42 = Number(value); } }, 5);
+assert.deepEqual(physicalTail({}), ['chat1103', 'chat1104', 'chat1105', 'chat1106', 'chat1107']);
+tailRows.reverse();
+assert.deepEqual(physicalTail({}), ['chat1103', 'chat1104', 'chat1105', 'chat1106', 'chat1107']);
+console.log('ok - physical tail anchors survive DOM presentation reordering');

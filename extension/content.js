@@ -23,8 +23,8 @@
   const _enabledKey = 'pena.extension.enabled';
   const _repositoryChannel = 'pena.dialog.repository.v2';
 	const _workerHealthChannel = 'pena.runtime.worker-health.v1';
-	const _expectedWorkerEntry = 'worker-v7_5_87.js';
-	const _expectedWorkerBuild = '7.5.87';
+	const _expectedWorkerEntry = 'worker-v7_5_88.js';
+	const _expectedWorkerBuild = '7.5.88';
 	const _expectedWorkerProtocol = 'dialog-repository-v2';
   const _repositoryRequestEvent = 'pena-dialog-repository-request';
   const _repositoryResponseEvent = 'pena-dialog-repository-response';
