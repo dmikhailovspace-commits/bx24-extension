@@ -39,6 +39,17 @@ jobs:
         shell: pwsh
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/update-project-context.ps1 -Check
 
+      - name: Upload regression diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: regression-diagnostics-${{ github.sha }}
+          path: |
+            tests/artifacts/*.json
+            tests/artifacts/*.png
+          if-no-files-found: warn
+          retention-days: 14
+
   build-windows:
     name: Build and verify Windows EXE
     runs-on: windows-2025
@@ -227,7 +238,9 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' \
-            'Stable dialog recovery after sleep, source changes and reconnect.' \
+            'Fixes time-panel layering, date alignment and action icons.' \
+            'Improves contact qualification, task discovery and tracking updates.' \
+            'Bounds background REST traffic and includes functional performance diagnostics.' \
             'Includes Windows EXE and Universal macOS DMG for Intel and Apple Silicon.' \
             > release-notes.md
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then

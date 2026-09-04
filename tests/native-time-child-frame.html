@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>PENA time tracking child frame</title>
+</head>
+<body>
+  <script>
+	const routeTaskId = new URLSearchParams(window.location.search).get('routeTaskId');
+	if (/^\d+$/.test(routeTaskId || '')) {
+		history.replaceState({}, '', `/company/personal/user/7/tasks/task/view/${routeTaskId}/`);
+		const title = document.createElement('div');
+		title.className = 'tasks-task-title';
+		title.textContent = `Задача ${routeTaskId}`;
+		document.body.appendChild(title);
+	}
+    window.BX = window.top.BX;
+    window.BX24 = window.top.BX24;
+    window.__PENA_TEST_SKIP_DIALOG_RUNTIME__ = true;
+    window.__PENA_FORCE_REST_CATALOG__ = false;
+  </script>
+	<script src="/extension/native-catalog.js"></script>
+	<script src="/extension/native-interaction-state.js"></script>
+	<script src="/extension/native-time-control.js"></script>
+	<script src="/extension/native-lifecycle.js"></script>
+	<script src="/extension/injected.js"></script>
+  <script>window.__PENA_CHILD_FRAME_LOADED__ = true;</script>
+</body>
+</html>

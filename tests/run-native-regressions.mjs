@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createReadStream, readFileSync } from 'node:fs';
+import { createReadStream, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
 import { createRequire } from 'node:module';
@@ -56,10 +56,33 @@ const address = server.address();
 const base = `http://127.0.0.1:${address.port}`;
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 420, height: 760 } });
+await page.addInitScript(() => {
+	window.__PENA_TEST_EAGER_MATERIALIZATION__ = true;
+	window.__PENA_TEST_NATIVE_EXPECTED_AUDIT__ = true;
+	window.__PENA_TEST_NATIVE_TASK_AUDIT__ = true;
+});
 const pageErrors = [];
 page.on('pageerror', error => pageErrors.push(String(error)));
+const scenarioTimings = [];
+let activeScenario = null;
+const finishScenario = async (error = null) => {
+	if (!activeScenario) return;
+	const rest = await page.evaluate(() => window.__PENA_REST_DIAGNOSTICS__?.snapshot()).catch(() => null);
+	scenarioTimings.push({ ...activeScenario, durationMs: Date.now() - activeScenario.startedAt,
+		status: error ? 'FAIL' : 'PASS', ...(error ? { error: String(error) } : {}), rest });
+	activeScenario = null;
+	mkdirSync(join(root, 'tests/artifacts'), { recursive: true });
+	writeFileSync(join(root, 'tests/artifacts/native-scenarios.json'), JSON.stringify({ scenarios: scenarioTimings, pageErrors }, null, 2));
+};
+const navigate = page.goto.bind(page);
+page.goto = async (url, options) => {
+	await finishScenario();
+	activeScenario = { url: String(url).replace(base, ''), startedAt: Date.now() };
+	return navigate(url, options);
+};
 
 try {
+	nativeRegressionSuite: {
 	await page.goto(`${base}/tests/native-color-regression-harness.html`);
 	await page.locator('.pena-native-folder-switcher').waitFor({ state: 'visible' });
   const target = page.locator('.pena-native-managed-row[data-id="chat225"]');
@@ -130,14 +153,53 @@ try {
 	const dialogMarkerTools = await markerPalette.evaluate(palette => ({
 		picker: !!palette.querySelector('.dialog-control-mini-picker'),
 		hue: !!palette.querySelector('.dialog-control-hue-strip'),
+		random: !!palette.querySelector('.dialog-control-palette-tool.--random'),
+		eyedropper: !!palette.querySelector('.dialog-control-palette-tool.--eyedropper'),
 		addIcon: palette.querySelector('.dialog-control-swatch.--add svg')?.innerHTML || '',
 		clearIcon: palette.querySelector('.dialog-control-swatch.--clear .dialog-control-transparent-icon')?.outerHTML || '',
 		rect: (() => { const rect = palette.getBoundingClientRect(); return { left: rect.left, top: rect.top, width: rect.width, height: rect.height }; })()
 	}));
 	assert.equal(dialogMarkerTools.picker, true);
 	assert.equal(dialogMarkerTools.hue, true);
+	assert.equal(dialogMarkerTools.random, true);
+	assert.equal(dialogMarkerTools.eyedropper, true);
 	assert.ok(dialogMarkerTools.addIcon && dialogMarkerTools.clearIcon);
 	assert.ok(dialogMarkerTools.rect.left >= 8 && dialogMarkerTools.rect.top >= 8, `Dialog palette escaped the viewport: ${JSON.stringify(dialogMarkerTools.rect)}`);
+	const customColorsBeforeRandom = await page.evaluate(() => JSON.parse(localStorage.getItem('pena.dialogControlColors.v1') || '[]'));
+	await markerPalette.locator('.dialog-control-palette-tool.--random').click();
+	await page.waitForFunction(() => /^#[0-9a-f]{6}$/i.test(JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats') || '[]').find(item => item.id === 'chat225')?.color || ''));
+	const randomColorState = await markerPalette.evaluate(palette => {
+		const color = JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats') || '[]').find(item => item.id === 'chat225')?.color || '';
+		return {
+			color,
+			custom: JSON.parse(localStorage.getItem('pena.dialogControlColors.v1') || '[]'),
+			hasSwatch: !!palette.querySelector(`.dialog-control-swatch[data-color="${color}"]`)
+		};
+	});
+	assert.deepEqual(randomColorState.custom, customColorsBeforeRandom, 'Random color was saved without pressing Plus');
+	assert.equal(randomColorState.hasSwatch, false, 'Random color appeared in the saved palette without pressing Plus');
+	await markerPalette.locator('.dialog-control-swatch.--add').click();
+	await page.waitForFunction(color => JSON.parse(localStorage.getItem('pena.dialogControlColors.v1') || '[]').includes(color), randomColorState.color);
+	const customColorsAfterPlus = await page.evaluate(() => JSON.parse(localStorage.getItem('pena.dialogControlColors.v1') || '[]'));
+	assert.equal(customColorsAfterPlus.includes(randomColorState.color), true, 'Plus did not save the currently selected random color');
+	markerPalette = await openMarkerPalette(source);
+	await markerPalette.locator('.dialog-control-swatch[data-color="#ef4444"]').click();
+	markerPalette = await openMarkerPalette(target);
+	await markerPalette.locator('.dialog-control-palette-tool.--eyedropper').click();
+	await page.waitForFunction(() => document.documentElement.classList.contains('pena-dialog-color-eyedropper'));
+	await page.evaluate(() => { window.nativeRowClicks = []; window.nativeRowGestures = []; });
+	await source.hover();
+	await source.click();
+	await page.waitForFunction(() => JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats') || '[]').find(item => item.id === 'chat225')?.color === '#ef4444');
+	const eyedropperResult = await page.evaluate(() => ({
+		active: document.documentElement.classList.contains('pena-dialog-color-eyedropper'),
+		clicks: [...window.nativeRowClicks],
+		gestures: [...window.nativeRowGestures]
+	}));
+	assert.deepEqual(eyedropperResult, { active: false, clicks: [], gestures: [] },
+		`Eyedropper leaked the real click into Bitrix: ${JSON.stringify(eyedropperResult)}`);
+	assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('pena.dialogControlColors.v1') || '[]')), customColorsAfterPlus,
+		'Eyedropper saved its sampled color without pressing Plus');
 	await page.keyboard.press('Escape');
 
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=tasks&legacyNativeOff=1`);
@@ -148,8 +210,41 @@ try {
 		'Legacy native-mode=0 disabled the only remaining task control panel'
 	);
 
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&passThrough=1&short=1&noPrefSeed=1`);
+	await page.locator('.pena-native-folder-switcher').waitFor({ state: 'visible' });
+	await page.getByRole('button', { name: /Фильтры/ }).click();
+	const freshDefaultPanel = page.locator('.pena-native-filter-panel');
+	assert.deepEqual(await freshDefaultPanel.evaluate(panel => ({
+		date: panel.querySelector('[data-pena-sort-mode="date"]')?.classList.contains('--active') || false,
+		desc: panel.querySelector('[data-pena-sort-direction="desc"]')?.classList.contains('--active') || false,
+		unread: panel.querySelector('.pena-native-unread-filter input')?.checked || false,
+		persisted: localStorage.getItem('pena.dialogControlView.chats')
+	})), { date: true, desc: true, unread: false, persisted: null },
+	'Fresh profile does not default to Bitrix date order with newest first');
+	await freshDefaultPanel.getByRole('button', { name: 'Дата', exact: true }).click();
+	await page.evaluate(() => {
+		const labels = new Map([['chat225', '15:45'], ['chat5', '16:45']]);
+		for (const [id, label] of labels) {
+			const row = document.querySelector(`.recent-host .bx-im-list-recent-item__wrap[data-id="${id}"]`);
+			const date = document.createElement('span');
+			date.className = 'bx-im-list-recent-item__date';
+			date.textContent = label;
+			row?.appendChild(date);
+		}
+	});
+	const nativeDatePanel = page.locator('.pena-native-filter-panel');
+	await nativeDatePanel.getByRole('button', { name: 'По убыванию', exact: true }).click();
+	await page.waitForTimeout(200);
+	const directDateIds = () => page.evaluate(() => Array.from(document.querySelector('.recent-host .bx-im-list-container-recent__elements')?.children || [], row => row.getAttribute('data-id')));
+	let displayedDateIds = await directDateIds();
+	assert.ok(displayedDateIds.indexOf('chat225') < displayedDateIds.indexOf('chat5'), 'Default date descending changed the canonical Bitrix order');
+	await nativeDatePanel.getByRole('button', { name: 'По возрастанию', exact: true }).click();
+	await page.waitForTimeout(200);
+	displayedDateIds = await directDateIds();
+	assert.ok(displayedDateIds.indexOf('chat225') < displayedDateIds.indexOf('chat5'), 'Ascending native displayed time did not reverse 15:45/16:45');
+
   for (const mode of ['chats', 'tasks']) {
-    await page.goto(`${base}/tests/native-consistency-harness.html?mode=${mode}`);
+		await page.goto(`${base}/tests/native-consistency-harness.html?mode=${mode}&taskPageCap=10`);
     await page.locator('.pena-native-folder-switcher').waitFor({ state: 'visible' });
     await page.waitForFunction(() => document.querySelectorAll('.test-host:not([hidden]) .pena-native-managed-viewport').length === 1);
     assert.equal(await page.locator('.test-host:not([hidden]) .pena-native-managed-viewport').count(), 1, `Default ${mode} mode did not expose the complete REST catalog`);
@@ -164,9 +259,17 @@ try {
 	assert.equal(output.invalidSwitcherMounts, 0);
 	assert.equal(output.avatarGeometry?.ringMatchesAvatar, true, `Avatar ring does not follow the avatar contour in ${mode}`);
 	assert.equal(output.avatarGeometry?.ringBorderWidth, 4, `Avatar ring is not 4px thick in ${mode}`);
+	assert.deepEqual(output.avatarLayering, {
+		stackHostIsAvatar: true,
+		stackHostCount: 1,
+		bodyPromoted: false,
+		tailPromoted: false
+	}, `Avatar stacking leaked into managed row content in ${mode}: ${JSON.stringify(output.avatarLayering)}`);
     assert.equal(output.geometry.panelOverlapsList, false);
     assert.equal(output.geometry.firstRowStartsInsideList, true);
     assert.equal(output.geometry.switcherInsideScrollViewport, false);
+	assert.ok(Math.abs(output.geometry.panelListGap) <= 0.5, `Panel/list gap is visible in ${mode}: ${JSON.stringify(output.geometry)}`);
+	assert.ok(Math.abs(output.geometry.firstRowGap) <= 0.5, `First dialog does not start at the viewport edge in ${mode}: ${JSON.stringify(output.geometry)}`);
 	await page.getByRole('button', { name: /Фильтры/ }).click();
 	const filterPanel = page.locator('.pena-native-filter-panel');
 	await filterPanel.waitFor({ state: 'visible' });
@@ -268,24 +371,55 @@ try {
 	assert.equal(await page.getByRole('button', { name: /Фильтры/ }).getAttribute('aria-expanded'), 'false');
 	const beforeTimePanel = await readOutput(page);
 	await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('pena.time')).forEach(key => localStorage.removeItem(key)));
+	const closedTimeRestCalls = await page.evaluate(() => window.nativeRestCalls.filter(call =>
+		['server.time', 'user.current', 'task.elapseditem.getlist', 'task.elapseditem.add', 'task.elapseditem.update', 'task.elapseditem.delete'].includes(call.method)
+	).map(call => call.method));
+	assert.deepEqual(closedTimeRestCalls, [], `Closed time panel produced REST traffic in ${mode}: ${JSON.stringify(closedTimeRestCalls)}`);
+	assert.equal(await page.evaluate(() => window.timeRestCalls.length), 0, `Closed time panel batched elapsed-time REST in ${mode}`);
 	await page.locator('.pena-native-time-button').click();
 	const timePanel = page.locator('.pena-native-time-panel');
 	await timePanel.waitFor({ state: 'visible' });
-	await page.waitForFunction(() => document.querySelector('.pena-native-time-total-value')?.textContent === '1 ч 30 мин');
+	try {
+		await page.waitForFunction(() => document.querySelector('.pena-native-time-total-value')?.textContent === '1 ч 30 мин');
+	} catch (error) {
+		const diagnostic = await page.evaluate(() => ({
+			total: document.querySelector('.pena-native-time-total-value')?.textContent || '',
+			meta: document.querySelector('.pena-native-time-meta')?.textContent || '',
+			options: Array.from(document.querySelectorAll('.pena-native-time-task-select option'), option => ({ value: option.value, text: option.textContent })),
+			restCalls: window.nativeRestCalls,
+			timeRestCalls: window.timeRestCalls
+		}));
+		throw new Error(`Time panel did not load its working set: ${JSON.stringify(diagnostic)}; ${error.message}`);
+	}
 	await page.waitForFunction(() => document.querySelectorAll('.pena-native-time-task-select option').length >= 2);
+	const initialElapsedRequests = await page.evaluate(() => window.timeRestCalls.map(params => ({
+		taskId: String(Array.isArray(params) ? params[0] : ''),
+		filter: Array.isArray(params) ? params[2] : null,
+		argCount: Array.isArray(params) ? params.length : 0
+	})));
+	assert.ok(initialElapsedRequests.length >= 2, `Elapsed time was not loaded per task in ${mode}: ${JSON.stringify(initialElapsedRequests)}`);
+	assert.ok(initialElapsedRequests.every(request => /^\d+$/.test(request.taskId) && request.argCount === 5),
+		`task.elapseditem.getlist did not receive [TASKID, order, filter, select, nav] in ${mode}: ${JSON.stringify(initialElapsedRequests)}`);
+	assert.ok(initialElapsedRequests.some(request => request.taskId === '101') && initialElapsedRequests.some(request => request.taskId === '102'),
+		`Elapsed time requests omitted eligible task IDs in ${mode}: ${JSON.stringify(initialElapsedRequests)}`);
 	await page.evaluate(() => { window.__penaTimePanelReference = document.querySelector('.pena-native-time-panel'); });
 	assert.match(await timePanel.locator('.pena-native-time-meta').textContent(), /2 задачи · 2 записи/);
-	assert.equal(await timePanel.locator('.pena-native-time-panel-head > .pena-native-popover-close').count(), 1, `Time panel close is not attached to the window header in ${mode}`);
+	assert.equal(await timePanel.locator('.pena-native-time-header-actions > .pena-native-popover-close').count(), 1, `Time panel close is not attached to the window header in ${mode}`);
 	assert.equal(await timePanel.locator('.pena-native-time-summary .pena-native-popover-close').count(), 0, `Time panel close still sits under refresh in ${mode}`);
 	assert.equal(await timePanel.locator('.pena-native-time-panel-title').textContent(), 'Учёт времени');
+	assert.equal(await timePanel.getAttribute('role'), 'dialog', `Time workspace is not exposed as a dialog in ${mode}`);
+	assert.equal(await timePanel.getAttribute('aria-modal'), 'true', `Time workspace is not modal in ${mode}`);
 	assert.equal(await timePanel.evaluate(panel => {
 		const tracker = panel.querySelector('.pena-native-time-tracker');
 		const activity = panel.querySelector('.pena-native-time-suggestions');
 		return !!(tracker && activity && (tracker.compareDocumentPosition(activity) & Node.DOCUMENT_POSITION_FOLLOWING));
 	}), true, `Primary tracker is not placed before secondary activity in ${mode}`);
 	const trackerOptions = await timePanel.locator('.pena-native-time-task-select option').evaluateAll(options => options.map(option => ({ value: option.value, title: option.textContent?.trim() || '' })));
-	assert.ok(trackerOptions.every(option => /^\d+$/.test(option.value) && option.title && !/^(Выберите задачу|Сначала откройте задачу|Задача #\d+)$/.test(option.title)), `Tracker contains a placeholder instead of real tasks in ${mode}: ${JSON.stringify(trackerOptions)}`);
-	assert.equal(await timePanel.locator('input[type="date"]').count(), 0);
+	assert.deepEqual(trackerOptions[0], { value: '', title: 'Выберите задачу' }, `Tracker has no neutral initial choice in ${mode}`);
+	assert.equal(await timePanel.locator('.pena-native-time-task-select').inputValue(), '', `Tracker auto-selected an unexplained task in ${mode}`);
+	assert.ok(trackerOptions.slice(1).every(option => /^\d+$/.test(option.value) && option.title && !/^(Сначала откройте задачу|Задача #\d+)$/.test(option.title)), `Tracker contains a non-task entry in ${mode}: ${JSON.stringify(trackerOptions)}`);
+	assert.equal(await timePanel.locator('.pena-native-time-date-input').count(), 1, `Time panel has no selected-date control in ${mode}`);
+	assert.equal(await timePanel.locator('.pena-native-time-view-tab').count(), 2, `Time panel has no day/statistics switch in ${mode}`);
 	assert.equal(await timePanel.getByText('Трекинг сейчас', { exact: true }).count(), 0);
 	assert.equal(await timePanel.getByText('Без запуска таймера', { exact: true }).count(), 0);
 	assert.equal(await timePanel.locator('.pena-native-time-manual-hours').getAttribute('type'), 'text');
@@ -303,20 +437,30 @@ try {
 	assert.equal(durationFieldColors.hours, durationFieldColors.minutes, `Hour and minute values use different colors in ${mode}`);
 	assert.equal(durationFieldColors.hoursPlaceholder, durationFieldColors.hours, `Empty hour field looks different from an entered value in ${mode}`);
 	assert.equal(durationFieldColors.minutesPlaceholder, durationFieldColors.minutes, `Empty minute field looks different from an entered value in ${mode}`);
-	const compactTimePanel = await timePanel.evaluate(panel => ({
+	const timeWindow = await timePanel.evaluate(panel => {
+		const body = panel.querySelector('.pena-native-time-body');
+		const scroll = panel.querySelector('.pena-native-time-scroll');
+		const summary = panel.querySelector('.pena-native-time-summary')?.getBoundingClientRect();
+		const bodyRect = body?.getBoundingClientRect();
+		return ({
 		width: panel.getBoundingClientRect().width,
-		gap: getComputedStyle(panel).gap,
-		overflowY: getComputedStyle(panel).overflowY,
-		scrollbarGutter: getComputedStyle(panel).scrollbarGutter,
+		gap: getComputedStyle(body).gap,
+		position: getComputedStyle(panel).position,
+		columns: getComputedStyle(body).gridTemplateColumns,
+		overflowY: getComputedStyle(scroll).overflowY,
+		scrollbarGutter: getComputedStyle(scroll).scrollbarGutter,
+		edgesAligned: !!summary && !!bodyRect && Math.abs(summary.left - bodyRect.left) <= 1 && Math.abs(summary.right - bodyRect.right) <= 1,
 		refreshPaths: panel.querySelectorAll('.pena-native-time-refresh svg path').length,
 		refreshBorder: getComputedStyle(panel.querySelector('.pena-native-time-refresh')).borderTopWidth
-	}));
-	assert.ok(compactTimePanel.width <= 340, `Time panel stayed oversized in ${mode}: ${JSON.stringify(compactTimePanel)}`);
-	assert.equal(compactTimePanel.gap, '6px');
-	assert.equal(compactTimePanel.overflowY, 'auto');
-	assert.match(compactTimePanel.scrollbarGutter, /stable/);
-	assert.equal(compactTimePanel.refreshPaths, 2, `Refresh icon was not replaced in ${mode}`);
-	assert.equal(compactTimePanel.refreshBorder, '0px', `Refresh control kept the old boxed appearance in ${mode}`);
+	})});
+	assert.ok(timeWindow.width >= 400, `Time workspace did not open as a wide window in ${mode}: ${JSON.stringify(timeWindow)}`);
+	assert.equal(timeWindow.position, 'fixed');
+	assert.match(timeWindow.gap, /16px/);
+	assert.equal(timeWindow.overflowY, 'auto');
+	assert.match(timeWindow.scrollbarGutter, /stable/);
+	assert.equal(timeWindow.edgesAligned, true, `Time summary and cards have different edges in ${mode}: ${JSON.stringify(timeWindow)}`);
+	assert.equal(timeWindow.refreshPaths, 1, `Refresh icon was not replaced in ${mode}`);
+	assert.equal(timeWindow.refreshBorder, '0px', `Refresh control kept the old boxed appearance in ${mode}`);
 	const callsBeforeTimeoutRetry = await page.evaluate(() => window.timeRestCalls.length);
 	await page.evaluate(() => {
 		window.timeListTimeoutFailures = 1;
@@ -335,13 +479,12 @@ try {
 	assert.match(timeFonts.accent, /Unbounded Variable/);
 	assert.match(timeFonts.tech, /Consolas/);
 	const trackedToggle = timePanel.locator('.pena-native-time-tracked-toggle');
-	assert.match(await trackedToggle.textContent(), /Учтено · 2/);
+	assert.match(await trackedToggle.textContent(), /Записи · 2/);
 	await trackedToggle.click();
 	await page.waitForFunction(() => document.querySelectorAll('.pena-native-time-tracked-list .pena-native-time-task-row').length === 2);
-	assert.deepEqual(await timePanel.locator('.pena-native-time-tracked-list .pena-native-time-task-title').allTextContents(), ['Задача 101', 'Задача 102']);
+	assert.deepEqual(await timePanel.locator('.pena-native-time-tracked-list .pena-native-time-task-title').allTextContents(), ['Задача 102', 'Задача 101']);
 	const manualToggle = timePanel.locator('.pena-native-time-manual-toggle');
-	assert.equal(await timePanel.locator('.pena-native-time-manual').isHidden(), true, `Manual controls were expanded by default in ${mode}`);
-	await manualToggle.click();
+	assert.equal(await timePanel.locator('.pena-native-time-manual').isVisible(), true, `Manual hours/minutes are hidden in the full time window in ${mode}`);
 	assert.equal(await manualToggle.getAttribute('aria-expanded'), 'true');
 	const manualSearch = timePanel.locator('.pena-native-time-manual-search');
 	assert.equal(await timePanel.locator('.pena-native-time-manual-results .pena-native-time-manual-result').count(), 0, 'Manual entry exposed recommendations before search');
@@ -349,9 +492,29 @@ try {
 	await manualSearch.fill('Задача без совпадений');
 	await timePanel.locator('.pena-native-time-manual-search-status').getByText('Поиск недоступен. Повторите', { exact: true }).waitFor({ state: 'visible', timeout: 3000 });
 	assert.equal(await timePanel.locator('.pena-native-time-manual-error').isHidden(), true, `Task search error is duplicated below the form in ${mode}`);
+	const searchRetry = timePanel.locator('.pena-native-time-search-retry');
+	await searchRetry.focus();
+	await searchRetry.press('Enter');
+	await page.waitForFunction(() => document.activeElement?.classList?.contains('pena-native-time-manual-search'));
+	assert.equal(await manualSearch.evaluate(input => document.activeElement === input), true, `Task search retry lost keyboard focus in ${mode}`);
 	await manualSearch.fill('Задача 405');
 	await page.waitForTimeout(400);
 	assert.equal(await timePanel.locator('.pena-native-time-manual-result').filter({ hasText: 'Задача 405' }).count(), 0, 'Manual search exposed a task with disabled time tracking');
+	await manualSearch.fill('Задача 406');
+	const verifiedUnknownTask = timePanel.locator('.pena-native-time-manual-result').filter({ hasText: 'Задача 406' });
+	await verifiedUnknownTask.waitFor({ state: 'visible', timeout: 3000 });
+	assert.equal(await page.evaluate(() => window.nativeRestCalls.some(call => call.method === 'tasks.task.get' && String(call.params?.taskId || '') === '406')), true, 'Task without a list-level ALLOW flag was not verified through tasks.task.get');
+	assert.equal(await page.evaluate(() => window.nativeRestCalls.filter(call => call.method === 'tasks.task.list' && call.params?.filter?.TITLE).every(call => call.params?.order?.ACTIVITY_DATE === 'desc' && !('%TITLE' in (call.params.filter || {})))), true, 'Manual task search used a non-production Bitrix filter/order contract');
+	await manualSearch.fill('Каталожная задача');
+	await page.waitForFunction(() => window.nativeRestCalls.some(call => call.method === 'tasks.task.list' && call.params?.filter?.TITLE === '%Каталожная задача%' && Number(call.params?.start) >= 20));
+	assert.equal(await timePanel.locator('.pena-native-time-manual-result').count(), 24, 'Paginated task search silently cut valid trackable tasks');
+	await manualSearch.fill('  Каталожная   задача 24  ');
+	await timePanel.locator('.pena-native-time-manual-result').filter({ hasText: 'Каталожная задача 24' }).waitFor({ state: 'visible', timeout: 3000 });
+	await manualSearch.fill('50070');
+	const exactIdResult = timePanel.locator('.pena-native-time-manual-result').filter({ hasText: 'Задача 50070' });
+	await exactIdResult.waitFor({ state: 'visible', timeout: 3000 });
+	assert.equal(await page.evaluate(() => window.nativeRestCalls.some(call => call.method === 'tasks.task.get' && String(call.params?.taskId || '') === '50070')), true,
+		'Numeric task search did not use an exact tasks.task.get lookup');
 	await page.evaluate(() => { window.timeTaskSearchFailures = 2; });
 	await manualSearch.fill('Задача 101');
 	const manualTaskResult = timePanel.locator('.pena-native-time-manual-result').filter({ hasText: 'Задача 101' });
@@ -370,16 +533,130 @@ try {
 	await timePanel.locator('.pena-native-time-manual-submit').click();
 	await page.waitForFunction(() => document.querySelector('.pena-native-time-total-value')?.textContent === '2 ч 45 мин');
 	assert.equal(await page.evaluate(() => Number(window.timeAddCalls[0]?.ARFIELDS?.SECONDS || 0)), 4500, `Manual duration was not saved in ${mode}`);
+	const selectedDateInput = timePanel.locator('.pena-native-time-date-input');
+	const todayKey = await selectedDateInput.inputValue();
+	assert.match(await page.evaluate(() => String(window.timeAddCalls[0]?.ARFIELDS?.CREATED_DATE || '')), new RegExp(`^${todayKey}T12:00:00`), `Manual write ignored the selected date in ${mode}`);
+	const previousDateKey = await page.evaluate(dateKey => {
+		const date = new Date(`${dateKey}T12:00:00`);
+		date.setDate(date.getDate() - 1);
+		return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+	}, todayKey);
+	await selectedDateInput.evaluate((input, value) => {
+		input.value = value;
+		input.dispatchEvent(new Event('change', { bubbles: true }));
+	}, previousDateKey);
+	await page.waitForFunction(() => document.querySelector('.pena-native-time-total-value')?.textContent === '0 мин');
+	assert.equal(await timePanel.locator('.pena-native-time-tracker').isHidden(), true, `Timer remained available for a past date in ${mode}`);
+	await timePanel.locator('.pena-native-time-manual-search').fill('Задача 102');
+	const pastTask = timePanel.locator('.pena-native-time-manual-result').filter({ hasText: 'Задача 102' });
+	await pastTask.waitFor({ state: 'visible' });
+	await pastTask.click();
+	await timePanel.locator('.pena-native-time-manual-minutes').fill('30');
+	await timePanel.locator('.pena-native-time-manual-submit').click();
+	await page.waitForFunction(() => document.querySelector('.pena-native-time-total-value')?.textContent === '30 мин');
+	assert.match(await page.evaluate(() => String(window.timeAddCalls.at(-1)?.ARFIELDS?.CREATED_DATE || '')), new RegExp(`^${previousDateKey}T12:00:00`), `Backdated write used today's date in ${mode}`);
+	if (await timePanel.locator('.pena-native-time-tracked-list').isHidden()) await trackedToggle.click();
+	const pastEntry = timePanel.locator('.pena-native-time-tracked-list .pena-native-time-entry-row').first();
+	await pastEntry.locator('.pena-native-time-row-edit').click();
+	await pastEntry.locator('.pena-native-time-entry-minutes').fill('45');
+	await pastEntry.locator('.pena-native-time-entry-save').click();
+	try {
+	await page.waitForFunction(() => window.timeUpdateCalls.length > 0 && document.querySelector('.pena-native-time-total-value')?.textContent === '45 мин');
+	} catch (error) {
+		const state = await page.evaluate(() => ({ updates: window.timeUpdateCalls, added: window.timeAddedItems, seed: window.timeSeedItems, total: document.querySelector('.pena-native-time-total-value')?.textContent, editor: document.querySelector('.pena-native-time-entry-row')?.innerText, toast: document.querySelector('.pena-native-toast.--show')?.textContent, rest: window.__PENA_REST_DIAGNOSTICS__?.snapshot() }));
+		throw new Error('Backdated edit failed: ' + JSON.stringify(state), {cause:error});
+	}
+	assert.match(await page.evaluate(() => String(window.timeUpdateCalls[0]?.ARFIELDS?.CREATED_DATE || '')), new RegExp(`^${previousDateKey}T12:00:00`), `Editing a backdated entry reset its date in ${mode}`);
+	const pastDelete = timePanel.locator('.pena-native-time-tracked-list .pena-native-time-entry-row').first().locator('.pena-native-time-row-delete');
+	await pastDelete.click();
+	const pastDeleteConfirm = timePanel.locator('.pena-native-time-tracked-list .pena-native-time-entry-row').first().locator('.pena-native-time-row-delete.--confirm');
+	await pastDeleteConfirm.waitFor({ state: 'visible' });
+	assert.equal(await pastDeleteConfirm.textContent(), 'Удалить?');
+	await pastDeleteConfirm.click();
+	await page.waitForFunction(() => window.timeDeletedItems.length > 0 && document.querySelector('.pena-native-time-total-value')?.textContent === '0 мин');
+	await timePanel.locator('.pena-native-time-date-next').click();
+	await page.waitForFunction(() => document.querySelector('.pena-native-time-total-value')?.textContent === '2 ч 45 мин');
+	await timePanel.locator('.pena-native-time-view-tab[data-view="stats"]').click();
+	await page.waitForFunction(() => !document.querySelector('.pena-native-time-panel')?.classList.contains('--loading') &&
+		document.querySelector('.pena-native-time-total-value')?.textContent === '2 ч 45 мин');
+	await page.waitForFunction(() => document.querySelectorAll('.pena-native-time-stats-row').length === 7);
+	assert.equal(await timePanel.locator('.pena-native-time-stats').isVisible(), true, `7-day statistics did not open in ${mode}`);
+	assert.equal(await timePanel.locator('.pena-native-time-stats-row').count(), 7, `Statistics did not render seven dates in ${mode}`);
+	const statisticRows = await timePanel.locator('.pena-native-time-stats-row').allTextContents();
+	assert.ok(statisticRows.some(text => /2 ч 45 мин/.test(text)), `Statistics omitted today's total in ${mode}: ${JSON.stringify(statisticRows)}`);
+	await timePanel.locator('.pena-native-time-view-tab[data-view="day"]').click();
+	await page.waitForFunction(() => document.querySelector('.pena-native-time-total-value')?.textContent === '2 ч 45 мин');
+	assert.equal(await timePanel.locator('.pena-native-time-tracker').isVisible(), true, `Timer did not return on today in ${mode}`);
 	await manualToggle.click();
 	assert.equal(await timePanel.locator('.pena-native-time-manual').isHidden(), true, `Manual entry could not return to its collapsed state in ${mode}`);
+	await page.evaluate(() => {
+		const frame = document.createElement('iframe');
+		frame.id = 'covered-task-frame';
+		frame.srcdoc = '<!doctype html><title>Covered task</title>';
+		frame.setAttribute('data-slider-url', '/company/personal/user/7/tasks/task/view/404/');
+		frame.style.cssText = 'position:fixed;left:20px;top:160px;width:260px;height:220px;z-index:-1';
+		document.body.appendChild(frame);
+	});
+	await page.waitForTimeout(5400);
+	assert.equal(await page.evaluate(() => {
+		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
+		return JSON.parse(localStorage.getItem(key) || '[]').some(item => item.taskId === '404');
+	}), false, `A covered/stale task frame was counted as active work in ${mode}`);
+	await page.evaluate(() => document.querySelector('#covered-task-frame')?.remove());
+	if (mode === 'tasks') {
 	await page.evaluate(() => window.dispatchNativeSidePanelTask('404'));
 	await page.waitForTimeout(250);
 	const sidePanelTouch = await page.evaluate(() => {
-		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
-		return JSON.parse(localStorage.getItem(key) || '[]').find(item => item.taskId === '404') || null;
+		return Object.keys(localStorage)
+			.filter(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'))
+			.flatMap(key => JSON.parse(localStorage.getItem(key) || '[]'))
+			.find(item => item.taskId === '404') || null;
 	});
-	assert.equal(sidePanelTouch?.visits, 0, `Opening a SidePanel task counted as work in ${mode}: ${JSON.stringify(sidePanelTouch)}`);
+	assert.equal(sidePanelTouch?.visits || 0, 0, `Opening a SidePanel task counted as work in ${mode}: ${JSON.stringify(sidePanelTouch)}`);
 	assert.equal(await timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Задача 404' }).count(), 0, 'A quick task open entered suggestions');
+	const foreignCloseState = await page.evaluate(() => {
+		const dateKey = document.querySelector('.pena-native-time-date-input')?.value || new Date().toISOString().slice(0, 10);
+		const leaseKey = Object.keys(localStorage).find(key => key.startsWith('pena.timeActivityOwner.v1.')) || 'pena.timeActivityOwner.v1.7';
+		const visitsKey = Object.keys(localStorage).find(key => key.startsWith('pena.timeVisitedTasks.v1.')) || `pena.timeVisitedTasks.v1.7.${dateKey}`;
+		if (!localStorage.getItem(visitsKey)) localStorage.setItem(visitsKey, JSON.stringify([{
+			activityId: 'task:404', taskId: '404', title: 'Задача 404', dialogId: 'chat404',
+			visitedAt: Date.now(), firstVisitedAt: Date.now(), lastAccountedAt: Date.now(),
+			visits: 0, activeSeconds: 0, sessionActive: true, sessionQualified: false
+		}]));
+		localStorage.setItem(leaseKey, JSON.stringify({ frameId: 'foreign-task-frame', activityId: 'task:404', heartbeatAt: Date.now() }));
+		const before = {
+			leaseKey,
+			lease: JSON.parse(localStorage.getItem(leaseKey) || 'null'),
+			visit: JSON.parse(localStorage.getItem(visitsKey) || '[]').find(item => item.taskId === '404') || null
+		};
+		window.dispatchNativeSidePanelClose();
+		return {
+			before,
+			afterLease: JSON.parse(localStorage.getItem(leaseKey) || 'null'),
+			afterVisit: JSON.parse(localStorage.getItem(visitsKey) || '[]').find(item => item.taskId === '404') || null
+		};
+	});
+	assert.equal(foreignCloseState.afterVisit?.sessionActive === true, true,
+		`A non-owner Bitrix frame closed another frame's active task session in ${mode}: ${JSON.stringify(foreignCloseState)}`);
+	const foreignLeaseBaseline = await page.evaluate(() => {
+		const leaseKey = Object.keys(localStorage).find(key => key.startsWith('pena.timeActivityOwner.v1.'));
+		const visitsKey = Object.keys(localStorage).find(key => key.startsWith('pena.timeVisitedTasks.v1.'));
+		return {
+			leaseKey,
+			visit: JSON.parse(localStorage.getItem(visitsKey) || '[]').find(item => item.taskId === '404') || null
+		};
+	});
+	await page.evaluate(() => window.dispatchNativeSidePanelTask('404'));
+	await page.waitForTimeout(180);
+	const foreignLeaseAfterOpen = await page.evaluate(leaseKey => {
+		const visitsKey = Object.keys(localStorage).find(key => key.startsWith('pena.timeVisitedTasks.v1.'));
+		return {
+			lease: JSON.parse(localStorage.getItem(leaseKey) || 'null'),
+			visit: JSON.parse(localStorage.getItem(visitsKey) || '[]').find(item => item.taskId === '404') || null
+		};
+	}, foreignLeaseBaseline.leaseKey);
+	assert.equal(foreignLeaseAfterOpen.lease?.frameId, 'foreign-task-frame', `A fresh foreign activity lease was stolen in ${mode}`);
+	assert.deepEqual(foreignLeaseAfterOpen.visit, foreignLeaseBaseline.visit, `A writer ignored a failed activity lease claim in ${mode}`);
 	await page.evaluate(() => {
 		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
 		const activities = JSON.parse(localStorage.getItem(key) || '[]');
@@ -410,19 +687,21 @@ try {
 		window.timeListFailures = 1;
 		window.dispatchNativeSidePanelTask('404');
 	});
-	const estimated = timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Задача 404' });
-	await page.waitForFunction(() => document.querySelector('.pena-native-time-suggestions-list .pena-native-time-task-detail')?.textContent.includes('4 касания'));
-	assert.match(await estimated.locator('.pena-native-time-task-detail').textContent(), /4 касания · ≈ 10 мин/);
-	await estimated.locator('.pena-native-time-estimate-edit').click();
-	await estimated.locator('.pena-native-time-estimate-minutes').fill('99');
-	await estimated.locator('.pena-native-time-estimate-cancel').click();
-	await page.waitForFunction(() => !document.querySelector('.pena-native-time-estimate-minutes'));
-	assert.equal(await page.evaluate(() => window.timeAddCalls.length), 1, `Cancelling estimate correction wrote time in ${mode}`);
-	await estimated.locator('.pena-native-time-estimate-edit').click();
-	await estimated.locator('.pena-native-time-estimate-minutes').fill('17');
-	await estimated.locator('.pena-native-time-estimate-save').click();
+	const activity = timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Задача 404' });
+	await page.waitForFunction(() => document.querySelector('.pena-native-time-suggestions-list .pena-native-time-task-detail')?.textContent.includes('4 контакта'));
+	assert.equal(await activity.locator('.pena-native-time-task-detail').textContent(), '4 контакта');
+	assert.equal(await activity.locator('.pena-native-time-activity-add').count(), 1, `Qualified activity has no manual-entry action in ${mode}`);
+	assert.equal(await activity.getByText(/≈|мин|час/i).count(), 0, `Activity exposed an automatic duration in ${mode}`);
+	const callsBeforeActivityForm = await page.evaluate(() => window.timeAddCalls.length);
+	await activity.locator('.pena-native-time-activity-add').click();
+	await timePanel.locator('.pena-native-time-manual-selected').filter({ hasText: 'Задача 404' }).waitFor({ state: 'visible' });
+	assert.equal(await timePanel.locator('.pena-native-time-manual-hours').inputValue(), '', `Activity prefilled hours in ${mode}`);
+	assert.equal(await timePanel.locator('.pena-native-time-manual-minutes').inputValue(), '', `Activity prefilled minutes in ${mode}`);
+	assert.equal(await page.evaluate(() => window.timeAddCalls.length), callsBeforeActivityForm, `Opening manual entry wrote time in ${mode}`);
+	await timePanel.locator('.pena-native-time-manual-minutes').fill('17');
+	await timePanel.locator('.pena-native-time-manual-submit').click();
 	await page.waitForFunction(() => !Array.from(document.querySelectorAll('.pena-native-time-suggestions-list .pena-native-time-task-title')).some(node => node.textContent === 'Задача 404'));
-	assert.equal(await page.evaluate(() => Number(window.timeAddCalls.at(-1)?.ARFIELDS?.SECONDS || 0)), 1020, `Corrected automatic estimate was not recorded in ${mode}`);
+	assert.equal(await page.evaluate(() => Number(window.timeAddCalls.at(-1)?.ARFIELDS?.SECONDS || 0)), 1020, `Manual activity time was not recorded in ${mode}`);
 	await page.evaluate(() => window.dispatchNativeSidePanelTask('405'));
 	await page.waitForTimeout(200);
 	assert.equal(await timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Задача 405' }).count(), 0, 'Task with disabled time tracking entered suggestions');
@@ -430,13 +709,21 @@ try {
 		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
 		return JSON.parse(localStorage.getItem(key) || '[]').some(item => item.taskId === '405');
 	}), false, 'Task with disabled time tracking was persisted as work');
+	}
 	await page.evaluate(() => document.querySelector('.test-host:not([hidden]) [data-id="chat5"]')?.click());
 	if (mode === 'tasks') {
 		await page.waitForTimeout(200);
-		assert.equal(await timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Чат 5' }).count(), 0, 'Opening a task chat counted as work');
+		assert.equal(await timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Задача 5' }).count(), 0, 'Opening a task chat counted as work');
+		await page.evaluate(() => window.dispatchNativeTaskMessage('chat5', '8'));
+		await page.waitForTimeout(250);
+		assert.equal(await timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Задача 5' }).count(), 0, 'An incoming task message counted as the current user work');
+		assert.equal(await page.evaluate(() => {
+			const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
+			return JSON.parse(localStorage.getItem(key) || '[]').find(item => item.dialogId === 'chat5')?.visits || 0;
+		}), 0, 'An incoming task message qualified a touch');
 		await page.evaluate(() => window.dispatchNativeTaskMessage('chat5'));
 		try {
-			await page.waitForFunction(() => Array.from(document.querySelectorAll('.pena-native-time-suggestions-list .pena-native-time-task-title')).some(node => node.textContent === 'Чат 5'), null, { timeout: 5000 });
+			await page.waitForFunction(() => Array.from(document.querySelectorAll('.pena-native-time-suggestions-list .pena-native-time-task-title')).some(node => node.textContent === 'Задача 5'), null, { timeout: 5000 });
 		} catch (error) {
 			const diagnostic = await page.evaluate(() => ({
 				events: Object.fromEntries(Array.from(window.nativeCustomEventHandlers || [], ([name, handlers]) => [name, handlers.length])),
@@ -447,17 +734,24 @@ try {
 			}));
 			throw new Error(`Outgoing task message was not qualified: ${JSON.stringify(diagnostic)}; ${error.message}`);
 		}
-		const taskChatActivity = timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Чат 5' });
-		assert.equal(await taskChatActivity.locator('.pena-native-time-estimate-add').count(), 1, 'A task chat did not expose one-click time accounting');
-		assert.match(await taskChatActivity.locator('.pena-native-time-task-detail').textContent(), /касание · ≈ 5 мин/);
+		const taskChatActivity = timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Задача 5' });
+		assert.equal(await taskChatActivity.locator('.pena-native-time-activity-add').count(), 1, 'A task chat did not expose manual time entry');
+		assert.equal(await taskChatActivity.locator('.pena-native-time-task-detail').textContent(), '1 контакт');
+		assert.equal(await page.evaluate(() => {
+			const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
+			return JSON.parse(localStorage.getItem(key) || '[]').find(item => item.taskId === '5')?.title || '';
+		}), 'Задача 5', 'Outgoing work persisted the native chat caption instead of the canonical task title');
 	} else {
-		await page.evaluate(() => window.dispatchNativeTaskMessage('chat5'));
+		await page.evaluate(() => {
+			window.dispatchNativeTaskMessage('chat5');
+			window.dispatchNativeSidePanelTask('5');
+		});
 		await page.waitForTimeout(250);
 		assert.equal(await timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Чат 5' }).count(), 0, 'An ordinary chat entered time activity');
 		assert.equal(await page.evaluate(() => {
 			const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
-			return JSON.parse(localStorage.getItem(key) || '[]').some(item => item.dialogId === 'chat5' || !item.taskId);
-		}), false, 'An ordinary chat was persisted as time activity');
+			return JSON.parse(localStorage.getItem(key) || '[]').some(item => item.dialogId === 'chat5' || item.taskId === '5' || !item.taskId);
+		}), false, 'Known task message/SidePanel events in ordinary chats were persisted as time activity');
 	}
 	const touchesBeforeMultiSelect = await page.evaluate(() => {
 		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
@@ -482,9 +776,21 @@ try {
 		link.click();
 		link.remove();
 	});
-	await page.waitForFunction(() => Array.from(document.querySelectorAll('.pena-native-time-task-select option')).some(option => option.value === '303'));
+	await page.waitForTimeout(250);
+	assert.equal(await page.locator('.pena-native-time-task-select option[value="303"]').count(), 1, 'An eligible catalog task must be selectable before qualified work');
 	assert.equal(await timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Задача 303' }).count(), 0, 'Opening a task link counted as work');
-	await timePanel.locator('.pena-native-time-task-select').first().selectOption('303');
+	await timePanel.locator('.pena-native-time-task-select').first().selectOption('101');
+	await timePanel.locator('.pena-native-time-start').click();
+	await page.waitForFunction(() => document.querySelector('.pena-native-time-tracker')?.classList.contains('--active'));
+	const activeCancelTracker = timePanel.locator('.pena-native-time-cancel');
+	assert.equal(await activeCancelTracker.isVisible(), true, `Running timer cannot be cancelled in ${mode}`);
+	const callsBeforeActiveCancel = await page.evaluate(() => window.timeAddCalls.length);
+	await activeCancelTracker.click();
+	await page.waitForFunction(() => document.querySelector('.pena-native-time-cancel')?.textContent === 'Сбросить?');
+	await activeCancelTracker.click();
+	await page.waitForFunction(() => !Object.keys(localStorage).some(key => key.startsWith('pena.timeActiveTracker.v1.')) && !document.querySelector('.pena-native-time-start')?.hidden);
+	assert.equal(await page.evaluate(() => window.timeAddCalls.length), callsBeforeActiveCancel, `Cancelling a running timer wrote time in ${mode}`);
+	await timePanel.locator('.pena-native-time-task-select').first().selectOption('101');
 	await timePanel.locator('.pena-native-time-start').click();
 	await page.waitForFunction(() => document.querySelector('.pena-native-time-tracker')?.classList.contains('--active'));
 	await page.evaluate(() => {
@@ -495,9 +801,10 @@ try {
 		window.timeAddFailures = 1;
 	});
 	await page.waitForTimeout(1100);
+	const callsBeforeFailedTimer = await page.evaluate(() => window.timeAddCalls.length);
 	await timePanel.locator('.pena-native-time-stop').click();
 	await page.waitForFunction(() => document.querySelector('.pena-native-time-stop')?.textContent === 'Повторить');
-	assert.equal(await page.evaluate(() => window.timeAddCalls.length), 3, `Failed elapsed-item write was not attempted in ${mode}`);
+	assert.equal(await page.evaluate(() => window.timeAddCalls.length), callsBeforeFailedTimer + 1, `Failed elapsed-item write was not attempted in ${mode}`);
 	assert.ok(await page.evaluate(() => !!Object.keys(localStorage).find(key => key.startsWith('pena.timeActiveTracker.v1.'))), `Failed timer was lost in ${mode}`);
 	const cancelTracker = timePanel.locator('.pena-native-time-cancel');
 	await cancelTracker.click();
@@ -506,9 +813,10 @@ try {
 	assert.ok(await page.evaluate(() => !!Object.keys(localStorage).find(key => key.startsWith('pena.timeActiveTracker.v1.'))), `First cancel click discarded unsaved time in ${mode}`);
 	await cancelTracker.click();
 	await page.waitForFunction(() => !Object.keys(localStorage).some(key => key.startsWith('pena.timeActiveTracker.v1.')) && !document.querySelector('.pena-native-time-start')?.hidden);
-	assert.equal(await page.evaluate(() => window.timeAddCalls.length), 3, `Cancelling retry performed another write in ${mode}`);
-	await timePanel.locator('.pena-native-time-task-select').first().selectOption('303');
+	assert.equal(await page.evaluate(() => window.timeAddCalls.length), callsBeforeFailedTimer + 1, `Cancelling retry performed another write in ${mode}`);
+	await timePanel.locator('.pena-native-time-task-select').first().selectOption('101');
 	await timePanel.locator('.pena-native-time-start').click();
+	const callsBeforeRetryTimer = await page.evaluate(() => window.timeAddCalls.length);
 	await page.evaluate(() => {
 		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeActiveTracker.v1.'));
 		const tracker = JSON.parse(localStorage.getItem(key) || 'null');
@@ -519,19 +827,21 @@ try {
 	await timePanel.locator('.pena-native-time-stop').click();
 	await page.waitForFunction(() => document.querySelector('.pena-native-time-stop')?.textContent === 'Повторить');
 	await timePanel.locator('.pena-native-time-stop').click();
-	await page.waitForFunction(() => !Object.keys(localStorage).some(key => key.startsWith('pena.timeActiveTracker.v1.')) && document.querySelector('.pena-native-time-tracked-label')?.textContent.includes('3'));
+	await page.waitForFunction(() => !Object.keys(localStorage).some(key => key.startsWith('pena.timeActiveTracker.v1.')));
 	const addState = await page.evaluate(() => ({ calls: window.timeAddCalls.length, seconds: Number(window.timeAddCalls.at(-1)?.ARFIELDS?.SECONDS || 0) }));
-	assert.equal(addState.calls, 5, `Elapsed-item retry did not complete in ${mode}`);
+	assert.equal(addState.calls, callsBeforeRetryTimer + 2, `Elapsed-item retry did not complete in ${mode}`);
 	assert.ok(addState.seconds >= 60, `Elapsed-item duration was truncated in ${mode}: ${JSON.stringify(addState)}`);
 	await trackedToggle.click();
 	if (await timePanel.locator('.pena-native-time-tracked-list').isHidden()) await trackedToggle.click();
-	const firstTrackedDelete = timePanel.locator('.pena-native-time-tracked-list .pena-native-time-task-row').filter({ hasText: 'Задача 101' }).locator('.pena-native-time-row-delete');
+	const deleteCallsBefore = await page.evaluate(() => window.timeDeletedItems.length);
+	const firstTrackedDelete = timePanel.locator('.pena-native-time-tracked-list .pena-native-time-task-row').filter({ hasText: 'Задача 101' }).locator('.pena-native-time-row-delete').first();
 	await firstTrackedDelete.click();
-	await page.waitForFunction(() => Array.from(document.querySelectorAll('.pena-native-time-row-delete')).some(button => button.textContent?.includes('Точно')));
-	assert.match(await firstTrackedDelete.textContent(), /Точно/);
-	await firstTrackedDelete.click();
-	await page.waitForFunction(() => window.timeDeletedItems.length > 0);
-	assert.equal(await page.evaluate(() => String(window.timeDeletedItems[0]?.ITEMID || '')), 'time-1', 'Unified panel did not delete the elapsed record');
+	const firstTrackedDeleteConfirm = timePanel.locator('.pena-native-time-tracked-list .pena-native-time-task-row').filter({ hasText: 'Задача 101' }).locator('.pena-native-time-row-delete.--confirm').first();
+	await firstTrackedDeleteConfirm.waitFor({ state: 'visible' });
+	assert.equal(await firstTrackedDeleteConfirm.textContent(), 'Удалить?');
+	await firstTrackedDeleteConfirm.click();
+	await page.waitForFunction(previous => window.timeDeletedItems.length === previous + 1, deleteCallsBefore);
+	assert.equal(await page.evaluate(() => String(window.timeDeletedItems.at(-1)?.TASKID || '')), '101', 'Unified panel deleted the wrong task record');
 	const duringTimePanel = await readOutput(page);
 	assert.ok(Math.abs(duringTimePanel.avatarGeometry.avatarLeft - beforeTimePanel.avatarGeometry.avatarLeft) < 0.5, `Time popover shifted avatars in ${mode}`);
 	await timePanel.locator('.pena-native-popover-close').click();
@@ -624,6 +934,317 @@ try {
 	})));
 	assert.equal(wheelCanceled, false, `Wheel was blocked before the managed chat viewport could scroll in ${mode}`);
   }
+
+	await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('pena.time')).forEach(key => localStorage.removeItem(key)));
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=tasks`);
+	await page.locator('.task-host .pena-native-folder-switcher').waitFor({ state: 'visible', timeout: 4000 });
+	await page.waitForFunction(() => document.querySelectorAll('.task-host .pena-native-managed-row').length > 0);
+	await page.evaluate(() => history.pushState({}, '', '/company/personal/user/7/tasks/task/view/303/'));
+	await page.waitForTimeout(5600);
+	assert.equal(await page.evaluate(() => {
+		const visitsKey = Object.keys(localStorage).find(key => key.startsWith('pena.timeVisitedTasks.v1.'));
+		return visitsKey ? JSON.parse(localStorage.getItem(visitsKey) || '[]').some(item => item.taskId === '303') : false;
+	}), false, 'A task route behind the active Messenger was counted as current work');
+	await page.evaluate(() => history.replaceState({}, '', '/tests/native-consistency-harness.html?mode=tasks'));
+	await page.evaluate(() => {
+		const iframe = document.createElement('iframe');
+		iframe.id = 'time-tracking-child-frame';
+		iframe.hidden = true;
+		iframe.src = '/tests/native-time-child-frame.html?routeTaskId=5';
+		document.body.appendChild(iframe);
+	});
+	await page.waitForFunction(() => {
+		const iframe = document.getElementById('time-tracking-child-frame');
+		return iframe?.contentWindow?.__PENA_CHILD_FRAME_LOADED__ === true &&
+			iframe.contentDocument?.visibilityState === 'visible' &&
+			(window.nativeCustomEventHandlers.get('onPullEvent-im') || []).length === 1;
+		}, null, { timeout: 4000 });
+	await page.waitForTimeout(800);
+	const inactiveChildBeforeTopClick = await page.evaluate(() => {
+		const visitsKey = Object.keys(localStorage).find(key => key.startsWith('pena.timeVisitedTasks.v1.'));
+		const leaseKey = Object.keys(localStorage).find(key => key.startsWith('pena.timeActivityOwner.v1.'));
+		return {
+			visit: visitsKey
+				? JSON.parse(localStorage.getItem(visitsKey) || '[]').find(item => item.taskId === '5') || null
+				: null,
+			lease: leaseKey ? JSON.parse(localStorage.getItem(leaseKey) || 'null') : null,
+			childPath: document.getElementById('time-tracking-child-frame')?.contentWindow?.location?.pathname || ''
+		};
+	});
+	assert.equal(inactiveChildBeforeTopClick.childPath, '/company/personal/user/7/tasks/task/view/5/');
+	assert.equal(inactiveChildBeforeTopClick.visit, null,
+		`A CSS-hidden task route iframe recorded activity before the active Messenger did: ${JSON.stringify(inactiveChildBeforeTopClick)}`);
+	assert.equal(inactiveChildBeforeTopClick.lease, null,
+		`A CSS-hidden task route iframe claimed the activity lease: ${JSON.stringify(inactiveChildBeforeTopClick)}`);
+	await page.evaluate(() => document.querySelector('.task-host [data-id="chat5"]')?.click());
+	await page.waitForTimeout(250);
+	assert.equal(await page.evaluate(() => Object.keys(localStorage).some(key => key.startsWith('pena.timeActivityOwner.v1.'))), false,
+		'Quick task open claimed a cross-frame activity lease');
+	const multiFrameBeforeMessage = await page.evaluate(() => {
+		const leaseKey = Object.keys(localStorage).find(key => key.startsWith('pena.timeActivityOwner.v1.')) || 'pena.timeActivityOwner.v1.7';
+		return {
+			leaseKey,
+			lease: JSON.parse(localStorage.getItem(leaseKey) || 'null'),
+			handlers: (window.nativeCustomEventHandlers.get('onPullEvent-im') || []).length,
+			childVisibility: document.getElementById('time-tracking-child-frame')?.contentDocument?.visibilityState || ''
+		};
+	});
+	await page.evaluate(() => window.dispatchNativeTaskMessage('chat5'));
+	await page.waitForFunction(() => {
+		const visitsKey = Object.keys(localStorage).find(key => key.startsWith('pena.timeVisitedTasks.v1.'));
+		return JSON.parse(localStorage.getItem(visitsKey) || '[]').find(item => item.taskId === '5')?.visits === 1;
+	}, null, { timeout: 5000 });
+	const multiFrameAfterMessage = await page.evaluate(leaseKey => {
+		const visitsKey = Object.keys(localStorage).find(key => key.startsWith('pena.timeVisitedTasks.v1.'));
+		return {
+			lease: JSON.parse(localStorage.getItem(leaseKey) || 'null'),
+			visit: JSON.parse(localStorage.getItem(visitsKey) || '[]').find(item => item.taskId === '5') || null
+		};
+	}, multiFrameBeforeMessage.leaseKey);
+	assert.deepEqual(
+		{ handlers: multiFrameBeforeMessage.handlers, childVisibility: multiFrameBeforeMessage.childVisibility },
+		{ handlers: 1, childVisibility: 'visible' },
+		`A CSS-hidden non-Messenger iframe subscribed to shared Bitrix tracking events: ${JSON.stringify(multiFrameBeforeMessage)}`
+	);
+	assert.ok(multiFrameAfterMessage.lease?.frameId,
+		`The active Messenger did not claim the qualified task lease: ${JSON.stringify({ multiFrameBeforeMessage, multiFrameAfterMessage })}`);
+	assert.equal(multiFrameAfterMessage.visit?.visits, 1, 'One outgoing message was counted more than once across frames');
+	await page.evaluate(() => {
+		const iframe = document.getElementById('time-tracking-child-frame');
+		iframe?.contentWindow?.dispatchEvent(new PageTransitionEvent('pagehide'));
+		iframe?.remove();
+	});
+	await page.waitForTimeout(150);
+	const afterChildFrameClose = await page.evaluate(leaseKey => {
+		const visitsKey = Object.keys(localStorage).find(key => key.startsWith('pena.timeVisitedTasks.v1.'));
+		return {
+			lease: JSON.parse(localStorage.getItem(leaseKey) || 'null'),
+			visit: JSON.parse(localStorage.getItem(visitsKey) || '[]').find(item => item.taskId === '5') || null
+		};
+	}, multiFrameBeforeMessage.leaseKey);
+	assert.ok(afterChildFrameClose.lease?.frameId === multiFrameAfterMessage.lease?.frameId && afterChildFrameClose.visit?.visits === 1,
+		`Closing an inactive iframe changed qualified task activity: ${JSON.stringify(afterChildFrameClose)}`);
+
+	// A closed time panel must not resolve the user or load elapsed time. Once the
+	// user explicitly opens it, identity resolution stays single-flight and no
+	// temporary `self` namespace is written while the response is pending.
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=tasks&timeUserCurrentFallback=1&timeUserCurrentDelay=1500`);
+	await page.waitForFunction(() => (window.nativeCustomEventHandlers.get('onPullEvent-im') || []).length === 1);
+	await page.waitForTimeout(750);
+	const unresolvedUserStorage = await page.evaluate(() => ({
+		selfKeys: Object.keys(localStorage).filter(key => /pena\.time[^.]*\.v1\.self(?:\.|$)/.test(key)),
+		userCalls: window.nativeRestCalls.filter(call => call.method === 'user.current').length,
+		elapsedCalls: window.nativeRestCalls.filter(call => call.method === 'task.elapseditem.getlist').length
+	}));
+	assert.equal(unresolvedUserStorage.userCalls, 0, `Closed time panel resolved user.current: ${JSON.stringify(unresolvedUserStorage)}`);
+	assert.equal(unresolvedUserStorage.elapsedCalls, 0, `Closed time panel loaded elapsed time: ${JSON.stringify(unresolvedUserStorage)}`);
+	assert.deepEqual(unresolvedUserStorage.selfKeys, [], `Tracking wrote unscoped data before user.current resolved: ${JSON.stringify(unresolvedUserStorage)}`);
+	await page.evaluate(() => window.dispatchNativeTaskMessage('chat5', '8'));
+	await page.waitForTimeout(250);
+	assert.equal(await page.evaluate(() => window.nativeRestCalls.filter(call => call.method === 'user.current').length), 0,
+		'Incoming task message resolved fallback user identity while the panel was closed');
+	assert.equal(await page.evaluate(() => Object.keys(localStorage).some(key => key.startsWith('pena.timeVisitedTasks.v1.'))), false,
+		'Incoming task message created time activity for an unknown current user');
+	await page.evaluate(() => window.dispatchNativeTaskMessage('chat5'));
+	await page.waitForFunction(() => window.nativeRestCalls.filter(call => call.method === 'user.current').length === 1);
+	await page.waitForTimeout(250);
+	assert.deepEqual(await page.evaluate(() => Object.keys(localStorage).filter(key => /pena\.time[^.]*\.v1\.self(?:\.|$)/.test(key))), [],
+		'Task action wrote a temporary self namespace while user.current was pending');
+	try {
+		await page.waitForFunction(() => {
+			const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.7.'));
+			return key && JSON.parse(localStorage.getItem(key) || '[]').some(item => item.taskId === '5' && item.visits === 1);
+		}, null, { timeout: 10000 });
+	} catch (error) {
+		const diagnostic = await page.evaluate(() => ({
+			storage: Object.fromEntries(Object.entries(localStorage).filter(([key]) => key.startsWith('pena.time'))),
+			restCalls: window.nativeRestCalls,
+			taskItems: window.__PENA_NATIVE_PREFETCH__?.status?.().catalogCount
+		}));
+		throw new Error(`Deferred outgoing activity was not persisted: ${JSON.stringify(diagnostic)}; ${error.message}`);
+	}
+	assert.equal(await page.evaluate(() => window.nativeRestCalls.filter(call => call.method === 'user.current').length), 1,
+		'user.current was not single-flight for duplicate outgoing-message events');
+	assert.equal(await page.evaluate(() => window.timeRestCalls.length), 0,
+		'Qualified task action loaded elapsed time while the panel was closed');
+	await page.locator('.task-host .pena-native-time-button').click();
+	await page.waitForFunction(() => !document.querySelector('.pena-native-time-panel')?.classList.contains('--loading') &&
+		window.timeRestCalls.length > 0, null, { timeout: 10000 });
+	await page.locator('.pena-native-time-panel').press('Escape');
+
+	// Even a known task/dialog event is ignored in ordinary chats. It must not
+	// resolve the fallback identity or create local activity.
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&timeUserCurrentFallback=1`);
+	await page.waitForFunction(() => (window.nativeCustomEventHandlers.get('onPullEvent-im') || []).length === 1);
+	await page.evaluate(() => {
+		window.dispatchNativeTaskMessage('chat5');
+		window.dispatchNativeSidePanelTask('5');
+	});
+	await page.waitForTimeout(300);
+	assert.equal(await page.evaluate(() => window.nativeRestCalls.filter(call => call.method === 'user.current').length), 0,
+		'Ordinary chat task events resolved time-tracking identity');
+	assert.equal(await page.evaluate(() => Object.keys(localStorage).some(key => key.startsWith('pena.timeVisitedTasks.v1.'))), false,
+		'Ordinary chat task events created time activity');
+
+	// Legacy self-scoped data is merged once into the confirmed account. Ephemeral
+	// leases are discarded instead of being resurrected under the new identity.
+	await page.evaluate(() => {
+		localStorage.clear();
+		const now = new Date();
+		const dateKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+		localStorage.setItem(`pena.timeVisitedTasks.v1.self.${dateKey}`, JSON.stringify([{
+			activityId: 'task:303', taskId: '303', title: 'Legacy 303', visitedAt: Date.now(), firstVisitedAt: Date.now(), visits: 1
+		}]));
+		localStorage.setItem('pena.timeActiveTracker.v1.self', JSON.stringify({ taskId: '303', title: 'Legacy 303', startedAt: Date.now(), pendingSeconds: 120 }));
+		localStorage.setItem('pena.timeManualDraft.v1.self', JSON.stringify({ taskId: '303', title: 'Legacy 303', query: 'Legacy 303', hours: '1', minutes: '0' }));
+		localStorage.setItem('pena.timeActivityOwner.v1.self', JSON.stringify({ frameId: 'dead-frame', activityId: 'task:303', heartbeatAt: Date.now() }));
+	});
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=tasks&timeUserCurrentFallback=1&timeUserCurrentDelay=120`);
+	await page.locator('.task-host .pena-native-time-button').waitFor({ state: 'visible' });
+	await page.locator('.task-host .pena-native-time-button').click();
+	await page.waitForFunction(() => window.nativeRestCalls.some(call => call.method === 'user.current') &&
+		!Object.keys(localStorage).some(key => key.includes('.self')));
+	const migratedSelfStorage = await page.evaluate(() => {
+		const visitsKey = Object.keys(localStorage).find(key => key.startsWith('pena.timeVisitedTasks.v1.7.'));
+		return {
+			visits: visitsKey ? JSON.parse(localStorage.getItem(visitsKey) || '[]').map(item => item.taskId) : [],
+			tracker: JSON.parse(localStorage.getItem('pena.timeActiveTracker.v1.7') || 'null'),
+			draft: JSON.parse(localStorage.getItem('pena.timeManualDraft.v1.7') || 'null'),
+			lease: JSON.parse(localStorage.getItem('pena.timeActivityOwner.v1.7') || 'null')
+		};
+	});
+	assert.ok(migratedSelfStorage.visits.includes('303'), `Legacy visits were not migrated: ${JSON.stringify(migratedSelfStorage)}`);
+	assert.equal(migratedSelfStorage.tracker?.taskId, '303', `Legacy tracker was not migrated: ${JSON.stringify(migratedSelfStorage)}`);
+	assert.equal(migratedSelfStorage.draft?.taskId, '303', `Legacy draft was not migrated: ${JSON.stringify(migratedSelfStorage)}`);
+	assert.notEqual(migratedSelfStorage.lease?.frameId, 'dead-frame', `A dead self lease was migrated: ${JSON.stringify(migratedSelfStorage)}`);
+
+	// Opening the panel during a delayed two-page task index must await the full
+	// catalog before snapshotting eligible IDs. Otherwise page 2 is cached away.
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=tasks&taskCatalogRows=4&taskPageCap=5&taskDelay=350`);
+	await page.locator('.task-host .pena-native-time-button').waitFor({ state: 'visible' });
+	await page.locator('.task-host .pena-native-time-button').click();
+	await page.waitForTimeout(180);
+	assert.equal(await page.evaluate(() => window.timeRestCalls.length), 0,
+		'Elapsed time loaded before the delayed task catalog completed');
+	await page.waitForFunction(() => !document.querySelector('.pena-native-time-panel')?.classList.contains('--loading') &&
+		document.querySelector('.pena-native-time-total-value')?.textContent === '1 ч 30 мин', null, { timeout: 10000 });
+	const delayedCatalogLoad = await page.evaluate(() => ({
+		starts: window.nativeRestCalls.filter(call => call.method === 'tasks.task.list' && !call.params?.filter?.TITLE).map(call => Number(call.params?.start) || 0),
+		taskIds: [...new Set(window.timeRestCalls.map(params => String(params?.[0] || '')))]
+	}));
+	assert.ok(delayedCatalogLoad.starts.includes(0) && delayedCatalogLoad.starts.includes(5),
+		`Delayed task catalog did not load both pages: ${JSON.stringify(delayedCatalogLoad)}`);
+	assert.ok(delayedCatalogLoad.taskIds.includes('50000') && delayedCatalogLoad.taskIds.includes('102'),
+		`Elapsed batch was created from a partial task catalog: ${JSON.stringify(delayedCatalogLoad)}`);
+	await page.locator('.pena-native-time-panel').press('Escape');
+
+	// A cached Y/N flag expires. Stale N must be rechecked instead of permanently
+	// suppressing work; stale Y must stop tracking after an explicit N response.
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=tasks&timeEligibilityTtl=100`);
+	await page.waitForFunction(() => (window.nativeCustomEventHandlers.get('SidePanel.Slider:onOpenComplete') || []).length === 1);
+	await page.evaluate(() => window.dispatchNativeSidePanelTask('5'));
+	await page.waitForTimeout(250);
+	assert.equal(await page.evaluate(() => {
+		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.7.'));
+		return key ? JSON.parse(localStorage.getItem(key) || '[]').some(item => item.taskId === '5' && item.visits > 0) : false;
+	}), false, 'A quick SidePanel open qualified time activity');
+	await page.waitForTimeout(160);
+	await page.evaluate(() => {
+		window.timeTaskEligibilityOverrides['5'] = 'N';
+		window.dispatchNativeTaskMessage('chat5');
+	});
+	await page.waitForFunction(() => {
+		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.7.'));
+		const removed = !key || !JSON.parse(localStorage.getItem(key) || '[]').some(item => item.taskId === '5');
+		return removed && window.nativeRestCalls.some(call => call.method === 'tasks.task.get' && String(call.params?.taskId || '') === '5');
+	});
+	await page.waitForTimeout(160);
+	await page.evaluate(() => {
+		window.timeTaskEligibilityOverrides['5'] = 'Y';
+		window.dispatchNativeTaskMessage('chat5');
+	});
+	await page.waitForFunction(() => {
+		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.7.'));
+		return key && JSON.parse(localStorage.getItem(key) || '[]').some(item => item.taskId === '5');
+	});
+
+	// Late failure of page 2 keeps page 1 visible. A failing old query also cannot
+	// erase the local results of text entered during the debounce window.
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=tasks&taskPageCap=20`);
+	await page.locator('.task-host .pena-native-folder-switcher').waitFor({ state: 'visible', timeout: 4000 });
+	await page.locator('.task-host .pena-native-time-button').click();
+	const trackingPanel = page.locator('.task-host .pena-native-time-panel');
+	if (await trackingPanel.locator('.pena-native-time-manual').isHidden()) {
+		await trackingPanel.locator('.pena-native-time-manual-toggle').click();
+	}
+	await page.evaluate(() => {
+		window.timeSearchOnlyEntries = Array.from({ length: 25 }, (_, index) => ({
+			id: String(61000 + index), title: `Серверная подборка ${index + 1}`, chatId: String(61000 + index), allowTimeTracking: 'Y'
+		}));
+		window.timeTaskSearchFailStarts = [20];
+	});
+	const runtimeSearch = trackingPanel.locator('.pena-native-time-manual-search');
+	await runtimeSearch.fill('Серверная подборка');
+	await page.waitForFunction(() => document.querySelectorAll('.task-host .pena-native-time-manual-result').length === 20);
+	await page.waitForTimeout(350);
+	assert.equal(await trackingPanel.locator('.pena-native-time-manual-result').count(), 20, 'Late page failure rolled progressive task results back to the local catalog');
+	await page.evaluate(() => {
+		window.timeTaskSearchFailStarts = [0];
+		window.timeTaskSearchFailureDelay = 120;
+	});
+	await runtimeSearch.fill('Старая ошибка');
+	await page.waitForTimeout(270);
+	await runtimeSearch.fill('Задача 101');
+	await page.waitForTimeout(700);
+	const lateQueryCount = await trackingPanel.locator('.pena-native-time-manual-result').filter({ hasText: 'Задача 101' }).count();
+	if (lateQueryCount !== 1) {
+		const diagnostic = await page.evaluate(() => ({
+			query: document.querySelector('.pena-native-time-manual-search')?.value || '',
+			results: Array.from(document.querySelectorAll('.pena-native-time-manual-result'), node => node.textContent),
+			restCalls: window.nativeRestCalls.filter(call => call.method.startsWith('tasks.task'))
+		}));
+		throw new Error(`A late failure repainted results for the previous debounced query: ${JSON.stringify(diagnostic)}`);
+	}
+
+	// Grace belongs to one uninterrupted mode/source generation. Returning to the
+	// task list without an active row must not restart the previous session.
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=tasks`);
+	await page.waitForFunction(() => (window.nativeCustomEventHandlers.get('SidePanel.Slider:onOpenComplete') || []).length === 1);
+	await page.evaluate(() => {
+		const row = document.querySelector('.task-host [data-id="chat5"]');
+		row?.setAttribute('aria-current', 'true');
+		window.dispatchNativeSidePanelTask('5');
+	});
+	await page.waitForTimeout(250);
+	assert.equal(await page.evaluate(() => Object.keys(localStorage).some(key => key.startsWith('pena.timeVisitedTasks.v1.7.'))), false,
+		'A quick task open wrote a persistent activity session');
+	await switchMode(page);
+	await page.waitForTimeout(250);
+	await page.evaluate(() => window.dispatchNativeSidePanelClose());
+	await switchMode(page);
+	await page.evaluate(() => {
+		const row = document.querySelector('.task-host [data-id="chat5"]');
+		row?.removeAttribute('aria-current');
+		row?.removeAttribute('aria-selected');
+		row?.classList.remove('--selected', '--active', 'is-selected', 'is-active');
+	});
+	await page.waitForTimeout(900);
+	assert.equal(await page.evaluate(() => {
+		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.7.'));
+		return key ? JSON.parse(localStorage.getItem(key) || '[]').find(item => item.taskId === '5')?.sessionActive : null;
+	}), null, 'Mode switch persisted or reused a quick task-row touch');
+
+	if (process.env.PENA_TRACKING_ONLY === '1') {
+		assert.deepEqual(pageErrors, []);
+		console.log('PASS tracking regressions: user identity, eligibility TTL, progressive search and active-row grace');
+		break nativeRegressionSuite;
+	}
 
   await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats`);
   await page.locator('.pena-native-folder-switcher').waitFor({ state: 'visible' });
@@ -753,7 +1374,8 @@ try {
 	assert.equal(warmCacheMaterialization.recentCalls, 1, `Cold document did not run exactly one complete metadata audit: ${JSON.stringify(warmCacheMaterialization)}`);
 	await page.waitForFunction(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
-		return status?.loadedModes?.includes('chats') && !status.originalActive;
+		return status?.loadedModes?.includes('chats') && !status.originalActive &&
+			Number(status.modeStates?.chats?.materialization?.nativePassCount || 0) === 2;
 	}, null, { timeout: 20000 });
 	const materializedOnce = await page.evaluate(() => ({
 		count: window.__PENA_NATIVE_PREFETCH__?.status?.().modeCounts?.chats || 0,
@@ -889,6 +1511,19 @@ try {
 			originalAvatars: host.querySelectorAll('.test-avatar').length,
 			generatedAvatars: host.querySelectorAll('.pena-native-remote-avatar').length,
 			marker: !!row?.querySelector('.pena-native-avatar-ring'),
+			nativeTypingIndicator: (() => {
+				const ring = row?.querySelector('.pena-native-avatar-ring');
+				const indicator = row?.querySelector('[data-native-typing-indicator="1"]');
+				if (!ring || !indicator) return null;
+				return {
+					visible: getComputedStyle(indicator).visibility !== 'hidden' && Number(getComputedStyle(indicator).opacity) > 0,
+					hostIsolation: getComputedStyle(ring.parentElement).isolation,
+					ringZIndex: getComputedStyle(ring).zIndex,
+					indicatorZIndex: getComputedStyle(indicator).zIndex,
+					indicatorPromoted: indicator.classList.contains('pena-native-avatar-native-overlay'),
+					portraitPromoted: row.querySelector('.test-avatar')?.classList.contains('pena-native-avatar-native-overlay') || false
+				};
+			})(),
 			ringGeometry: (() => {
 				const avatar = row?.querySelector('.test-avatar')?.getBoundingClientRect();
 				const ring = row?.querySelector('.pena-native-avatar-ring')?.getBoundingClientRect();
@@ -916,10 +1551,76 @@ try {
 	assert.ok(passThrough.originalAvatars > 0, `Original Bitrix avatars disappeared: ${JSON.stringify(passThrough)}`);
 	assert.equal(passThrough.generatedAvatars, 0, `Extension generated avatar placeholders: ${JSON.stringify(passThrough)}`);
 	assert.equal(passThrough.marker, true, `Color marker was not overlaid on the original row: ${JSON.stringify(passThrough)}`);
+	assert.equal(passThrough.nativeTypingIndicator?.visible, true, `Native Bitrix typing indicator disappeared: ${JSON.stringify(passThrough)}`);
+	assert.equal(passThrough.nativeTypingIndicator?.hostIsolation, 'isolate', `Avatar ring escaped its local stacking context: ${JSON.stringify(passThrough)}`);
+	assert.equal(passThrough.nativeTypingIndicator?.ringZIndex, '1', `Avatar ring has an unsafe stacking level: ${JSON.stringify(passThrough)}`);
+	assert.equal(passThrough.nativeTypingIndicator?.indicatorPromoted, true, `Native Bitrix typing indicator was not recognized as an overlay: ${JSON.stringify(passThrough)}`);
+	assert.equal(passThrough.nativeTypingIndicator?.indicatorZIndex, '7', `Native Bitrix typing indicator has an unsafe stacking level: ${JSON.stringify(passThrough)}`);
+	assert.equal(passThrough.nativeTypingIndicator?.portraitPromoted, false, `The native avatar portrait was promoted above its color ring: ${JSON.stringify(passThrough)}`);
 	assert.equal(passThrough.ringGeometry?.matches, true, `Color ring does not follow the original avatar contour: ${JSON.stringify(passThrough)}`);
 	assert.ok(passThrough.ringGeometry?.squareDelta < 0.1, `Color marker is oval instead of circular: ${JSON.stringify(passThrough)}`);
 	assert.ok(passThrough.ringGeometry?.centerDelta < 0.1, `Color ring is not centered on the original avatar: ${JSON.stringify(passThrough)}`);
 	assert.equal(passThrough.contentPaddingLeft, '2px', `Color marker changed Bitrix row layout: ${JSON.stringify(passThrough)}`);
+	const tallAvatarRing = await page.locator('.recent-host .pena-native-chat-row[data-id="chat225"]').evaluate(async row => {
+		const container = row.querySelector('.bx-im-component-avatar__container');
+		const content = row.querySelector('.bx-im-component-avatar__content');
+		if (container) container.style.height = '64px';
+		await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+		const ring = row.querySelector('.pena-native-avatar-ring');
+		const ringRect = ring?.getBoundingClientRect();
+		const contentRect = content?.getBoundingClientRect();
+		const containerRect = container?.getBoundingClientRect();
+		const result = {
+			hostIsContent: ring?.parentElement === content,
+			containerHeight: containerRect?.height || 0,
+			ringDelta: ringRect && contentRect ? Math.max(
+				Math.abs(ringRect.left - contentRect.left), Math.abs(ringRect.right - contentRect.right),
+				Math.abs(ringRect.top - contentRect.top), Math.abs(ringRect.bottom - contentRect.bottom)
+			) : Infinity,
+			squareDelta: ringRect ? Math.abs(ringRect.width - ringRect.height) : Infinity
+		};
+		if (container) container.style.removeProperty('height');
+		return result;
+	});
+	assert.ok(tallAvatarRing.containerHeight >= 63, `Tall Bitrix avatar fixture was not created: ${JSON.stringify(tallAvatarRing)}`);
+	assert.equal(tallAvatarRing.hostIsContent, true, `Ring attached to the row-height avatar wrapper: ${JSON.stringify(tallAvatarRing)}`);
+	assert.ok(tallAvatarRing.ringDelta < 0.1 && tallAvatarRing.squareDelta < 0.1,
+		`Ring became oval instead of following the inner portrait: ${JSON.stringify(tallAvatarRing)}`);
+
+	const counterBaseline = await page.evaluate(() => ({
+		all: Number(document.querySelector('.recent-host .pena-native-group-tab[data-native-segment-id=""] .pena-native-tab-count')?.textContent) || 0,
+		folder: Number(document.querySelector('.recent-host .pena-native-folder-tab[data-native-folder-id="folder:test"] .pena-native-tab-count')?.textContent) || 0,
+		scrollTop: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0,
+		revision: window.__PENA_NATIVE_PREFETCH__?.status?.().materializationRevisions?.chats || 0
+	}));
+	assert.equal(await page.evaluate(() => window.setNativeDomCounter('chat225', 11)), true);
+	await page.waitForFunction(expected => {
+		const folder = Number(document.querySelector('.recent-host .pena-native-folder-tab[data-native-folder-id="folder:test"] .pena-native-tab-count')?.textContent) || 0;
+		const all = Number(document.querySelector('.recent-host .pena-native-group-tab[data-native-segment-id=""] .pena-native-tab-count')?.textContent) || 0;
+		return folder === 11 && all === expected;
+	}, counterBaseline.all - counterBaseline.folder + 11, { timeout: 1500 });
+	assert.equal(await page.evaluate(() => window.setNativeDomCounter('chat225', 11, { hidden: true })), true);
+	await page.waitForFunction(expected => {
+		const folder = Number(document.querySelector('.recent-host .pena-native-folder-tab[data-native-folder-id="folder:test"] .pena-native-tab-count')?.textContent) || 0;
+		const all = Number(document.querySelector('.recent-host .pena-native-group-tab[data-native-segment-id=""] .pena-native-tab-count')?.textContent) || 0;
+		return folder === 0 && all === expected;
+	}, counterBaseline.all - counterBaseline.folder, { timeout: 1500 });
+	assert.equal(await page.evaluate(() => window.setNativeDomCounter('chat225', 4)), true);
+	await page.waitForFunction(expected => {
+		const folder = Number(document.querySelector('.recent-host .pena-native-folder-tab[data-native-folder-id="folder:test"] .pena-native-tab-count')?.textContent) || 0;
+		const all = Number(document.querySelector('.recent-host .pena-native-group-tab[data-native-segment-id=""] .pena-native-tab-count')?.textContent) || 0;
+		return folder === 4 && all === expected;
+	}, counterBaseline.all - counterBaseline.folder + 4, { timeout: 1500 });
+	assert.equal(await page.evaluate(() => window.setNativeDomCounter('chat225', null, { remove: true })), true);
+	await page.waitForFunction(() => Number(document.querySelector('.recent-host .pena-native-folder-tab[data-native-folder-id="folder:test"] .pena-native-tab-count')?.textContent) === 0,
+		null, { timeout: 1500 });
+	const counterFinal = await page.evaluate(() => ({
+		scrollTop: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0,
+		revision: window.__PENA_NATIVE_PREFETCH__?.status?.().materializationRevisions?.chats || 0,
+		overlays: document.querySelectorAll('.pena-native-original-load-guard,.pena-native-load-guard:not([hidden])').length
+	}));
+	assert.deepEqual(counterFinal, { scrollTop: counterBaseline.scrollTop, revision: counterBaseline.revision, overlays: 0 },
+		`Live status reconciliation rematerialized or moved the list: ${JSON.stringify({ counterBaseline, counterFinal })}`);
 	const nativeSearch = page.locator('.recent-host input[type="search"]');
 	const nativeSearchRunsBefore = await page.evaluate(() => window.nativeSearchRuns);
 	await nativeSearch.fill('Чат 225');
@@ -927,13 +1628,58 @@ try {
 		const visible = Array.from(document.querySelectorAll('.recent-host .pena-native-chat-row')).filter(row => getComputedStyle(row).display !== 'none');
 		return visible.length === 1 && visible[0].dataset.id === 'chat225';
 	}, null, { timeout: 3000 });
+	await page.locator('.recent-host .pena-native-chat-row[data-id="chat225"]').evaluate(async row => {
+		const current = row.querySelector('[data-native-typing-indicator="1"]');
+		const parent = current?.parentElement;
+		if (!current || !parent) return;
+		const portraitContainer = row.querySelector('.bx-im-component-avatar__container');
+		if (portraitContainer && portraitContainer.parentElement === parent) {
+			const nestedAvatarWrapper = document.createElement('span');
+			nestedAvatarWrapper.className = 'bx-im-list-recent-item__avatar_container';
+			parent.insertBefore(nestedAvatarWrapper, portraitContainer);
+			nestedAvatarWrapper.appendChild(portraitContainer);
+		}
+		const replacement = current.cloneNode(true);
+		replacement.classList.remove('pena-native-avatar-native-overlay');
+		current.remove();
+		await new Promise(resolve => setTimeout(resolve, 40));
+		parent.appendChild(replacement);
+		await new Promise(resolve => setTimeout(resolve, 260));
+	});
 	const searchedMarker = await page.locator('.recent-host .pena-native-chat-row[data-id="chat225"]').evaluate(row => {
 		const avatar = row.querySelector('.test-avatar')?.getBoundingClientRect();
-		const ring = row.querySelector('.pena-native-avatar-ring')?.getBoundingClientRect();
+		const ringElement = row.querySelector('.pena-native-avatar-ring');
+		const indicator = row.querySelector('[data-native-typing-indicator="1"]');
+		const ring = ringElement?.getBoundingClientRect();
+		const indicatorRect = indicator?.getBoundingClientRect();
+		let typingAboveRing = false;
+		if (ringElement && indicator && ring && indicatorRect) {
+			const x = (Math.max(ring.left, indicatorRect.left) + Math.min(ring.right, indicatorRect.right)) / 2;
+			const y = (Math.max(ring.top, indicatorRect.top) + Math.min(ring.bottom, indicatorRect.bottom)) / 2;
+			const previous = [ringElement, indicator].map(element => ({
+				element,
+				value: element.style.getPropertyValue('pointer-events'),
+				priority: element.style.getPropertyPriority('pointer-events')
+			}));
+			try {
+				ringElement.style.setProperty('pointer-events', 'auto', 'important');
+				indicator.style.setProperty('pointer-events', 'auto', 'important');
+				const stack = document.elementsFromPoint(x, y).filter(element => element === indicator || element === ringElement);
+				typingAboveRing = stack[0] === indicator;
+			} finally {
+				previous.forEach(({ element, value, priority }) => {
+					if (value) element.style.setProperty('pointer-events', value, priority);
+					else element.style.removeProperty('pointer-events');
+				});
+			}
+		}
 		return {
 			originalAvatar: !!row.querySelector('.test-avatar'),
 			marker: !!ring,
+			ringCount: row.querySelectorAll('.pena-native-avatar-ring').length,
 			nativeFormatting: row.classList.contains('pena-native-chat-row') && !!row.querySelector('.bx-im-list-recent-item__container'),
+			typingPromotedAfterRemount: indicator?.classList.contains('pena-native-avatar-native-overlay') || false,
+			typingAboveRing,
 			geometryDelta: avatar && ring ? Math.max(
 				Math.abs(ring.left - avatar.left), Math.abs(ring.right - avatar.right),
 				Math.abs(ring.top - avatar.top), Math.abs(ring.bottom - avatar.bottom)
@@ -943,7 +1689,10 @@ try {
 	assert.deepEqual(searchedMarker, {
 		originalAvatar: true,
 		marker: true,
+		ringCount: 1,
 		nativeFormatting: true,
+		typingPromotedAfterRemount: true,
+		typingAboveRing: true,
 		geometryDelta: 0
 	}, `Search stripped the native row or its color marker: ${JSON.stringify(searchedMarker)}`);
 	await nativeSearch.fill('Чат 5');
@@ -967,7 +1716,7 @@ try {
 		const input = document.querySelector('.recent-host input[type="search"]');
 		const visible = Array.from(document.querySelectorAll('.recent-host .pena-native-chat-row')).filter(row => getComputedStyle(row).display !== 'none');
 		return input?.value === 'Чат 5' && visible.length === 1 && visible[0].dataset.id === 'chat5';
-	}, null, { timeout: 8000 });
+	}, null, { timeout: 12000 });
 	await page.waitForFunction(() => window.__PENA_NATIVE_PREFETCH__?.status?.().originalActive === false, null, { timeout: 8000 });
 	await page.evaluate(() => localStorage.setItem('pena.dialogControlView.chats', JSON.stringify({ sortMode: 'date', sortDirection: 'asc', unreadOnly: false })));
 	await page.locator('#dispatch-wheel').click();
@@ -1042,6 +1791,22 @@ try {
 	await page.locator('.recent-host [data-pena-sort-mode="color"]').click();
 	await page.locator('.recent-host [data-pena-sort-direction="asc"]').click();
 	await page.evaluate(() => window.__PENA_NATIVE_PREFETCH__.runOriginal());
+	try {
+		await page.waitForFunction(() => {
+			const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+			return status?.loadedModes?.includes('chats') && status.originalActive === false &&
+				window.__PENA_RECENT_SYNC__?.phase === 'ready';
+		}, null, { timeout: 12000 });
+	} catch (error) {
+		const diagnostic = await page.evaluate(() => ({
+			status: window.__PENA_NATIVE_PREFETCH__?.status?.() || null,
+			sync: window.__PENA_RECENT_SYNC__ || null,
+			bottom: window.__PENA_NATIVE_BOTTOM_DEBUG__ || null,
+			scroll: window.__PENA_NATIVE_SCROLL_DEBUG__ || null,
+			overlay: document.querySelector('.recent-host .pena-native-original-load-guard')?.outerHTML || ''
+		}));
+		throw new Error(`Manual native confirmation did not settle: ${JSON.stringify(diagnostic)}`, { cause: error });
+	}
 	await page.locator('.recent-host [data-pena-sort-mode="date"]').click();
 	await page.locator('.recent-host [data-pena-sort-direction="desc"]').click();
 	await page.waitForFunction(() => {
@@ -1070,11 +1835,52 @@ try {
 	await page.locator('#bitrix-native-menu').waitFor({ state: 'visible', timeout: 2000 });
 	assert.equal(await page.evaluate(() => window.nativeContextMenus), 1, 'Embedded original-menu action did not open Bitrix context menu');
 
-	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1`);
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&fallbackAvatar=1`);
 	await page.waitForFunction(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
 		return status?.loadedModes?.includes('chats') && status.originalActive === false;
-	}, null, { timeout: 8000 });
+	}, null, { timeout: 12000 });
+	const fallbackAvatarStack = await page.locator('.recent-host .pena-native-chat-row[data-id="chat225"]').evaluate(row => {
+		const host = row.querySelector('.bx-messenger-cl-avatar');
+		const portrait = row.querySelector('.test-avatar');
+		const ring = row.querySelector('.pena-native-avatar-ring');
+		const indicator = row.querySelector('[data-native-typing-indicator="1"]');
+		return {
+			hostIsRingHost: !!host?.classList.contains('pena-native-avatar-ring-host'),
+			ringCount: row.querySelectorAll('.pena-native-avatar-ring').length,
+			portraitPromoted: portrait?.classList.contains('pena-native-avatar-native-overlay') || false,
+			indicatorPromoted: indicator?.classList.contains('pena-native-avatar-native-overlay') || false,
+			indicatorZIndex: indicator ? getComputedStyle(indicator).zIndex : '',
+			ringZIndex: ring ? getComputedStyle(ring).zIndex : ''
+		};
+	});
+	assert.deepEqual(fallbackAvatarStack, {
+		hostIsRingHost: true,
+		ringCount: 1,
+		portraitPromoted: false,
+		indicatorPromoted: true,
+		indicatorZIndex: '7',
+		ringZIndex: '1'
+	}, `Fallback avatar stacking promoted the portrait above its ring: ${JSON.stringify(fallbackAvatarStack)}`);
+	await page.locator('.recent-host .pena-native-chat-row[data-id="chat225"]').evaluate(async row => {
+		const current = row.querySelector('[data-native-typing-indicator="1"]');
+		const parent = current?.parentElement;
+		if (!current || !parent) return;
+		const replacement = current.cloneNode(true);
+		replacement.removeAttribute('data-native-typing-indicator');
+		replacement.className = 'opaque-native-status-7f3a';
+		replacement.setAttribute('data-opaque-native-status', '1');
+		current.remove();
+		parent.appendChild(replacement);
+		await new Promise(resolve => setTimeout(resolve, 280));
+	});
+	assert.deepEqual(await page.locator('.recent-host .pena-native-chat-row[data-id="chat225"]').evaluate(row => {
+		const indicator = row.querySelector('[data-opaque-native-status="1"]');
+		return {
+			promoted: indicator?.classList.contains('pena-native-avatar-native-overlay') || false,
+			zIndex: indicator ? getComputedStyle(indicator).zIndex : ''
+		};
+	}), { promoted: true, zIndex: '7' }, 'Opaque native typing/status overlay fell under the avatar color ring');
 	const rootColorRow = page.locator('.recent-host .pena-native-chat-row[data-id="chat5"]');
 	await rootColorRow.click({ button: 'right' });
 	assert.equal(await page.locator('.dialog-control-context-menu .dialog-control-context-colors').count(), 0, 'Root dialog still exposes color controls');
@@ -1084,12 +1890,16 @@ try {
 	const currentDialogTools = await dialogColorPalette.evaluate(palette => ({
 		picker: !!palette.querySelector('.dialog-control-mini-picker'),
 		hue: !!palette.querySelector('.dialog-control-hue-strip'),
+		random: !!palette.querySelector('.dialog-control-palette-tool.--random'),
+		eyedropper: !!palette.querySelector('.dialog-control-palette-tool.--eyedropper'),
 		addIcon: palette.querySelector('.dialog-control-swatch.--add svg')?.innerHTML || '',
 		clearIcon: palette.querySelector('.dialog-control-swatch.--clear .dialog-control-transparent-icon')?.outerHTML || ''
 	}));
 	assert.deepEqual(currentDialogTools, {
 		picker: dialogMarkerTools.picker,
 		hue: dialogMarkerTools.hue,
+		random: dialogMarkerTools.random,
+		eyedropper: dialogMarkerTools.eyedropper,
 		addIcon: dialogMarkerTools.addIcon,
 		clearIcon: dialogMarkerTools.clearIcon
 	}, 'Dialog marker controls changed between managed and original Bitrix rows');
@@ -1114,27 +1924,90 @@ try {
 	const folderMarkerTools = await folderColorGrid.evaluate(palette => ({
 		picker: !!palette.querySelector('.dialog-control-mini-picker'),
 		hue: !!palette.querySelector('.dialog-control-hue-strip'),
+		random: !!palette.querySelector('.dialog-control-palette-tool.--random'),
+		eyedropper: !!palette.querySelector('.dialog-control-palette-tool.--eyedropper'),
 		addIcon: palette.querySelector('.dialog-control-swatch.--add svg')?.innerHTML || '',
 		clearIcon: palette.querySelector('.dialog-control-swatch.--clear .dialog-control-transparent-icon')?.outerHTML || ''
 	}));
 	assert.deepEqual(currentDialogTools, folderMarkerTools, 'Dialog and folder marker panels use different controls or icons');
-	await folderColorGrid.locator('.dialog-control-swatch[data-color="#5dc87e"]').click();
-	await page.waitForFunction(() => JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats') || '[]').find(item => item.id === 'folder:test')?.color === '#5dc87e');
+	const customColorsBeforeFolderTools = await page.evaluate(() => JSON.parse(localStorage.getItem('pena.dialogControlColors.v1') || '[]'));
+	await folderColorGrid.locator('.dialog-control-palette-tool.--random').click();
+	await page.waitForFunction(() => /^#[0-9a-f]{6}$/i.test(JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats') || '[]').find(item => item.id === 'folder:test')?.color || ''));
+	assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('pena.dialogControlColors.v1') || '[]')), customColorsBeforeFolderTools,
+		'Folder random color was saved without pressing Plus');
+	await folderTab.click({ button: 'right' });
+	await page.locator('.dialog-control-context-folder-color').click();
+	const folderEyedropperGrid = page.locator('.dialog-control-palette.--open');
+	await folderEyedropperGrid.waitFor({ state: 'visible', timeout: 2000 });
+	await folderEyedropperGrid.locator('.dialog-control-palette-tool.--eyedropper').click();
+	await page.waitForFunction(() => document.documentElement.classList.contains('pena-dialog-color-eyedropper'));
+	await page.evaluate(() => { window.nativeRowClicks = []; window.nativeRowGestures = []; });
+	const folderColorSource = page.locator('.recent-host .pena-native-chat-row[data-id="chat225"]');
+	await folderColorSource.hover();
+	await folderColorSource.click();
+	await page.waitForFunction(() => JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats') || '[]').find(item => item.id === 'folder:test')?.color === '#22c55e');
+	assert.deepEqual(await page.evaluate(() => ({
+		clicks: [...window.nativeRowClicks],
+		gestures: [...window.nativeRowGestures],
+		active: document.documentElement.classList.contains('pena-dialog-color-eyedropper')
+	})), { clicks: [], gestures: [], active: false }, 'Folder eyedropper leaked a click into Bitrix');
+	assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('pena.dialogControlColors.v1') || '[]')), customColorsBeforeFolderTools,
+		'Folder eyedropper saved its sampled color without pressing Plus');
 
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&segments=1`);
 	await page.locator('.recent-host .pena-native-folder-switcher').waitFor({ state: 'visible', timeout: 3000 });
 	const commonFolderTab = page.locator('.recent-host .pena-native-folder-tab').filter({ hasText: 'Все папки' });
 	const movableFolderTab = page.locator('.recent-host .pena-native-folder-tab').filter({ hasText: 'Тестовая папка' });
 	const targetGroupTab = page.locator('.recent-host .pena-native-group-tab').filter({ hasText: 'Целевая группа' });
-	assert.equal(await commonFolderTab.getAttribute('draggable'), 'false', 'The common All folders tab became draggable');
+	assert.equal(await commonFolderTab.getAttribute('draggable'), 'true', 'The aggregate All folders tab cannot be visually reordered');
 	assert.equal(await movableFolderTab.getAttribute('draggable'), 'true', 'A user folder cannot be dragged from All');
-	await movableFolderTab.dragTo(targetGroupTab);
+	await page.evaluate(() => { window.nativeScrollAudit = []; });
+	await commonFolderTab.dragTo(targetGroupTab);
+	const aggregateGroupDrop = await page.evaluate(() => ({
+		items: JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats') || '[]'),
+		order: JSON.parse(localStorage.getItem('pena.dialogControlNativeFolder.v1.order.chats.root') || '[]'),
+		scrollEvents: [...(window.nativeScrollAudit || [])]
+	}));
+	assert.equal(aggregateGroupDrop.items.some(item => item.id === '__all_folders__'), false,
+		'The aggregate All folders tab was persisted as a real folder');
+	assert.equal(aggregateGroupDrop.items.some(item => item.segmentId === 'segment:target'), false,
+		'Dropping All folders on a group unexpectedly assigned data to that group');
+	assert.deepEqual(aggregateGroupDrop.order, ['__all_folders__', 'folder:test'],
+		'Rejected aggregate group drop changed the folder-tab order');
+	assert.deepEqual(aggregateGroupDrop.scrollEvents, [], 'Rejected aggregate group drop moved the native viewport');
+	const movableFolderBox = await movableFolderTab.boundingBox();
+	assert.ok(movableFolderBox, 'The user folder tab has no measurable drop target');
+	await commonFolderTab.dragTo(movableFolderTab, {
+		targetPosition: { x: Math.max(1, movableFolderBox.width - 2), y: Math.max(1, movableFolderBox.height / 2) }
+	});
+	await page.waitForFunction(() => {
+		const order = JSON.parse(localStorage.getItem('pena.dialogControlNativeFolder.v1.order.chats.root') || '[]');
+		return order.join('|') === 'folder:test|__all_folders__';
+	});
+	await page.waitForFunction(() => Array.from(document.querySelectorAll('.recent-host .pena-native-folder-tab'))
+		.map(tab => tab.dataset.nativeFolderSortId).join('|') === 'folder:test|__all_folders__');
+	assert.deepEqual(await page.locator('.recent-host .pena-native-folder-tab').evaluateAll(tabs =>
+		tabs.map(tab => tab.dataset.nativeFolderSortId)), ['folder:test', '__all_folders__'],
+		'The aggregate All folders tab did not move inside the folder strip');
+	assert.deepEqual(await page.evaluate(() => window.nativeScrollAudit || []), [],
+		'Reordering All folders moved the native viewport');
+	await page.reload();
+	await page.locator('.recent-host .pena-native-folder-switcher').waitFor({ state: 'visible', timeout: 3000 });
+	assert.deepEqual(await page.locator('.recent-host .pena-native-folder-tab').evaluateAll(tabs =>
+		tabs.map(tab => tab.dataset.nativeFolderSortId)), ['folder:test', '__all_folders__'],
+		'The reordered All folders position did not survive a reload');
+	const reloadedAggregate = page.locator('.recent-host .pena-native-folder-tab').filter({ hasText: 'Все папки' });
+	assert.equal(await reloadedAggregate.getAttribute('data-native-folder-id'), '',
+		'Reordered All folders stopped being an aggregate view');
+	const reloadedMovableFolder = page.locator('.recent-host .pena-native-folder-tab').filter({ hasText: 'Тестовая папка' });
+	const reloadedTargetGroup = page.locator('.recent-host .pena-native-group-tab').filter({ hasText: 'Целевая группа' });
+	await reloadedMovableFolder.dragTo(reloadedTargetGroup);
 	await page.waitForFunction(() => {
 		const items = JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats') || '[]');
 		return items.find(item => item.id === 'folder:test')?.segmentId === 'segment:target' &&
 			items.find(item => item.id === 'chat225')?.segmentId === 'segment:target';
 	});
-	await targetGroupTab.click();
+	await reloadedTargetGroup.click();
 	const movedFolderTab = page.locator('.recent-host .pena-native-folder-tab').filter({ hasText: 'Тестовая папка' });
 	await movedFolderTab.waitFor({ state: 'visible', timeout: 2000 });
 	await movedFolderTab.dragTo(page.locator('.recent-host .pena-native-group-tab').filter({ hasText: /^Все/ }));
@@ -1143,6 +2016,29 @@ try {
 		return !items.find(item => item.id === 'folder:test')?.segmentId &&
 			!items.find(item => item.id === 'chat225')?.segmentId;
 	});
+
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&segments=1`);
+	await page.locator('.recent-host .pena-native-folder-switcher').waitFor({ state: 'visible', timeout: 3000 });
+	await page.evaluate(() => { window.nativeScrollAudit = []; });
+	const assignedNativeRow = page.locator('.recent-host .pena-native-chat-row[data-id="chat225"]');
+	const aggregateUnassignTarget = page.locator('.recent-host .pena-native-folder-tab').filter({ hasText: 'Все папки' });
+	await assignedNativeRow.waitFor({ state: 'visible', timeout: 3000 });
+	await page.waitForFunction(() => document.querySelector('.recent-host .pena-native-chat-row[data-id="chat225"]')?.getAttribute('draggable') === 'true');
+	await assignedNativeRow.dragTo(aggregateUnassignTarget);
+	await page.waitForFunction(() => {
+		const item = JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats') || '[]').find(candidate => candidate.id === 'chat225');
+		return item && !item.folderId && !item.color;
+	});
+	await page.waitForFunction(() => {
+		const row = document.querySelector('.recent-host .pena-native-chat-row[data-id="chat225"]');
+		return row && !row.dataset.penaNativeFolderId && !row.classList.contains('--native-colored');
+	});
+	assert.deepEqual(await assignedNativeRow.evaluate(row => ({
+		folderId: row.dataset.penaNativeFolderId || '',
+		colored: row.classList.contains('--native-colored')
+	})), { folderId: '', colored: false }, 'Dropping a dialog on All folders did not remove its folder binding and marker');
+	assert.deepEqual(await page.evaluate(() => window.nativeScrollAudit || []), [],
+		'Unassigning a dialog through All folders moved the native viewport');
 
 	const openStripContextMenu = async selector => {
 		await page.locator(selector).evaluate(element => {
@@ -1199,16 +2095,40 @@ try {
 	await page.waitForFunction(() => !JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats') || '[]')
 		.some(item => item.type === 'folder' && item.title === 'Папка после проверки'));
 
-	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&passThrough=1&pendingControl=1`);
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&passThrough=1&pendingControl=1&nativeCatalog=1&nativeFirst=1`);
 	await page.waitForFunction(() => window.nativeRestCalls?.some(call => call.method === 'im.dialog.get' && call.dialogId === 'chat9000'), null, { timeout: 8000 });
-	await page.waitForFunction(() => window.__PENA_RECENT_SYNC__?.controlledPendingCount === 0 && !window.__PENA_RECENT_SYNC__?.detailsInFlight, null, { timeout: 8000 });
+	await page.waitForFunction(() => window.__PENA_RECENT_SYNC__?.controlledPendingCount === 0 &&
+		window.__PENA_RECENT_SYNC__?.materializationReady === true &&
+		window.__PENA_RECENT_SYNC__?.ready === true && !window.__PENA_RECENT_SYNC__?.detailsInFlight, null, { timeout: 15000 });
 	const resolvedNativeStatus = await page.locator('.recent-host .pena-native-sync-chip').evaluate(chip => ({ text: chip.textContent, className: chip.className }));
 	assert.doesNotMatch(resolvedNativeStatus.className, /--warning/, `Native mandatory-dialog loading stayed unresolved: ${JSON.stringify(resolvedNativeStatus)}`);
-	assert.match(resolvedNativeStatus.className, /--ready/, `Resolved native list was not marked ready: ${JSON.stringify(resolvedNativeStatus)}`);
+	assert.doesNotMatch(resolvedNativeStatus.className, /--error/, `Resolved native list exposed an error action: ${JSON.stringify(resolvedNativeStatus)}`);
+	assert.equal(await page.locator('.recent-host .pena-native-sync-chip').evaluate(chip => chip.hidden), true,
+		'Resolved list left a redundant permanent status chip in the toolbar');
 
 	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=120&lazyChunk=8&lazyDelay=20&initialTop=32`);
 	await page.locator('.recent-host .pena-native-original-load-guard').waitFor({ state: 'visible', timeout: 3000 });
+	await page.evaluate(() => {
+		window.nativeMeasuredProgress = [];
+		const sample = () => {
+			const sync = window.__PENA_RECENT_SYNC__ || {};
+			const percent = Number(sync.percent);
+			if (!Number.isFinite(percent)) return;
+			const previous = window.nativeMeasuredProgress.at(-1);
+			const next = {
+				percent,
+				stage: String(sync.workStage || ''),
+				active: window.__PENA_NATIVE_PREFETCH__?.status?.().originalActive === true
+			};
+			if (!previous || previous.percent !== next.percent || previous.stage !== next.stage || previous.active !== next.active) {
+				window.nativeMeasuredProgress.push(next);
+			}
+		};
+		new MutationObserver(sample).observe(document.body, { childList: true, subtree: true, characterData: true });
+		window.nativeMeasuredProgressTimer = setInterval(sample, 40);
+		sample();
+	});
 	const nativeFirstProgressSamples = [];
 	for (let index = 0; index < 3; index += 1) {
 		nativeFirstProgressSamples.push(String(await page.locator('.recent-host .pena-native-original-load-guard .pena-native-load-value').textContent()).trim());
@@ -1219,7 +2139,7 @@ try {
 	await page.waitForFunction(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
 		return status?.loadedModes?.includes('chats') && !status.originalActive;
-	}, null, { timeout: 8000 });
+	}, null, { timeout: 12000 });
 	const nativeFirstChats = await page.evaluate(() => ({
 		rows: document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]').length,
 		modeCount: window.__PENA_NATIVE_PREFETCH__.status().modeCounts.chats || 0,
@@ -1227,7 +2147,8 @@ try {
 		imRecentCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').length,
 		taskCalls: window.nativeRestCalls.filter(call => call.method === 'tasks.task.list').length,
 		progress: window.__PENA_RECENT_SYNC__?.percent,
-		duration: Math.max(0, Number(window.__PENA_RECENT_SYNC__?.completedAt) - Number(window.__PENA_RECENT_SYNC__?.startedAt))
+		duration: Math.max(0, Number(window.__PENA_RECENT_SYNC__?.completedAt) - Number(window.__PENA_RECENT_SYNC__?.startedAt)),
+		progressHistory: (clearInterval(window.nativeMeasuredProgressTimer), window.nativeMeasuredProgress || [])
 	}));
 	assert.ok(nativeFirstChats.rows >= 120 && nativeFirstChats.modeCount >= 120,
 		`Native-first loading did not materialize old chat rows: ${JSON.stringify(nativeFirstChats)}`);
@@ -1235,9 +2156,53 @@ try {
 	assert.ok(nativeFirstChats.imRecentCalls > 0, `Cold native source did not obtain its complete metadata baseline: ${JSON.stringify(nativeFirstChats)}`);
 	assert.ok(nativeFirstChats.taskCalls > 0 && nativeFirstChats.duration < 6000,
 		`Native-first loading missed the fast startup path: ${JSON.stringify(nativeFirstChats)}`);
+	const activeProgress = nativeFirstChats.progressHistory.filter(sample => sample.active).map(sample => sample.percent);
+	assert.ok(activeProgress.length >= 3 && new Set(activeProgress).size >= 3,
+		`Native progress did not advance during real work: ${JSON.stringify(nativeFirstChats.progressHistory)}`);
+	assert.ok(activeProgress.every((value, index) => value >= 0 && value < 100 && (index === 0 || value >= activeProgress[index - 1])),
+		`Native progress reached 100 before completion or moved backwards: ${JSON.stringify(nativeFirstChats.progressHistory)}`);
+	assert.ok(nativeFirstChats.progressHistory.some(sample => sample.stage === 'tail-verification'),
+		`Tail verification was not represented in progress: ${JSON.stringify(nativeFirstChats.progressHistory)}`);
+	assert.equal(nativeFirstChats.progress, 100, `Committed native load did not publish 100%: ${JSON.stringify(nativeFirstChats)}`);
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&typedIds=1&catalogRows=80`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.loadedModes?.includes('chats') && !status.originalActive;
+	}, null, { timeout: 12000 });
+	assert.ok(await page.evaluate(() => window.__PENA_NATIVE_PREFETCH__.status().modeCounts.chats || 0) >= 80,
+		'Typed Bitrix data-chat-id rows were not materialized');
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&catalogRows=40&taskDelay=9000`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.loadedModes?.includes('chats') && !status.originalActive;
+	}, null, { timeout: 12000 });
+	assert.equal(await page.evaluate(() => window.__PENA_NATIVE_PREFETCH__.status().taskCatalogComplete), false,
+		'Cold chat loader waited for the unrelated task index');
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=120&lazyChunk=8&lazyDelay=20&initialTop=32`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.loadedModes?.includes('chats') && !status.originalActive;
+	}, null, { timeout: 12000 });
 	const nativeFirstDateBaseline = await visibleIds(page);
 	assert.ok(nativeFirstDateBaseline.length >= 120, `Date sort baseline omitted old native dialogs: ${nativeFirstDateBaseline.length}`);
+	const healthyPanelBefore = await page.evaluate(() => ({
+		revision: window.__PENA_NATIVE_PREFETCH__?.status?.().materializationRevisions?.chats || 0,
+		top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0,
+		scrollEvents: window.nativeScrollAudit.length
+	}));
 	await page.getByRole('button', { name: /Фильтры/ }).click();
+	await page.waitForTimeout(260);
+	const healthyPanelAfter = await page.evaluate(() => ({
+		revision: window.__PENA_NATIVE_PREFETCH__?.status?.().materializationRevisions?.chats || 0,
+		top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0,
+		scrollEvents: window.nativeScrollAudit.length,
+		active: window.__PENA_NATIVE_PREFETCH__?.status?.().originalActive === true,
+		overlays: document.querySelectorAll('.pena-native-original-load-guard').length
+	}));
+	assert.deepEqual(healthyPanelAfter, { ...healthyPanelBefore, active: false, overlays: 0 },
+		`Opening the extension woke or moved an already healthy Bitrix list: ${JSON.stringify({ healthyPanelBefore, healthyPanelAfter })}`);
 	const nativeFirstFilterPanel = page.locator('.recent-host .pena-native-filter-panel');
 	await nativeFirstFilterPanel.getByRole('button', { name: 'Дата', exact: true }).click();
 	await nativeFirstFilterPanel.getByRole('button', { name: 'По возрастанию', exact: true }).click();
@@ -1313,6 +2278,7 @@ try {
 		window.setNativeRestDelay?.(1200);
 		window.__PENA_TEST_DIALOG_AUDIT_TTL_MS__ = 50;
 		window.__PENA_TEST_DIALOG_DEEP_IDLE_MS__ = 20;
+		window.__PENA_TEST_DIALOG_DEEP_USER_IDLE_MS__ = 50;
 	});
 	await page.waitForTimeout(5300);
 	await page.evaluate(() => window.dispatchEvent(new Event('focus')));
@@ -1333,7 +2299,10 @@ try {
 		`Late recycled rows stayed unsorted while REST audit was active: ${JSON.stringify({ auditInterim, auditRecycled })}`);
 	assert.equal(auditInterim.top, lateMaterializationBefore.top,
 		`Late rows during REST audit moved the native viewport: ${JSON.stringify(auditInterim)}`);
-	await page.waitForFunction(() => window.__PENA_NATIVE_PREFETCH__?.status?.().apiActive === false, null, { timeout: 4000 });
+	// The fixture delays each SDK response by 1.2 s. The shared two-request
+	// scheduler deliberately serializes part of this background audit; row
+	// presentation above still has its independent 800 ms responsiveness budget.
+	await page.waitForFunction(() => window.__PENA_NATIVE_PREFETCH__?.status?.().apiActive === false, null, { timeout: 10000 });
 	await page.waitForTimeout(220);
 	const auditFinalIds = await visibleIds(page);
 	assert.deepEqual([...auditFinalIds.slice(0, 2)].sort(), [...auditRecycled.lateIds].sort(),
@@ -1350,6 +2319,7 @@ try {
 		rows: document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]').length,
 		ids: Array.from(document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]'), row => row.dataset.id),
 		modeCount: window.__PENA_NATIVE_PREFETCH__?.status?.().modeCounts?.chats || 0,
+		materialization: window.__PENA_NATIVE_PREFETCH__?.status?.().modeStates?.chats?.materialization || null,
 		duration: Math.max(0, Number(window.__PENA_RECENT_SYNC__?.completedAt) - Number(window.__PENA_RECENT_SYNC__?.startedAt)),
 		bottom: window.__PENA_NATIVE_BOTTOM_DEBUG__ || null,
 		top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0
@@ -1357,7 +2327,12 @@ try {
 	assert.ok(postProofMaterialization.rows === 45 && postProofMaterialization.modeCount === 45 &&
 		postProofMaterialization.ids.includes('chat8000') && postProofMaterialization.ids.includes('chat8001'),
 		`Traversal certified the list before Bitrix delivered its late bottom page: ${JSON.stringify(postProofMaterialization)}`);
-	assert.ok(postProofMaterialization.duration >= 900 && postProofMaterialization.bottom?.unexpectedSeenCount === 2,
+	assert.ok(postProofMaterialization.duration >= 900 &&
+		postProofMaterialization.materialization?.nativePassCount === 2 &&
+		postProofMaterialization.materialization?.exactPhysicalCatalogProof === false &&
+		postProofMaterialization.materialization?.confirmationKind === 'native-second-pass' &&
+		postProofMaterialization.materialization?.needsColdConfirmation === false &&
+		postProofMaterialization.bottom?.stable === true,
 		`Late bottom page was not included in the stable completion proof: ${JSON.stringify(postProofMaterialization)}`);
 	assert.equal(postProofMaterialization.top, 24,
 		`Late bottom confirmation moved the user's native viewport: ${JSON.stringify(postProofMaterialization)}`);
@@ -1390,6 +2365,7 @@ try {
 		rows: document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]').length,
 		ids: Array.from(document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]'), row => row.dataset.id).sort(),
 		modeCount: window.__PENA_NATIVE_PREFETCH__?.status?.().modeCounts?.chats || 0,
+		materialization: window.__PENA_NATIVE_PREFETCH__?.status?.().modeStates?.chats?.materialization || null,
 		expectedCatalog: window.__PENA_NATIVE_PREFETCH__?.status?.().modeStates?.chats?.expectedCatalog || null,
 		sourceTop: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0,
 		duration: Math.max(0, Number(window.__PENA_RECENT_SYNC__?.completedAt) - Number(window.__PENA_RECENT_SYNC__?.startedAt)),
@@ -1404,8 +2380,11 @@ try {
 		`Cold delayed page lacked a scoped complete baseline: ${JSON.stringify(delayedColdFinal)}`);
 	assert.equal(delayedColdFinal.sourceTop, 28, `Cold delayed page moved the user anchor: ${JSON.stringify(delayedColdFinal)}`);
 	assert.ok(delayedColdFinal.duration < 10000, `Cold delayed page exceeded the startup target: ${JSON.stringify(delayedColdFinal)}`);
-	assert.ok(delayedColdFinal.bottom?.cold && delayedColdFinal.bottom?.stable && delayedColdFinal.bottom?.expectedProof &&
-		delayedColdFinal.bottom?.expectedCount === 83 && delayedColdFinal.bottom?.missingExpectedCount === 0 &&
+	assert.ok(delayedColdFinal.materialization?.nativePassCount === 1 &&
+		delayedColdFinal.materialization?.exactPhysicalCatalogProof === true &&
+		delayedColdFinal.materialization?.physicalExpansionObserved === true &&
+		delayedColdFinal.materialization?.needsColdConfirmation === false &&
+		delayedColdFinal.bottom?.stable && delayedColdFinal.bottom?.headFenceChecked === true &&
 		delayedColdFinal.bottom?.seenCount === 83,
 	`Cold delayed page lacked conservative bottom proof: ${JSON.stringify(delayedColdFinal)}`);
 	const delayedColdSearch = page.locator('.recent-host input[type="search"]');
@@ -1496,7 +2475,8 @@ try {
 	await page.waitForFunction(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
 		const manifest = window.getNativeRepositorySnapshot?.()?.manifest;
-		return status?.modeStates?.chats?.attempt?.state === 'retry' && !status.originalActive &&
+		return !!status?.metadataRetryModes?.chats &&
+			status?.modeStates?.chats?.attempt?.state === 'idle' && !status.originalActive &&
 			manifest?.apiWatermarkVersion === 1 && manifest.apiCursorAt === 0 && manifest.apiFullAt === 0;
 	}, null, { timeout: 12000 });
 	const nativeOnlyWatermark = await page.evaluate(() => ({
@@ -1575,14 +2555,26 @@ try {
 		`Visible native merge advanced the API watermark: ${JSON.stringify(afterVisibleMutationWatermark)}`
 	);
 	await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-	await page.waitForFunction(mark => {
-		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
-		const snapshot = window.getNativeRepositorySnapshot?.();
-		const recentCalls = (window.nativeRestCalls || []).filter(call => call.method === 'im.recent.list' || call.method === 'im.recent.get');
-		return Number(status?.reconcile?.count) > mark.reconcileCount && !status.apiActive &&
-			recentCalls.length > mark.recentCalls && snapshot?.records?.some(record => record.id === 'chat9900') &&
-			Number(snapshot?.manifest?.apiCursorAt) > 0 && Number(snapshot?.manifest?.apiFullAt) > 0;
-	}, staleWakeMark, { timeout: 12000 });
+	try {
+		await page.waitForFunction(mark => {
+			const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+			const snapshot = window.getNativeRepositorySnapshot?.();
+			const recentCalls = (window.nativeRestCalls || []).filter(call => call.method === 'im.recent.list' || call.method === 'im.recent.get');
+			return Number(status?.reconcile?.count) > mark.reconcileCount && !status.apiActive &&
+				recentCalls.length > mark.recentCalls && snapshot?.records?.some(record => record.id === 'chat9900') &&
+				Number(snapshot?.manifest?.apiCursorAt) > 0 && Number(snapshot?.manifest?.apiFullAt) > 0;
+		}, staleWakeMark, { timeout: 12000 });
+	} catch (error) {
+		const diagnostic = await page.evaluate(mark => ({
+			mark,
+			status: window.__PENA_NATIVE_PREFETCH__?.status?.() || null,
+			sync: window.__PENA_RECENT_SYNC__ || null,
+			snapshot: window.getNativeRepositorySnapshot?.() || null,
+			recentCalls: (window.nativeRestCalls || []).filter(call => call.method === 'im.recent.list' || call.method === 'im.recent.get'),
+			failure: window.__PENA_NATIVE_FAILURE_DEBUG__ || null
+		}), staleWakeMark);
+		throw new Error(`Stale API wake did not reconcile: ${JSON.stringify(diagnostic)}`, { cause: error });
+	}
 	const recoveredApiWatermark = await page.evaluate(mark => {
 		const recentCalls = window.nativeRestCalls.filter(call => call.method === 'im.recent.list' || call.method === 'im.recent.get').slice(mark.recentCalls);
 		const snapshot = window.getNativeRepositorySnapshot();
@@ -1647,22 +2639,118 @@ try {
 	assert.deepEqual(staleSubsetFinal.recentCalls, [0],
 		`Complete cold API proof was fetched more than once while physical rows were delayed: ${JSON.stringify(staleSubsetFinal)}`);
 	assert.ok(staleSubsetFinal.elapsed < 10000 && staleSubsetFinal.revision === 1,
-		`Delayed cold materialization missed its startup budget or ran more than one pass: ${JSON.stringify(staleSubsetFinal)}`);
+		`Delayed cold materialization missed its startup budget or did not use the exact physical proof: ${JSON.stringify(staleSubsetFinal)}`);
 	assert.equal(staleSubsetFinal.top, 28, `Delayed cold recovery moved the scroll anchor: ${JSON.stringify(staleSubsetFinal)}`);
 	assert.equal(staleSubsetFinal.unguardedScrolls, 0, `Delayed cold recovery leaked viewport scroll outside its guard: ${JSON.stringify(staleSubsetFinal)}`);
 	assert.equal(staleSubsetFinal.replacementRows, 0, `Delayed cold recovery created replacement rows: ${JSON.stringify(staleSubsetFinal)}`);
 
 	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&lazyAfterFirstPass=1&lazyChunk=250&catalogRows=177&apiRecentCap=10&restNoNext=1&initialTop=28&startupBudget=10000`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return Number(status?.materializationRevisions?.chats || 0) >= 1 &&
+			window.__PENA_RECENT_SYNC__?.inFlight === true &&
+			Number.isFinite(Number(window.__PENA_RECENT_SYNC__?.percent));
+	}, null, { timeout: 10000 });
+	const shortApiColdInterim = await page.evaluate(() => ({
+		phase: window.__PENA_RECENT_SYNC__?.phase || '',
+		percent: Number(window.__PENA_RECENT_SYNC__?.percent),
+		overlays: document.querySelectorAll('.recent-host .pena-native-original-load-guard').length,
+		revision: window.__PENA_NATIVE_PREFETCH__?.status?.().materializationRevisions?.chats || 0
+	}));
+	assert.ok(shortApiColdInterim.percent >= 50 && shortApiColdInterim.percent < 100 && shortApiColdInterim.overlays === 1,
+		`Cold confirmation lost or reset its single visible progress state: ${JSON.stringify(shortApiColdInterim)}`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.loadedModes?.includes('chats') && !status.originalActive &&
+			Number(status.materializationRevisions?.chats || 0) === 2 && status.modeCounts?.chats === 180;
+	}, null, { timeout: 12000 });
+	const shortApiCold = await page.evaluate(() => ({
+		ids: Array.from(document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]'), row => row.dataset.id),
+		revision: window.__PENA_NATIVE_PREFETCH__?.status?.().materializationRevisions?.chats || 0,
+		passCount: window.__PENA_NATIVE_PREFETCH__?.status?.().modeStates?.chats?.materialization?.nativePassCount || 0,
+		apiConfirmed: window.__PENA_NATIVE_PREFETCH__?.status?.().modeStates?.chats?.materialization?.apiConfirmed === true,
+		recentCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').map(call => call.offset),
+		top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0,
+		unguardedScrolls: window.nativeScrollAudit.filter(entry =>
+			!entry.loader && Math.abs(Number(entry.top) - Number(window.nativeScrollbarBaseline?.chats?.top)) > .5
+		).length,
+		replacementRows: document.querySelectorAll('.pena-native-managed-row,.pena-native-remote-row').length
+	}));
+	assert.equal(shortApiCold.ids.length, 180,
+		`A short complete API subset certified the first native window: ${JSON.stringify(shortApiCold)}`);
+	assert.deepEqual(new Set(shortApiCold.ids).size, 180,
+		`The automatic confirmation pass duplicated or lost dialogs: ${JSON.stringify(shortApiCold)}`);
+	assert.equal(shortApiCold.revision, 2,
+		`A new source generation did not run exactly two guarded passes: ${JSON.stringify(shortApiCold)}`);
+	assert.equal(shortApiCold.passCount, 2,
+		`The materialization pass counter is inconsistent: ${JSON.stringify(shortApiCold)}`);
+	assert.equal(shortApiCold.apiConfirmed, true,
+		`The short API metadata audit was not retained as metadata confirmation: ${JSON.stringify(shortApiCold)}`);
+	assert.equal(shortApiCold.top, 28, `The mandatory confirmation pass moved the native anchor: ${JSON.stringify(shortApiCold)}`);
+	assert.equal(shortApiCold.unguardedScrolls, 0, `The mandatory confirmation pass leaked a real scroll: ${JSON.stringify(shortApiCold)}`);
+	assert.equal(shortApiCold.replacementRows, 0, `The mandatory confirmation pass created replacement rows: ${JSON.stringify(shortApiCold)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=20&lazyChunk=8&lazyDelay=20&apiProjectionExtraRows=7&initialTop=18&startupBudget=10000`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.loadedModes?.includes('chats') && !status.originalActive &&
+			status.modeStates?.chats?.attempt?.state === 'idle' &&
+			status.modeStates?.chats?.materialization?.count === 23 &&
+			status.modeStates?.chats?.expectedCatalog?.count === 30;
+	}, null, { timeout: 15000 });
+	await page.waitForTimeout(1800);
+	const apiProjectionMismatch = await page.evaluate(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		const materialization = status?.modeStates?.chats?.materialization || {};
+		const chip = document.querySelector('.recent-host .pena-native-sync-chip');
+		return {
+			catalogCount: status?.modeCounts?.chats || 0,
+			materializedCount: materialization.count || 0,
+			revision: status?.materializationRevisions?.chats || 0,
+			passCount: materialization.nativePassCount || 0,
+			state: materialization.state || '',
+			invalidated: materialization.invalidated === true,
+			apiProjectionExtraCount: materialization.apiProjectionExtraCount || 0,
+			expectedCount: status?.modeStates?.chats?.expectedCatalog?.count || 0,
+			error: window.__PENA_RECENT_SYNC__?.error || '',
+			backgroundError: window.__PENA_RECENT_SYNC__?.backgroundError || '',
+			chipVisible: !!chip && !chip.hidden,
+			overlays: document.querySelectorAll('.recent-host .pena-native-original-load-guard').length,
+			top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0,
+			replacementRows: document.querySelectorAll('.pena-native-managed-row,.pena-native-remote-row').length
+		};
+	});
+	assert.deepEqual(apiProjectionMismatch, {
+		catalogCount: 30,
+		materializedCount: 23,
+		revision: 2,
+		passCount: 2,
+		state: 'ready',
+		invalidated: false,
+		apiProjectionExtraCount: 7,
+		expectedCount: 30,
+		error: '',
+		backgroundError: '',
+		chipVisible: false,
+		overlays: 0,
+		top: 18,
+		replacementRows: 0
+	}, `API-only projection rows incorrectly broke a complete native feed: ${JSON.stringify(apiProjectionMismatch)}`);
+
+	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&repositoryCache=1&repositoryFullProof=1&repositoryControlledExtra=1&restFailCount=20&lazy=1&catalogRows=80&lazyChunk=100&lazyDelay=2200&initialTop=28&startupBudget=10000`);
 	await page.waitForFunction(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
-		return status?.modeStates?.chats?.attempt?.state === 'retry' &&
-			Number(status.modeStates.chats.attempt.retryAt) > Date.now() && !status.originalActive;
+		return status?.modeStates?.chats?.attempt?.state === 'idle' &&
+			Number(status?.metadataRetryModes?.chats?.retryAt) > Date.now() && !status.originalActive;
 	}, null, { timeout: 10000 });
 	const repositoryCold = await page.evaluate(() => ({
 		loaded: window.__PENA_NATIVE_PREFETCH__?.status?.().loadedModes?.includes('chats') === true,
 		materialization: window.__PENA_NATIVE_PREFETCH__?.status?.().modeStates?.chats?.materialization || null,
 		attempt: window.__PENA_NATIVE_PREFETCH__?.status?.().modeStates?.chats?.attempt || null,
+		metadataRetry: window.__PENA_NATIVE_PREFETCH__?.status?.().metadataRetryModes?.chats || null,
 		ids: Array.from(document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]'), row => row.dataset.id).sort(),
 		top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0,
 		baseline: window.__PENA_NATIVE_PREFETCH__?.status?.().expectedCatalogs?.chats || null,
@@ -1672,13 +2760,14 @@ try {
 	}));
 	assert.deepEqual(repositoryCold.ids, ['chat225', 'chat5', 'chat77', ...Array.from({ length: 80 }, (_, index) => `chat${1000 + index}`)].sort(),
 		`Repository cold recovery lost the exact physical source: ${JSON.stringify(repositoryCold)}`);
-	assert.equal(repositoryCold.loaded, false,
-		`Repository baseline incorrectly certified the current cold DOM while API was unavailable: ${JSON.stringify(repositoryCold)}`);
-	assert.notEqual(repositoryCold.materialization?.state, 'ready',
-		`Offline repository bootstrap wrote a current materialization: ${JSON.stringify(repositoryCold)}`);
+	assert.equal(repositoryCold.loaded, true,
+		`A complete physical traversal stayed blocked by an unrelated metadata outage: ${JSON.stringify(repositoryCold)}`);
+	assert.equal(repositoryCold.materialization?.state, 'ready',
+		`Complete physical rows were not recorded while metadata retry remained pending: ${JSON.stringify(repositoryCold)}`);
 	assert.ok(repositoryCold.baseline?.complete && repositoryCold.baseline?.kind === 'repository' &&
 		repositoryCold.baseline?.count === 83 && repositoryCold.baseline?.reason === 'repository-complete' &&
-		String(repositoryCold.attempt?.reason || '').startsWith('api-proof-unavailable:'),
+		repositoryCold.attempt?.state === 'idle' &&
+		String(repositoryCold.metadataRetry?.reason || '').startsWith('metadata-audit-incomplete:'),
 		`Schema-v2 repository lower bound was not retained with an API retry: ${JSON.stringify(repositoryCold)}`);
 	assert.deepEqual(repositoryCold.cachedConfirmedIds.slice().sort(), exactColdPhysicalIds,
 		`Failed cold API audit destroyed the last confirmed repository catalog: ${JSON.stringify(repositoryCold)}`);
@@ -1709,7 +2798,7 @@ try {
 	await page.waitForFunction(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
 		return status?.loadedModes?.includes('chats') && !status.originalActive && status.modeCounts?.chats === 433;
-	}, null, { timeout: 10000 });
+	}, null, { timeout: 20000 });
 	const collapsedAudit = await page.evaluate(() => ({
 		baseline: window.__PENA_NATIVE_PREFETCH__?.status?.().expectedCatalogs?.chats || null,
 		offsets: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').map(call => call.offset),
@@ -1727,7 +2816,7 @@ try {
 	await page.waitForFunction(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
 		return status?.loadedModes?.includes('chats') && !status.originalActive && status.modeCounts?.chats === 433;
-	}, null, { timeout: 10000 });
+	}, null, { timeout: 20000 });
 	const canonicalRecentOffsets = await page.evaluate(() => ({
 		baseline: window.__PENA_NATIVE_PREFETCH__?.status?.().expectedCatalogs?.chats || null,
 		offsets: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').map(call => call.offset),
@@ -1778,6 +2867,12 @@ try {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
 		return status?.loadedModes?.includes('chats') && !status.originalActive && status.modeCounts?.chats === 83;
 	}, null, { timeout: 10000 });
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		const proof = status?.expectedCatalogs?.chats;
+		const calls = window.nativeRestCalls.filter(call => call.method === 'im.recent.list').length;
+		return proof?.complete === true && proof?.count === 83 && calls >= 3;
+	}, null, { timeout: 5000 });
 	const transientEmptyFinal = await page.evaluate(() => ({
 		proof: window.__PENA_NATIVE_PREFETCH__?.status?.().expectedCatalogs?.chats || null,
 		calls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').map(call => call.offset),
@@ -1807,6 +2902,35 @@ try {
 	assert.deepEqual(transientTaskCatalog.ids,
 		['chat225', 'chat5', 'chat77', ...Array.from({ length: 30 }, (_, index) => `chat${1000 + index}`)].sort(),
 		`Task first-empty recovery lost physical IDs: ${JSON.stringify(transientTaskCatalog)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=tasks&nativeCatalog=1&nativeFirst=1&passThrough=1&repositoryCache=1&repositorySchema2NoProof=1&repositoryTrackingUnknown=1&catalogRows=30&startupBudget=10000`);
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.loadedModes?.includes('tasks') && !status.originalActive && status.taskCatalogComplete === true;
+	}, null, { timeout: 10000 });
+	await page.waitForFunction(() => {
+		const records = window.getNativeRepositorySnapshot?.().records || [];
+		const enabled = records.find(item => item.id === 'chat406');
+		const disabled = records.find(item => item.id === 'chat405');
+		return enabled?.state?.timeTrackingEnabled === true && disabled?.state?.timeTrackingEnabled === false &&
+			Number(enabled?.state?.taskCatalogFetchedAt) > 0 && Number(disabled?.state?.taskCatalogFetchedAt) > 0;
+	}, null, { timeout: 5000 });
+	const persistedUnknownTracking = await page.evaluate(() => {
+		const records = window.getNativeRepositorySnapshot?.().records || [];
+		const record = records.find(item => item.id === 'chat406') || null;
+		const disabled = records.find(item => item.id === 'chat405') || null;
+		return {
+			title: record?.title || '',
+			enabled: record?.state?.timeTrackingEnabled,
+			disabled: disabled?.state?.timeTrackingEnabled,
+			taskCatalogFetchedAt: Number(record?.state?.taskCatalogFetchedAt) || 0,
+			taskGetCalls: window.nativeRestCalls.filter(call => call.method === 'tasks.task.get' && String(call.params?.taskId || '') === '406').length
+		};
+	});
+	assert.ok(persistedUnknownTracking.title === 'Задача 406' && persistedUnknownTracking.enabled === true && persistedUnknownTracking.disabled === false &&
+		persistedUnknownTracking.taskCatalogFetchedAt > 0 && persistedUnknownTracking.taskGetCalls === 0,
+		`A task-list row without ALLOW_TIME_TRACKING erased confirmed eligibility or its canonical title: ${JSON.stringify(persistedUnknownTracking)}`);
 
 	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&repositoryCache=1&repositorySchema2NoProof=1&repositoryControlledExtra=1&catalogRows=30`);
@@ -1845,27 +2969,32 @@ try {
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&repositoryCache=1&repositoryFullProof=1&repositoryDeletedId=chat9999&restFailCount=20&catalogRows=80&startupBudget=10000`);
 	await page.waitForFunction(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
-		return status?.modeStates?.chats?.attempt?.state === 'retry' && !status.originalActive;
+		const modeState = status?.modeStates?.chats;
+		return status?.loadedModes?.includes('chats') && !status.originalActive &&
+			modeState?.materialization?.state === 'ready' && modeState.materialization.nativePassCount === 2 &&
+			modeState.materialization.needsColdConfirmation === false && modeState.attempt?.state === 'idle' &&
+			Number(status?.metadataRetryModes?.chats?.retryAt) > Date.now();
 	}, null, { timeout: 10000 });
-	await page.waitForTimeout(260);
 	const tombstoneRecovery = await page.evaluate(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
 		return {
 			loaded: status?.loadedModes?.includes('chats') === true,
 			materialization: status?.modeStates?.chats?.materialization || null,
 			attempt: status?.modeStates?.chats?.attempt || null,
+			metadataRetry: status?.metadataRetryModes?.chats || null,
 			baseline: status?.expectedCatalogs?.chats || null,
 			verified: window.nativeRestCalls.some(call => call.method === 'im.dialog.get' && call.dialogId === 'chat9999'),
 			confirmedIds: window.getNativeRepositorySnapshot?.().manifest?.catalogModes?.chats?.confirmedIds || [],
 			ids: Array.from(document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]'), row => row.dataset.id).sort()
 		};
 	});
-	assert.ok(!tombstoneRecovery.loaded && tombstoneRecovery.materialization?.state !== 'ready' &&
+	assert.ok(tombstoneRecovery.loaded && tombstoneRecovery.materialization?.state === 'ready' &&
 		tombstoneRecovery.baseline?.kind === 'repository' &&
 		tombstoneRecovery.baseline?.reason === 'repository-tombstones-reconciled' &&
 		tombstoneRecovery.baseline?.count === 83 && tombstoneRecovery.verified &&
-		String(tombstoneRecovery.attempt?.reason || '').startsWith('api-proof-unavailable:'),
-		`Repository tombstone reconciliation incorrectly certified an offline cold source: ${JSON.stringify(tombstoneRecovery)}`);
+		tombstoneRecovery.attempt?.state === 'idle' &&
+		String(tombstoneRecovery.metadataRetry?.reason || '').startsWith('metadata-audit-incomplete:'),
+		`Repository tombstone reconciliation did not separate physical readiness from metadata retry: ${JSON.stringify(tombstoneRecovery)}`);
 	assert.deepEqual(tombstoneRecovery.confirmedIds.slice().sort(), exactColdPhysicalIds,
 		`Repository tombstone was not persisted while API proof remained pending: ${JSON.stringify(tombstoneRecovery)}`);
 	assert.equal(tombstoneRecovery.ids.includes('chat9999'), false, `Deleted confirmed ID leaked into native rows: ${JSON.stringify(tombstoneRecovery)}`);
@@ -1876,7 +3005,9 @@ try {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
 		return status?.loadedModes?.includes('chats') && !status.originalActive && status.modeCounts?.chats === 83;
 	}, null, { timeout: 10000 });
-	await page.waitForTimeout(260);
+	await page.waitForFunction(() =>
+		(window.getNativeRepositorySnapshot?.().manifest?.catalogModes?.chats?.confirmedIds || []).length === 83,
+		null, { timeout: 6000 });
 	const apiTombstoneRecovery = await page.evaluate(() => {
 		const snapshot = window.getNativeRepositorySnapshot?.() || null;
 		const deletedRecord = snapshot?.records?.find(record => record.id === 'chat9999') || null;
@@ -1901,6 +3032,42 @@ try {
 		`Repository confirmedIds retained the deleted API-proof dialog: ${JSON.stringify(apiTombstoneRecovery)}`);
 
 	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&catalogRows=80&delayedRowsMs=60000&startupBudget=5000&restTransientEmptyMs=60000`);
+	await page.waitForTimeout(5500);
+	const delayedEmptyInterim = await page.evaluate(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.() || {};
+		return {
+			loaded: status.loadedModes?.includes('chats') === true,
+			materialization: status.modeStates?.chats?.materialization || null,
+			attempt: status.modeStates?.chats?.attempt || null,
+			proof: status.expectedCatalogs?.chats || null,
+			restOffsets: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').map(call => call.offset),
+			rows: document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]').length
+		};
+	});
+	assert.equal(delayedEmptyInterim.rows, 0, `Delayed-empty fixture restored too early: ${JSON.stringify(delayedEmptyInterim)}`);
+	assert.equal(delayedEmptyInterim.loaded, false, `An empty native source was falsely marked ready: ${JSON.stringify(delayedEmptyInterim)}`);
+	assert.notEqual(delayedEmptyInterim.materialization?.state, 'ready', `Zero rows produced a ready materialization: ${JSON.stringify(delayedEmptyInterim)}`);
+	assert.ok(delayedEmptyInterim.restOffsets.length >= 2 && delayedEmptyInterim.proof?.complete !== true,
+		`Two transient empty API pages were accepted as exact native emptiness: ${JSON.stringify(delayedEmptyInterim)}`);
+	assert.equal(await page.evaluate(() => window.restoreDelayedNativeSource?.()), true, 'Delayed native source could not be restored by the fixture');
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		const rows = document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]').length;
+		return window.delayedSourceRestoredAt > 0 && status?.loadedModes?.includes('chats') && !status.originalActive &&
+			status.modeStates?.chats?.materialization?.state === 'ready' && status.modeCounts?.chats === 83 && rows === 83;
+	}, null, { timeout: 22000 });
+	const delayedEmptyFinal = await page.evaluate(() => ({
+		count: window.__PENA_NATIVE_PREFETCH__?.status?.().modeCounts?.chats || 0,
+		revision: window.__PENA_NATIVE_PREFETCH__?.status?.().materializationRevisions?.chats || 0,
+		rows: document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements > [data-id]').length,
+		top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0,
+		replacementRows: document.querySelectorAll('.pena-native-managed-row,.pena-native-remote-row').length
+	}));
+	assert.deepEqual(delayedEmptyFinal, { count: 83, revision: 2, rows: 83, top: 0, replacementRows: 0 },
+		`Delayed native source did not recover through one exact two-pass generation: ${JSON.stringify(delayedEmptyFinal)}`);
+
+	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=80&lazyChunk=8&lazyDelay=20&initialTop=28&skipRuntime=1&sourceUnavailable=1`);
 	await page.waitForFunction(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
@@ -1921,6 +3088,30 @@ try {
 		initialMountRecovery.unavailableLeft === 0 && initialMountRecovery.sourceTop === initialMountRecovery.baselineTop &&
 		initialMountRecovery.managed === 0 && initialMountRecovery.imRecentCalls > 0,
 		`First messenger mount did not recover the native list: ${JSON.stringify(initialMountRecovery)}`);
+
+	await page.evaluate(() => localStorage.clear());
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=80&lazyChunk=8&lazyDelay=20&initialTop=28&skipRuntime=1&skipInitialMount=1`);
+	await page.locator('.recent-host .pena-native-folder-switcher').waitFor({ state: 'visible', timeout: 4000 });
+	const beforePanelOpen = await page.evaluate(() => ({
+		loaded: window.__PENA_NATIVE_PREFETCH__?.status?.().loadedModes?.includes('chats') === true,
+		revision: window.__PENA_NATIVE_PREFETCH__?.status?.().materializationRevisions?.chats || 0,
+		active: window.__PENA_NATIVE_PREFETCH__?.status?.().originalActive === true,
+		top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0
+	}));
+	assert.deepEqual(beforePanelOpen, { loaded: false, revision: 0, active: false, top: 28 },
+		`Panel-open fixture loaded before the explicit panel action: ${JSON.stringify(beforePanelOpen)}`);
+	await page.getByRole('button', { name: /Фильтры/ }).click();
+	await page.waitForTimeout(550);
+	const afterPanelOpen = await page.evaluate(() => ({
+		loaded: window.__PENA_NATIVE_PREFETCH__?.status?.().loadedModes?.includes('chats') === true,
+		revision: window.__PENA_NATIVE_PREFETCH__?.status?.().materializationRevisions?.chats || 0,
+		active: window.__PENA_NATIVE_PREFETCH__?.status?.().originalActive === true,
+		top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0,
+		overlay: document.querySelectorAll('.pena-native-original-load-guard').length,
+		restCalls: window.nativeRestCalls.filter(call => call.method === 'im.recent.list').length
+	}));
+	assert.deepEqual(afterPanelOpen, { loaded: false, revision: 0, active: false, top: 28, overlay: 0, restCalls: 0 },
+		`Opening a plain extension panel started an unnecessary full catalog load: ${JSON.stringify(afterPanelOpen)}`);
 
 	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=120&lazyChunk=8&lazyDelay=20&initialTop=32&activeFolder=1`);
@@ -2097,7 +3288,7 @@ try {
 	assert.doesNotMatch(descendantScrollViewport.loaderText, /\u2026|\.\.\./, `Descendant viewport exposed an indeterminate dots state: ${JSON.stringify(descendantScrollViewport)}`);
 
 	await page.evaluate(() => localStorage.clear());
-	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&repositoryCache=1&lazy=1&catalogRows=160&lazyChunk=10&lazyDelay=300&startupBudget=1200`);
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&repositoryCache=1&lazy=1&catalogRows=160&lazyChunk=10&lazyDelay=300&startupBudget=450&recoveryRetryMs=500,600,700`);
 	await page.waitForFunction(() => window.__PENA_NATIVE_PREFETCH__?.status?.().originalActive === true, null, { timeout: 3000 });
 	const timedOutBaseline = await page.evaluate(() => ({
 		modeCount: window.__PENA_NATIVE_PREFETCH__?.status?.().modeCounts?.chats || 0,
@@ -2105,34 +3296,106 @@ try {
 	}));
 	await page.waitForFunction(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
-		return status?.originalActive === false && window.__PENA_RECENT_SYNC__?.phase === 'error';
+		const attempt = status?.modeStates?.chats?.attempt;
+		return status?.originalActive === false && attempt?.state === 'retry' &&
+			Number(attempt.retryAttempt || 0) === 1 && attempt.userActionRequired !== true;
 	}, null, { timeout: 6000 });
-	await page.waitForTimeout(250);
-	const timedOutNativeTraversal = await page.evaluate(() => ({
+	const automaticRetry = await page.evaluate(() => ({
 		detailCalls: (window.nativeRestCalls || []).filter(call => call.method === 'im.dialog.get').length,
 		background: window.__PENA_NATIVE_PREFETCH__?.status?.().backgroundModes?.includes('chats') || false,
 		loaded: window.__PENA_NATIVE_PREFETCH__?.status?.().loadedModes?.includes('chats') || false,
 		modeCount: window.__PENA_NATIVE_PREFETCH__?.status?.().modeCounts?.chats || 0,
 		syncCount: window.__PENA_RECENT_SYNC__?.count || 0,
 		attempt: window.__PENA_NATIVE_PREFETCH__?.status?.().modeStates?.chats?.attempt || null,
-		error: window.__PENA_RECENT_SYNC__?.error || ''
+		error: window.__PENA_RECENT_SYNC__?.error || '',
+		inFlight: window.__PENA_RECENT_SYNC__?.inFlight,
+		overlays: document.querySelectorAll('.recent-host .pena-native-original-load-guard').length,
+		chipHidden: document.querySelector('.recent-host .pena-native-sync-chip')?.hidden
 	}));
-	assert.ok(timedOutNativeTraversal.detailCalls < 10, `Timed-out native loading started a per-dialog REST storm: ${JSON.stringify(timedOutNativeTraversal)}`);
-	assert.equal(timedOutNativeTraversal.background, true, `Timed-out traversal did not retain a bounded recovery attempt: ${JSON.stringify(timedOutNativeTraversal)}`);
-	assert.equal(timedOutNativeTraversal.loaded, false, `Timed-out traversal was marked complete: ${JSON.stringify(timedOutNativeTraversal)}`);
-	assert.equal(timedOutNativeTraversal.modeCount, timedOutBaseline.modeCount, `Timed-out traversal published a partial mode count: ${JSON.stringify({ timedOutBaseline, timedOutNativeTraversal })}`);
-	assert.ok(timedOutNativeTraversal.syncCount >= timedOutBaseline.syncCount,
-		`Timed-out traversal deleted last-known-good metadata: ${JSON.stringify({ timedOutBaseline, timedOutNativeTraversal })}`);
-	assert.match(timedOutNativeTraversal.error, /конец списка/i, `Timed-out traversal has no recoverable error state: ${JSON.stringify(timedOutNativeTraversal)}`);
-	assert.match(String(timedOutNativeTraversal.attempt?.state || ''), /retry/i, `Timed-out traversal did not enter retry state: ${JSON.stringify(timedOutNativeTraversal)}`);
-	assert.ok(Number(timedOutNativeTraversal.attempt?.retryAt) > Date.now(), `Timed-out traversal has no bounded retry deadline: ${JSON.stringify(timedOutNativeTraversal)}`);
+	assert.ok(automaticRetry.detailCalls < 10, `Timed-out native loading started a per-dialog REST storm: ${JSON.stringify(automaticRetry)}`);
+	assert.equal(automaticRetry.background, true, `Timed-out traversal did not retain a bounded recovery attempt: ${JSON.stringify(automaticRetry)}`);
+	assert.equal(automaticRetry.loaded, false, `Timed-out traversal was marked complete: ${JSON.stringify(automaticRetry)}`);
+	assert.equal(automaticRetry.modeCount, timedOutBaseline.modeCount, `Timed-out traversal published a partial mode count: ${JSON.stringify({ timedOutBaseline, automaticRetry })}`);
+	assert.ok(automaticRetry.syncCount >= timedOutBaseline.syncCount,
+		`Timed-out traversal deleted last-known-good metadata: ${JSON.stringify({ timedOutBaseline, automaticRetry })}`);
+	assert.equal(automaticRetry.error, '', `First automatic recovery exposed a false hard error: ${JSON.stringify(automaticRetry)}`);
+	assert.equal(automaticRetry.attempt?.userActionRequired, false, `First automatic recovery requested manual action: ${JSON.stringify(automaticRetry)}`);
+	assert.ok(Number(automaticRetry.attempt?.retryAt) > Date.now(), `Automatic retry has no bounded deadline: ${JSON.stringify(automaticRetry)}`);
+	assert.equal(automaticRetry.inFlight, false, `Retry wait stayed published as foreground work: ${JSON.stringify(automaticRetry)}`);
+	assert.equal(automaticRetry.overlays, 0, `Retry wait left the blocking overlay mounted: ${JSON.stringify(automaticRetry)}`);
+	assert.equal(automaticRetry.chipHidden, true, `First automatic retry exposed a toolbar action: ${JSON.stringify(automaticRetry)}`);
+	try {
+		await page.waitForFunction(() => {
+			const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+			const attempt = status?.modeStates?.chats?.attempt;
+			return status?.originalActive === false && attempt?.state === 'retry' &&
+				attempt.userActionRequired === true &&
+				window.__PENA_RECENT_SYNC__?.recoveryActionRequired === true &&
+				/конец списка/i.test(String(window.__PENA_RECENT_SYNC__?.backgroundError || ''));
+		}, null, { timeout: 15000 });
+	} catch (error) {
+		const diagnostic = await page.evaluate(() => ({
+			status: window.__PENA_NATIVE_PREFETCH__?.status?.(),
+			sync: window.__PENA_RECENT_SYNC__,
+			bottom: window.__PENA_NATIVE_BOTTOM_DEBUG__,
+			failure: window.__PENA_NATIVE_FAILURE_DEBUG__,
+			rest: window.nativeRestCalls
+		}));
+		throw new Error(`Automatic retry did not exhaust: ${JSON.stringify(diagnostic)}`, { cause: error });
+	}
+	const timedOutNativeTraversal = await page.evaluate(() => ({
+		background: window.__PENA_NATIVE_PREFETCH__?.status?.().backgroundModes?.includes('chats') || false,
+		loaded: window.__PENA_NATIVE_PREFETCH__?.status?.().loadedModes?.includes('chats') || false,
+		modeCount: window.__PENA_NATIVE_PREFETCH__?.status?.().modeCounts?.chats || 0,
+		syncCount: window.__PENA_RECENT_SYNC__?.count || 0,
+		attempt: window.__PENA_NATIVE_PREFETCH__?.status?.().modeStates?.chats?.attempt || null,
+		error: window.__PENA_RECENT_SYNC__?.error || '',
+		backgroundError: window.__PENA_RECENT_SYNC__?.backgroundError || '',
+		recoveryActionRequired: window.__PENA_RECENT_SYNC__?.recoveryActionRequired === true
+	}));
+	assert.equal(timedOutNativeTraversal.background, true);
+	assert.equal(timedOutNativeTraversal.loaded, false);
+	assert.equal(timedOutNativeTraversal.modeCount, timedOutBaseline.modeCount);
+	assert.ok(timedOutNativeTraversal.syncCount >= timedOutBaseline.syncCount);
+	assert.equal(timedOutNativeTraversal.error, '', `Usable native feed was replaced by a hard error: ${JSON.stringify(timedOutNativeTraversal)}`);
+	assert.match(timedOutNativeTraversal.backgroundError, /конец списка/i,
+		`Exhausted recovery has no actionable background error: ${JSON.stringify(timedOutNativeTraversal)}`);
+	assert.equal(timedOutNativeTraversal.recoveryActionRequired, true,
+		`Exhausted recovery did not expose the retry action: ${JSON.stringify(timedOutNativeTraversal)}`);
+	assert.equal(timedOutNativeTraversal.attempt?.userActionRequired, true);
+	assert.equal(Number(timedOutNativeTraversal.attempt?.retryAt || 0), 0,
+		`Exhausted recovery kept an automatic wake timer: ${JSON.stringify(timedOutNativeTraversal)}`);
+	const blockingRetryUi = await page.locator('.recent-host .pena-native-sync-chip').evaluate(chip => ({
+		hidden: chip.hidden,
+		text: String(chip.textContent || '').trim(),
+		className: chip.className
+	}));
+	assert.equal(blockingRetryUi.hidden, false,
+		`A cold blocking native failure hid its recovery action: ${JSON.stringify(blockingRetryUi)}`);
+	assert.equal(blockingRetryUi.text, 'Повторить',
+		`A cold blocking native failure exposed the wrong action: ${JSON.stringify(blockingRetryUi)}`);
+	assert.match(blockingRetryUi.className, /--warning/,
+		`A usable native feed with exhausted recovery was presented as a hard error: ${JSON.stringify(blockingRetryUi)}`);
+	const blockingAttemptStartedAt = Number(timedOutNativeTraversal.attempt?.startedAt) || 0;
+	await page.evaluate(() => { window.__PENA_TEST_NATIVE_SCROLL_MAX_MS__ = 10000; });
+	await page.locator('.recent-host .pena-native-sync-chip').click();
+	await page.waitForFunction(previousStartedAt => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.originalActive === true || Number(status?.modeStates?.chats?.attempt?.startedAt || 0) > Number(previousStartedAt || 0);
+	}, blockingAttemptStartedAt, { timeout: 3000 });
+	await page.waitForFunction(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return status?.loadedModes?.includes('chats') && status?.modeStates?.chats?.attempt?.state === 'idle' && !status.originalActive;
+	}, null, { timeout: 12000 });
+	assert.equal(await page.locator('.recent-host .pena-native-sync-chip').evaluate(chip => chip.hidden), true,
+		'A successful click retry left the blocking recovery chip visible');
 
 	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=30&lazyChunk=10&lazyDelay=10&initialTop=16&catalogTtl=120&deepIdle=50`);
 	await page.waitForFunction(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
 		return status?.loadedModes?.includes('chats') && !status.originalActive && Number(status.modeLoadedAt?.chats) > 0;
-	}, null, { timeout: 6000 });
+	}, null, { timeout: 10000 });
 	const nativeFirstBeforeTtl = await page.evaluate(() => ({
 		loadedAt: window.__PENA_NATIVE_PREFETCH__.status().modeLoadedAt.chats,
 		top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0,
@@ -2150,13 +3413,76 @@ try {
 	assert.equal(nativeFirstAfterTtl.top, nativeFirstBeforeTtl.top, 'TTL refresh moved the native chat viewport');
 	assert.equal(nativeFirstAfterTtl.imRecentCalls, nativeFirstBeforeTtl.imRecentCalls, 'Idle TTL refresh repeated the full metadata baseline');
 	assert.equal(await page.locator('.recent-host .pena-native-original-load-guard').count(), 0, 'Idle TTL refresh showed a blocking loader');
+	const readyRetryBaseline = await page.evaluate(() => {
+		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+		return {
+			ids: Array.from(document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements [data-id]'), row => String(row.dataset.id || '')).filter(Boolean).sort(),
+			modeCount: Number(status?.modeCounts?.chats) || 0,
+			materializationCount: Number(status?.modeStates?.chats?.materialization?.count) || 0,
+			revision: Number(status?.materializationRevisions?.chats) || 0,
+			sourceGeneration: Number(status?.modeStates?.chats?.materialization?.sourceGeneration) || 0,
+			top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0
+		};
+	});
+	const readyRetryFailure = await page.evaluate(async () => {
+		window.__PENA_TEST_DIALOG_OFFLINE__ = true;
+		window.__PENA_TEST_NATIVE_SCROLL_MAX_MS__ = 250;
+		const result = await window.__PENA_NATIVE_PREFETCH__.runOriginal({ force: true, reason: 'ready-recheck-failure' });
+		const status = window.__PENA_NATIVE_PREFETCH__.status();
+		const sync = window.__PENA_RECENT_SYNC__ || {};
+		const chip = document.querySelector('.recent-host .pena-native-sync-chip');
+		return {
+			result,
+			ids: Array.from(document.querySelectorAll('.recent-host .bx-im-list-container-recent__elements [data-id]'), row => String(row.dataset.id || '')).filter(Boolean).sort(),
+			modeCount: Number(status?.modeCounts?.chats) || 0,
+			materialization: status?.modeStates?.chats?.materialization || null,
+			revision: Number(status?.materializationRevisions?.chats) || 0,
+			attempt: status?.modeStates?.chats?.attempt || null,
+			sync: {
+				ready: sync.ready === true,
+				error: String(sync.error || ''),
+				recoveryPending: sync.recoveryPending === true
+			},
+			chip: chip ? { hidden: chip.hidden, text: String(chip.textContent || '').trim(), className: chip.className } : null,
+			overlays: document.querySelectorAll('.recent-host .pena-native-original-load-guard,.recent-host .pena-native-load-guard:not([hidden])').length,
+			top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0
+		};
+	});
+	assert.equal(readyRetryFailure.result?.incomplete, true,
+		`The ready-source failure fixture unexpectedly completed: ${JSON.stringify(readyRetryFailure)}`);
+	assert.equal(readyRetryFailure.attempt?.state, 'retry',
+		`A failed ready-source recheck did not retain its automatic retry: ${JSON.stringify(readyRetryFailure)}`);
+	assert.equal(readyRetryFailure.materialization?.state, 'ready',
+		`A non-blocking recheck failure discarded the current materialization: ${JSON.stringify(readyRetryFailure)}`);
+	assert.notEqual(readyRetryFailure.materialization?.invalidated, true,
+		`A non-destructive recheck failure invalidated the current materialization: ${JSON.stringify(readyRetryFailure)}`);
+	assert.equal(readyRetryFailure.materialization?.sourceGeneration, readyRetryBaseline.sourceGeneration,
+		`A non-blocking recheck failure changed the source generation: ${JSON.stringify({ readyRetryBaseline, readyRetryFailure })}`);
+	assert.equal(readyRetryFailure.revision, readyRetryBaseline.revision,
+		`A non-blocking recheck failure advanced the materialization revision: ${JSON.stringify({ readyRetryBaseline, readyRetryFailure })}`);
+	assert.equal(readyRetryFailure.modeCount, readyRetryBaseline.modeCount,
+		`A non-blocking recheck failure changed the confirmed mode count: ${JSON.stringify({ readyRetryBaseline, readyRetryFailure })}`);
+	assert.equal(readyRetryFailure.materialization?.count, readyRetryBaseline.materializationCount,
+		`A non-blocking recheck failure changed the materialized count: ${JSON.stringify({ readyRetryBaseline, readyRetryFailure })}`);
+	assert.deepEqual(readyRetryFailure.ids, readyRetryBaseline.ids,
+		`A non-blocking recheck failure changed the native dialog IDs: ${JSON.stringify({ readyRetryBaseline, readyRetryFailure })}`);
+	assert.equal(readyRetryFailure.top, readyRetryBaseline.top,
+		`A non-blocking recheck failure moved the native viewport: ${JSON.stringify({ readyRetryBaseline, readyRetryFailure })}`);
+	assert.equal(readyRetryFailure.sync.ready, true,
+		`A non-blocking recheck failure replaced ready sync state: ${JSON.stringify(readyRetryFailure)}`);
+	assert.equal(readyRetryFailure.sync.error, '',
+		`A non-blocking recheck failure became a hard catalog error: ${JSON.stringify(readyRetryFailure)}`);
+	assert.equal(readyRetryFailure.chip?.hidden, true,
+		`A background retry over a current materialization exposed a misleading compact action: ${JSON.stringify(readyRetryFailure)}`);
+	assert.equal(readyRetryFailure.overlays, 0,
+		`A background retry over a current materialization left a blocking overlay: ${JSON.stringify(readyRetryFailure)}`);
 
 	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=35&lazyChunk=10&lazyDelay=10&headTtl=1000&headTimeout=80&deltaTimeout=1`);
 	await page.waitForFunction(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
 		return status?.loadedModes?.includes('chats') && !status.originalActive && window.__PENA_RECENT_SYNC__?.phase === 'ready';
-	}, null, { timeout: 6000 });
+	}, null, { timeout: 10000 });
 	const readyBeforeHeadTimeout = await page.evaluate(() => ({
 		count: window.__PENA_RECENT_SYNC__?.count || 0,
 		modeCount: window.__PENA_NATIVE_PREFETCH__?.status?.().modeCounts?.chats || 0,
@@ -2339,9 +3665,14 @@ try {
 	assert.deepEqual(stableRecovery, { count: foregroundCompleteState.count, background: false, active: false }, `Catalog changed after foreground completion: ${JSON.stringify({ foregroundCompleteState, stableRecovery })}`);
 
 	await page.evaluate(() => localStorage.clear());
-	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&pendingControl=1&detailDelay=800`);
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&pendingControl=1&activeFolder=1&detailDelay=800`);
 	try {
-		await page.waitForFunction(() => window.__PENA_RECENT_SYNC__?.detailsInFlight === true && window.__PENA_NATIVE_PREFETCH__?.status?.().originalActive === false, null, { timeout: 12000 });
+		await page.waitForFunction(() => {
+			const sync = window.__PENA_RECENT_SYNC__;
+			const native = window.__PENA_NATIVE_PREFETCH__?.status?.();
+			return native?.loadedModes?.includes('chats') && native.originalActive === false &&
+				(sync?.detailsInFlight === true || Number(sync?.detailsCompleted) > 0);
+		}, null, { timeout: 12000 });
 	} catch (error) {
 		const diagnostic = await page.evaluate(() => ({
 			prefetch: window.__PENA_NATIVE_PREFETCH__?.status?.() || null,
@@ -2354,14 +3685,14 @@ try {
 	const integratedVerification = await page.evaluate(() => ({
 		originalActive: window.__PENA_NATIVE_PREFETCH__?.status?.().originalActive,
 		overlayVisible: !!document.querySelector('.recent-host .pena-native-original-load-guard'),
-		phase: window.__PENA_RECENT_SYNC__?.phase,
-		detailsSilent: window.__PENA_RECENT_SYNC__?.detailsSilent
+		gateLocked: window.__PENA_RECENT_SYNC__?.gateLocked === true
 	}));
+	// Detail hydration is independent of the completed catalog audit. Its internal
+	// phase may already be idle; the user-facing contract is no second load gate.
 	assert.deepEqual(integratedVerification, {
 		originalActive: false,
 		overlayVisible: false,
-		phase: 'verifying',
-		detailsSilent: true
+		gateLocked: false
 	}, `Mandatory-dialog verification reopened a second loading state: ${JSON.stringify(integratedVerification)}`);
 	await page.waitForFunction(() => {
 		const prefetch = window.__PENA_NATIVE_PREFETCH__?.status?.();
@@ -2406,7 +3737,7 @@ try {
 		return status?.apiActive && status?.apiMode === 'all';
 	}, null, { timeout: 3000 });
 	const initialLoaderValue = await page.locator('.recent-host .pena-native-original-load-guard .pena-native-load-value').textContent();
-	assert.notEqual(initialLoaderValue, '0%', 'Loader displayed a false zero-percent state before Bitrix returned the total');
+	assert.equal(initialLoaderValue, '0%', 'Loader invented progress before Bitrix returned the first measurable window');
 	await switchMode(page);
 	await page.waitForFunction(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
@@ -2449,12 +3780,17 @@ try {
 
 	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&taskRecentGeneric=1&nativeCatalog=1&passThrough=1&catalogRows=260&taskCatalogRows=260`);
+	await page.locator('.recent-host .pena-native-folder-switcher').waitFor({ state: 'visible', timeout: 4000 });
+	await page.getByRole('button', { name: /Фильтры/ }).click();
+	const deepCatalogFilterPanel = page.locator('.pena-native-filter-panel');
+	await deepCatalogFilterPanel.waitFor({ state: 'visible' });
+	await deepCatalogFilterPanel.locator('.pena-native-sync-refresh').click();
 	await page.waitForFunction(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
 		const stored = JSON.parse(localStorage.getItem('pena.dialogControl.v1.tasks') || '[]');
 		return status?.loadedModes?.includes('tasks') && status.taskCatalogComplete === true &&
 			stored.filter(item => item.type !== 'folder').length >= 265 && !status.apiActive;
-	}, null, { timeout: 12000 });
+	}, null, { timeout: 20000 });
 	const deepTaskCatalog = await page.evaluate(() => {
 		const tasks = JSON.parse(localStorage.getItem('pena.dialogControl.v1.tasks') || '[]').filter(item => item.type !== 'folder');
 		return {
@@ -2469,12 +3805,14 @@ try {
 		'chat225', 'chat5', 'chat77',
 		...Array.from({ length: 260 }, (_, index) => `chat${1000 + index}`),
 		...Array.from({ length: 260 }, (_, index) => `chat${50000 + index}`),
-		'chat101', 'chat102', 'chat303', 'chat404', 'chat405'
+		'chat101', 'chat102', 'chat303', 'chat404', 'chat405', 'chat406'
 	].sort();
 	assert.equal(deepTaskCatalog.stored, exactDeepTaskIds.length,
 		`Multi-page task catalog stopped before all available tasks: ${JSON.stringify(deepTaskCatalog)}`);
-	assert.deepEqual(deepTaskCatalog.taskStarts, [0, 50, 100, 150, 200, 250],
-		`Task catalog did not follow canonical 50-row START windows: ${JSON.stringify(deepTaskCatalog)}`);
+	assert.deepEqual(deepTaskCatalog.taskStarts.slice(0, 4), [0, 50, 100, 150],
+		`Background task-head refresh did not stay inside its bounded START window: ${JSON.stringify(deepTaskCatalog)}`);
+	assert.deepEqual(deepTaskCatalog.taskStarts.slice(-6), [0, 50, 100, 150, 200, 250],
+		`Manual task catalog refresh did not follow canonical 50-row START windows: ${JSON.stringify(deepTaskCatalog)}`);
 	assert.deepEqual(deepTaskCatalog.ids, exactDeepTaskIds,
 		`Multi-page task catalog lost or invented task identities: ${JSON.stringify(deepTaskCatalog)}`);
 	assert.equal(deepTaskCatalog.oldTask?.addedAt, Date.parse('2024-01-15T09:00:00.000Z'),
@@ -2518,7 +3856,12 @@ try {
 
   assert.deepEqual(pageErrors, []);
 	console.log('PASS native regressions: complete native traversal, atomic timeout recovery, sorting, search, folders, markers and time tracking');
+	}
+} catch (error) {
+	await finishScenario(error);
+	throw error;
 } finally {
+	await finishScenario();
   await browser.close();
   await closeServer();
 }

@@ -2,6 +2,7 @@
 
 const REPOSITORY_CHANNEL_V1 = 'pena.dialog.repository.v1';
 const REPOSITORY_CHANNEL_V2 = 'pena.dialog.repository.v2';
+const WORKER_HEALTH_CHANNEL = 'pena.runtime.worker-health.v1';
 const REPOSITORY_SCHEMA = 2;
 const REPOSITORY_LEGACY_SCHEMA = 1;
 const DIALOG_API_WATERMARK_VERSION = 1;
@@ -809,6 +810,17 @@ async function handleRepositoryMessage(message, sender) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+	if (message?.channel === WORKER_HEALTH_CHANNEL) {
+		sendResponse({
+			ok: true,
+			version: chrome.runtime.getManifest().version,
+			entry: globalThis.__PENA_WORKER_ENTRY__ || 'legacy',
+			build: globalThis.__PENA_WORKER_BUILD__ || 'legacy',
+			protocol: globalThis.__PENA_WORKER_PROTOCOL__ || 'legacy',
+			repositorySchema: REPOSITORY_SCHEMA
+		});
+		return false;
+	}
   if (!message || ![REPOSITORY_CHANNEL_V1, REPOSITORY_CHANNEL_V2].includes(message.channel)) return false;
   handleRepositoryMessage(message, sender)
     .then(result => sendResponse({ ok: true, result }))

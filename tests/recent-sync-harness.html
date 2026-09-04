@@ -31,6 +31,7 @@
   </div>
   <script>
 	window.__PENA_TEST_MANAGED_CATALOG__ = true;
+	window.__PENA_TEST_DIALOG_META_INSPECT__ = true;
     (() => {
 	  // This harness exercises the legacy REST repository path explicitly.
 	  // Production defaults to the native silent-scroll catalog.
@@ -52,6 +53,9 @@
 		repositoryBridgeConnected = true;
 		const script = document.createElement('script');
 		script.src = '../extension/dialog-repository.js';
+		script.addEventListener('load', () => document.dispatchEvent(new CustomEvent('pena-dialog-repository-connection', {
+		  detail: JSON.stringify({ connected: true, at: Date.now() })
+		})), { once: true });
 		document.head.appendChild(script);
 		return true;
 	  };

@@ -65,8 +65,10 @@ try {
   assertPanelStable(baseline, baseline, 'initial');
 	await page.waitForTimeout(1200);
 	const idle = await state();
-	assert.equal(idle.reusePasses, baseline.reusePasses, 'Hidden source kept scrolling after catalog completion');
-	assert.equal(idle.renderPasses, baseline.renderPasses, 'Bitrix source kept rendering after catalog completion');
+	assert.equal(idle.reusePasses, baseline.reusePasses,
+		`Hidden source kept scrolling after catalog completion: ${JSON.stringify({ baseline, idle, status: await page.evaluate(() => window.__PENA_NATIVE_PREFETCH__?.status?.()) })}`);
+	assert.equal(idle.renderPasses, baseline.renderPasses,
+		`Bitrix source kept rendering after catalog completion: ${JSON.stringify({ baseline, idle })}`);
 
   await wheel(3200);
   const down = await state();

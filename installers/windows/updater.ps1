@@ -26,12 +26,12 @@ $TASK_NAME       = "PENAAgencyUpdater"
 $LOG_FILE        = "$env:LOCALAPPDATA\PENA Agency\updater.log"
 $BITRIX_PATH_FILE = "$env:LOCALAPPDATA\PENA Agency\bitrix_path.txt"
 $TRUSTED_RAW_PREFIX = "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension"
-$REQUIRED_EXTENSION_FILES = @(
+$BASE_REQUIRED_EXTENSION_FILES = @(
     'background.js',
     'content.js',
     'native-catalog.js',
     'native-interaction-state.js',
-	'native-time-control.js',
+    'native-time-control.js',
     'native-lifecycle.js',
     'dialog-repository.js',
     'injected.js',
@@ -39,6 +39,8 @@ $REQUIRED_EXTENSION_FILES = @(
     'manifest.json',
     'popup.html',
     'popup.js',
+    'fonts/Onest-Variable.ttf',
+    'fonts/Unbounded-Variable.ttf',
     'icons/icon16.png',
     'icons/icon48.png',
     'icons/icon128.png',
@@ -102,6 +104,53 @@ function ConvertTo-SafeReleasePath($Path) {
     return $normalized
 }
 
+function Get-ManifestServiceWorker($Manifest) {
+    $workerPath = ConvertTo-SafeReleasePath ([string]$Manifest.background.service_worker)
+    if ($workerPath -notmatch '(?i)\.js$') {
+        throw "manifest.background.service_worker должен указывать на JavaScript-файл"
+    }
+    return $workerPath
+}
+
+function Get-RequiredExtensionFiles($Manifest) {
+    $workerPath = Get-ManifestServiceWorker $Manifest
+    return @($BASE_REQUIRED_EXTENSION_FILES + $workerPath | Select-Object -Unique)
+}
+
+function Get-RelativeReleaseFiles($Directory) {
+    $directoryFull = [System.IO.Path]::GetFullPath($Directory).TrimEnd('\') + '\'
+    return @(Get-ChildItem -LiteralPath $Directory -File -Recurse -Force -ErrorAction Stop | ForEach-Object {
+        $_.FullName.Substring($directoryFull.Length).Replace('\', '/')
+    })
+}
+
+function Test-ExactReleaseFileSet($StageDir, $ExpectedFiles) {
+    $expectedPaths = @($ExpectedFiles | ForEach-Object { ConvertTo-SafeReleasePath $_ })
+    $expectedSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($path in $expectedPaths) {
+        if (-not $expectedSet.Add($path)) {
+            throw "Release содержит повторяющийся путь: $path"
+        }
+    }
+
+    $actualPaths = @(Get-RelativeReleaseFiles $StageDir)
+    $actualSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($path in $actualPaths) {
+        if (-not $actualSet.Add($path)) {
+            throw "Staging содержит повторяющийся путь: $path"
+        }
+    }
+
+    $missing = @($expectedPaths | Where-Object { -not $actualSet.Contains($_) })
+    $unexpected = @($actualPaths | Where-Object { -not $expectedSet.Contains($_) })
+    if ($missing.Count -gt 0 -or $unexpected.Count -gt 0) {
+        $details = @()
+        if ($missing.Count -gt 0) { $details += "отсутствуют: $($missing -join ', ')" }
+        if ($unexpected.Count -gt 0) { $details += "лишние: $($unexpected -join ', ')" }
+        throw "Состав staging не совпадает с release: $($details -join '; ')"
+    }
+}
+
 function Get-BitrixExecutable {
     if (Test-Path $BITRIX_PATH_FILE) {
         $savedPath = (Get-Content $BITRIX_PATH_FILE -Raw -ErrorAction SilentlyContinue).Trim()
@@ -132,7 +181,26 @@ function Test-StagedRelease($StageDir, $ExpectedVersion, $ExpectedFiles) {
         throw "Версия staging manifest ($($manifest.version)) не совпадает с release ($ExpectedVersion)"
     }
 
-    foreach ($relativePath in $ExpectedFiles) {
+    $workerPath = Get-ManifestServiceWorker $manifest
+    $expectedPaths = @($ExpectedFiles | ForEach-Object { ConvertTo-SafeReleasePath $_ })
+    if ($expectedPaths -notcontains $workerPath) {
+        throw "Release не содержит worker из manifest.background.service_worker: $workerPath"
+    }
+    $workerCandidates = @($expectedPaths | Where-Object {
+        (Split-Path $_ -Leaf) -match '^(?i:service-worker|worker-v[^/]*)\.js$'
+    })
+    $undeclaredWorkers = @($workerCandidates | Where-Object { $_ -ne $workerPath })
+    if ($undeclaredWorkers.Count -gt 0) {
+        throw "Release содержит worker, не объявленный manifest.json: $($undeclaredWorkers -join ', ')"
+    }
+
+    foreach ($requiredPath in (Get-RequiredExtensionFiles $manifest)) {
+        if ($expectedPaths -notcontains $requiredPath) {
+            throw "Release не содержит обязательный runtime-файл: $requiredPath"
+        }
+    }
+
+    foreach ($relativePath in $expectedPaths) {
         $safePath = ConvertTo-SafeReleasePath $relativePath
         $filePath = Join-Path $StageDir ($safePath.Replace('/', '\'))
         if (-not (Test-Path $filePath -PathType Leaf) -or (Get-Item $filePath -ErrorAction Stop).Length -le 0) {
@@ -146,11 +214,15 @@ function Test-StagedRelease($StageDir, $ExpectedVersion, $ExpectedFiles) {
             throw "manifest.json не публикует обязательный runtime-модуль: $module"
         }
     }
+
+    Test-ExactReleaseFileSet $StageDir $expectedPaths
 }
 
 function Test-InstalledReleaseHealth($ExpectedVersion) {
     try {
-        $expectedFiles = @($REQUIRED_EXTENSION_FILES + $REQUIRED_WINDOWS_TARGET_FILES)
+        $manifestPath = Join-Path $INSTALL_DIR 'manifest.json'
+        $manifest = Get-Content $manifestPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        $expectedFiles = @((Get-RequiredExtensionFiles $manifest) + $REQUIRED_WINDOWS_TARGET_FILES)
         Test-StagedRelease $INSTALL_DIR $ExpectedVersion $expectedFiles
         return $true
     } catch {
@@ -235,7 +307,7 @@ function Invoke-AtomicExtensionUpdate($UpdateInfo) {
 
     $extensionFiles = @($UpdateInfo.extension_files | ForEach-Object { ConvertTo-SafeReleasePath $_ })
     if ($extensionFiles.Count -eq 0) { throw "update.json не содержит extension_files" }
-    foreach ($requiredFile in $REQUIRED_EXTENSION_FILES) {
+    foreach ($requiredFile in $BASE_REQUIRED_EXTENSION_FILES) {
         if ($extensionFiles -notcontains $requiredFile) {
             throw "update.json не содержит обязательный runtime-файл: $requiredFile"
         }
@@ -255,11 +327,6 @@ function Invoke-AtomicExtensionUpdate($UpdateInfo) {
     New-Item -Path $stageDir -ItemType Directory -ErrorAction Stop | Out-Null
 
     try {
-        if (Test-Path $INSTALL_DIR) {
-            Get-ChildItem -LiteralPath $INSTALL_DIR -Force -ErrorAction Stop |
-                Copy-Item -Destination $stageDir -Recurse -Force -ErrorAction Stop
-        }
-
         foreach ($relativePath in $extensionFiles) {
             $outFile = Join-Path $stageDir ($relativePath.Replace('/', '\'))
             $outDir = Split-Path $outFile -Parent
@@ -351,7 +418,7 @@ if ($InstallFrom) {
     try {
         Invoke-WithUpdateLock {
             $stageManifest = Get-Content (Join-Path $InstallFrom 'manifest.json') -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-            $expectedStageFiles = @($REQUIRED_EXTENSION_FILES + $REQUIRED_WINDOWS_TARGET_FILES)
+            $expectedStageFiles = @((Get-RequiredExtensionFiles $stageManifest) + $REQUIRED_WINDOWS_TARGET_FILES)
             Publish-StagedRelease $InstallFrom ([string]$stageManifest.version) $expectedStageFiles
         } | Out-Null
         Log "Release атомарно установлен в: $INSTALL_DIR"

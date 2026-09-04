@@ -167,7 +167,9 @@
       checks.push('single-selection-without-checkmark');
 
 	  assert(document.querySelector('.dialog-control-palette.--open .dialog-control-swatch.--add svg'), 'Add-color icon is missing');
-	  checks.push('folder-parity-without-extra-tools');
+	  assert(document.querySelector('.dialog-control-palette.--open .dialog-control-palette-tool.--random'), 'Random-color tool is missing');
+	  assert(document.querySelector('.dialog-control-palette.--open .dialog-control-palette-tool.--eyedropper'), 'Eyedropper tool is missing');
+	  checks.push('folder-parity-with-random-and-eyedropper');
 
       document.documentElement.dataset.testStatus = 'passed';
       window.__TEST_RESULT__ = { passed: true, checks };

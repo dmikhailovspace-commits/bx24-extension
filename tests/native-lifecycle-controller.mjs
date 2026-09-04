@@ -11,6 +11,7 @@ const {
 	DEFAULT_ABSENCE_GRACE_MS,
 	elementVisibility,
 	selectActiveCandidate,
+	classifyDialogSyncHealth,
 	createLifecycleController
 } = lifecycle;
 
@@ -238,6 +239,55 @@ function testVisibilitySignals() {
 	fixture.chats.host.style.opacity = '0';
 	assert.equal(elementVisibility(node).reason, 'opacity', 'ancestor opacity must participate in crossfade visibility');
 	fixture.chats.host.style.opacity = '1';
+}
+
+function testDialogSyncHealthSeparation() {
+	assert.deepEqual(classifyDialogSyncHealth({
+		materializationReady: true,
+		catalogReady: true,
+		recoveryScheduled: true,
+		error: 'metadata timeout'
+	}), {
+		catalogReady: true,
+		materializationReady: true,
+		recoveryScheduled: true,
+		recoveryActionRequired: false,
+		userError: '',
+		backgroundError: 'metadata timeout',
+		actionRequired: false
+	}, 'A background audit must not turn a usable feed into a retry action');
+
+	assert.deepEqual(classifyDialogSyncHealth({
+		materializationReady: false,
+		catalogReady: false,
+		recoveryScheduled: true,
+		userActionRequired: false,
+		error: ''
+	}), {
+		catalogReady: false,
+		materializationReady: false,
+		recoveryScheduled: true,
+		recoveryActionRequired: false,
+		userError: '',
+		backgroundError: '',
+		actionRequired: false
+	}, 'An automatic recovery attempt must remain progress, not a user-facing retry action');
+
+	assert.deepEqual(classifyDialogSyncHealth({
+		materializationReady: false,
+		catalogReady: false,
+		recoveryScheduled: true,
+		userActionRequired: true,
+		error: 'native traversal failed'
+	}), {
+		catalogReady: false,
+		materializationReady: false,
+		recoveryScheduled: true,
+		recoveryActionRequired: true,
+		userError: 'native traversal failed',
+		backgroundError: '',
+		actionRequired: true
+	}, 'A missing physical feed must retain its explicit recovery action');
 }
 
 function testCandidateCoherenceAndCrossfade() {
@@ -515,6 +565,7 @@ function testBrowserObserverConnection() {
 const tests = [
 	['browser publication', testBrowserPublication],
 	['hidden/class/style/aria visibility', testVisibilitySignals],
+	['catalog and recovery health separation', testDialogSyncHealthSeparation],
 	['candidate coherence and crossfade', testCandidateCoherenceAndCrossfade],
 	['1200 ms temporary absence', testTemporaryAbsence],
 	['50 atomic transitions', testFiftyAtomicTransitions],

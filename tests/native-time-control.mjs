@@ -34,20 +34,37 @@ function testRanges() {
 
 function testOrderedRequestParams() {
 	const params = time.buildElapsedRequestParams({
+		taskId: '17',
 		from: '2026-08-22',
 		to: '2026-08-23',
 		userId: '42',
 		page: 3
 	});
 	assert.equal(Array.isArray(params), true, 'legacy elapsed method requires positional arguments');
-	assert.deepEqual(params[0], { CREATED_DATE: 'desc', ID: 'desc' });
-	assert.deepEqual(params[1], {
+	assert.equal(params[0], 17, 'task.elapseditem.getlist requires TASKID as its first positional argument');
+	assert.deepEqual(params[1], { CREATED_DATE: 'desc', ID: 'desc' });
+	assert.deepEqual(params[2], {
 		'>=CREATED_DATE': '2026-08-22T00:00:00',
 		'<CREATED_DATE': '2026-08-24T00:00:00',
 		USER_ID: 42
 	});
-	assert.equal(params[3].NAV_PARAMS.nPageSize, 50);
-	assert.equal(params[3].NAV_PARAMS.iNumPage, 3);
+	assert.equal(params[4].NAV_PARAMS.nPageSize, 50);
+	assert.equal(params[4].NAV_PARAMS.iNumPage, 3);
+	assert.equal(params[3].includes('COMMENT_TEXT'), true);
+	assert.equal(params[3].includes('SOURCE'), true);
+	assert.throws(() => time.buildElapsedRequestParams({ from: '2026-08-22', to: '2026-08-23' }), /taskId is required/i);
+	assert.deepEqual(time.buildElapsedWriteFields({
+		seconds: 4500,
+		dateKey: '2026-08-21',
+		offsetMinutes: 180,
+		commentText: 'Ручная запись'
+	}), {
+		SECONDS: 4500,
+		COMMENT_TEXT: 'Ручная запись',
+		CREATED_DATE: '2026-08-21T12:00:00+03:00'
+	});
+	assert.equal(time.buildElapsedWriteFields({ seconds: 60, dateKey: '2026-08-21', offsetMinutes: -210 }).CREATED_DATE, '2026-08-21T12:00:00-03:30');
+	assert.throws(() => time.buildElapsedWriteFields({ seconds: 59, dateKey: '2026-08-21' }), /хотя бы одну минуту/i);
 }
 
 function testAggregation() {
@@ -107,8 +124,6 @@ function testActivityEstimation() {
 	activities = time.closeActivitySession(activities, start + 30 * 60000);
 	assert.equal(activities.find(item => item.taskId === '11').activeSeconds, 900, 'idle dwell must be capped');
 	assert.equal(activities.find(item => item.taskId === '11').visits, 1, 'a long active session must qualify once');
-	assert.equal(time.estimateActivitySeconds({ taskId: '20', visits: 4, visitedAt: start }), 300, 'touches must not invent elapsed time');
-	assert.equal(time.estimateActivitySeconds(task10), 300);
 	const closedAgain = time.closeActivitySession(activities, start + 31 * 60000);
 	assert.equal(closedAgain.find(item => item.taskId === '11').activeSeconds, 900, 'closing an inactive session twice must not add time');
 	let live = time.beginActivitySession([], { taskId: '21', visitedAt: start });
@@ -129,10 +144,9 @@ function testActivityEstimation() {
 	const continuedTask = continued.find(item => item.taskId === '10');
 	assert.equal(time.selectUntrackedVisits(continued, []).some(item => item.taskId === '10'), true, 'a qualified minute after accounting must be suggested');
 	assert.equal(continuedTask.activeSeconds, 180);
-	assert.equal(time.estimateActivitySeconds(continuedTask), 300, 'continued work must estimate only time added after the last write');
 	continued = time.markActivityAccounted(continued, 'task:10', start + 32 * 60000);
 	continued = time.syncActivitySession(continued, 'task:10', start + 37 * 60000 + 1000);
-	assert.equal(time.estimateActivitySeconds(continued.find(item => item.taskId === '10')), 600, 'the previous saved interval must not be counted twice');
+	assert.equal(continued.find(item => item.taskId === '10').visits, 2, 'a new qualified contact must be counted without suggesting a duration');
 
 	const visitAt = Date.parse('2026-08-27T12:00:00+03:00');
 	const visit = [{ taskId: '30', visitedAt: visitAt, lastQualifiedAt: visitAt, visits: 1 }];
@@ -149,43 +163,61 @@ function testManualDuration() {
 }
 
 async function testPaginationAndDedupe() {
-	const all = Array.from({ length: 120 }, (_, index) => makeItem(index + 1, index < 60 ? '2026-08-23' : '2026-08-22', 60, (index % 4) + 1));
-	const pages = [];
+	const task1 = Array.from({ length: 55 }, (_, index) => makeItem(index + 1, index < 50 ? '2026-08-23' : '2026-08-22', 60, 1));
+	const task2 = [
+		makeItem(1, '2026-08-23', 120, 2),
+		makeItem(2, '2026-08-22', 120, 2),
+		makeItem(3, '2026-08-23', 120, 2)
+	];
+	const task3 = [
+		makeItem(1, '2026-08-23', 600, 3, 8),
+		makeItem(2, '2026-08-21', 600, 3, 7)
+	];
+	const byTask = new Map([['1', task1], ['2', task2], ['3', task3]]);
+	const waves = [];
 	const result = await time.loadElapsedItems({
+		taskIds: ['1', '2', '3', '2', 'not-a-task'],
 		from: '2026-08-22',
 		to: '2026-08-23',
 		userId: '7',
-		callPage: async params => {
-			const page = params[3].NAV_PARAMS.iNumPage;
-			pages.push(page);
-			const start = (page - 1) * 50;
-			return { data: all.slice(start, start + 50), total: all.length };
+		callPages: async paramsList => {
+			waves.push(paramsList.map(params => [String(params[0]), params[4].NAV_PARAMS.iNumPage]));
+			return paramsList.map(params => {
+				const taskId = String(params[0]);
+				const page = params[4].NAV_PARAMS.iNumPage;
+				const items = byTask.get(taskId) || [];
+				const start = (page - 1) * 50;
+				const data = items.slice(start, start + 50);
+				if (taskId === '1' && page === 2) data.unshift(items[0]);
+				return { data, total: items.length };
+			});
 		}
 	});
-	assert.deepEqual(pages, [1, 2, 3]);
-	assert.equal(result.pages, 3);
-	assert.equal(result.entryCount, 120);
-	assert.equal(result.totalSeconds, 7200);
-	assert.equal(result.taskCount, 4);
+	assert.deepEqual(waves, [[['1', 1], ['2', 1], ['3', 1]], [['1', 2]]]);
+	assert.equal(result.pages, 4);
+	assert.equal(result.entryCount, 58);
+	assert.equal(result.totalSeconds, 3660);
+	assert.equal(result.taskCount, 2);
+	assert.deepEqual(result.days.map(day => day.dateKey), ['2026-08-23', '2026-08-22']);
+	assert.equal(result.items.filter(item => item.taskId === '1' && item.id === '1').length, 1, 'pagination duplicate was not removed');
+	assert.equal(result.items.some(item => item.taskId === '2' && item.id === '1'), true, 'same item ID from another task was incorrectly deduplicated');
 
-	const duplicate = makeItem(1, '2026-08-23', 60, 1);
-	const deduped = await time.loadElapsedItems({
+	const empty = await time.loadElapsedItems({
+		taskIds: [],
 		from: '2026-08-23',
 		to: '2026-08-23',
-		userId: '7',
-		pageSize: 2,
-		callPage: async params => params[3].NAV_PARAMS.iNumPage === 1
-			? { data: [duplicate, makeItem(2, '2026-08-23', 60, 2)], total: 3 }
-			: { data: [duplicate], total: 3 }
+		callPages: async () => { throw new Error('must not run'); }
 	});
-	assert.equal(deduped.entryCount, 2);
+	assert.equal(empty.entryCount, 0);
+	assert.equal(empty.pages, 0);
 
 	let oversizedCalls = 0;
 	await assert.rejects(
 		time.loadElapsedItems({
+			taskIds: ['1'],
 			from: '2025-08-01',
 			to: '2026-08-23',
-			callPage: async () => { oversizedCalls += 1; return { data: [] }; }
+			callPages: async () => { oversizedCalls += 1; return []; }
 		}),
 		/период не больше 366 дней/i
 	);
@@ -193,15 +225,16 @@ async function testPaginationAndDedupe() {
 
 	await assert.rejects(
 		time.loadElapsedItems({
+			taskIds: ['1'],
 			from: '2026-08-23',
 			to: '2026-08-23',
 			pageSize: 2,
 			maxPages: 2,
 			callPage: async params => ({
-				data: [makeItem(params[3].NAV_PARAMS.iNumPage * 10, '2026-08-23'), makeItem(params[3].NAV_PARAMS.iNumPage * 10 + 1, '2026-08-23')]
+				data: [makeItem(params[4].NAV_PARAMS.iNumPage * 10, '2026-08-23', 60, params[0]), makeItem(params[4].NAV_PARAMS.iNumPage * 10 + 1, '2026-08-23', 60, params[0])]
 			})
 		}),
-		/слишком большой диапазон/i
+		/слишком много записей времени/i
 	);
 }
 

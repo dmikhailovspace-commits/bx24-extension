@@ -23,7 +23,14 @@ const server = createServer((request, response) => {
   stream.pipe(response);
 });
 
-const listen = () => new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+const unsafeBrowserPorts = new Set([6000, 6566, 6665, 6666, 6667, 6668, 6669, 6697, 10080]);
+const listen = async () => {
+  while (true) {
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    if (!unsafeBrowserPorts.has(Number(server.address()?.port))) return;
+    await new Promise(resolve => server.close(resolve));
+  }
+};
 const closeServer = () => new Promise(resolve => server.close(resolve));
 const managedRows = page => page.evaluate(() => {
   const state = document.querySelector('.test-host:not([hidden]) .pena-native-managed-list')?._penaManagedState;
@@ -231,6 +238,50 @@ try {
     } catch (error) {
       failures.push(`${mode} color: ${error?.message || error}`);
       console.error(`FAIL native sort ${mode} color: ${error?.message || error}`);
+    }
+
+    try {
+      const catalogRows = 57;
+      const expectedAscIds = [
+        ...Array.from({ length: catalogRows }, (_, index) => `chat${1000 + index}`).reverse(),
+        'chat77',
+        'chat5',
+        'chat225'
+      ];
+      await page.goto(
+        `${base}/tests/native-consistency-harness.html?mode=${mode}` +
+        `&nativeCatalog=1&nativeFirst=1&passThrough=1&transform=1` +
+        `&repositoryCache=1&repositoryFullProof=1&repositoryProofCount=${expectedAscIds.length}` +
+        `&catalogRows=${catalogRows}`
+      );
+      await page.waitForFunction(currentMode => {
+        const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+        return status?.loadedModes?.includes(currentMode) && !status.originalActive &&
+          !status.apiActive && !status.modeLoadPending && !status.reconcile?.active;
+      }, mode, { timeout: 10000 });
+      await page.waitForFunction(expected => {
+        const actual = Array.from(
+          document.querySelectorAll('.test-host:not([hidden]) .bx-im-list-recent-item__wrap,.test-host:not([hidden]) .bx-im-list-item'),
+          row => String(row.dataset.id || '')
+        );
+        return actual.length === expected.length && actual.every((id, index) => id === expected[index]);
+      }, expectedAscIds, { timeout: 5000 });
+      const passThrough = await page.evaluate(() => {
+        const host = document.querySelector('.test-host:not([hidden])');
+        const source = host?.querySelector('.bx-im-list-container-recent__scroll-container,.bx-im-list-container-task__scroll-container');
+        return {
+          prefs: JSON.parse(localStorage.getItem(`pena.dialogControlView.${window.__PENA_NATIVE_PREFETCH__?.status?.().mode}`) || '{}'),
+          managedCount: host?.querySelectorAll('.pena-native-managed-viewport').length || 0,
+          sourceHidden: !!source?.classList.contains('pena-native-source-viewport-hidden')
+        };
+      });
+      assert.equal(passThrough.prefs.sortMode, 'date', `${mode}: pass-through startup changed saved sort mode`);
+      assert.equal(passThrough.prefs.sortDirection, 'asc', `${mode}: pass-through startup changed saved sort direction`);
+      assert.equal(passThrough.managedCount, 0, `${mode}: pass-through startup mounted a managed projection`);
+      assert.equal(passThrough.sourceHidden, false, `${mode}: pass-through startup hid the Bitrix viewport`);
+    } catch (error) {
+      failures.push(`${mode} pass-through startup date asc: ${error?.message || error}`);
+      console.error(`FAIL native sort ${mode} pass-through startup date asc: ${error?.message || error}`);
     }
     await page.close();
   }

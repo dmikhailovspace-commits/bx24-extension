@@ -267,6 +267,30 @@
 		return best;
 	}
 
+	function classifyDialogSyncHealth(input) {
+		const state = input && typeof input === 'object' ? input : {};
+		const materializationReady = state.materializationReady === true;
+		const catalogReady = state.catalogReady === true || materializationReady;
+		const recoveryScheduled = state.recoveryScheduled === true;
+		const recoveryNeedsUserAction = state.userActionRequired === true;
+		const gateError = String(state.gateError || '').trim();
+		const rawError = String(state.error || '').trim();
+		const recoveryActionRequired = recoveryScheduled && !materializationReady && recoveryNeedsUserAction;
+		// Failed background metadata/audit work is not a broken feed. Keep the error
+		// available for diagnostics. A scheduled automatic retry is still work in
+		// progress; expose a user action only after that retry budget is exhausted.
+		const userError = gateError || (!catalogReady ? rawError : '');
+		return Object.freeze({
+			catalogReady,
+			materializationReady,
+			recoveryScheduled,
+			recoveryActionRequired,
+			userError,
+			backgroundError: userError ? '' : rawError,
+			actionRequired: !!userError || recoveryActionRequired
+		});
+	}
+
 	function cleanupFunction(handle) {
 		if (typeof handle === 'function') return handle;
 		if (!handle || typeof handle !== 'object') return function noop() {};
@@ -688,7 +712,12 @@
 					if (!record || record.type === 'childList') return true;
 					return record.type === 'attributes' && OBSERVED_ATTRIBUTES.includes(record.attributeName);
 				});
-				if (relevant) scheduleScan();
+				if (relevant) {
+					// Let consumers invalidate mode-bound presentation synchronously.
+					// The heavier candidate reconciliation remains frame-batched below.
+					safeCall(details.onRelevantMutation, [records]);
+					scheduleScan();
+				}
 			});
 			observer.observe(target, {
 				subtree: true,
@@ -757,6 +786,7 @@
 		normalizeCandidate,
 		sameCandidate,
 		selectActiveCandidate,
+		classifyDialogSyncHealth,
 		createLifecycleController
 	});
 });

@@ -201,6 +201,11 @@
 		} else if (hasOwn(meta, 'lastMessageTs')) {
 			next.lastMessageTs = 0;
 		}
+		if (hasOwn(meta, 'lastMessageTsSource')) next.lastMessageTsSource = String(meta.lastMessageTsSource || '');
+		if (hasOwn(meta, 'nativeRecentRank')) {
+			const nativeRank = Number(meta.nativeRecentRank);
+			next.nativeRecentRank = Number.isFinite(nativeRank) && nativeRank >= 0 ? nativeRank : null;
+		}
 		if (hasOwn(meta, 'lastMessageId')) next.lastMessageId = Number(meta.lastMessageId) || 0;
 		if (hasOwn(meta, 'lastReadMessageId')) next.lastReadMessageId = Number(meta.lastReadMessageId) || 0;
 		if (hasOwn(meta, 'unreadCount')) next.unreadCount = Math.max(0, Number(meta.unreadCount) || 0);
@@ -350,7 +355,15 @@
 				if (!haystack.includes(query)) continue;
 			}
 
-			selected.push({ row, index, date: rowDate(row), color: assignedColor(row) });
+			const rawNativeRank = Number(row.nativeRecentRank ?? meta?.nativeRecentRank);
+			selected.push({
+				row,
+				index,
+				date: rowDate(row),
+				dateSource: String(row.lastMessageTsSource || meta?.lastMessageTsSource || ''),
+				nativeRank: Number.isFinite(rawNativeRank) && rawNativeRank >= 0 ? rawNativeRank : null,
+				color: assignedColor(row)
+			});
 		}
 
 		if (sortMode === 'date') {
@@ -358,7 +371,11 @@
 				if (!left.date && !right.date) return left.index - right.index;
 				if (!left.date) return 1;
 				if (!right.date) return -1;
-				if (left.date !== right.date) return (left.date - right.date) * direction;
+				const bothReal = left.dateSource !== 'native-order' && right.dateSource !== 'native-order';
+				if (bothReal && left.date !== right.date) return (left.date - right.date) * direction;
+				if (left.nativeRank != null && right.nativeRank != null && left.nativeRank !== right.nativeRank) {
+					return (left.nativeRank - right.nativeRank) * -direction;
+				}
 				return left.index - right.index;
 			});
 		} else if (sortMode === 'color') {

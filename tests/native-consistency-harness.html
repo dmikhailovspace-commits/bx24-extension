@@ -24,10 +24,15 @@
     .bx-im-list-item.is-pinned { height: 72px; }
     .bx-im-list-recent-item__container,
     .bx-im-list-item__container { display: flex; align-items: center; height: 64px; padding-left: 2px; }
-	.bx-im-list-recent-item__avatar,.bx-im-avatar__container { display: inline-flex; width: 40px; height: 40px; flex: 0 0 40px; border-radius: 50%; }
+	.bx-im-list-recent-item__avatar,.bx-im-avatar__container,.bx-im-component-avatar__container,.bx-im-component-avatar__content { display: inline-flex; width: 40px; height: 40px; flex: 0 0 40px; border-radius: 50%; }
+	.bx-im-list-recent-item__avatar { position:relative; }
 	.bx-im-list-recent-item__avatar { margin-right: 8px; }
+	.bx-messenger-cl-avatar { position:relative;display:inline-flex;width:40px;height:40px;flex:0 0 40px;margin-right:8px;border-radius:50%; }
 	.test-avatar { width: 40px; height: 40px; flex: 0 0 40px; margin-right: 8px; border-radius: 50%; background: #94a3b8; }
-	.bx-im-avatar__container>.test-avatar { display:block; margin-right:0; }
+	.bx-im-component-avatar__content>.test-avatar { display:block; margin-right:0; }
+	.bx-messenger-cl-avatar>.test-avatar { display:block;margin-right:0; }
+	.test-native-typing-indicator { position:absolute;right:-2px;bottom:-2px;z-index:3;width:16px;height:16px;border:2px solid #fff;border-radius:50%;background:#eef5fb;box-sizing:border-box;pointer-events:none; }
+	.test-native-typing-indicator::before { content:"";position:absolute;left:3px;top:4px;width:6px;height:4px;border-radius:1px;background:#7c96ad; }
 	.is-selected > .bx-im-list-recent-item__container,
 	.is-selected > .bx-im-list-item__container { padding-left: 0; }
     #anit-filters, #anit-dialog-control-dock { display: none !important; }
@@ -63,15 +68,31 @@
 <script>
 	document.querySelectorAll('.recent-host input[type="search"],.task-host input[type="search"]').forEach(input => { input.value = ''; });
 	const nativePassThrough = new URLSearchParams(location.search).get('passThrough') === '1';
+	const fallbackAvatar = new URLSearchParams(location.search).get('fallbackAvatar') === '1';
 	if (nativePassThrough) {
 	  document.querySelectorAll('[data-id="chat225"] .test-avatar').forEach(avatar => {
 		const outer = document.createElement('span');
-		outer.className = 'bx-im-list-recent-item__avatar';
+		outer.className = fallbackAvatar ? 'bx-messenger-cl-avatar' : 'bx-im-list-recent-item__avatar';
 		const inner = document.createElement('span');
-		inner.className = 'bx-im-avatar__container';
+		inner.className = 'bx-im-component-avatar__container';
+		const content = document.createElement('span');
+		content.className = 'bx-im-component-avatar__content';
+		const image = document.createElement('img');
+		image.className = avatar.className;
+		image.alt = '';
+		image.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+		const typingIndicator = document.createElement('span');
+		typingIndicator.className = 'bx-im-list-recent-item__typing-indicator test-native-typing-indicator';
+		typingIndicator.dataset.nativeTypingIndicator = '1';
+		typingIndicator.setAttribute('aria-hidden', 'true');
 		avatar.replaceWith(outer);
-		inner.appendChild(avatar);
-		outer.appendChild(inner);
+		if (fallbackAvatar) {
+			outer.append(image, typingIndicator);
+		} else {
+			content.appendChild(image);
+			inner.appendChild(content);
+			outer.append(inner, typingIndicator);
+		}
 	  });
 	}
 	window.__PENA_FORCE_REST_CATALOG__ = new URLSearchParams(location.search).get('nativeCatalog') !== '1';
@@ -79,7 +100,16 @@
 		new URLSearchParams(location.search).get('nativeCatalog') === '1' &&
 		new URLSearchParams(location.search).get('nativeFirst') !== '1';
 	window.__PENA_TEST_NATIVE_SCROLL_MAX_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('startupBudget')) || 0);
+	const eagerMaterialization = new URLSearchParams(location.search).get('eager');
+	if (eagerMaterialization === '1') window.__PENA_TEST_EAGER_MATERIALIZATION__ = true;
+	if (eagerMaterialization === '0') window.__PENA_TEST_EAGER_MATERIALIZATION__ = false;
+	if (new URLSearchParams(location.search).get('expectedAudit') === '1') window.__PENA_TEST_NATIVE_EXPECTED_AUDIT__ = true;
+	if (new URLSearchParams(location.search).get('taskAudit') === '1') window.__PENA_TEST_NATIVE_TASK_AUDIT__ = true;
+	const recoveryRetryMs = String(new URLSearchParams(location.search).get('recoveryRetryMs') || '')
+		.split(',').map(Number).filter(value => Number.isFinite(value) && value >= 20);
+	if (recoveryRetryMs.length) window.__PENA_TEST_RECOVERY_RETRY_MS__ = recoveryRetryMs;
 	window.__PENA_TEST_SKIP_DIALOG_RUNTIME__ = new URLSearchParams(location.search).get('skipRuntime') === '1';
+	window.__PENA_TEST_SKIP_INITIAL_MOUNT__ = new URLSearchParams(location.search).get('skipInitialMount') === '1';
 	window.__PENA_TEST_NATIVE_SOURCE_UNAVAILABLE_COUNT__ = Math.max(0, Number(new URLSearchParams(location.search).get('sourceUnavailable')) || 0);
 	window.__PENA_TEST_DIALOG_CATALOG_TTL_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('catalogTtl')) || 0);
 	window.__PENA_TEST_DIALOG_DEEP_IDLE_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('deepIdle')) || 0);
@@ -106,15 +136,26 @@
 	const catalogRows = Math.max(0, Number(new URLSearchParams(location.search).get('catalogRows')) || (manyRows ? 120 : 18));
 	const lazyChunk = Math.max(1, Number(new URLSearchParams(location.search).get('lazyChunk')) || 4);
 	const lazyDelay = Math.max(0, Number(new URLSearchParams(location.search).get('lazyDelay')) || 0);
+	const lazyAfterFirstPass = new URLSearchParams(location.search).get('lazyAfterFirstPass') === '1';
+	const busyRowDescendant = new URLSearchParams(location.search).get('busyRowDescendant') === '1';
+	const listLoaderMs = Math.max(0, Number(new URLSearchParams(location.search).get('listLoaderMs')) || 0);
+	const longTimeTitle = new URLSearchParams(location.search).get('longTimeTitle') === '1';
+	const delayedRowsMs = Math.max(0, Number(new URLSearchParams(location.search).get('delayedRowsMs')) || 0);
 	const postProofRows = Math.max(0, Number(new URLSearchParams(location.search).get('postProofRows')) || 0);
 	const postProofDelay = Math.max(0, Number(new URLSearchParams(location.search).get('postProofDelay')) || 0);
 	const detailDelay = Math.max(0, Number(new URLSearchParams(location.search).get('detailDelay')) || 0);
 	let restDelay = Math.max(0, Number(new URLSearchParams(location.search).get('restDelay')) || 0);
+	const taskDelay = Math.max(0, Number(new URLSearchParams(location.search).get('taskDelay')) || 0);
+	const timeUserCurrentFallback = new URLSearchParams(location.search).get('timeUserCurrentFallback') === '1';
+	const timeUserCurrentDelay = Math.max(0, Number(new URLSearchParams(location.search).get('timeUserCurrentDelay')) || 0);
+	window.__PENA_TEST_TIME_ELIGIBILITY_TTL_MS__ = Math.max(0, Number(new URLSearchParams(location.search).get('timeEligibilityTtl')) || 0);
 	window.setNativeRestDelay = value => { restDelay = Math.max(0, Number(value) || 0); };
 	const deltaTimeout = new URLSearchParams(location.search).get('deltaTimeout') === '1';
 	const restIncompleteZero = new URLSearchParams(location.search).get('restIncompleteZero') === '1';
 	const restUnknownTotal = new URLSearchParams(location.search).get('restUnknownTotal') === '1';
 	const restShortCap = Math.max(0, Number(new URLSearchParams(location.search).get('restShortCap')) || 0);
+	const apiRecentCap = Math.max(0, Number(new URLSearchParams(location.search).get('apiRecentCap')) || 0);
+	const apiProjectionExtraRows = Math.max(0, Number(new URLSearchParams(location.search).get('apiProjectionExtraRows')) || 0);
 	const restCollapsedPages = new URLSearchParams(location.search).get('restCollapsedPages') === '1';
 	const restNoNext = new URLSearchParams(location.search).get('restNoNext') === '1';
 	const restTransientEmptyMs = Math.max(0, Number(new URLSearchParams(location.search).get('restTransientEmptyMs')) || 0);
@@ -126,6 +167,7 @@
 	const repositoryControlledExtra = new URLSearchParams(location.search).get('repositoryControlledExtra') === '1';
 	const repositorySchema2NoProof = new URLSearchParams(location.search).get('repositorySchema2NoProof') === '1';
 	const repositoryEmpty = new URLSearchParams(location.search).get('repositoryEmpty') === '1';
+	const repositoryTrackingUnknown = new URLSearchParams(location.search).get('repositoryTrackingUnknown') === '1';
 	const repositoryDeletedId = String(new URLSearchParams(location.search).get('repositoryDeletedId') || '');
 	const apiDeletedId = String(new URLSearchParams(location.search).get('apiDeletedId') || '');
 	const taskPageCap = Math.max(0, Number(new URLSearchParams(location.search).get('taskPageCap')) || 0);
@@ -134,10 +176,12 @@
 	const taskNoEndMarker = new URLSearchParams(location.search).get('taskNoEndMarker') === '1';
 	let taskFirstEmptyRemaining = new URLSearchParams(location.search).get('taskFirstEmpty') === '1' ? 1 : 0;
 	const generatedManaged = new URLSearchParams(location.search).get('generatedManaged') === '1';
+	const typedDialogIds = new URLSearchParams(location.search).get('typedIds') === '1';
 	const wideParent = new URLSearchParams(location.search).get('wide') === '1';
 	const nestedViewport = new URLSearchParams(location.search).get('nestedViewport') === '1';
 	const descendantViewport = new URLSearchParams(location.search).get('descendantViewport') === '1';
 	const legacyNativeOff = new URLSearchParams(location.search).get('legacyNativeOff') === '1';
+	const noPrefSeed = new URLSearchParams(location.search).get('noPrefSeed') === '1';
     document.querySelector('.recent-host').hidden = mode === 'tasks';
     document.querySelector('.task-host').hidden = mode !== 'tasks';
 	if (nestedViewport) {
@@ -198,7 +242,7 @@
 	  items.push({ id: 'chat9000', title: 'Старый диалог в папке', folderId: 'folder:test', addedAt: now - 999999 });
 	}
 	if (manyRows) items.push({ id: 'folder:colors', type: 'folder', title: 'Цветовая сортировка', icon: 'folder', addedAt: now - 50 });
-    if (!shortList) document.querySelectorAll('.bx-im-list-container-recent__elements,.bx-im-list-container-task__elements').forEach(list => {
+	if (!shortList) document.querySelectorAll('.bx-im-list-container-recent__elements,.bx-im-list-container-task__elements').forEach(list => {
 	  const rowHost = getNativeRowHost(list);
 	  const template = rowHost.lastElementChild;
 	  for (let index = 0; index < catalogRows; index += 1) {
@@ -231,6 +275,7 @@
 	  let postProofScheduled = false;
 	  viewport.addEventListener('scroll', () => {
 		if (loading || viewport.scrollTop + viewport.clientHeight < viewport.scrollHeight - 2) return;
+		if (lazyAfterFirstPass && Number(window.__PENA_NATIVE_PREFETCH__?.status?.().materializationRevisions?.[modeKey] || 0) < 1) return;
 		if (!pending.length) {
 		  if (!postProofScheduled && postProofRows > 0) {
 			postProofScheduled = true;
@@ -249,12 +294,55 @@
 	  });
 	};
 	if (lazyRows) document.querySelectorAll('.bx-im-list-container-recent__elements,.bx-im-list-container-task__elements').forEach(installLazyMaterialization);
+	if (busyRowDescendant) {
+	  const row = document.querySelector('.test-host:not([hidden]) [data-id]');
+	  const busy = document.createElement('span');
+	  busy.className = 'ui-loader test-row-local-busy';
+	  busy.setAttribute('aria-busy', 'true');
+	  busy.style.cssText = 'display:inline-block;width:1px;height:1px';
+	  row?.appendChild(busy);
+	}
+	if (listLoaderMs > 0) {
+	  const list = document.querySelector('.test-host:not([hidden]) .bx-im-list-container-recent__elements,.test-host:not([hidden]) .bx-im-list-container-task__elements');
+	  const loader = document.createElement('div');
+	  loader.className = 'ui-loader test-list-loader';
+	  loader.style.cssText = 'display:block;position:absolute;left:8px;top:8px;width:28px;height:28px';
+	  list?.setAttribute('data-loading', 'true');
+	  list?.appendChild(loader);
+	  window.testListLoaderRemovedAt = 0;
+	  setTimeout(() => {
+		loader.remove();
+		list?.removeAttribute('data-loading');
+		window.testListLoaderRemovedAt = Date.now();
+	  }, listLoaderMs);
+	}
+	if (delayedRowsMs > 0) {
+	  const delayedList = document.querySelector('.test-host:not([hidden]) .bx-im-list-container-recent__elements,.test-host:not([hidden]) .bx-im-list-container-task__elements');
+	  const delayedHost = getNativeRowHost(delayedList);
+	  const delayedRows = Array.from(delayedHost?.children || [], row => row.cloneNode(true));
+	  delayedHost?.replaceChildren();
+	  window.delayedSourceRestoredAt = 0;
+	  window.restoreDelayedNativeSource = () => {
+		if (window.delayedSourceRestoredAt > 0) return false;
+		delayedHost?.replaceChildren(...delayedRows.map(row => row.cloneNode(true)));
+		window.delayedSourceRestoredAt = Date.now();
+		return true;
+	  };
+	  setTimeout(window.restoreDelayedNativeSource, delayedRowsMs);
+	}
 	const initialScrollTop = Math.max(0, Number(new URLSearchParams(location.search).get('initialTop')) || 0);
 	document.querySelectorAll(descendantViewport
 	  ? '.bx-im-list-recent__scroll-container,.bx-im-list-task__scroll-container'
 	  : '.bx-im-list-container-recent__scroll-container,.bx-im-list-container-task__scroll-container').forEach(viewport => {
 	  if (nativePassThrough) viewport.style.overflowY = 'scroll';
 	  viewport.scrollTop = initialScrollTop;
+	});
+	if (typedDialogIds) document.querySelectorAll('.bx-im-list-container-recent__elements [data-id],.bx-im-list-container-task__elements [data-id]').forEach(row => {
+	  const value = String(row.getAttribute('data-id') || '');
+	  const match = /^chat(\d+)$/i.exec(value);
+	  if (!match) return;
+	  row.removeAttribute('data-id');
+	  row.setAttribute('data-chat-id', match[1]);
 	});
 	window.nativeScrollAudit = [];
 	window.nativeScrollbarBaseline = {};
@@ -275,7 +363,8 @@
     ['chats', 'tasks'].forEach(storageMode => {
       localStorage.setItem(`pena.dialogControl.v1.${storageMode}`, JSON.stringify(items));
 	  localStorage.setItem(`pena.dialogControlNative.v1.${storageMode}`, legacyNativeOff ? '0' : '1');
-	  localStorage.setItem(`pena.dialogControlView.${storageMode}`, JSON.stringify({ sortMode: 'date', sortDirection: transformedView ? 'asc' : 'desc', unreadOnly: false }));
+	  if (noPrefSeed) localStorage.removeItem(`pena.dialogControlView.${storageMode}`);
+	  else localStorage.setItem(`pena.dialogControlView.${storageMode}`, JSON.stringify({ sortMode: 'date', sortDirection: transformedView ? 'asc' : 'desc', unreadOnly: false }));
 	  localStorage.setItem(`pena.filters.${storageMode}`, JSON.stringify({ query: '' }));
 	  const segmentFixture = new URLSearchParams(location.search).get('segments') === '1'
 		? [{ id: 'segment:target', title: 'Целевая группа', addedAt: now + 1 }]
@@ -350,6 +439,27 @@
 	  }
 	}));
 	window.nativeLateRowSeq = 0;
+	window.setNativeDomCounter = (dialogId, value, options = {}) => {
+	  const id = String(dialogId || '');
+	  const row = document.querySelector(`.test-host:not([hidden]) [data-id="${CSS.escape(id)}"]`);
+	  const content = row?.querySelector('.bx-im-list-recent-item__container,.bx-im-list-item__container') || row;
+	  if (!row || !content) return false;
+	  let counter = row.querySelector('.bx-im-list-recent-item__counter_number');
+	  if (options.remove === true) {
+		counter?.remove();
+		return true;
+	  }
+	  if (!counter) {
+		counter = document.createElement('span');
+		counter.className = 'bx-im-list-recent-item__counter_number';
+		content.appendChild(counter);
+	  }
+	  counter.textContent = value == null ? '' : String(value);
+	  counter.classList.toggle('--no-counter', options.later === true);
+	  counter.hidden = options.hidden === true;
+	  counter.setAttribute('aria-hidden', options.hidden === true ? 'true' : 'false');
+	  return true;
+	};
 	window.appendLateNativeRows = (count = 2) => {
 	  const list = document.querySelector('.test-host:not([hidden]) .bx-im-list-container-recent__elements,.test-host:not([hidden]) .bx-im-list-container-task__elements');
 	  const rowHost = getNativeRowHost(list);
@@ -399,13 +509,32 @@
 		row.querySelector('.bx-im-chat-title__text').textContent = index < knownCount
 		  ? sourceTitle
 		  : `Поздний старый диалог ${lateIds.length + 1}`;
+		row.querySelectorAll('.bx-im-list-recent-item__counter_number,.bx-im-list-recent-item__counters,[class*="mention" i]').forEach(node => node.remove());
+		if (index < knownCount) {
+		  const sourceStatus = source.querySelector('.bx-im-list-recent-item__counter_number,.bx-im-list-recent-item__counters,[class*="mention" i]');
+		  const targetContent = row.querySelector('.bx-im-list-recent-item__container,.bx-im-list-item__container') || row;
+		  if (sourceStatus) targetContent.appendChild(sourceStatus.cloneNode(true));
+		}
 		if (index < knownCount) knownIds.push(id);
 		else lateIds.push(id);
 	  });
 	  Array.from(rowHost.children).slice(poolSize).forEach(row => row.remove());
 	  return { knownIds, lateIds };
 	};
-	const apiRecentEntries = apiDeletedId ? recentEntries.concat([{
+	const projectionExtraEntries = Array.from({ length: apiProjectionExtraRows }, (_, index) => {
+	  const id = `chat${9700 + index}`;
+	  return {
+		dialog_id: id,
+		chat_id: 9700 + index,
+		type: 'chat',
+		title: `API-only dialog ${index + 1}`,
+		avatar: { url: `https://cdn.example.test/${id}.png`, color: '#dbeafe' },
+		counter: 0,
+		message: { id: 970000 + index, text: 'API projection only', date: '2024-01-01T00:00:00.000Z' }
+	  };
+	});
+	const apiRecentEntriesBase = recentEntries.concat(projectionExtraEntries);
+	const apiRecentEntries = apiDeletedId ? apiRecentEntriesBase.concat([{
 	  dialog_id: apiDeletedId,
 	  chat_id: Number(String(apiDeletedId).replace(/^chat/, '')),
 	  type: 'chat',
@@ -413,7 +542,7 @@
 	  avatar: { url: `https://cdn.example.test/${apiDeletedId}.png`, color: '#dbeafe' },
 	  counter: 0,
 	  message: { id: 1, text: 'Устаревшая запись API', date: '2024-01-01T00:00:00.000Z' }
-	}]) : recentEntries;
+	}]) : apiRecentEntriesBase;
 	window.addNativeOffscreenDelta = (dialogId = 'chat9900') => {
 	  const id = String(dialogId || 'chat9900');
 	  if (recentEntries.some(entry => entry.dialog_id === id)) return false;
@@ -478,17 +607,20 @@
 			TITLE: `Каталожная задача ${index + 1}`,
 			CHAT_ID: taskId,
 			ALLOW_TIME_TRACKING: 'Y',
-			ACTIVITY: new Date(Date.UTC(2025, 0, 1 + (index % 28), 9, 0, 0)).toISOString()
+			ACTIVITY_DATE: new Date(Date.UTC(2025, 0, 1 + (index % 28), 9, 0, 0)).toISOString()
 		};
-	}).concat(['101', '102', '303', '404', '405'].map(taskId => ({
+	}).concat(['101', '102', '303', '404', '405', '406'].map(taskId => ({
 		ID: taskId,
-		TITLE: `Задача ${taskId}`,
+			TITLE: longTimeTitle && taskId === '101'
+				? `Задача 101 — ${'очень длинное название проекта и этапа '.repeat(7)}${'Сверхдлинноесловобезпробелов'.repeat(6)}`
+				: `Задача ${taskId}`,
 		CHAT_ID: taskId,
-		ALLOW_TIME_TRACKING: taskId === '405' ? 'N' : 'Y',
-		ACTIVITY: taskId === '404' ? '2024-01-15T09:00:00.000Z' : `2026-01-${String((Number(taskId) % 20) + 1).padStart(2, '0')}T09:00:00.000Z`
+		...(taskId === '406' ? {} : { ALLOW_TIME_TRACKING: taskId === '405' ? 'N' : 'Y' }),
+		ACTIVITY_DATE: taskId === '404' ? '2024-01-15T09:00:00.000Z' : `2026-01-${String((Number(taskId) % 20) + 1).padStart(2, '0')}T09:00:00.000Z`
 	})));
 	window.timeRestCalls = [];
 	window.timeAddCalls = [];
+	window.timeUpdateCalls = [];
 	window.timeAddedItems = [];
 	window.timeDeletedItems = [];
 	window.timeSeedItems = null;
@@ -496,6 +628,7 @@
 	window.timeListFailures = 0;
 	window.timeListTimeoutFailures = 0;
 	window.timeTaskSearchFailures = 0;
+	window.timeTaskGetFailures = 0;
 	window.nativeRestCalls = [];
 	window.nativeBatchCalls = 0;
 	window.nativeBatchSizes = [];
@@ -507,7 +640,8 @@
 	  const requestedLimit = Math.max(1, Number(params?.LIMIT) || 50);
 	  const limit = restShortCap > 0 ? Math.min(requestedLimit, restShortCap) : requestedLimit;
 	  const taskMode = !document.querySelector('.task-host')?.hidden;
-	  const availableEntries = restIncompleteZero ? apiRecentEntries.slice(0, 164) : apiRecentEntries;
+	  const cappedEntries = apiRecentCap > 0 ? apiRecentEntries.slice(0, apiRecentCap) : apiRecentEntries;
+	  const availableEntries = restIncompleteZero ? cappedEntries.slice(0, 164) : cappedEntries;
 	  const collapsedPageSize = 150;
 	  const pageStart = restCollapsedPages
 		? Math.floor(offset / requestedLimit) * collapsedPageSize
@@ -567,15 +701,22 @@
 		(window.nativeCustomEventHandlers.get(name) || []).forEach(handler => handler(event));
 	  }
 	};
+	window.dispatchNativeSidePanelClose = () => {
+	  (window.nativeCustomEventHandlers.get('SidePanel.Slider:onCloseComplete') || []).forEach(handler => handler());
+	};
 	window.dispatchNativeTaskMessage = (dialogId, authorId = '7') => {
 	  for (const name of ['onPullEvent-im', 'onPullEvent-im-v2']) {
 		(window.nativeCustomEventHandlers.get(name) || []).forEach(handler => handler('messageChat', {
 		  dialogId,
-		  message: { dialogId, authorId }
+		  message: { dialogId, authorId, isOwn: String(authorId) === '7' }
 		}));
 	  }
 	};
-	window.currentBitrixUserId = '7';
+	window.currentBitrixUserId = timeUserCurrentFallback ? '' : '7';
+	window.timeTaskEligibilityOverrides = {};
+	window.timeSearchOnlyEntries = [];
+	window.timeTaskSearchFailStarts = [];
+	window.timeTaskSearchFailureDelay = 0;
 	window.BX = {
 	  message(key) { return key === 'USER_ID' ? window.currentBitrixUserId : ''; },
 	  addCustomEvent(name, handler) {
@@ -592,7 +733,8 @@
 		  start: Math.max(0, Number(params?.start) || 0),
 		  limit: Math.max(0, Number(params?.LIMIT) || 0),
 		  userId: window.currentBitrixUserId,
-		  lastSyncDate: String(params?.LAST_SYNC_DATE || '')
+		  lastSyncDate: String(params?.LAST_SYNC_DATE || ''),
+		  params: JSON.parse(JSON.stringify(params || {}))
 		});
 		if (method === 'im.counters.get') {
 		  if (counterFailAfterLive && window.nativeLiveRecentUpdated) {
@@ -623,6 +765,12 @@
 		  else respond();
 		  return;
 		}
+		if (method === 'user.current') {
+		  const respond = () => callback({ error: () => null, data: () => ({ ID: '7' }) });
+		  if (timeUserCurrentDelay > 0) setTimeout(respond, timeUserCurrentDelay);
+		  else respond();
+		  return;
+		}
 		if (method === 'server.time') {
 		  const now = new Date();
 		  const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -647,7 +795,15 @@
 			{ ID: 'time-1', TASK_ID: '101', USER_ID: '7', SECONDS: '3600', CREATED_DATE: `${today}T10:00:00+03:00` },
 			{ ID: 'time-2', TASK_ID: '102', USER_ID: '7', SECONDS: '1800', CREATED_DATE: `${today}T12:00:00+03:00` }
 		  ];
-		  const elapsedItems = [...window.timeSeedItems, ...window.timeAddedItems];
+		  const taskId = String(Array.isArray(params) ? (params[0] || '') : (params?.TASKID || ''));
+		  const filter = Array.isArray(params) ? (params[2] || {}) : (params?.filter || {});
+		  const from = String(filter['>=CREATED_DATE'] || '').slice(0, 10);
+		  const toExclusive = String(filter['<CREATED_DATE'] || '').slice(0, 10);
+		  const userId = String(filter.USER_ID || '');
+		  const elapsedItems = [...window.timeSeedItems, ...window.timeAddedItems].filter(item => {
+			const dateKey = String(item.CREATED_DATE || '').slice(0, 10);
+			return (!taskId || String(item.TASK_ID || '') === taskId) && (!from || dateKey >= from) && (!toExclusive || dateKey < toExclusive) && (!userId || String(item.USER_ID || '') === userId);
+		  });
 		  callback({
 			error: () => null,
 			data: () => elapsedItems,
@@ -662,17 +818,30 @@
 			callback({ error: () => 'TEMPORARY_ERROR', error_description: () => 'temporary elapsed-item failure' });
 			return;
 		  }
-		  const now = new Date();
-		  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 		  const item = {
 			ID: `time-added-${window.timeAddedItems.length + 1}`,
 			TASK_ID: String(params?.TASKID || ''),
 			USER_ID: '7',
 			SECONDS: String(params?.ARFIELDS?.SECONDS || 0),
-			CREATED_DATE: `${today}T14:00:00+03:00`
+			CREATED_DATE: String(params?.ARFIELDS?.CREATED_DATE || ''),
+			COMMENT_TEXT: String(params?.ARFIELDS?.COMMENT_TEXT || '')
 		  };
 		  window.timeAddedItems.push(item);
 		  callback({ error: () => null, data: () => item.ID });
+		  return;
+		}
+		if (method === 'task.elapseditem.update') {
+		  window.timeUpdateCalls.push(params);
+		  const itemId = String(params?.ITEMID || '');
+		  const update = item => String(item.ID || '') === itemId ? {
+			...item,
+			SECONDS: String(params?.ARFIELDS?.SECONDS || item.SECONDS || 0),
+			CREATED_DATE: String(params?.ARFIELDS?.CREATED_DATE || item.CREATED_DATE || ''),
+			COMMENT_TEXT: String(params?.ARFIELDS?.COMMENT_TEXT || item.COMMENT_TEXT || '')
+		  } : item;
+		  window.timeSeedItems = (window.timeSeedItems || []).map(update);
+		  window.timeAddedItems = window.timeAddedItems.map(update);
+		  callback({ error: () => null, data: () => true });
 		  return;
 		}
 		if (method === 'task.elapseditem.delete') {
@@ -685,12 +854,29 @@
 		}
 		if (method === 'tasks.task.get') {
 		  const taskId = String(params?.taskId || params?.id || '');
-		  callback({ error: () => null, data: () => ({ task: { id: taskId, title: `Задача ${taskId}`, chatId: taskId, allowTimeTracking: taskId === '405' ? 'N' : 'Y' } }) });
+		  const taskRecord = taskCatalogEntries.find(task => String(task.ID || task.id || '') === taskId);
+		  if (window.timeTaskGetFailures > 0) {
+			window.timeTaskGetFailures -= 1;
+			callback({ error: () => 'TEMPORARY_ERROR', error_description: () => 'temporary task eligibility failure' });
+			return;
+		  }
+		  const override = window.timeTaskEligibilityOverrides?.[taskId];
+		  const allowTimeTracking = override == null ? (taskId === '405' ? 'N' : 'Y') : String(override);
+		  callback({ error: () => null, data: () => ({ task: { id: taskId, title: taskRecord?.TITLE || `Задача ${taskId}`, chatId: taskId, allowTimeTracking } }) });
 		  return;
 		}
 		if (method === 'tasks.task.list') {
+		  if (taskDelay > 0 && params?.__penaDelayApplied !== true) {
+			const delayedParams = { ...(params || {}), __penaDelayApplied: true };
+			setTimeout(() => window.BX.rest.callMethod(method, delayedParams, callback), taskDelay);
+			return;
+		  }
 		  const start = Math.max(0, Number(params?.start) || 0);
-		  const titleQuery = String(params?.filter?.['%TITLE'] || '').toLowerCase();
+		  if (params?.order?.ACTIVITY) {
+			callback({ error: () => 'ERROR_ARGUMENT', error_description: () => 'Use ACTIVITY_DATE' });
+			return;
+		  }
+		  const titleQuery = String(params?.filter?.TITLE || '').replace(/^%|%$/g, '').toLowerCase();
 		  const trackingOnly = String(params?.filter?.ALLOW_TIME_TRACKING || '').toUpperCase() === 'Y';
 		  if (titleQuery && window.timeTaskSearchFailures > 0) {
 			window.timeTaskSearchFailures -= 1;
@@ -701,7 +887,15 @@
 			callback({ error: () => 'ERROR_ARGUMENT', error_description: () => 'ALLOW_TIME_TRACKING is not supported in search filter' });
 			return;
 		  }
-		  const filtered = taskCatalogEntries.filter(task =>
+		  if (titleQuery && window.timeTaskSearchFailStarts.includes(start)) {
+			window.timeTaskSearchFailStarts = window.timeTaskSearchFailStarts.filter(value => value !== start);
+			const fail = () => callback({ error: () => 'ACCESS_DENIED', error_description: () => 'late search page unavailable' });
+			if (window.timeTaskSearchFailureDelay > 0) setTimeout(fail, window.timeTaskSearchFailureDelay);
+			else fail();
+			return;
+		  }
+		  const searchEntries = titleQuery ? [...taskCatalogEntries, ...(window.timeSearchOnlyEntries || [])] : taskCatalogEntries;
+		  const filtered = searchEntries.filter(task =>
 			(!titleQuery || String(task.title || task.TITLE || '').toLowerCase().includes(titleQuery)) &&
 			(!trackingOnly || String(task.allowTimeTracking || task.ALLOW_TIME_TRACKING || '').toUpperCase() === 'Y')
 		  );
@@ -709,8 +903,9 @@
 			callback(taskCatalogPageResult(start));
 			return;
 		  }
-		  const page = filtered.slice(start, start + 50);
-		  callback({ error: () => null, data: () => ({ tasks: page }), total: () => filtered.length, next: () => start + 50 < filtered.length ? start + 50 : null });
+		  const searchLimit = taskPageCap > 0 ? taskPageCap : 50;
+		  const page = filtered.slice(start, start + searchLimit);
+		  callback({ error: () => null, data: () => ({ tasks: page }), total: () => filtered.length, next: () => start + searchLimit < filtered.length ? start + searchLimit : null });
 		  return;
 		}
 		if (method === 'im.recent.list') {
@@ -742,6 +937,35 @@
 			  ? { error: () => null, data: () => ({ task: { id: String(call.params?.taskId || ''), title: `Задача ${call.params?.taskId || ''}`, chatId: String(call.params?.taskId || ''), allowTimeTracking: String(call.params?.taskId || '') === '405' ? 'N' : 'Y' } }) }
 			  : call?.method === 'tasks.task.list'
 				? taskCatalogPageResult(call.params?.start)
+				: call?.method === 'task.elapseditem.getlist'
+				  ? (() => {
+					  const params = call.params || [];
+					  window.timeRestCalls.push(params);
+					  if (window.timeListTimeoutFailures > 0) {
+						window.timeListTimeoutFailures -= 1;
+						return { error: () => 'TIMEOUT', error_description: () => 'Bitrix24 request timeout' };
+					  }
+					  if (window.timeListFailures > 0) {
+						window.timeListFailures -= 1;
+						return { error: () => 'TEMPORARY_ERROR', error_description: () => 'temporary elapsed-list failure' };
+					  }
+					  const now = new Date();
+					  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+					  if (!window.timeSeedItems) window.timeSeedItems = [
+						{ ID: 'time-1', TASK_ID: '101', USER_ID: '7', SECONDS: '3600', CREATED_DATE: `${today}T10:00:00+03:00` },
+						{ ID: 'time-2', TASK_ID: '102', USER_ID: '7', SECONDS: '1800', CREATED_DATE: `${today}T12:00:00+03:00` }
+					  ];
+					  const taskId = String(params[0] || '');
+					  const filter = params[2] || {};
+					  const from = String(filter['>=CREATED_DATE'] || '').slice(0, 10);
+					  const toExclusive = String(filter['<CREATED_DATE'] || '').slice(0, 10);
+					  const userId = String(filter.USER_ID || '');
+					  const elapsedItems = [...window.timeSeedItems, ...window.timeAddedItems].filter(item => {
+						const dateKey = String(item.CREATED_DATE || '').slice(0, 10);
+						return String(item.TASK_ID || '') === taskId && (!from || dateKey >= from) && (!toExclusive || dateKey < toExclusive) && (!userId || String(item.USER_ID || '') === userId);
+					  });
+					  return { error: () => null, data: () => elapsedItems, total: () => elapsedItems.length, next: () => false };
+					})()
 				: call?.method === 'task.elapseditem.delete'
 				  ? (() => { const itemId = String(call.params?.ITEMID || ''); window.timeDeletedItems.push({ TASKID: call.params?.TASKID, ITEMID: call.params?.ITEMID }); window.timeSeedItems = (window.timeSeedItems || []).filter(item => String(item.ID) !== itemId); window.timeAddedItems = window.timeAddedItems.filter(item => String(item.ID) !== itemId); return { error: () => null, data: () => true }; })()
 			  : { error: () => null, data: () => ({}) }
@@ -780,6 +1004,26 @@
 	  if (repositoryFullProof && repositoryDeletedId) seededRecords.push({
 		id: repositoryDeletedId, restDialogId: repositoryDeletedId, mode, title: 'Удалённый подтверждённый диалог',
 		lastMessage: { id: 9999, text: 'Удалён после прошлого поколения', date: seededAt - 9000 }, remoteUpdatedAt: seededAt
+	  });
+	  if (repositoryTrackingUnknown) seededRecords.push({
+		id: 'chat406', restDialogId: 'chat406', mode: 'tasks', title: 'Задача 406',
+		task: { id: '406', url: '/company/personal/user/7/tasks/task/view/406/' },
+		lastMessage: { id: 406, text: 'Ранее подтверждённая задача', date: seededAt - 4000 },
+		remoteUpdatedAt: seededAt,
+		state: {
+			id: 'chat406', isTask: true, taskId: '406', displayTitle: 'Задача 406', title: 'задача 406',
+			timeTrackingEnabled: true, taskCatalogFetchedAt: seededAt, fetchedAt: seededAt
+		}
+	  });
+	  if (repositoryTrackingUnknown) seededRecords.push({
+		id: 'chat405', restDialogId: 'chat405', mode: 'tasks', title: 'Задача 405',
+		task: { id: '405', url: '/company/personal/user/7/tasks/task/view/405/' },
+		lastMessage: { id: 405, text: 'Учёт времени отключён', date: seededAt - 5000 },
+		remoteUpdatedAt: seededAt,
+		state: {
+			id: 'chat405', isTask: true, taskId: '405', displayTitle: 'Задача 405', title: 'задача 405',
+			timeTrackingEnabled: false, taskCatalogFetchedAt: seededAt, fetchedAt: seededAt
+		}
 	  });
 	  let repositorySnapshot = {
 		records: seededRecords,
@@ -1001,7 +1245,9 @@
         geometry: switcherRect && listRect ? {
           switcherBottom: Math.round(switcherRect.bottom),
           listTop: Math.round(listRect.top),
+		  panelListGap: Math.round((listRect.top - switcherRect.bottom) * 10) / 10,
           firstRowTop: firstRowRect ? Math.round(firstRowRect.top) : null,
+		  firstRowGap: firstRowRect ? Math.round((firstRowRect.top - listRect.top) * 10) / 10 : null,
           panelOverlapsList: switcherRect.bottom > listRect.top + 0.5,
           firstRowStartsInsideList: !firstRowRect || firstRowRect.top >= listRect.top - 0.5,
           listHeight: Math.round(listRect.height),
@@ -1010,6 +1256,12 @@
         } : null,
 		label: markerStyle && markerRect ? { width: `${markerRect.width}px`, left: `${markerRect.left - rowRect.left}px`, top: `${markerRect.top - rowRect.top}px`, bottom: `${rowRect.bottom - markerRect.bottom}px`, color: markerStyle.borderTopColor } : null,
 		avatarGeometry: avatarRect && markerRect ? { avatarLeft: avatarRect.left, avatarWidth: avatarRect.width, ringLeft: markerRect.left, ringRight: markerRect.right, ringMatchesAvatar: Math.abs(markerRect.left - avatarRect.left) < .1 && Math.abs(markerRect.right - avatarRect.right) < .1, ringBorderWidth: Number.parseFloat(markerStyle.borderTopWidth) } : null,
+		avatarLayering: row ? {
+		  stackHostIsAvatar: !!avatar?.classList.contains('pena-native-avatar-stack-host'),
+		  stackHostCount: row.querySelectorAll('.pena-native-avatar-stack-host').length,
+		  bodyPromoted: !!row.querySelector('.pena-native-remote-body.pena-native-avatar-native-overlay'),
+		  tailPromoted: !!row.querySelector('.pena-native-remote-tail.pena-native-avatar-native-overlay')
+		} : null,
 		directRowPadding: directRow ? Number.parseFloat(getComputedStyle(directRow).paddingLeft) : null,
         content: content ? { paddingLeft: getComputedStyle(content).paddingLeft, className: content.className } : null
 		,nativeRowClicks: [...window.nativeRowClicks]

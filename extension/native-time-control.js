@@ -13,10 +13,6 @@
 	const DEFAULT_TOUCH_DEDUPE_MS = 15000;
 	const DEFAULT_IDLE_CAP_SECONDS = 15 * 60;
 	const DEFAULT_QUALIFICATION_SECONDS = 60;
-	// Touches explain the estimate, but do not add invented time. The estimate is
-	// based on the active session only.
-	const DEFAULT_TOUCH_WEIGHT_SECONDS = 0;
-	const DEFAULT_ESTIMATE_STEP_SECONDS = 5 * 60;
 
 	function pad2(value) {
 		return String(value).padStart(2, '0');
@@ -72,7 +68,9 @@
 		return Math.round((finish.getTime() - start.getTime()) / 86400000) + 1;
 	}
 
-	function buildElapsedRequestParams({ from, to, userId, page = 1, pageSize = DEFAULT_PAGE_SIZE } = {}) {
+	function buildElapsedRequestParams({ taskId, from, to, userId, page = 1, pageSize = DEFAULT_PAGE_SIZE } = {}) {
+		const normalizedTaskId = String(taskId || '').trim();
+		if (!/^\d+$/.test(normalizedTaskId)) throw new TypeError('taskId is required');
 		const range = normalizeRange(from, to);
 		const filter = {
 			'>=CREATED_DATE': `${range.from}T00:00:00`,
@@ -80,9 +78,10 @@
 		};
 		if (/^\d+$/.test(String(userId || ''))) filter.USER_ID = Number(userId);
 		return [
+			Number(normalizedTaskId),
 			{ CREATED_DATE: 'desc', ID: 'desc' },
 			filter,
-			['ID', 'TASK_ID', 'USER_ID', 'SECONDS', 'MINUTES', 'CREATED_DATE', 'DATE_START', 'DATE_STOP'],
+			['ID', 'TASK_ID', 'USER_ID', 'SECONDS', 'MINUTES', 'CREATED_DATE', 'DATE_START', 'DATE_STOP', 'COMMENT_TEXT', 'SOURCE'],
 			{ NAV_PARAMS: { nPageSize: Math.min(DEFAULT_PAGE_SIZE, Math.max(1, Number(pageSize) || DEFAULT_PAGE_SIZE)), iNumPage: Math.max(1, Number(page) || 1) } }
 		];
 	}
@@ -107,7 +106,7 @@
 		const seconds = rawSeconds !== '' && rawSeconds != null && Number.isFinite(directSeconds) && directSeconds >= 0
 			? directSeconds
 			: (rawMinutes !== '' && rawMinutes != null && Number.isFinite(minutes) && minutes >= 0 ? minutes * 60 : 0);
-		const createdAt = String(item.CREATED_DATE ?? item.createdDate ?? item.DATE_START ?? item.dateStart ?? '');
+		const createdAt = String(item.CREATED_DATE ?? item.createdDate ?? item.createdAt ?? item.DATE_START ?? item.dateStart ?? '');
 		return {
 			id: String(item.ID ?? item.id ?? ''),
 			taskId: String(item.TASK_ID ?? item.taskId ?? ''),
@@ -116,7 +115,9 @@
 			createdAt,
 			dateKey: extractDateKey(createdAt),
 			dateStart: String(item.DATE_START ?? item.dateStart ?? ''),
-			dateStop: String(item.DATE_STOP ?? item.dateStop ?? '')
+			dateStop: String(item.DATE_STOP ?? item.dateStop ?? ''),
+			commentText: String(item.COMMENT_TEXT ?? item.commentText ?? ''),
+			source: String(item.SOURCE ?? item.source ?? '')
 		};
 	}
 
@@ -140,6 +141,7 @@
 			if (item.createdAt && item.createdAt > task.lastTrackedAt) task.lastTrackedAt = item.createdAt;
 			tasks.set(taskKey, task);
 		}
+		normalized.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')) || String(b.id || '').localeCompare(String(a.id || '')));
 		return {
 			items: normalized,
 			totalSeconds,
@@ -155,7 +157,7 @@
 		const taskId = /^\d+$/.test(rawTaskId) ? rawTaskId : '';
 		const dialogId = String(task.dialogId || '').trim();
 		// Time can only be written to a Bitrix task. Legacy dialog-only activity
-		// is discarded here so ordinary chats never enter estimates or history.
+		// is discarded here so ordinary chats never enter activity or history.
 		if (!taskId) return null;
 		const visitedAt = Math.max(0, Number(task.visitedAt) || 0);
 		const firstVisitedAt = Math.max(0, Number(task.firstVisitedAt) || visitedAt);
@@ -336,19 +338,6 @@
 		return merged.sort((a, b) => b.visitedAt - a.visitedAt || a.activityId.localeCompare(b.activityId));
 	}
 
-	function estimateActivitySeconds(activity = {}, options = {}) {
-		const normalized = normalizeVisitedTask(activity);
-		if (!normalized) return 0;
-		const touchWeight = options.touchWeightSeconds == null
-			? DEFAULT_TOUCH_WEIGHT_SECONDS
-			: Math.max(0, Number(options.touchWeightSeconds) || 0);
-		const step = Math.max(60, Number(options.stepSeconds) || DEFAULT_ESTIMATE_STEP_SECONDS);
-		const maximum = Math.max(step, Number(options.maxSeconds) || 8 * 3600);
-		const unaccountedActiveSeconds = Math.max(0, normalized.activeSeconds - normalized.accountedActiveSeconds);
-		const raw = unaccountedActiveSeconds + normalized.visits * touchWeight;
-		return Math.min(maximum, Math.max(step, Math.ceil(raw / step) * step));
-	}
-
 	function markActivityAccounted(items = [], activityId = '', accountedAt = Date.now()) {
 		const id = String(activityId || '');
 		const at = Math.max(0, Number(accountedAt) || Date.now());
@@ -402,48 +391,171 @@
 		return { hours: normalizedHours, minutes: normalizedMinutes, seconds };
 	}
 
-	async function loadElapsedItems({ callPage, from, to, userId, pageSize = DEFAULT_PAGE_SIZE, maxPages = DEFAULT_MAX_PAGES, maxRangeDays = 366 } = {}) {
-		if (typeof callPage !== 'function') throw new TypeError('callPage is required');
+	function formatPortalOffset(offsetMinutes) {
+		const offset = Number(offsetMinutes);
+		if (!Number.isFinite(offset)) return '';
+		const absolute = Math.abs(Math.round(offset));
+		return `${offset < 0 ? '-' : '+'}${pad2(Math.floor(absolute / 60))}:${pad2(absolute % 60)}`;
+	}
+
+	function buildElapsedWriteFields({ seconds, dateKey, offsetMinutes, commentText = '' } = {}) {
+		const normalizedSeconds = Math.round(Number(seconds) || 0);
+		if (normalizedSeconds < 60) throw new RangeError('Укажите хотя бы одну минуту');
+		if (normalizedSeconds > 24 * 3600) throw new RangeError('За один раз можно добавить не больше 24 часов');
+		const normalizedDate = String(dateKey || '').trim();
+		if (!parseDateKey(normalizedDate)) throw new RangeError('Выберите корректную дату');
+		// Noon is intentional: it is safely inside the selected portal day even when
+		// the browser and portal use different time zones.
+		return {
+			SECONDS: normalizedSeconds,
+			COMMENT_TEXT: String(commentText || ''),
+			CREATED_DATE: `${normalizedDate}T12:00:00${formatPortalOffset(offsetMinutes)}`
+		};
+	}
+
+	async function loadElapsedItems({
+		callPage,
+		callPages,
+		taskIds = [],
+		from,
+		to,
+		userId,
+		pageSize = DEFAULT_PAGE_SIZE,
+		maxPages = DEFAULT_MAX_PAGES,
+		maxRangeDays = 366
+	} = {}) {
+		if (typeof callPages !== 'function' && typeof callPage !== 'function') throw new TypeError('callPages or callPage is required');
 		const range = normalizeRange(from, to);
 		if (countRangeDays(range.from, range.to) > Math.max(1, Number(maxRangeDays) || 366)) {
 			throw new RangeError(`Выберите период не больше ${Math.max(1, Number(maxRangeDays) || 366)} дней`);
+		}
+		const requestedTaskIds = Array.from(new Set((Array.isArray(taskIds) ? taskIds : [])
+			.map(value => String(value || '').trim())
+			.filter(value => /^\d+$/.test(value))));
+		if (!requestedTaskIds.length) {
+			return { ...aggregateElapsedItems([]), range, pages: 0, totalAvailable: 0 };
 		}
 		const safePageSize = Math.min(DEFAULT_PAGE_SIZE, Math.max(1, Number(pageSize) || DEFAULT_PAGE_SIZE));
 		const safeMaxPages = Math.max(1, Number(maxPages) || DEFAULT_MAX_PAGES);
 		const collected = [];
 		const seen = new Set();
-		let expectedTotal = null;
+		const totals = new Map();
 		let pages = 0;
-		let lastBatchSize = 0;
-		for (let page = 1; page <= safeMaxPages; page += 1) {
-			const response = await callPage(buildElapsedRequestParams({ ...range, userId, page, pageSize: safePageSize }));
-			const batch = extractElapsedItems(response?.data ?? response);
-			lastBatchSize = batch.length;
-			if (Number.isFinite(Number(response?.total)) && Number(response.total) >= 0) expectedTotal = Number(response.total);
-			for (const raw of batch) {
-				const item = normalizeElapsedItem(raw);
-				const identity = item.id || `${item.taskId}:${item.userId}:${item.createdAt}:${item.seconds}`;
-				if (seen.has(identity)) continue;
-				seen.add(identity);
-				collected.push(raw);
+		let queue = requestedTaskIds.map(taskId => ({ taskId, page: 1 }));
+		const runPages = async (paramsList, jobs) => {
+			if (typeof callPages === 'function') return callPages(paramsList, jobs);
+			return Promise.all(paramsList.map((params, index) => callPage(params, jobs[index])));
+		};
+		while (queue.length) {
+			const wave = queue.splice(0, 50);
+			const paramsList = wave.map(job => buildElapsedRequestParams({
+				taskId: job.taskId,
+				...range,
+				userId,
+				page: job.page,
+				pageSize: safePageSize
+			}));
+			const responses = await runPages(paramsList, wave);
+			if (!Array.isArray(responses) || responses.length !== wave.length) {
+				throw new Error('Bitrix24 вернул неполный пакет записей времени');
 			}
-			pages = page;
-			if (!batch.length || batch.length < safePageSize || (expectedTotal != null && collected.length >= expectedTotal)) break;
+			const nextWave = [];
+			responses.forEach((response, index) => {
+				const job = wave[index];
+				const batch = extractElapsedItems(response?.data ?? response);
+				const expectedTotal = Number.isFinite(Number(response?.total)) && Number(response.total) >= 0
+					? Number(response.total)
+					: null;
+				if (job.page === 1) totals.set(job.taskId, expectedTotal);
+				for (const raw of batch) {
+					const item = normalizeElapsedItem(raw);
+					if (!item.taskId) item.taskId = job.taskId;
+					const identity = item.id
+						? `${job.taskId}:${item.id}`
+						: `${job.taskId}:${item.userId}:${item.createdAt}:${item.seconds}`;
+					if (seen.has(identity)) continue;
+					seen.add(identity);
+					collected.push(item);
+				}
+				pages += 1;
+				const explicitNext = response?.next != null && response.next !== false;
+				const totalHasMore = expectedTotal != null && job.page * safePageSize < expectedTotal;
+				const fullPageMayHaveMore = batch.length >= safePageSize;
+				const hasMore = explicitNext || totalHasMore || fullPageMayHaveMore;
+				if (!hasMore) return;
+				if (job.page >= safeMaxPages) throw new Error(`Слишком много записей времени в задаче #${job.taskId}: уточните даты`);
+				nextWave.push({ taskId: job.taskId, page: job.page + 1 });
+			});
+			queue.push(...nextWave);
 		}
-		if (pages >= safeMaxPages && lastBatchSize >= safePageSize && (expectedTotal == null || collected.length < expectedTotal)) {
-			throw new Error('Слишком большой диапазон: уточните даты');
-		}
-		return { ...aggregateElapsedItems(collected), range, pages, totalAvailable: expectedTotal };
+		const requestedUserId = /^\d+$/.test(String(userId || '')) ? String(userId) : '';
+		const requestedTaskIdSet = new Set(requestedTaskIds);
+		const inRange = collected.filter(item =>
+			requestedTaskIdSet.has(item.taskId) &&
+			item.dateKey && item.dateKey >= range.from && item.dateKey <= range.to &&
+			(!requestedUserId || !item.userId || item.userId === requestedUserId)
+		);
+		const knownTotals = Array.from(totals.values());
+		const totalAvailable = knownTotals.every(value => value != null)
+			? knownTotals.reduce((sum, value) => sum + value, 0)
+			: null;
+		return { ...aggregateElapsedItems(inRange), range, pages, totalAvailable };
+	}
+
+	// Shared by all extension REST producers. Diagnostics contain timings and method
+	// names only; never task titles, messages, parameters or tokens.
+	function createRequestQueue({ concurrency = 2, spacingMs = 80, timeoutMs = 12000, cooldownMs = 15000, burst = 16, refillMs = 500 } = {}) {
+		const queue = [], pending = new Map(), samples = [];
+		let active = 0, peak = 0, lastStart = 0, blockedUntil = 0, wake = null, deduplicated = 0;
+		let tokens = burst, replenishedAt = Date.now();
+		const pump = () => {
+			if (wake || active >= concurrency || !queue.length) return;
+			const now = Date.now();
+			tokens = Math.min(burst, tokens + Math.max(0, now - replenishedAt) / refillMs);
+			replenishedAt = now;
+			const delay = Math.max(lastStart + spacingMs, blockedUntil, now + Math.max(0, 1 - tokens) * refillMs) - now;
+			if (delay > 0) { wake = setTimeout(() => { wake = null; pump(); }, delay); return; }
+			const job = queue.shift();
+			if (job.isCurrent && !job.isCurrent()) {
+				pending.delete(job.key); job.reject(Object.assign(new Error('Request superseded'), { code: 'SUPERSEDED' })); pump(); return;
+			}
+			tokens -= 1;
+			active++; peak = Math.max(peak, active); lastStart = Date.now();
+			const sample = { method: job.method, queuedMs: lastStart - job.queuedAt, startedAt: lastStart, durationMs: 0, status: 'pending' };
+			samples.push(sample); if (samples.length > 200) samples.shift();
+			let settled = false;
+			const finish = (error, value) => {
+				if (settled) return; settled = true; clearTimeout(timer);
+				sample.durationMs = Date.now() - sample.startedAt;
+				sample.status = error ? 'error' : 'ok';
+				if (error) sample.code = String(error.code || 'REST_ERROR');
+				if (error && /TIMEOUT|QUERY_LIMIT|TOO_MANY|429|время ожидания/i.test(String(error.code || '') + ' ' + error.message)) blockedUntil = Date.now() + cooldownMs;
+				active--; pending.delete(job.key);
+				if (error) job.reject(error); else job.resolve(value);
+				pump();
+			};
+			const timer = setTimeout(() => finish(Object.assign(new Error(`${job.method}: превышено время ожидания`), { code: 'TIMEOUT' })), job.timeoutMs || timeoutMs);
+			Promise.resolve().then(job.run).then(value => finish(null, value), error => finish(error));
+			pump();
+		};
+		return {
+			run(method, key, run, options = {}) {
+				if (key && pending.has(key)) { deduplicated++; return pending.get(key); }
+				const promise = new Promise((resolve, reject) => queue.push({ method, key, run, resolve, reject, queuedAt: Date.now(), ...options }));
+				if (key) pending.set(key, promise);
+				pump(); return promise;
+			},
+			snapshot: () => ({ active, queued: queue.length, peak, deduplicated, cooldownMs: Math.max(0, blockedUntil - Date.now()), samples: samples.map(sample => ({ ...sample })) })
+		};
 	}
 
 	return Object.freeze({
+		createRequestQueue,
 		DEFAULT_PAGE_SIZE,
 		DEFAULT_MAX_PAGES,
 		DEFAULT_TOUCH_DEDUPE_MS,
 		DEFAULT_IDLE_CAP_SECONDS,
 		DEFAULT_QUALIFICATION_SECONDS,
-		DEFAULT_TOUCH_WEIGHT_SECONDS,
-		DEFAULT_ESTIMATE_STEP_SECONDS,
 		toDateKey,
 		parseDateKey,
 		addDays,
@@ -461,12 +573,13 @@
 		recordActivityTouch,
 		syncActivitySession,
 		closeActivitySession,
-		estimateActivitySeconds,
 		markActivityAccounted,
 		selectUntrackedVisits,
 		formatDurationCompact,
 		formatDuration,
 		normalizeManualDuration,
+		formatPortalOffset,
+		buildElapsedWriteFields,
 		loadElapsedItems
 	});
 });

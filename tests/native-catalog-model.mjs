@@ -20,6 +20,123 @@ function ids(rows) {
 	return rows.map(row => String(row.id));
 }
 
+function extractInjectedFunction(source, name, nextName) {
+	const start = source.indexOf(`function ${name}(`);
+	const end = source.indexOf(`\n\tfunction ${nextName}(`, start);
+	assert.ok(start >= 0 && end > start, `Cannot extract ${name} from injected.js`);
+	return source.slice(start, end);
+}
+
+function testDialogIdentityReconcile() {
+	const injectedSource = readFileSync(new URL('../extension/injected.js', import.meta.url), 'utf8');
+	const functionSource = extractInjectedFunction(
+		injectedSource,
+		'_reconcileDialogControlRecentIdentities',
+		'_hydrateDialogControlItemsFromRecent'
+	);
+	const normalizeId = value => String(value || '').trim().toLowerCase();
+	const normalizeTitle = value => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+	const apiRecords = new Map();
+	const reconcile = Function(
+		'normId',
+		'_normalizeDialogControlTitle',
+		'_isDialogControlFallbackTitle',
+		'_normalizeDialogControlRestDialogId',
+		'_isDialogControlFolder',
+		'_getDialogRecentMeta',
+		`"use strict";\n${functionSource}\nreturn _reconcileDialogControlRecentIdentities;`
+	)(
+		normalizeId,
+		normalizeTitle,
+		() => false,
+		normalizeId,
+		item => item?.type === 'folder',
+		id => apiRecords.get(id)
+	);
+
+	const candidates = new Map([
+		['chat5042', { id: 'chat5042', restDialogId: 'chat5042', displayTitle: 'Canonical anchor' }],
+		['chat5041', { id: 'chat5041', restDialogId: 'chat5041', displayTitle: 'Transient recycled title' }]
+	]);
+	const canonicalItems = [
+		{ id: 'chat5042', dialogId: 'chat5042', title: 'Transient recycled title', folderId: 'folder:tasks', color: '#22c55e' },
+		{ id: 'chat5041', dialogId: 'chat5041', title: 'Canonical anchor', recentManaged: true }
+	];
+	const canonicalSnapshot = JSON.parse(JSON.stringify(canonicalItems));
+	assert.equal(reconcile(canonicalItems, candidates), 0, 'valid typed IDs must not be remapped by a stale unique title');
+	assert.deepEqual(canonicalItems, canonicalSnapshot, 'valid typed ID reconciliation mutated the catalog');
+
+	const restBackedItem = [{
+		id: 'legacy-anchor',
+		dialogId: 'chat5042',
+		title: 'Transient recycled title',
+		folderId: 'folder:tasks'
+	}];
+	assert.equal(reconcile(restBackedItem, candidates), 1, 'legacy identity was not reconciled');
+	assert.equal(restBackedItem[0].id, 'chat5042', 'title overrode the canonical REST/dialog ID');
+	assert.equal(restBackedItem[0].folderId, 'folder:tasks', 'identity migration lost user customization');
+
+	const personalCollisionCandidates = new Map([
+		['chat42', { id: 'chat42', entityKind: 'chat', restDialogId: 'chat42', displayTitle: 'Начальный 42' }],
+		['user42', { id: 'user42', entityKind: 'user', restDialogId: '42', displayTitle: 'Марина Ваймер' }]
+	]);
+	const legacyPersonalItem = [{
+		id: 'chat42',
+		dialogId: 'chat42',
+		title: 'Марина Ваймер',
+		folderId: 'folder:leaders',
+		color: '#22c55e'
+	}];
+	assert.equal(reconcile(legacyPersonalItem, personalCollisionCandidates), 1, 'proven legacy personal collision was not migrated');
+	assert.deepEqual(legacyPersonalItem, [{
+		id: 'user42',
+		dialogId: '42',
+		title: 'Марина Ваймер',
+		folderId: 'folder:leaders',
+		color: '#22c55e'
+	}], 'chatN legacy personal identity did not migrate narrowly to userN');
+	apiRecords.set('chat42', personalCollisionCandidates.get('chat42'));
+	apiRecords.set('user42', personalCollisionCandidates.get('user42'));
+	const recycledCandidates = new Map(personalCollisionCandidates);
+	recycledCandidates.set('chat42', { ...recycledCandidates.get('chat42'), displayTitle: 'Марина Ваймер' });
+	const recycledPersonal = [{ id: 'chat42', dialogId: 'chat42', title: 'Марина Ваймер', folderId: 'folder:leaders' }];
+	assert.equal(reconcile(recycledPersonal, recycledCandidates), 1, 'recycled DOM title hid the proven personal collision');
+	assert.equal(recycledPersonal[0].id, 'user42');
+	assert.equal(recycledPersonal[0].folderId, 'folder:leaders');
+	apiRecords.clear();
+
+	const unrelatedPersonalCandidates = new Map([
+		['chat42', { id: 'chat42', entityKind: 'chat', restDialogId: 'chat42', displayTitle: 'Начальный 42' }],
+		['user43', { id: 'user43', entityKind: 'user', restDialogId: '43', displayTitle: 'Марина Ваймер' }]
+	]);
+	const unrelatedPersonalItem = [{ id: 'chat42', dialogId: 'chat42', title: 'Марина Ваймер' }];
+	assert.equal(reconcile(unrelatedPersonalItem, unrelatedPersonalCandidates), 0, 'different numeric IDs triggered legacy collision migration');
+	assert.equal(unrelatedPersonalItem[0].id, 'chat42', 'unrelated personal title overrode a valid chat ID');
+
+	const additiveItems = [
+		{ id: 'chat5042', dialogId: 'chat5042', title: 'Canonical anchor', recentManaged: true },
+		{ id: 'legacy-anchor', dialogId: 'chat5042', title: 'Canonical anchor', folderId: 'folder:tasks', color: '#22c55e' }
+	];
+	const additiveSnapshot = JSON.parse(JSON.stringify(additiveItems));
+	assert.equal(
+		reconcile(additiveItems, candidates, { allowDestructive: false }),
+		0,
+		'additive hydration attempted destructive identity reconciliation'
+	);
+	assert.deepEqual(additiveItems, additiveSnapshot, 'pruneMissing:false removed or remapped a dialog');
+
+	const hydrateSource = extractInjectedFunction(
+		injectedSource,
+		'_hydrateDialogControlItemsFromRecent',
+		'_hydrateAllDialogControlModesFromRecent'
+	);
+	assert.match(
+		hydrateSource,
+		/allowDestructive:\s*pruneMissing/,
+		'hydration does not fence identity reconciliation with pruneMissing'
+	);
+}
+
 function testBrowserPublication() {
 	const source = readFileSync(new URL('../extension/native-catalog.js', import.meta.url), 'utf8');
 	const sandbox = { window: {} };
@@ -150,6 +267,53 @@ function testSelectRows() {
 		sortDirection: 'desc'
 	});
 	assert.deepEqual(ids(tieRows), ['first', 'second'], 'equal values must retain input order');
+
+	const nativeDatePolicy = [
+		{ id: 'synthetic-new', title: 'Synthetic new', recentManaged: true },
+		{ id: 'synthetic-old', title: 'Synthetic old', recentManaged: true },
+		{ id: 'real-new', title: 'Real new', recentManaged: true },
+		{ id: 'real-old', title: 'Real old', recentManaged: true },
+		{ id: 'unknown', title: 'Unknown', recentManaged: true }
+	];
+	const nativeDateMeta = new Map([
+		['synthetic-new', { id: 'synthetic-new', lastMessageTs: 999999, lastMessageTsSource: 'native-order', nativeRecentRank: 0, isTask: false }],
+		['synthetic-old', { id: 'synthetic-old', lastMessageTs: 999998, lastMessageTsSource: 'native-order', nativeRecentRank: 1, isTask: false }],
+		['real-new', { id: 'real-new', lastMessageTs: 200, lastMessageTsSource: 'bitrix', nativeRecentRank: 3, isTask: false }],
+		['real-old', { id: 'real-old', lastMessageTs: 100, lastMessageTsSource: 'bitrix', nativeRecentRank: 2, isTask: false }],
+		['unknown', { id: 'unknown', lastMessageTs: 0, nativeRecentRank: 4, isTask: false }]
+	]);
+	const mergedDatePolicy = mergeRecentItems(nativeDatePolicy, nativeDateMeta, 'chats');
+	assert.deepEqual(
+		mergedDatePolicy.map(row => [row.id, row.lastMessageTsSource || '', row.nativeRecentRank]),
+		[
+			['synthetic-new', 'native-order', 0],
+			['synthetic-old', 'native-order', 1],
+			['real-new', 'bitrix', 3],
+			['real-old', 'bitrix', 2],
+			['unknown', '', 4]
+		],
+		'managed catalog dropped date-source or native-rank metadata'
+	);
+	assert.deepEqual(
+		ids(selectRows({ ...base, items: nativeDatePolicy.slice(2, 4), recentById: nativeDateMeta, sortMode: 'date', sortDirection: 'desc' })),
+		['real-new', 'real-old'],
+		'two real Bitrix timestamps must sort by time rather than stale native rank'
+	);
+	assert.deepEqual(
+		ids(selectRows({ ...base, items: nativeDatePolicy.slice(0, 2).reverse(), recentById: nativeDateMeta, sortMode: 'date', sortDirection: 'desc' })),
+		['synthetic-new', 'synthetic-old'],
+		'two synthetic timestamps must preserve the proven native rank'
+	);
+	assert.deepEqual(
+		ids(selectRows({ ...base, items: [nativeDatePolicy[0], nativeDatePolicy[3]], recentById: nativeDateMeta, sortMode: 'date', sortDirection: 'desc' })),
+		['synthetic-new', 'real-old'],
+		'a synthetic rank surrogate must not be compared to real wall-clock time'
+	);
+	assert.deepEqual(
+		ids(selectRows({ ...base, items: [nativeDatePolicy[4], nativeDatePolicy[2]], recentById: nativeDateMeta, sortMode: 'date', sortDirection: 'asc' })),
+		['real-new', 'unknown'],
+		'rows without a date must stay at the end for ascending sort too'
+	);
 }
 
 function testVirtualWindowAndAnchor() {
@@ -249,6 +413,7 @@ const tests = [
 	['browser publication', testBrowserPublication],
 	['buildIndex', testBuildIndex],
 	['mergeRecentItems', testMergeRecentItems],
+	['dialog identity reconcile', testDialogIdentityReconcile],
 	['selectRows', testSelectRows],
 	['virtual window and anchors', testVirtualWindowAndAnchor]
 ];

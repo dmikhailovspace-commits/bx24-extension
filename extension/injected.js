@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.66';
+	window.__ANITREC_RUNNING__ = '7.5.85';
 
-	const VER = '7.5.66';
+	const VER = '7.5.85';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -19,11 +19,16 @@
 	const _PENA_TIME_VISITS_KEY = 'pena.timeVisitedTasks.v1';
 	const _PENA_TIME_TRACKER_KEY = 'pena.timeActiveTracker.v1';
 	const _PENA_TIME_MANUAL_DRAFT_KEY = 'pena.timeManualDraft.v1';
+	const _PENA_TIME_ACTIVITY_LEASE_KEY = 'pena.timeActivityOwner.v1';
+	const _PENA_TIME_ACTIVITY_LEASE_STALE_MS = 15000;
 	function _isPenaExtensionEnabled() {
 		const shared = document.documentElement?.dataset?.penaExtensionEnabled;
 		if (shared === '0') return false;
 		if (shared === '1') return true;
-		try { return localStorage.getItem(_PENA_EXTENSION_ENABLED_KEY) !== '0'; } catch { return true; }
+		let enabled = true;
+		try { enabled = localStorage.getItem(_PENA_EXTENSION_ENABLED_KEY) !== '0'; } catch {}
+		if (document.documentElement) document.documentElement.dataset.penaExtensionEnabled = enabled ? '1' : '0';
+		return enabled;
 	}
 	function _setPenaExtensionEnabled(enabled) {
 		try { localStorage.setItem(_PENA_EXTENSION_ENABLED_KEY, enabled ? '1' : '0'); } catch {}
@@ -221,9 +226,9 @@
 			// otherwise the loader scrolls an outer layout wrapper and no older page is
 			// requested. The mode-specific selectors keep us away from the open chat.
 			const descendantSelector = list.matches('.bx-im-list-container-task__elements')
-				? '.bx-im-list-task__scroll-container,.bx-im-list-container-task__scroll-container'
-				: '.bx-im-list-recent__scroll-container,.bx-im-list-container-recent__scroll-container';
-			const descendant = Array.from(list.querySelectorAll?.(descendantSelector) || []).find(candidate => {
+				? '.bx-im-list-task__scroll-container,.bx-im-list-container-task__scroll-container,[class*="recycle-scroller"],[class*="virtual-scroll"]'
+				: '.bx-im-list-recent__scroll-container,.bx-im-list-container-recent__scroll-container,[class*="recycle-scroller"],[class*="virtual-scroll"]';
+			const descendantCandidates = Array.from(list.querySelectorAll?.(descendantSelector) || []).filter(candidate => {
 				if (!candidate?.isConnected) return false;
 				const rect = candidate.getBoundingClientRect?.();
 				if (!rect || rect.width <= 1 || rect.height <= 1) return false;
@@ -231,6 +236,12 @@
 				return /(?:auto|scroll|overlay)/i.test(String(style.overflowY || '')) ||
 					Number(candidate.scrollHeight) > Number(candidate.clientHeight) + 1;
 			});
+			descendantCandidates.sort((a, b) => {
+				const rangeA = Math.max(0, Number(a.scrollHeight) - Number(a.clientHeight));
+				const rangeB = Math.max(0, Number(b.scrollHeight) - Number(b.clientHeight));
+				return rangeB - rangeA;
+			});
+			const descendant = descendantCandidates[0] || null;
 			if (descendant) return descendant;
 
 			// Bitrix wraps the task list in an `elements_container` and keeps the real
@@ -295,7 +306,7 @@
 				if (!scrollEl) { console.warn('[ANIT-CHATSORTER] autoScroll: не найден scroll container'); return resolve({ reason: 'unavailable' }); }
 				if (!observeEl) observeEl = scrollEl;
 
-				let mutationVersion = 0, idle = 0, activeElapsed = 0, lastTickAt = performance.now();
+				let mutationVersion = 0, idle = 0, stalled = 0, activeElapsed = 0, lastTickAt = performance.now();
 				let lastHeight = Number(scrollEl.scrollHeight) || 0;
 				let lastProgressToken = String(getProgressToken?.() ?? '');
 				const mutationWaiters = new Set();
@@ -392,11 +403,14 @@
 					const progressChanged = progressToken !== lastProgressToken;
 					lastProgressToken = progressToken;
 					const currentTop = Number(scrollEl.scrollTop) || 0;
+					const moved = Math.abs(currentTop - before) > .5;
 					const currentClientHeight = Number(scrollEl.clientHeight) || 0;
 					const currentMaxTop = Math.max(0, heightAfter - currentClientHeight);
 					// A recycled Bitrix viewport may temporarily reject a scroll assignment while
 					// it is replacing its row window. No movement is a stall, not proof of bottom.
 					const atBottom = Math.abs(currentTop - currentMaxTop) < 2;
+					if (moved || heightChanged || progressChanged) stalled = 0;
+					else if (!atBottom) stalled += Math.max(1, rawElapsed || tick);
 					if (!atBottom || heightChanged || progressChanged) {
 						idle = 0;
 					} else {
@@ -416,13 +430,17 @@
 					}
 
 					const timedOut = activeElapsed > maxTime;
+					// Bitrix Desktop can keep a recycled viewport motionless for well over a
+					// second while it prepares the next native window. Treat that as a bounded
+					// wait, not as an immediate failure; actual progress still resets `stalled`.
+					const sourceStalled = stalled >= Math.min(4000, Math.max(2600, idleLimit * 8));
 					window.__PENA_NATIVE_SCROLL_DEBUG__ = {
-						loops: loopCount, idle: Math.round(idle), activeElapsed: Math.round(activeElapsed),
+						loops: loopCount, idle: Math.round(idle), stalled: Math.round(stalled), activeElapsed: Math.round(activeElapsed),
 						scrollTop: Number(scrollEl.scrollTop) || 0, scrollHeight: Number(scrollEl.scrollHeight) || 0,
 						clientHeight: Number(scrollEl.clientHeight) || 0, mutationVersion, atBottom, heightChanged, progressChanged
 					};
-					if (idle >= idleLimit || timedOut) {
-						stopReason = timedOut ? 'timeout' : 'idle';
+					if (idle >= idleLimit || sourceStalled || timedOut) {
+						stopReason = timedOut ? 'timeout' : (sourceStalled ? 'stalled' : 'idle');
 						console.log('[ANIT-CHATSORTER] Автоскролл остановлен. idle =', idle, 'ms, timedOut =', timedOut);
 						break;
 					}
@@ -504,14 +522,33 @@
 		return value;
 	}
 
+	function _getTypedDialogDataId(el) {
+		if (!el) return '';
+		const chatId = String(el.getAttribute?.('data-chat-id') || el.dataset?.chatId || '').trim();
+		if (/^\d+$/.test(chatId)) return `chat${chatId}`;
+		if (/^(?:chat|sg)\d+$/i.test(chatId)) return chatId;
+		const userId = String(el.getAttribute?.('data-user-id') || el.dataset?.userId || '').trim();
+		if (/^\d+$/.test(userId)) return `user${userId}`;
+		if (/^user\d+$/i.test(userId)) return userId;
+		const entityId = String(el.getAttribute?.('data-entity-id') || el.dataset?.entityId || '').trim();
+		const entityType = String(el.getAttribute?.('data-entity-type') || el.dataset?.entityType || '').trim();
+		if (/^\d+$/.test(entityId)) {
+			if (/chat|dialog|group|task/i.test(entityType)) return `chat${entityId}`;
+			if (/user|private/i.test(entityType)) return `user${entityId}`;
+		}
+		return /^(?:chat|sg|user)\d+$/i.test(entityId) ? entityId : '';
+	}
+
 	function _getSafeNestedDialogDataId(el) {
-		const value = String(el?.querySelector?.('[data-id]')?.getAttribute?.('data-id') || '').trim();
+		const nested = el?.querySelector?.('[data-id],[data-chat-id],[data-user-id],[data-entity-id]');
+		const value = String(_getTypedDialogDataId(nested) || nested?.getAttribute?.('data-id') || '').trim();
 		return /^(?:chat|sg|user)\d+$/i.test(value) ? value : '';
 	}
 
 	function _getRawDialogControlIdFromElement(el) {
 		if (!el) return '';
 		const values = [
+			_getTypedDialogDataId(el),
 			el.getAttribute?.('data-dialog-id'),
 			el.getAttribute?.('data-dialog-id-value'),
 			el.getAttribute?.('data-dialogid'),
@@ -571,12 +608,16 @@
 		});
 		return changed;
 	}
+	// Typed IDs are read from an already identified Bitrix row. Do not expose raw
+	// `[data-user-id]`/`[data-entity-id]` as global row selectors: Bitrix and the
+	// document root use those attributes for unrelated identity metadata.
 	const _CHAT_LIST_ITEM_SELECTOR = '.bx-messenger-cl-item,.bx-im-list-recent-item__wrap,.bx-im-list-item,[data-dialog-id],[data-dialog-id-value],[data-dialogid]';
 	const _CHAT_SEARCH_ITEM_SELECTOR = '.bx-im-search-result-item,.bx-im-search-item,.bx-im-dialog-search-result-item,.bx-im-list-search-item,[data-dialog-id],[data-dialog-id-value],[data-dialogid]';
 
 	function _getOwnChatIdFromElement(el) {
 		if (!el) return '';
 		return normId(
+			_getTypedDialogDataId(el) ||
 			el.getAttribute?.('data-id') ||
 			el.getAttribute?.('data-dialog-id') ||
 			el.getAttribute?.('data-dialog-id-value') ||
@@ -634,6 +675,7 @@
 
 
 			return normId(
+				_getTypedDialogDataId(el) ||
 				el.getAttribute('data-id') ||
 				el.getAttribute('data-dialog-id') ||
 				el.getAttribute('data-dialog-id-value') ||
@@ -821,7 +863,7 @@
 				topHit: _isElementTopHit(frame) ? 1 : 0,
 				..._getElementStackScore(frame, index)
 			};
-		}).filter(Boolean);
+		}).filter(candidate => candidate?.topHit === 1);
 		if (!candidates.length) return null;
 		candidates.sort((a, b) =>
 			(a.topHit - b.topHit) ||
@@ -880,9 +922,12 @@
 		) return _dialogControlActiveScreenCache.value;
 		const taskFrameInfo = _getTopVisibleDialogControlTaskFrameInfo();
 		const routeTaskId = _extractTaskIdFromTaskUrl(`${window.location.pathname || ''}${window.location.search || ''}${window.location.hash || ''}`);
+		const messengerListActive = isInternalChatsDOM();
 		const value = {
 			taskFrameInfo,
-			taskId: taskFrameInfo?.taskId || routeTaskId || '',
+			// Bitrix Desktop may keep a task URL behind an open Messenger. That route
+			// is not evidence of active work while a native chat list owns the screen.
+			taskId: taskFrameInfo?.taskId || (!messengerListActive ? routeTaskId : '') || '',
 			title: undefined
 		};
 		_dialogControlActiveScreenCache = { ts: now, value };
@@ -1422,54 +1467,28 @@
 		return error;
 	}
 
-	function _callBxRestMethod(method, params = {}) {
-		return new Promise((resolve, reject) => {
-			const topWin = _getSafeTopWindow();
-			const BXNS = [window.BX, topWin?.BX].filter(Boolean).find(ns => typeof ns?.rest?.callMethod === 'function');
-			const caller = BXNS?.rest?.callMethod;
-			const BX24NS = [window.BX24, topWin?.BX24].filter(Boolean).find(ns => typeof ns?.callMethod === 'function');
-			const handleResult = (res) => {
-				try {
-					const restError = _createBxRestError(res);
-					if (restError) {
-						reject(restError);
-						return;
-					}
-					resolve(typeof res?.data === 'function' ? res.data() : res);
-				} catch (e) {
-					reject(e);
-				}
-			};
-			if (!caller && BX24NS) {
-				try {
-					BX24NS.callMethod(method, params, handleResult);
-					return;
-				} catch (e) {
-					reject(e);
-					return;
-				}
-			}
-			if (!caller) return reject(new Error('BX.rest недоступен'));
-			try {
-				caller.call(BXNS.rest, method, params, (res) => {
-					try {
-						const restError = _createBxRestError(res);
-						if (restError) {
-							reject(restError);
-							return;
-						}
-						resolve(typeof res?.data === 'function' ? res.data() : res);
-					} catch (e) {
-						reject(e);
-					}
-				});
-			} catch (e) {
-				reject(e);
-			}
-		});
+	let _dialogRestQueue = null;
+	function _scheduleBxRest(method, params, run, options = {}) {
+		if (!_dialogRestQueue && _PENA_TIME_CONTROL?.createRequestQueue) {
+			_dialogRestQueue = _PENA_TIME_CONTROL.createRequestQueue();
+			window.__PENA_REST_DIAGNOSTICS__ = { snapshot: () => _dialogRestQueue.snapshot() };
+		}
+		const read = !/\.(?:add|update|delete|start|stop)$/.test(method);
+		// Repository scope reads the current BX identity. The time-user cache may
+		// still belong to the previous login while a source replacement is settling.
+		const scope = _getDialogNativeSharedAuditScopeKey() || location.host + ':self';
+		const key = read ? scope + ':' + method + ':' + JSON.stringify(params) : '';
+		const isCurrent = () => scope === (_getDialogNativeSharedAuditScopeKey() || location.host + ':self') &&
+			(!options.isCurrent || options.isCurrent());
+		return _dialogRestQueue ? _dialogRestQueue.run(method, key, run, { ...options, isCurrent }) : run();
 	}
-
-	function _callBxRestPage(method, params = {}) {
+	function _callBxRestMethod(method, params = {}, options = {}) {
+		return _callBxRestPage(method, params, options).then(page => page.data);
+	}
+	function _callBxRestPage(method, params = {}, options = {}) {
+		return _scheduleBxRest(method, params, () => _dispatchBxRestPage(method, params), options);
+	}
+	function _dispatchBxRestPage(method, params = {}) {
 		return new Promise((resolve, reject) => {
 			const topWin = _getSafeTopWindow();
 			const BXNS = [window.BX, topWin?.BX].filter(Boolean).find(ns => typeof ns?.rest?.callMethod === 'function');
@@ -1511,25 +1530,7 @@
 	}
 
 	function _callBxRestPageWithTimeout(method, params = {}, timeoutMs = 12000) {
-		return new Promise((resolve, reject) => {
-			let settled = false;
-			const timer = setTimeout(() => {
-				if (settled) return;
-				settled = true;
-				reject(new Error(`${method}: превышено время ожидания`));
-			}, Math.max(1000, Number(timeoutMs) || 12000));
-			_callBxRestPage(method, params).then(value => {
-				if (settled) return;
-				settled = true;
-				clearTimeout(timer);
-				resolve(value);
-			}, error => {
-				if (settled) return;
-				settled = true;
-				clearTimeout(timer);
-				reject(error);
-			});
-		});
+		return _callBxRestPage(method, params, { timeoutMs: Math.max(50, Number(timeoutMs) || 12000) });
 	}
 
 	function _getDialogRecentHeadTimeoutMs() {
@@ -1551,7 +1552,7 @@
 		let lastError = null;
 		for (let attempt = 0; attempt < attempts; attempt += 1) {
 			try {
-				return await _callBxRestPageWithTimeout(method, params, baseTimeoutMs + attempt * 8000);
+				return await _callBxRestPage(method, params, { timeoutMs: baseTimeoutMs + attempt * 8000, isCurrent: options.isCurrent });
 			} catch (error) {
 				lastError = error;
 				if (attempt + 1 >= attempts || !_isBxRestReadRetryable(error)) throw error;
@@ -1575,7 +1576,7 @@
 		const BX24NS = [window.BX24, topWin?.BX24].filter(Boolean).find(ns => typeof ns?.callBatch === 'function');
 		if (BX24NS) {
 			try {
-				return await new Promise((resolve, reject) => {
+				return await _scheduleBxRest('batch:' + [...new Set(jobs.map(job => job.method))].join('+'), jobs, () => new Promise((resolve, reject) => {
 					let settled = false;
 					const timer = setTimeout(() => {
 						if (settled) return;
@@ -1599,7 +1600,7 @@
 							reject(error);
 						}
 					}, false);
-				});
+				}), { timeoutMs });
 			} catch (error) {
 				warn('Bitrix batch недоступен, страницы загружаются ограниченным пулом', error?.message || error);
 			}
@@ -1963,6 +1964,9 @@
 
 	function _getDialogRecentInteractionGatePercent(catalogPercent = null) {
 		if (_dialogRecentInteractionGate.ready) return 100;
+		if (Number.isFinite(Number(_dialogRecentProgress.workPercent))) {
+			return Math.max(0, Math.min(99, Math.round(Number(_dialogRecentProgress.workPercent))));
+		}
 		if (_dialogRecentProgress.phase === 'verifying') {
 			if (!Number.isFinite(_dialogRecentProgress.expectedTotal)) return null;
 			const total = Math.max(0, Number(_dialogRecentDetailProgress.total) || 0);
@@ -1972,7 +1976,7 @@
 		if (Number.isFinite(catalogPercent)) return Math.max(0, Math.min(85, Math.round(Number(catalogPercent) * .85)));
 		const pages = Math.max(0, Number(_dialogRecentProgress.pagesLoaded) || 0);
 		const loaded = Math.max(0, Number(_dialogRecentProgress.loadedCount) || 0);
-		return loaded > 0 ? Math.min(82, 28 + pages * 9) : 6;
+		return loaded > 0 ? Math.min(82, 28 + pages * 9) : 0;
 	}
 
 	function _queueDialogRecentStatusUi() {
@@ -1991,7 +1995,51 @@
 			: setTimeout(render, 0);
 	}
 
-	function _publishDialogRecentSyncState() {
+	function _publishDialogRecentModeBoundary(mode) {
+		const activeMode = mode === 'tasks' ? 'tasks' : 'chats';
+		const current = window.__PENA_RECENT_SYNC__;
+		if (!current || current.mode === activeMode) return;
+		const loadedCount = Math.max(0, Number(_dialogNativeModeCounts.get(activeMode)) || 0);
+		const ready = _dialogNativePrefetchedModes.has(activeMode);
+		// A route mutation is observed before the frame-batched lifecycle scan.
+		// Publish only a DOM-free boundary snapshot here so no stale progress/error
+		// can bleed into the newly visible list and the observer cannot feed itself.
+		window.__PENA_RECENT_SYNC__ = Object.freeze({
+			...current,
+			mode: activeMode,
+			phase: ready ? 'ready' : 'idle',
+			loadedCount,
+			expectedTotal: loadedCount || null,
+			pagesLoaded: 0,
+			percent: ready ? 100 : null,
+			workStage: '',
+			full: false,
+			partial: false,
+			inFlight: false,
+			uiSilent: true,
+			error: '',
+			backgroundError: '',
+			backgroundErrorAt: 0
+		});
+	}
+
+	function _publishDialogRecentSyncState(modeOverride = '') {
+		const activeMode = modeOverride === 'tasks' || modeOverride === 'chats' ? modeOverride : _pMode();
+		const progressMatchesMode = !_dialogRecentProgress.mode || _dialogRecentProgress.mode === activeMode;
+		const modeCount = Math.max(0, Number(_dialogNativeModeCounts.get(activeMode)) || 0);
+		const displayProgress = progressMatchesMode ? _dialogRecentProgress : {
+			mode: activeMode,
+			phase: _dialogNativePrefetchedModes.has(activeMode) ? 'ready' : 'idle',
+			loadedCount: modeCount,
+			expectedTotal: modeCount || null,
+			pagesLoaded: 0,
+			full: false,
+			partial: false,
+			startedAt: 0,
+			completedAt: Math.max(0, Number(_dialogNativeModeLoadedAt.get(activeMode)) || 0)
+		};
+		const activeNativeTraversal = (_dialogNativeOriginalScrollActive || _dialogNativeOriginalScrollFinishing) &&
+			_dialogNativeOriginalScrollMode === activeMode;
 		const count = _countDialogRecentMeta();
 		const loadLimit = _getDialogRecentLoadLimit();
 		const mandatoryItems = _getDialogRecentMandatoryItems();
@@ -2012,48 +2060,121 @@
 			_isDialogRecentPublishable(meta) && !(Number(meta?.recentListFetchedAt) > 0)
 		).length;
 		const availableCount = _getDialogRecentUniqueMeta().filter(_isDialogRecentPublishable).length;
-		const expectedTotal = Number.isFinite(_dialogRecentProgress.expectedTotal)
-			? Math.max(0, Number(_dialogRecentProgress.expectedTotal))
+		const expectedTotal = Number.isFinite(displayProgress.expectedTotal)
+			? Math.max(0, Number(displayProgress.expectedTotal))
 			: null;
-		const loading = ['full-sync', 'incremental-sync', 'native-scroll', 'verifying'].includes(_dialogRecentProgress.phase);
+		// retry-wait is a scheduled future attempt, not foreground work. Treating it
+		// as active kept the blocking overlay and public inFlight flag alive after
+		// the physical traversal had already restored the user's viewport.
+		const nativeRetryWaiting = displayProgress.phase === 'materializing' &&
+			String(displayProgress.workStage || '') === 'retry-wait';
+		const loading = ['full-sync', 'incremental-sync', 'native-scroll', 'verifying', 'materializing'].includes(displayProgress.phase) &&
+			!nativeRetryWaiting;
 		let percent = null;
 		if (loading) {
-			if (_dialogRecentProgress.phase === 'verifying') {
-				percent = 96;
+			const materializationPass = Math.max(0, Number(displayProgress.materializationPass) || 0);
+			const measuredWorkPercent = Number(displayProgress.workPercent);
+			if (Number.isFinite(measuredWorkPercent)) {
+				// Native traversal has more work after reaching the physical bottom: it
+				// still has to prove that the tail is stable, fence the head and restore
+				// the user's anchor. Keep those stages inside the measured 0..99 range;
+				// 100 is reserved for the final committed and restored state.
+				percent = Math.max(0, Math.min(99, Math.round(measuredWorkPercent)));
+			} else if (displayProgress.phase === 'materializing') {
+				percent = 50;
+			} else if (displayProgress.phase === 'verifying') {
+				percent = materializationPass === 1 ? 49 : (materializationPass >= 2 ? 99 : 96);
+			} else if (displayProgress.phase === 'native-scroll' &&
+				Number.isFinite(Number(displayProgress.physicalPercent)) &&
+				Number(displayProgress.loadedCount) > 0) {
+				const physicalPercent = Math.max(1, Math.min(94, Math.round(Number(displayProgress.physicalPercent))));
+				percent = materializationPass === 1
+					? Math.max(1, Math.min(49, Math.round((physicalPercent / 94) * 49)))
+					: (materializationPass >= 2
+						? Math.max(50, Math.min(99, 50 + Math.round((physicalPercent / 94) * 49)))
+						: physicalPercent);
 			} else if (expectedTotal != null && expectedTotal > 0) {
-				percent = Math.max(1, Math.min(99, Math.round((_dialogRecentProgress.loadedCount / expectedTotal) * 100)));
+				percent = Math.max(1, Math.min(99, Math.round((displayProgress.loadedCount / expectedTotal) * 100)));
 			} else {
-				const pages = Math.max(0, Number(_dialogRecentProgress.pagesLoaded) || 0);
-				const loaded = Math.max(0, Number(_dialogRecentProgress.loadedCount) || 0);
+				const pages = Math.max(0, Number(displayProgress.pagesLoaded) || 0);
+				const loaded = Math.max(0, Number(displayProgress.loadedCount) || 0);
 				// Bitrix often omits a usable total for im.recent.list. Keep the loader
 				// numeric and monotonic while more pages are still being discovered.
-				percent = loaded > 0 ? Math.min(92, 18 + pages * 9) : 6;
+				percent = loaded > 0 ? Math.min(92, 18 + pages * 9) : 0;
 			}
-			const previousDisplay = Number(_dialogRecentProgress.displayPercent) || 0;
+			const previousDisplay = Number(displayProgress.displayPercent) || 0;
 			percent = Math.max(previousDisplay, percent);
-			_dialogRecentProgress.displayPercent = percent;
-		} else if (_dialogRecentProgress.phase === 'ready') {
-			percent = 100;
+			if (progressMatchesMode) _dialogRecentProgress.displayPercent = percent;
+		} else if (displayProgress.phase === 'ready') {
+			percent = activeNativeTraversal ? 99 : 100;
 		}
 		const gatePercent = _getDialogRecentInteractionGatePercent(percent);
 		_dialogRecentInteractionGate.percent = gatePercent;
+		const activeAttempt = _dialogNativeAttemptStates.get(activeMode) || {};
+		const activeMaterialization = _dialogNativeMaterializedSources.get(activeMode) || {};
+		const activeSource = _dialogNativeSourceGenerations.get(activeMode) || {};
+		const nativeMaterializationReady = _dialogNativePrefetchedModes.has(activeMode) &&
+			activeMaterialization.invalidated !== true && activeMaterialization.needsColdConfirmation !== true &&
+			activeMaterialization.list?.isConnected && activeMaterialization.viewport?.isConnected &&
+			activeMaterialization.list === activeSource.list && activeMaterialization.viewport === activeSource.viewport &&
+			Number(activeMaterialization.sourceGeneration) === Number(activeSource.generation) &&
+			_isDialogNativeMaterializationCurrent(activeMode, activeMaterialization.list);
+		const nativeUsable = _isDialogControlNativePassThrough() && !!activeSource.list?.isConnected &&
+			!!activeSource.viewport?.isConnected;
+		const metadataAvailable = count > 0 || _dialogRecentCacheLoaded;
+		const nativeRecoveryScheduled = String(activeAttempt.state || '') === 'retry' ||
+			activeMaterialization.invalidated === true || _dialogNativeRecoveryRetryTimers.has(activeMode);
+		const activeHardError = !_dialogRecentLastErrorMode || _dialogRecentLastErrorMode === activeMode
+			? String(_dialogRecentLastError || '')
+			: '';
+		const activeSoftError = !_dialogRecentLastSoftErrorMode || _dialogRecentLastSoftErrorMode === activeMode
+			? String(_dialogRecentLastSoftError || '')
+			: '';
+		const catalogReadyForUi = _isDialogControlNativePassThrough()
+			? nativeUsable
+			: (_dialogRecentLastFullAt > 0 || _dialogRecentCacheLoaded);
+		const syncHealth = window.__PENA_NATIVE_LIFECYCLE__?.classifyDialogSyncHealth?.({
+			materializationReady: nativeMaterializationReady,
+			nativeUsable,
+			metadataAvailable,
+			fullFeaturesReady: nativeMaterializationReady,
+			materializationPolicy: 'interaction-priority',
+			catalogReady: catalogReadyForUi,
+			recoveryScheduled: nativeRecoveryScheduled,
+			userActionRequired: activeAttempt.userActionRequired === true,
+			gateError: _dialogRecentInteractionGate.error,
+			error: activeHardError
+		}) || {
+			recoveryActionRequired: nativeRecoveryScheduled && !nativeMaterializationReady && activeAttempt.userActionRequired === true,
+			userError: catalogReadyForUi ? '' : activeHardError,
+			backgroundError: catalogReadyForUi ? activeHardError : ''
+		};
+		// Catalog, physical materialization and an individual refresh attempt are
+		// independent. A failed metadata/audit request over a usable native feed stays
+		// diagnostic and must never become a red user-facing retry action.
+		const nativeRecoveryActionRequired = syncHealth.recoveryActionRequired === true;
+		const publishedPhase = displayProgress.phase === 'error' && catalogReadyForUi && !syncHealth.userError
+			? 'ready'
+			: displayProgress.phase;
 		window.__PENA_RECENT_SYNC__ = Object.freeze({
 			version: VER,
-			phase: _dialogRecentProgress.phase,
+			mode: activeMode,
+			phase: publishedPhase,
 			count,
 			committedCount: count,
-			loadedCount: Math.max(0, Number(_dialogRecentProgress.loadedCount) || 0),
+			loadedCount: Math.max(0, Number(displayProgress.loadedCount) || 0),
 			expectedTotal,
-			pagesLoaded: Math.max(0, Number(_dialogRecentProgress.pagesLoaded) || 0),
+			pagesLoaded: Math.max(0, Number(displayProgress.pagesLoaded) || 0),
 			percent,
+			workStage: String(displayProgress.workStage || ''),
 			gatePercent,
 			gateLocked: _isDialogRecentInteractionBlocked(),
 			gateReady: !!_dialogRecentInteractionGate.ready,
 			gateError: _dialogRecentInteractionGate.error,
 			gateReason: _dialogRecentInteractionGate.reason,
-			full: !!_dialogRecentProgress.full,
-			partial: !!_dialogRecentProgress.partial,
-			ready: _dialogRecentLastFullAt > 0 || _dialogRecentCacheLoaded,
+			full: !!displayProgress.full,
+			partial: !!displayProgress.partial,
+			ready: catalogReadyForUi,
 			empty: _dialogRecentLastFullAt > 0 && count === 0,
 			cached: _dialogRecentCacheLoaded && _dialogRecentLastFullAt <= 0,
 			cacheSavedAt: _dialogRecentCacheSavedAt,
@@ -2067,7 +2188,20 @@
 			controlledOutsideCount: _dialogRecentControlledOutsideCount,
 			controlledOutsideReadyCount,
 			truncated: _dialogRecentTruncated,
-			backgroundPending: _dialogNativeBackgroundPendingModes.has(_pMode()),
+			backgroundPending: _dialogNativeBackgroundPendingModes.has(activeMode),
+			metadataPending: _dialogNativeMetadataRetryStates.has(activeMode),
+			materializationReady: nativeMaterializationReady,
+			nativeUsable,
+			metadataAvailable,
+			fullFeaturesReady: nativeMaterializationReady,
+			materializationPolicy: 'interaction-priority',
+			recoveryPending: nativeRecoveryActionRequired,
+			recoveryActionRequired: nativeRecoveryActionRequired,
+			backgroundRecoveryPending: nativeRecoveryScheduled && !nativeRecoveryActionRequired,
+			attemptState: String(activeAttempt.state || 'idle'),
+			attemptReason: String(activeAttempt.reason || ''),
+			automaticRecoveryPending: nativeRecoveryScheduled && !nativeRecoveryActionRequired,
+			retryAt: Math.max(0, Number(activeAttempt.retryAt) || 0),
 			countersAt: _dialogRecentCountersAt,
 			countersError: _dialogRecentCountersError,
 			detailsInFlight: !!_dialogRecentDetailProgress.inFlight,
@@ -2078,17 +2212,21 @@
 			detailsFailed: Math.max(0, Number(_dialogRecentDetailProgress.failed) || 0),
 			detailsUnavailable: Math.max(0, Number(_dialogRecentDetailProgress.unavailable) || 0),
 			unavailableCount: _getDialogRecentUniqueMeta().filter(_isDialogRecentUnavailable).length,
-			managedCount: _getDialogControlItemsForMode(_pMode()).filter(item =>
+			managedCount: _getDialogControlItemsForMode(activeMode).filter(item =>
 				!_isDialogControlFolder(item) && !_isDialogControlItemUnavailable(item)
 			).length,
 			lastSuccessAt: _dialogRecentLastSuccessAt,
 			lastFullAt: _dialogRecentLastFullAt,
-			startedAt: Number(_dialogRecentProgress.startedAt) || 0,
-			completedAt: Number(_dialogRecentProgress.completedAt) || 0,
-			inFlight: loading || !!_dialogRecentSyncPromise || !!_dialogNativePrefetchPromise,
-			error: _dialogRecentLastError,
-			backgroundError: _dialogRecentLastSoftError,
-			backgroundErrorAt: _dialogRecentLastSoftErrorAt
+			startedAt: Number(displayProgress.startedAt) || 0,
+			completedAt: Number(displayProgress.completedAt) || 0,
+			inFlight: loading || activeNativeTraversal || (progressMatchesMode && (
+				!!_dialogRecentSyncPromise || (!!_dialogNativePrefetchPromise && !nativeRetryWaiting)
+			)),
+			uiSilent: progressMatchesMode && (_dialogRecentSyncUiSilent || _dialogRecentApiLoadSilent ||
+				(_dialogNativeOriginalScrollActive && _dialogNativeOriginalScrollSilent)),
+			error: String(syncHealth.userError || ''),
+			backgroundError: String(activeSoftError || syncHealth.backgroundError || ''),
+			backgroundErrorAt: activeSoftError ? _dialogRecentLastSoftErrorAt : 0
 		});
 		if (_dialogNativeOriginalScrollActive || _dialogRecentApiLoadActive) {
 			const originalContainer = findContainer();
@@ -2233,6 +2371,10 @@
 	}
 
 	function _markDialogRecentRepositoryFullCommit(options = {}) {
+		if (window.__PENA_TEST_PERF_METRICS__) {
+			window.__PENA_TEST_PERF_METRICS__.repositoryFullCommits =
+				(Number(window.__PENA_TEST_PERF_METRICS__.repositoryFullCommits) || 0) + 1;
+		}
 		_dialogRecentRepositoryNeedsFullCommit = true;
 		_dialogRecentRepositoryFullCommitRevision += 1;
 		if (options.invalidateConfirmation === true) _dialogRecentRepositoryConfirmedReplace = false;
@@ -2244,6 +2386,18 @@
 		const id = normId(meta.id || aliases[0]);
 		if (!id) return null;
 		meta.id = id;
+		if (/^\d+$/.test(String(meta.taskId || ''))) {
+			const taskId = String(meta.taskId);
+			if (meta.isTask === true && /^chat\d+$/i.test(id)) {
+				_dialogTimeTaskChatDialogIds.set(taskId, id);
+				_dialogTimeTaskIdsByChatDialogId.set(id, taskId);
+			}
+			if (typeof meta.timeTrackingEnabled === 'boolean') {
+				_setDialogTimeTaskEligibility(taskId, meta.timeTrackingEnabled, meta.taskCatalogFetchedAt || meta.fetchedAt);
+			}
+			const canonicalTitle = String(meta.taskCatalogFetchedAt ? (meta.displayTitle || '') : '').replace(/\s+/g, ' ').trim();
+			if (canonicalTitle) _dialogTimeTaskTitles.set(taskId, canonicalTitle);
+		}
 		const normalizeAlias = raw => {
 			const value = String(raw || '').trim();
 			if (!value) return '';
@@ -2376,14 +2530,16 @@
 			'lastAuthorId', 'lastAuthorName', 'lastAuthorAvatarUrl', 'lastAuthorOwn', 'lastAuthorSystem', 'lastAuthorResolved', 'lastMessageStatus',
 			'lastMessageHasFile', 'lastMessageHasAttach', 'lastMessageSticker',
 			'lastMessageTs', 'lastMessageTsSource', 'nativeRecentRank', 'lastMessageId', 'lastReadMessageId', 'unreadCount', 'hasUnread', 'hasLater', 'hasMention',
-			'isTask', 'taskId', 'taskUrl', 'restDialogId', 'fetchedAt', 'counterFetchedAt', 'counterStale', 'detailFetchedAt', 'detailAttemptAt',
+			'isTask', 'taskId', 'taskUrl', 'timeTrackingEnabled', 'taskCatalogFetchedAt', 'restDialogId', 'fetchedAt', 'counterFetchedAt', 'counterStale', 'detailFetchedAt', 'detailAttemptAt',
 			'detailBlockedUntil', 'avatarResolved', 'availability', 'availabilityReason', 'availabilityCheckedAt', 'recentListFetchedAt', 'catalogSource'
 		];
 		const result = fields.reduce((serialized, field) => {
 			const value = meta?.[field];
 			// The catalog can contain thousands of rows. Default values are restored by
 			// the normalizer, so persisting them only burns localStorage quota and time.
-			if (value === undefined || value === null || value === '' || value === false || (value === 0 && field !== 'nativeRecentRank')) return serialized;
+			if (value === undefined || value === null || value === '' ||
+				(value === false && field !== 'timeTrackingEnabled') ||
+				(value === 0 && field !== 'nativeRecentRank')) return serialized;
 			serialized[field] = value;
 			return serialized;
 		}, {});
@@ -2591,7 +2747,16 @@
 					_compareDialogRecentFreshness(liveFreshness, incomingFreshness) >= 0
 					? live
 					: incoming;
-				_setDialogRecentMeta(result, preferred);
+				const merged = { ...preferred };
+				const liveCounterAt = Math.max(0, Number(live.counterFetchedAt) || 0);
+				const incomingCounterAt = Math.max(0, Number(incoming.counterFetchedAt) || 0);
+				const counterSource = liveCounterAt === incomingCounterAt
+					? preferred
+					: (liveCounterAt > incomingCounterAt ? live : incoming);
+				for (const field of ['unreadCount', 'hasUnread', 'hasLater', 'hasMention', 'lastReadMessageId', 'counterFetchedAt', 'counterStale']) {
+					if (counterSource[field] !== undefined) merged[field] = counterSource[field];
+				}
+				_setDialogRecentMeta(result, merged);
 				return;
 			}
 
@@ -2618,7 +2783,8 @@
 		for (const mode of ['chats', 'tasks']) {
 			const materialization = _dialogNativeMaterializedSources.get(mode);
 			const repositoryBaseline = _dialogNativeRepositoryExpectedCatalogs.get(mode);
-			const hasConfirmedMaterialization = !!(materialization?.completedAt && !materialization.invalidated && Array.isArray(materialization.ids));
+			const hasConfirmedMaterialization = !!(materialization?.completedAt && !materialization.invalidated &&
+				materialization.needsColdConfirmation !== true && Array.isArray(materialization.ids));
 			const confirmedIds = hasConfirmedMaterialization
 				? Array.from(new Set(materialization.ids.map(normId).filter(Boolean)))
 				: (Array.isArray(repositoryBaseline?.ids) ? repositoryBaseline.ids.slice() : []);
@@ -2701,6 +2867,7 @@
 		if (cached.taskCatalog?.complete === true && taskFetchedAt > 0 && remoteTaskWins) {
 			_dialogTaskCatalogComplete = true;
 			_dialogTaskCatalogFetchedAt = taskFetchedAt;
+			_dialogTaskCatalogScopeKey = _getDialogNativeSharedAuditScopeKey();
 		}
 		return restoredCompleteMode;
 	}
@@ -2782,6 +2949,7 @@
 
 	function _restoreDialogRecentPayload(cached, currentUserId, options = {}) {
 		if (!cached || !Array.isArray(cached.entries)) return 0;
+		const beforeSignature = _getDialogRecentRenderSignature(_dialogRecentMeta);
 		const metas = cached.entries
 			.map(entry => (entry?.state || entry?.lastMessage || entry?.unread || entry?.mode || entry?.remoteUpdatedAt != null)
 				? _dialogRecentRecordToMeta(entry, currentUserId)
@@ -2829,11 +2997,15 @@
 			: Math.max(0, Number(cached.windowCount) || _countDialogRecentMeta());
 		if (options.mergeRepository !== true) _dialogRecentTruncated = !!cached.truncated;
 		_dialogRecentProgress = {
-			phase: 'cached', loadedCount: _dialogRecentWindowCount, expectedTotal: _dialogRecentWindowCount,
+			mode: _pMode(), phase: 'cached', loadedCount: _dialogRecentWindowCount, expectedTotal: _dialogRecentWindowCount,
 			pagesLoaded: 0, full: false, partial: false, startedAt: 0, completedAt: _dialogRecentCacheSavedAt
 		};
 		_hydrateAllDialogControlModesFromRecent({ pruneMissing: false });
 		_completeDialogRecentInteractionGate();
+		if (beforeSignature !== _getDialogRecentRenderSignature(_dialogRecentMeta)) {
+			_dialogRecentDataRevision += 1;
+			_notifyDialogRecentDataChanged();
+		}
 		return _countDialogRecentMeta();
 	}
 
@@ -2954,6 +3126,27 @@
 		return _dialogRecentRepositoryBootstrapPromise;
 	}
 
+	function _armDialogRecentRepositoryConnectionRecovery() {
+		if (_dialogRecentRepositoryConnectionArmed) return;
+		_dialogRecentRepositoryConnectionArmed = true;
+		document.addEventListener(_DIALOG_REPOSITORY_CONNECTION_EVENT, event => {
+			let connection = event?.detail;
+			if (typeof connection === 'string') {
+				try { connection = JSON.parse(connection); } catch { connection = null; }
+			}
+			if (connection?.connected !== true || _dialogRecentRepositoryAvailable || !window.__PENA_DIALOG_REPOSITORY__?.get) return;
+			if (_dialogRecentRepositoryReconnectTimer) clearTimeout(_dialogRecentRepositoryReconnectTimer);
+			_dialogRecentRepositoryReconnectTimer = null;
+			_dialogRecentRepositoryReady = false;
+			_dialogRecentRepositoryBootstrapPromise = null;
+			_bootstrapDialogRecentRepository().then(() => {
+				if (_dialogRecentRepositoryNeedsFullCommit || _dialogRecentRepositoryDirtyIds.size) {
+					_scheduleDialogRecentCacheWrite(0);
+				}
+			}).catch(() => {});
+		});
+	}
+
 	function _findDialogCounterField(root, name) {
 		if (!root || typeof root !== 'object') return { found: false, value: null };
 		const key = Object.keys(root).find(candidate => String(candidate).toUpperCase() === name);
@@ -2966,11 +3159,18 @@
 		const fields = ['CHAT', 'CHAT_MUTED', 'LINES', 'DIALOG', 'CHAT_UNREAD', 'DIALOG_UNREAD'];
 		const resolved = new Map(fields.map(name => [name, _findDialogCounterField(root, name)]));
 		if (!fields.some(name => resolved.get(name).found)) return null;
+		const coverage = {
+			chatCounts: ['CHAT', 'CHAT_MUTED', 'LINES'].some(name => resolved.get(name).found),
+			dialogCounts: resolved.get('DIALOG').found,
+			chatManual: resolved.get('CHAT_UNREAD').found,
+			dialogManual: resolved.get('DIALOG_UNREAD').found
+		};
+		const complete = ['CHAT', 'DIALOG', 'CHAT_UNREAD', 'DIALOG_UNREAD'].every(name => resolved.get(name).found);
 		const states = new Map();
 		const ensure = id => {
 			const normalized = normId(id);
 			if (!normalized) return null;
-			if (!states.has(normalized)) states.set(normalized, { unreadCount: 0, manualUnread: false });
+			if (!states.has(normalized)) states.set(normalized, { unreadCount: 0, manualUnread: false, countSeen: false, manualSeen: false });
 			return states.get(normalized);
 		};
 		const canonical = (kind, raw) => {
@@ -2985,7 +3185,10 @@
 					if (!record || typeof record !== 'object') return;
 					const id = record.dialog_id ?? record.dialogId ?? record.chat_id ?? record.user_id ?? record.id;
 					const state = ensure(canonical(kind, id));
-					if (state) state.unreadCount = Math.max(state.unreadCount, Math.max(0, Number(record.counter ?? record.value ?? record.count) || 0));
+					if (state) {
+						state.countSeen = true;
+						state.unreadCount = Math.max(state.unreadCount, Math.max(0, Number(record.counter ?? record.value ?? record.count) || 0));
+					}
 				});
 				return;
 			}
@@ -2993,6 +3196,7 @@
 			Object.entries(collection).forEach(([rawId, rawValue]) => {
 				const state = ensure(canonical(kind, rawId));
 				if (!state) return;
+				state.countSeen = true;
 				state.unreadCount = Math.max(state.unreadCount, Math.max(0, Number(
 					typeof rawValue === 'object' ? rawValue?.counter ?? rawValue?.value ?? rawValue?.count : rawValue
 				) || 0));
@@ -3005,15 +3209,20 @@
 						? record.dialog_id ?? record.dialogId ?? record.chat_id ?? record.user_id ?? record.id
 						: record;
 					const state = ensure(canonical(kind, rawId));
-					if (state) state.manualUnread = true;
+					if (state) {
+						state.manualSeen = true;
+						state.manualUnread = true;
+					}
 				});
 				return;
 			}
 			if (!collection || typeof collection !== 'object') return;
 			Object.entries(collection).forEach(([rawId, active]) => {
-				if (active === false || active === 0 || active === 'N') return;
 				const state = ensure(canonical(kind, rawId));
-				if (state) state.manualUnread = true;
+				if (state) {
+					state.manualSeen = true;
+					state.manualUnread = !(active === false || active === 0 || active === 'N');
+				}
 			});
 		};
 		applyCounts('CHAT', resolved.get('CHAT').value);
@@ -3022,7 +3231,7 @@
 		applyCounts('DIALOG', resolved.get('DIALOG').value);
 		applyManual('CHAT', resolved.get('CHAT_UNREAD').value);
 		applyManual('DIALOG', resolved.get('DIALOG_UNREAD').value);
-		return { states, fetchedAt: Date.now() };
+		return { states, coverage, complete, fetchedAt: Date.now() };
 	}
 
 	async function _fetchDialogCounterSnapshot() {
@@ -3053,12 +3262,22 @@
 			const restId = normId(meta.restDialogId);
 			const sgChatId = /^sg(\d+)$/i.exec(id)?.[1];
 			const candidates = [id, restId, sgChatId ? `chat${sgChatId}` : ''].filter(Boolean);
-			const state = candidates.map(candidate => snapshot.states.get(candidate)).find(Boolean) || { unreadCount: 0, manualUnread: false };
-			meta.unreadCount = Math.max(0, Number(state.unreadCount) || 0);
-			meta.hasUnread = meta.unreadCount > 0;
-			meta.hasLater = !!state.manualUnread && meta.unreadCount <= 0;
-			meta.counterFetchedAt = snapshot.fetchedAt;
-			meta.counterStale = false;
+			const state = candidates.map(candidate => snapshot.states.get(candidate)).find(Boolean) || null;
+			const chatDomain = meta.entityKind === 'chat' || candidates.some(candidate => /^(?:chat|sg)\d+$/i.test(candidate));
+			const countsCovered = chatDomain ? snapshot.coverage?.chatCounts !== false : snapshot.coverage?.dialogCounts !== false;
+			const manualCovered = chatDomain ? snapshot.coverage?.chatManual !== false : snapshot.coverage?.dialogManual !== false;
+			const applyCounts = countsCovered && (snapshot.complete !== false || state?.countSeen === true);
+			const applyManual = manualCovered && (snapshot.complete !== false || state?.manualSeen === true);
+			if (applyCounts) {
+				meta.unreadCount = Math.max(0, Number(state?.unreadCount) || 0);
+				meta.hasUnread = meta.unreadCount > 0 || !!meta.hasMention;
+			}
+			if (applyManual) meta.hasLater = !!state?.manualUnread && !meta.hasUnread;
+			else if (meta.hasUnread) meta.hasLater = false;
+			if (applyCounts || applyManual) {
+				meta.counterFetchedAt = snapshot.fetchedAt;
+				meta.counterStale = false;
+			}
 			if (target === _dialogRecentMeta && _dialogRecentRepositoryReady) _markDialogRecentRepositoryDirty(id);
 		});
 		_dialogRecentCountersAt = snapshot.fetchedAt;
@@ -3234,7 +3453,8 @@
 			const forceValidationRetry = options.forceAccessRetry === true && (
 				options.forceAvailabilityCheck === true ||
 				_isDialogRecentUnavailable(meta) ||
-				_isDialogRecentPending(meta)
+				_isDialogRecentPending(meta) ||
+				meta?.messagePreviewResolved !== true
 			);
 			if (!forceValidationRetry) {
 				if (blockedUntil > now) return;
@@ -3333,19 +3553,37 @@
 				const detailHasUnreadMark = Object.prototype.hasOwnProperty.call(entity || {}, 'unread');
 				const detailFetchedAt = Date.now();
 				const hasAuthoritativeCounter = Number(previous.counterFetchedAt) > 0;
+				const hasRecentProjection = Number(previous.recentListFetchedAt) > 0;
+				const projectedTitle = hasRecentProjection && previous.displayTitle
+					? previous.displayTitle
+					: (detail.displayTitle || previous.displayTitle || item?.title || '');
+				const projectedAvatarUrl = hasRecentProjection && previous.avatarUrl
+					? previous.avatarUrl
+					: (detail.avatarUrl || previous.avatarUrl || '');
 				const merged = Object.assign({}, previous, detail, {
 					id,
 					entityKind: isChat ? 'chat' : 'user',
-					displayTitle: detail.displayTitle || previous.displayTitle || item?.title || '',
-					title: detail.title || previous.title || String(item?.title || '').toLowerCase(),
-					avatarUrl: detail.avatarUrl || previous.avatarUrl || '',
-					avatarColor: detail.avatarColor || previous.avatarColor || '',
-					avatarSource: detail.avatarUrl ? 'detail' : (previous.avatarSource || 'none'),
+					displayTitle: projectedTitle,
+					title: String(projectedTitle || detail.title || previous.title || item?.title || '').toLowerCase(),
+					avatarUrl: projectedAvatarUrl,
+					avatarColor: hasRecentProjection && previous.avatarColor
+						? previous.avatarColor
+						: (detail.avatarColor || previous.avatarColor || ''),
+					avatarSource: projectedAvatarUrl === previous.avatarUrl && previous.avatarUrl
+						? (previous.avatarSource || 'recent')
+						: (detail.avatarUrl ? 'detail' : (previous.avatarSource || 'none')),
 					avatarResolved: true,
 					displayLastText: detail.displayLastText || previous.displayLastText || '',
 					lastText: detail.lastText || previous.lastText || '',
 					lastMessageTs: Number(detail.lastMessageTs) || Number(previous.lastMessageTs) || 0,
-					isTask: detail.isTask === true ? true : (detail.isTask === false ? false : (previous.isTask ?? (mode === 'tasks' ? null : false))),
+					// im.dialog.get may describe a task chat as a generic `chat` and omit all
+					// TASKS_* hints. That response can enrich the dialog, but it must not move
+					// an already known/stored task chat into the ordinary-chat catalog.
+					isTask: detail.isTask === true || previous.isTask === true || mode === 'tasks'
+						? true
+						: (detail.isTask === false ? false : (previous.isTask ?? false)),
+					taskId: String(detail.taskId || previous.taskId || item?.taskId || ''),
+					taskUrl: String(detail.taskUrl || previous.taskUrl || item?.taskUrl || ''),
 					detailFetchedAt,
 					availability: 'available',
 					availabilityReason: '',
@@ -3359,7 +3597,8 @@
 				if (!hasAuthoritativeCounter && (detailHasCounter || detailHasUnreadMark)) {
 					merged.counterFetchedAt = detailFetchedAt;
 				}
-				delete merged.detailAttemptAt;
+				if (messagePreviewResolved) delete merged.detailAttemptAt;
+				else merged.detailAttemptAt = detailFetchedAt;
 				delete merged.detailBlockedUntil;
 				_setDialogRecentMeta(activeTarget, merged, [item?.dialogId, ...normalized.keys]);
 				updated += 1;
@@ -3452,6 +3691,10 @@
 			const normalized = normId(id);
 			if (normalized) _dialogRecentDetailQueuedWindowIds.add(normalized);
 		});
+		Array.from(options.mandatoryIds || []).forEach(id => {
+			const normalized = normId(id);
+			if (normalized) _dialogRecentDetailQueuedMandatoryIds.add(normalized);
+		});
 		if (options.forceAccessRetry === true) _dialogRecentDetailQueuedForceAccessRetry = true;
 		if (options.includeMandatory !== false) _dialogRecentDetailQueuedIncludeMandatory = true;
 		if (_dialogRecentDetailSyncPromise) {
@@ -3464,16 +3707,22 @@
 				const windowIds = new Set(_dialogRecentDetailQueuedWindowIds);
 				const forceAccessRetry = _dialogRecentDetailQueuedForceAccessRetry;
 				const includeMandatory = _dialogRecentDetailQueuedIncludeMandatory;
+				const mandatoryIds = new Set(_dialogRecentDetailQueuedMandatoryIds);
 				_dialogRecentDetailQueuedWindowIds.clear();
+				_dialogRecentDetailQueuedMandatoryIds.clear();
 				_dialogRecentDetailQueuedForceAccessRetry = false;
 				_dialogRecentDetailQueuedIncludeMandatory = false;
 				_dialogRecentDetailQueued = false;
+				const allMandatory = _getDialogRecentMandatoryItems();
+				const mandatory = includeMandatory
+					? allMandatory
+					: new Map(Array.from(mandatoryIds).map(id => [id, allMandatory.get(id)]).filter(([, record]) => !!record));
 				const result = await _runDialogRecentDetailPass(windowIds, {
 					forceAccessRetry,
-					mandatory: includeMandatory ? _getDialogRecentMandatoryItems() : new Map()
+					mandatory
 				});
 				Object.keys(aggregate).forEach(key => { aggregate[key] += Math.max(0, Number(result?.[key]) || 0); });
-			} while (_dialogRecentDetailQueued || _dialogRecentDetailQueuedWindowIds.size);
+			} while (_dialogRecentDetailQueued || _dialogRecentDetailQueuedWindowIds.size || _dialogRecentDetailQueuedMandatoryIds.size);
 			return aggregate;
 		})().catch(error => {
 			_dialogRecentDetailProgress = { ..._dialogRecentDetailProgress, inFlight: false };
@@ -3486,11 +3735,12 @@
 		return _dialogRecentDetailSyncPromise;
 	}
 
-	function _reconcileDialogControlRecentIdentities(items, candidates) {
-		if (!Array.isArray(items) || !(candidates instanceof Map) || !candidates.size) return 0;
+	function _reconcileDialogControlRecentIdentities(items, candidates, options = {}) {
+		if (options.allowDestructive === false || !Array.isArray(items) || !(candidates instanceof Map) || !candidates.size) return 0;
 		const titleBuckets = new Map();
 		candidates.forEach((meta, id) => {
-			const key = _normalizeDialogControlTitle(meta?.displayTitle || meta?.title);
+			const apiMeta = _getDialogRecentMeta(id);
+			const key = _normalizeDialogControlTitle(apiMeta?.displayTitle || apiMeta?.title || meta?.displayTitle || meta?.title);
 			if (!key) return;
 			if (!titleBuckets.has(key)) titleBuckets.set(key, []);
 			titleBuckets.get(key).push(id);
@@ -3503,11 +3753,29 @@
 			const titleKey = _normalizeDialogControlTitle(item.title);
 			const titleMatches = titleKey && !_isDialogControlFallbackTitle(titleKey) ? titleBuckets.get(titleKey) || [] : [];
 			const uniqueTitleId = titleMatches.length === 1 ? titleMatches[0] : '';
-			if (currentId && candidates.has(currentId) && (!uniqueTitleId || uniqueTitleId === currentId)) continue;
+			const currentMeta = currentId ? candidates.get(currentId) : null;
+			const currentChatMatch = /^chat(\d+)$/i.exec(currentId);
+			const personalTargetMatch = /^user(\d+)$/i.exec(uniqueTitleId);
+			const apiMeta = _getDialogRecentMeta(currentId);
+			const currentCandidateTitle = _normalizeDialogControlTitle(apiMeta?.displayTitle || apiMeta?.title || currentMeta?.displayTitle || currentMeta?.title);
+			const legacyPersonalCollision = !!(
+				currentChatMatch &&
+				personalTargetMatch &&
+				currentChatMatch[1] === personalTargetMatch[1] &&
+				currentMeta?.entityKind === 'chat' &&
+				candidates.get(uniqueTitleId)?.entityKind === 'user' &&
+				currentCandidateTitle &&
+				currentCandidateTitle !== titleKey
+			);
+			// A typed ID observed in the current catalog is stronger evidence than a
+			// temporarily stale/recycled title. The sole exception is the legacy format
+			// that stored personal dialog N as chatN while both chatN and userN exist.
+			if (currentId && candidates.has(currentId) && !legacyPersonalCollision) continue;
 			const restCandidateId = normId(_normalizeDialogControlRestDialogId(
 				item.dialogId || item.rawDialogId || item.bitrixDialogId
 			));
-			let targetId = uniqueTitleId || (restCandidateId && candidates.has(restCandidateId) ? restCandidateId : '');
+			const canonicalRestId = restCandidateId && candidates.has(restCandidateId) ? restCandidateId : '';
+			let targetId = legacyPersonalCollision ? uniqueTitleId : (canonicalRestId || uniqueTitleId);
 			if (!targetId || targetId === currentId) continue;
 			const meta = candidates.get(targetId);
 			const canonicalDialogId = _normalizeDialogControlRestDialogId(meta?.restDialogId || targetId);
@@ -3555,13 +3823,17 @@
 			if (!belongsToMode) return;
 			const visibleElement = visibleById.get(id);
 			const visible = visibleElement ? {
-				displayTitle: getChatTitleFromElement(visibleElement),
-				restDialogId: _getRawDialogControlIdFromElement(visibleElement) || meta.restDialogId || id,
+				displayTitle: meta.displayTitle || getChatTitleFromElement(visibleElement),
+				restDialogId: meta.restDialogId || _getRawDialogControlIdFromElement(visibleElement) || id,
 				fromVisibleList: true
 			} : null;
 			candidates.set(id, Object.assign({}, meta, visible || {}));
 		});
-		const identityUpdates = _reconcileDialogControlRecentIdentities(items, candidates);
+		// Partial/native-window hydration is additive. Identity migration may merge
+		// duplicates with splice(), so run it only for a proven, pruning catalog.
+		const identityUpdates = _reconcileDialogControlRecentIdentities(items, candidates, {
+			allowDestructive: pruneMissing
+		});
 		const existingById = new Map(items
 			.filter(item => !_isDialogControlFolder(item))
 			.map(item => [normId(item.id), item])
@@ -3601,12 +3873,19 @@
 				if (!existing?.recentManaged) return;
 				const nextTitle = title || existing.title;
 				const nextAddedAt = Number(meta?.lastMessageTs) || Number(existing.addedAt) || Date.now();
+				const nextDateSource = String(meta?.lastMessageTsSource || existing.lastMessageTsSource || '');
+				const rawNativeRank = Number(meta?.nativeRecentRank);
+				const nextNativeRank = Number.isFinite(rawNativeRank) && rawNativeRank >= 0
+					? rawNativeRank
+					: (Number.isFinite(Number(existing.nativeRecentRank)) ? Number(existing.nativeRecentRank) : null);
 				const nextDialogId = _normalizeDialogControlRestDialogId(meta?.restDialogId || existing.dialogId || id);
 				const nextTaskId = String(meta?.taskId || existing.taskId || '');
 				const nextTaskUrl = String(meta?.taskUrl || existing.taskUrl || '');
 				if (
 					existing.title !== nextTitle ||
 					Number(existing.addedAt) !== nextAddedAt ||
+					String(existing.lastMessageTsSource || '') !== nextDateSource ||
+					(Number.isFinite(Number(existing.nativeRecentRank)) ? Number(existing.nativeRecentRank) : null) !== nextNativeRank ||
 					existing.dialogId !== nextDialogId ||
 					String(existing.taskId || '') !== nextTaskId ||
 					String(existing.taskUrl || '') !== nextTaskUrl ||
@@ -3614,6 +3893,10 @@
 				) {
 					existing.title = nextTitle;
 					existing.addedAt = nextAddedAt;
+					existing.lastMessageTs = nextAddedAt;
+					existing.lastMessageTsSource = nextDateSource;
+					if (nextNativeRank == null) delete existing.nativeRecentRank;
+					else existing.nativeRecentRank = nextNativeRank;
 					existing.dialogId = nextDialogId;
 					existing.taskId = nextTaskId;
 					existing.taskUrl = nextTaskUrl;
@@ -3627,6 +3910,11 @@
 				dialogId: _normalizeDialogControlRestDialogId(meta?.restDialogId || id),
 				title: title || `Диалог ${id.replace(/^chat/i, '')}`,
 				addedAt: Number(meta?.lastMessageTs) || Date.now(),
+				lastMessageTs: Number(meta?.lastMessageTs) || 0,
+				lastMessageTsSource: String(meta?.lastMessageTsSource || ''),
+				...(Number.isFinite(Number(meta?.nativeRecentRank)) && Number(meta?.nativeRecentRank) >= 0
+					? { nativeRecentRank: Number(meta.nativeRecentRank) }
+					: {}),
 				recentManaged: true,
 				taskId: meta?.taskId || '',
 				taskUrl: meta?.taskUrl || ''
@@ -3658,13 +3946,14 @@
 			type: domMeta.type || recent.type,
 			hasMention: !!(domMeta.hasMention || recent.hasMention)
 		});
-		const countersFresh = Number(recent.counterFetchedAt) > 0 &&
-			Date.now() - Number(recent.counterFetchedAt) <= (_DIALOG_RECENT_QUICK_MS * 3);
+		const recentCounterAt = Math.max(0, Number(recent.counterFetchedAt) || 0);
+		const countersFresh = recentCounterAt > 0 &&
+			Date.now() - recentCounterAt <= (_DIALOG_RECENT_QUICK_MS * 3);
 		if (countersFresh) {
 			merged.unreadCount = Math.max(0, Number(recent.unreadCount) || 0);
 			merged.hasUnread = !!recent.hasUnread;
 			merged.hasLater = !!recent.hasLater;
-			merged.hasMention = !!(recent.hasMention || domMeta.hasMention);
+			merged.hasMention = !!recent.hasMention;
 		}
 		return merged;
 	}
@@ -3675,8 +3964,27 @@
 		if (!IS_OL_FRAME && _isDialogControlNativeMode()) {
 			const container = findContainer();
 			_renderDialogControlNativeSwitcher(container, _getDialogControlItems());
-			_dialogControlLastSig = _getDialogControlStatusSig();
 			_scheduleDialogControlNativeView(container, { restoreDisplay: false });
+		} else if (filtersHost && document.body.contains(filtersHost)) {
+			_refreshDialogControlPanel(filtersHost);
+		}
+	}
+
+	function _notifyDialogRecentCountersChanged(container = findContainer()) {
+		_invalidateDialogControlDomReadCache();
+		if (!IS_OL_FRAME && _isDialogControlNativeMode()) {
+			const switcher = _dialogControlNativeSwitcherNode;
+			const context = switcher?._penaNativeRenderContext;
+			if (switcher?.isConnected && context?.container === container) {
+				_syncDialogControlNativeCounterStatuses(switcher, _getDialogControlItems());
+			} else {
+				_renderDialogControlNativeSwitcher(container, _getDialogControlItems());
+			}
+			// Bitrix already painted the row counter. Only the extension's unread-only
+			// view needs a row pass; folder/group badges use the catalog counter index.
+			if (_getDialogControlViewPrefs().unreadOnly) {
+				_scheduleDialogControlNativeView(container, { restoreDisplay: false });
+			}
 		} else if (filtersHost && document.body.contains(filtersHost)) {
 			_refreshDialogControlPanel(filtersHost);
 		}
@@ -3701,6 +4009,7 @@
 
 	async function _syncDialogRecentData(options = {}) {
 		if (IS_OL_FRAME || !isInternalChatsDOM()) return { count: _dialogRecentMeta.size, skipped: true };
+		const syncMode = _pMode();
 		if (!_dialogRecentRepositoryReady) await _bootstrapDialogRecentRepository();
 		if (!_isDialogControlNativePassThrough() && ['manual', 'gate-retry'].includes(String(options.reason || '')) && !_countDialogRecentMeta()) {
 			_beginDialogRecentInteractionGate(options.reason);
@@ -3741,6 +4050,7 @@
 			return { count: _dialogRecentMeta.size, skipped: true };
 		}
 		_dialogRecentLastAttemptAt = now;
+		_dialogRecentSyncUiSilent = options.silent === true;
 		_dialogRecentSyncPromise = (async () => {
 			const configuredLoadLimit = _getDialogRecentLoadLimit();
 			const loadLimit = options.completeCatalog === true ? 0 : configuredLoadLimit;
@@ -3762,13 +4072,17 @@
 			let completionConfirmedWithoutTotal = false;
 			let metadataFreeStagnantPages = 0;
 			let fastPages = [];
+			let interactionInterrupted = false;
+			const interactionFenceAt = Date.now();
 			const countersPromise = _fetchDialogCounterSnapshotWithRetry().catch(error => {
 				_dialogRecentCountersError = String(error?.message || error || 'Ошибка счётчиков');
 				return null;
 			});
 			if (nextFullMap) _ensureDialogRecentMandatoryMeta(nextFullMap, mandatory);
 			_dialogRecentLastError = '';
+			_dialogRecentLastErrorMode = '';
 			_dialogRecentProgress = {
+				mode: syncMode,
 				phase: full ? 'full-sync' : 'incremental-sync',
 				loadedCount: 0,
 				expectedTotal: loadLimit || null,
@@ -3783,6 +4097,12 @@
 				let offset = 0;
 				const deltaCursor = Math.max(0, Number(_dialogRecentLastSuccessAt) || 0);
 				while (pages < (full ? _DIALOG_RECENT_MAX_PAGES : 1)) {
+					if (options.interactionFriendly === true && pages > 0 && _dialogNativeLastUserActivityAt > interactionFenceAt) {
+						interactionInterrupted = true;
+						truncated = true;
+						fullPassComplete = true;
+						break;
+					}
 					let page;
 					let pageWasPrefetched = false;
 					if (full && fastPages.length) {
@@ -3990,7 +4310,9 @@
 					Math.max(0, Number(_dialogRecentProgress.startedAt) || 0)
 				);
 				_dialogRecentLastError = '';
+				_dialogRecentLastErrorMode = '';
 				_dialogRecentLastSoftError = '';
+				_dialogRecentLastSoftErrorMode = '';
 				_dialogRecentLastSoftErrorAt = 0;
 				const added = _hydrateAllDialogControlModesFromRecent();
 				const committedCount = _countDialogRecentMeta();
@@ -4015,21 +4337,33 @@
 					_completeDialogRecentInteractionGate();
 				}
 				let detailResult;
-				_dialogRecentDetailUiSilent = true;
-				try {
-					detailResult = await _runDialogRecentDetailPass(new Set(), {
-						mandatory: _getDialogRecentMandatoryItems(),
-						resetProgress: true,
-						forceAccessRetry: gateWasBlocked || options.reason === 'manual'
-					});
-				} finally {
-					_dialogRecentDetailUiSilent = false;
+				const resolveMandatoryDetails = options.resolveMandatoryDetails === true ||
+					['manual', 'gate-retry', 'view-demand'].includes(String(options.reason || ''));
+				if (!interactionInterrupted && resolveMandatoryDetails) {
+					_dialogRecentDetailUiSilent = true;
+					try {
+						// A full refresh already confirms recent-dialog availability. Only
+						// unresolved or quarantined folder items need an access check here;
+						// optional avatars/previews hydrate with the visible window.
+						const accessChecks = new Map(Array.from(_getDialogRecentMandatoryItems()).filter(([id]) => {
+							const meta = _getDialogRecentMeta(id);
+							return !meta || _isDialogRecentPending(meta) || _isDialogRecentUnavailable(meta) ||
+								(Number(meta.detailFetchedAt) > 0 && meta.messagePreviewResolved === false);
+						}));
+						detailResult = await _runDialogRecentDetailPass(new Set(), {
+							mandatory: accessChecks,
+							resetProgress: true,
+							forceAccessRetry: gateWasBlocked || options.reason === 'manual'
+						});
+					} finally {
+						_dialogRecentDetailUiSilent = false;
+					}
 				}
 				const currentMandatory = _getDialogRecentMandatoryItems();
-				const unresolvedMandatory = Array.from(currentMandatory.keys()).filter(id => {
+				const unresolvedMandatory = resolveMandatoryDetails ? Array.from(currentMandatory.keys()).filter(id => {
 					const meta = _getDialogRecentMeta(id);
 					return !meta || _isDialogRecentPending(meta);
-				});
+				}) : [];
 				const verificationErrors = [];
 				if (unresolvedMandatory.length) verificationErrors.push(`Не удалось проверить ${unresolvedMandatory.length} диалог(а) в папках`);
 				if (_dialogRecentCountersError) verificationErrors.push('Не удалось получить актуальные уведомления');
@@ -4037,7 +4371,9 @@
 				// The complete catalog is already usable. A failed optional detail/counter
 				// check is a recoverable warning and must not replace it with a hard error.
 				_dialogRecentLastError = '';
+				_dialogRecentLastErrorMode = '';
 				_dialogRecentLastSoftError = verificationError;
+				_dialogRecentLastSoftErrorMode = verificationError ? syncMode : '';
 				_dialogRecentLastSoftErrorAt = verificationError ? Date.now() : 0;
 				_dialogRecentProgress = Object.assign({}, _dialogRecentProgress, {
 					phase: 'ready',
@@ -4063,6 +4399,7 @@
 					controlledCount: currentMandatory.size,
 					verificationPending: unresolvedMandatory.length,
 					truncated,
+					interactionInterrupted,
 					catalogComplete: fullCatalogComplete,
 					totalMetadataInconsistent,
 					expectedTotal: Number.isFinite(_dialogRecentProgress.expectedTotal)
@@ -4089,9 +4426,12 @@
 					_notifyDialogRecentDataChanged();
 				}
 				const syncError = String(e?.message || e || 'Ошибка синхронизации');
-				const softBackgroundFailure = !full && options.silent === true && hadPreviousCatalog;
+				const softBackgroundFailure = options.silent === true && hadPreviousCatalog;
 				if (softBackgroundFailure) {
+					_dialogRecentLastError = '';
+					_dialogRecentLastErrorMode = '';
 					_dialogRecentLastSoftError = syncError;
+					_dialogRecentLastSoftErrorMode = syncMode;
 					_dialogRecentLastSoftErrorAt = Date.now();
 					_dialogRecentProgress = Object.assign({}, previousProgress, {
 						phase: previousProgress?.phase === 'error' ? 'ready' : (previousProgress?.phase || 'ready'),
@@ -4102,6 +4442,7 @@
 					return { count: _countDialogRecentMeta(), backgroundFailed: true, error: syncError };
 				}
 				_dialogRecentLastError = syncError;
+				_dialogRecentLastErrorMode = syncMode;
 				_dialogRecentProgress = Object.assign({}, _dialogRecentProgress, {
 					phase: 'error',
 					loadedCount: currentWindowIds.size,
@@ -4119,6 +4460,7 @@
 			} finally {
 				_dialogRecentSyncPromise = null;
 				_dialogRecentActiveLoadLimit = null;
+				_dialogRecentSyncUiSilent = false;
 				_publishDialogRecentSyncState();
 			}
 		})();
@@ -4161,6 +4503,174 @@
 		return null;
 	}
 
+	function _setDialogTimeTaskEligibility(taskId, enabled, checkedAt = Date.now()) {
+		const id = String(taskId || '').trim();
+		if (!/^\d+$/.test(id) || typeof enabled !== 'boolean') return false;
+		_dialogTimeTaskEligibility.set(id, enabled);
+		_dialogTimeTaskEligibilityCheckedAt.set(id, Math.max(0, Number(checkedAt) || Date.now()));
+		return true;
+	}
+
+	function _rememberDialogTimeTaskChat(taskId, rawChatId) {
+		const id = String(taskId || '').trim();
+		const chatId = String(rawChatId || '').trim();
+		if (!/^\d+$/.test(id) || !/^(?:chat)?\d+$/i.test(chatId)) return '';
+		const dialogId = normId(/^chat/i.test(chatId) ? chatId : `chat${chatId}`);
+		if (dialogId) {
+			_dialogTimeTaskChatDialogIds.set(id, dialogId);
+			_dialogTimeTaskIdsByChatDialogId.set(dialogId, id);
+		}
+		return dialogId;
+	}
+
+	function _getDialogTimeTaskChatDialogId(taskId) {
+		const id = String(taskId || '').trim();
+		if (!/^\d+$/.test(id)) return '';
+		const cached = normId(_dialogTimeTaskChatDialogIds.get(id) || '');
+		if (cached) return cached;
+		const meta = _getDialogRecentUniqueMeta().find(item => item?.isTask === true && String(item.taskId || '') === id);
+		if (!meta?.id) return '';
+		_dialogTimeTaskChatDialogIds.set(id, normId(meta.id));
+		_dialogTimeTaskIdsByChatDialogId.set(normId(meta.id), id);
+		return normId(meta.id);
+	}
+
+	function _getFreshDialogTimeTaskEligibility(taskId, now = Date.now()) {
+		const id = String(taskId || '').trim();
+		if (!/^\d+$/.test(id) || !_dialogTimeTaskEligibility.has(id)) return null;
+		const checkedAt = Math.max(0, Number(_dialogTimeTaskEligibilityCheckedAt.get(id)) || 0);
+		const age = Number(now) - checkedAt;
+		if (!checkedAt || !Number.isFinite(age) || age < 0 || age >= _DIALOG_TIME_TASK_ELIGIBILITY_TTL_MS) return null;
+		return _dialogTimeTaskEligibility.get(id) === true;
+	}
+
+	function _getDialogTimeTaskEligibilityForDisplay(taskId) {
+		const fresh = _getFreshDialogTimeTaskEligibility(taskId);
+		if (fresh != null) return fresh;
+		// Keep already rendered totals stable while the bounded title/eligibility
+		// worker revalidates this task. Mutating actions never use this stale value.
+		return _dialogTimeTaskEligibility.get(String(taskId || '').trim()) === true;
+	}
+
+	function _getDialogTimeEligibleTaskIds() {
+		return Array.from(_dialogTimeTaskEligibility.entries())
+			.filter(([taskId, enabled]) => enabled === true)
+			.map(([taskId]) => String(taskId))
+			.sort((left, right) => Number(left) - Number(right));
+	}
+
+	function _getDialogTimeWorkingTaskIds(range = _dialogTimeRange) {
+		const normalized = _PENA_TIME_CONTROL?.normalizeRange?.(range?.from, range?.to) || range || {};
+		const ids = new Set();
+		const add = value => {
+			const id = String(value || '').trim();
+			if (/^\d+$/.test(id) && _getDialogTimeTaskEligibilityForDisplay(id)) ids.add(id);
+		};
+		for (const record of _dialogTimeCache.values()) {
+			(record?.data?.tasks || []).forEach(task => add(task?.taskId));
+		}
+		if (normalized.from && normalized.to && _PENA_TIME_CONTROL?.addDays) {
+			let dateKey = normalized.from;
+			for (let day = 0; day < 8 && dateKey <= normalized.to; day += 1) {
+				_readDialogTimeVisits(dateKey).forEach(visit => add(visit?.taskId));
+				if (dateKey === normalized.to) break;
+				dateKey = _PENA_TIME_CONTROL.addDays(dateKey, 1);
+			}
+		}
+		add(_dialogTimeManualSelectedTask?.taskId);
+		add(_readDialogTimeTracker()?.taskId);
+		add(_getActiveDialogTimeActivity()?.taskId);
+		// Keep a small deterministic safety sample so a portal-side time entry can
+		// still surface before the dialog has been opened in this browser session.
+		_getDialogTimeEligibleTaskIds().slice(0, 8).forEach(add);
+		// One Bitrix batch with a small recent working set is enough for the initial
+		// panel. Old tasks enter this set through search/activity instead of turning
+		// every panel open into a portal-wide elapsed-time crawl.
+		const recent = _getDialogRecentUniqueMeta()
+			.filter(meta => meta?.isTask === true && _getDialogTimeTaskEligibilityForDisplay(String(meta.taskId || '')))
+			.sort((left, right) => (Number(right.lastMessageTs) || 0) - (Number(left.lastMessageTs) || 0));
+		for (const meta of recent) {
+			if (ids.size >= 16) break;
+			add(meta.taskId);
+		}
+		return Array.from(ids).sort((left, right) => Number(left) - Number(right));
+	}
+
+	let _dialogTimeCatalogPromise = null;
+	let _dialogTimeCatalogCursor = 0;
+	let _dialogTimeCatalogScope = '';
+	let _dialogTimeCatalogTimer = null;
+	async function _refreshDialogTimeTaskCatalog({ force = false } = {}) {
+		if (_dialogTimeCatalogPromise) return _dialogTimeCatalogPromise;
+		const scope = _getDialogNativeSharedAuditScopeKey();
+		const current = () => scope === _getDialogNativeSharedAuditScopeKey() && _dialogControlNativeWorkspaceTab === 'time' && document.visibilityState !== 'hidden';
+		if (!scope || !current()) return;
+		if (scope !== _dialogTimeCatalogScope) { _dialogTimeCatalogCursor = 0; _dialogTimeCatalogScope = scope; }
+		const since = force ? 0 : _dialogTimeCatalogCursor;
+		const startedAt = Date.now();
+		_dialogTimeCatalogPromise = (async () => {
+			let start = 0;
+			const seen = new Set();
+			while (current()) {
+				const filter = since ? { '>=CHANGED_DATE': new Date(since - 60000).toISOString() } : {};
+				const revisions = new Map(_dialogTimeTaskRevisions);
+				const page = await _callBxRestPage('tasks.task.list', {
+					filter, select: ['ID', 'TITLE', 'CHAT_ID', 'ALLOW_TIME_TRACKING', 'CHANGED_DATE'],
+					order: { ID: 'asc' }, start
+				}, { isCurrent: current });
+				if (!current()) return;
+				const rows = _extractDialogTaskCatalogRows(page.data);
+				const newIds = rows.map(row => String(row.ID ?? row.id)).filter(id => !seen.has(id));
+				if (rows.length && !newIds.length) throw new Error('Task pagination repeated a page');
+				newIds.forEach(id => seen.add(id));
+				_publishDialogTimeTaskIndexRows(rows.filter(row => {
+					const id = String(row.ID ?? row.id);
+					return (revisions.get(id) || 0) === (_dialogTimeTaskRevisions.get(id) || 0);
+				}));
+				const range = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
+				_loadDialogTimeRange(range).catch(() => {});
+				if (_dialogTimeManualSearchQuery && !_dialogTimeManualSelectedTask) {
+					_dialogTimeManualSearchResults = _getDialogTimeLocalTaskSearchResults(_dialogTimeManualSearchQuery);
+					_renderDialogTimeManualSearch();
+				}
+				if (!(page.next != null && page.next > start) && rows.length < 50) {
+					_dialogTimeCatalogCursor = startedAt;
+					return;
+				}
+				start = page.next != null && page.next > start ? page.next : start + 50;
+				await _sleepDialogControl(200);
+			}
+		})().finally(() => {
+			_dialogTimeCatalogPromise = null;
+			clearTimeout(_dialogTimeCatalogTimer);
+			if (current()) _dialogTimeCatalogTimer = setTimeout(() => _refreshDialogTimeTaskCatalog().catch(() => {}), 15000);
+		});
+		return _dialogTimeCatalogPromise;
+	}
+
+	function _publishDialogTimeTaskIndexRows(rows = []) {
+		let changed = false;
+		for (const task of Array.isArray(rows) ? rows : []) {
+			const taskId = String(task?.ID ?? task?.id ?? '').trim();
+			if (!/^\d+$/.test(taskId)) continue;
+			const title = String(task?.TITLE ?? task?.title ?? '').replace(/\s+/g, ' ').trim();
+			const enabled = _readDialogTaskTimeTrackingFlag(task);
+			_rememberDialogTimeTaskChat(taskId, task?.CHAT_ID ?? task?.chatId ?? task?.chat?.id);
+			if (title && _dialogTimeTaskTitles.get(taskId) !== title) {
+				_dialogTimeTaskTitles.set(taskId, title);
+				changed = true;
+			}
+			if (enabled != null) {
+				if (_dialogTimeTaskEligibility.get(taskId) !== enabled) changed = true;
+				// Every explicit Bitrix response renews the evidence, even when the
+				// boolean value itself did not change.
+				_setDialogTimeTaskEligibility(taskId, enabled);
+			}
+		}
+		if (changed) _queueDialogTimeUiSync();
+		return changed;
+	}
+
 	function _mergeDialogTaskCatalogRows(rows = []) {
 		let merged = 0;
 		const fetchedAt = Date.now();
@@ -4172,9 +4682,12 @@
 			if (!id) continue;
 			const previous = _getDialogRecentMeta(id) || {};
 			const displayTitle = String(task?.TITLE ?? task?.title ?? previous.displayTitle ?? '').replace(/\s+/g, ' ').trim();
-			const timeTrackingEnabled = _readDialogTaskTimeTrackingFlag(task);
+			const explicitTimeTrackingEnabled = _readDialogTaskTimeTrackingFlag(task);
+			const timeTrackingEnabled = explicitTimeTrackingEnabled == null && typeof previous.timeTrackingEnabled === 'boolean'
+				? previous.timeTrackingEnabled
+				: explicitTimeTrackingEnabled;
 			const taskActivityTs = _parseDialogRecentDate(
-				task?.ACTIVITY ?? task?.activity ?? task?.CHANGED_DATE ?? task?.changedDate ?? ''
+				task?.ACTIVITY_DATE ?? task?.activityDate ?? task?.CHANGED_DATE ?? task?.changedDate ?? ''
 			);
 			const meta = Object.assign({}, previous, {
 				id,
@@ -4187,12 +4700,13 @@
 				restDialogId: _normalizeDialogControlRestDialogId(id),
 				timeTrackingEnabled,
 				lastMessageTs: Math.max(0, Number(previous.lastMessageTs) || taskActivityTs || 0),
+				lastMessageTsSource: previous.lastMessageTsSource || (taskActivityTs ? 'task-activity' : ''),
 				taskCatalogFetchedAt: fetchedAt,
 				availability: previous.availability === 'unavailable' ? 'unavailable' : 'available',
 				fetchedAt
 			});
 			_setDialogRecentMeta(_dialogRecentMeta, meta, [id, rawChatId]);
-			if (timeTrackingEnabled != null) _dialogTimeTaskEligibility.set(rawTaskId, timeTrackingEnabled);
+			if (explicitTimeTrackingEnabled != null) _setDialogTimeTaskEligibility(rawTaskId, explicitTimeTrackingEnabled, fetchedAt);
 			if (displayTitle) _dialogTimeTaskTitles.set(rawTaskId, displayTitle);
 			merged += 1;
 		}
@@ -4200,13 +4714,21 @@
 	}
 
 	async function _syncDialogTaskCatalog(options = {}) {
-		if (_dialogTaskCatalogSyncPromise) return _dialogTaskCatalogSyncPromise;
-		if (!options.force && _dialogTaskCatalogComplete) {
-			return { count: _getDialogRecentUniqueMeta().filter(meta => meta.isTask === true).length, complete: true, cached: true };
+		const scopeKey = _getDialogNativeSharedAuditScopeKey();
+		const forceNetwork = options.forceNetwork === true || options.force === true;
+		const headOnly = options.headOnly === true;
+		const requestScopeKey = `${scopeKey}:${headOnly ? 'head' : 'full'}`;
+		if (_dialogTaskCatalogSyncPromise && _dialogTaskCatalogSyncScopeKey === requestScopeKey) return _dialogTaskCatalogSyncPromise;
+		if (!forceNetwork && _isDialogTaskCatalogMetadataFresh()) {
+			return _dialogTaskCatalogLastResult
+				? { ..._dialogTaskCatalogLastResult, cached: true }
+				: { count: _getDialogRecentUniqueMeta().filter(meta => meta.isTask === true).length, complete: true, cached: true, rows: [] };
 		}
-		_dialogTaskCatalogSyncPromise = (async () => {
-			const select = ['ID', 'TITLE', 'CHAT_ID', 'ALLOW_TIME_TRACKING', 'ACTIVITY', 'CHANGED_DATE'];
-			const maxPages = _DIALOG_TASK_CATALOG_MAX_PAGES;
+		const syncPromise = (async () => {
+			const select = ['ID', 'TITLE', 'CHAT_ID', 'ALLOW_TIME_TRACKING', 'ACTIVITY_DATE', 'CHANGED_DATE'];
+			const maxPages = headOnly
+				? Math.max(1, Math.min(4, Number(options.maxPages) || 1))
+				: _DIALOG_TASK_CATALOG_MAX_PAGES;
 			let rows = [];
 			let pages = 0;
 			let complete = false;
@@ -4217,9 +4739,16 @@
 			let emptyQuorumConfirmed = false;
 			let emptyNativeContradiction = false;
 			while (pages < maxPages) {
-				const page = await _callBxRestPageWithTimeout('tasks.task.list', { select, start }, 12000);
+				const page = await _callBxRestPageWithTimeout('tasks.task.list', { select, order: { ACTIVITY_DATE: 'desc' }, start }, 12000);
+				if (!scopeKey || scopeKey !== _getDialogNativeSharedAuditScopeKey()) {
+					return { count: 0, tasks: 0, pages, complete: false, discarded: true, reason: 'task-catalog-fenced', rows: [] };
+				}
 				const batch = _extractDialogTaskCatalogRows(page?.data);
 				rows.push(...batch);
+				// Time tracking has its own lightweight index. Publish every successful
+				// page immediately instead of waiting for the unrelated recent-dialog
+				// catalog to finish or fail.
+				_publishDialogTimeTaskIndexRows(batch);
 				pages += 1;
 				if (page?.total != null && Number.isFinite(Number(page.total)) && Number(page.total) >= 0) {
 					total = Math.max(0, Number(page.total));
@@ -4263,15 +4792,32 @@
 				if (id) unique.set(id, task);
 			});
 			const uniqueRows = Array.from(unique.values());
+			if (!scopeKey || scopeKey !== _getDialogNativeSharedAuditScopeKey()) {
+				return { count: 0, tasks: 0, pages, complete: false, discarded: true, reason: 'task-catalog-fenced', rows: [] };
+			}
+			_publishDialogTimeTaskIndexRows(uniqueRows);
 			const merged = options.deferMerge === true ? 0 : _mergeDialogTaskCatalogRows(uniqueRows);
-			_dialogTaskCatalogComplete = complete;
+			// A lightweight head refresh enriches recent tasks but must neither erase
+			// an older complete index nor claim that the whole task catalog was read.
+			if (!headOnly || complete) _dialogTaskCatalogComplete = complete;
 			_dialogTaskCatalogFetchedAt = Date.now();
-			return { count: merged, tasks: unique.size, pages, expectedTotal: total, complete, paginationChainValid, emptyQuorumConfirmed, emptyNativeContradiction, rows: uniqueRows };
-		})().finally(() => { _dialogTaskCatalogSyncPromise = null; });
-		return _dialogTaskCatalogSyncPromise;
+			_dialogTaskCatalogScopeKey = scopeKey;
+			const result = { count: merged, tasks: unique.size, pages, expectedTotal: total, complete, headOnly, paginationChainValid, emptyQuorumConfirmed, emptyNativeContradiction, rows: uniqueRows };
+			if (!headOnly || complete || !_dialogTaskCatalogLastResult) _dialogTaskCatalogLastResult = result;
+			return result;
+		})().finally(() => {
+			if (_dialogTaskCatalogSyncPromise === syncPromise) {
+				_dialogTaskCatalogSyncPromise = null;
+				_dialogTaskCatalogSyncScopeKey = '';
+			}
+		});
+		_dialogTaskCatalogSyncPromise = syncPromise;
+		_dialogTaskCatalogSyncScopeKey = requestScopeKey;
+		return syncPromise;
 	}
 
 	function _commitDialogTaskCatalogResult(taskCatalog) {
+		if (taskCatalog?.discarded === true) return 0;
 		const rows = Array.isArray(taskCatalog?.rows) ? taskCatalog.rows : [];
 		const merged = rows.length ? _mergeDialogTaskCatalogRows(rows) : 0;
 		const hydrated = _hydrateAllDialogControlModesFromRecent({ pruneMissing: false });
@@ -4316,10 +4862,17 @@
 		_syncDialogNativeOriginalLoadUi(container);
 		_dialogRecentApiLoadPromise = (async () => {
 			try {
-				// Both catalogs start together. tasks.task.list is kept separate from the
-				// recent-map commit, then merged again after that atomic commit so a fast
-				// task response cannot be overwritten by im.recent.list.
-				const taskCatalogPromise = _syncDialogTaskCatalog({ force: true, deferMerge: true }).then(
+				// The dialog index comes from im.recent.list. A full tasks.task.list crawl
+				// is unrelated to displaying old dialogs and can starve Messenger requests.
+				// Keep background/startup work to one recent-task page; the complete task
+				// catalog is fetched only by an explicit manual audit.
+				const fullTaskCatalog = options.forceTaskCatalog === true || String(options.reason || '') === 'manual';
+				const taskCatalogPromise = _syncDialogTaskCatalog({
+					force: true,
+					deferMerge: true,
+					headOnly: !fullTaskCatalog,
+					maxPages: 4
+				}).then(
 					value => ({ value, error: null }),
 					error => ({ value: null, error })
 				);
@@ -4327,7 +4880,7 @@
 					...options,
 					full: true,
 					force: true,
-					fastBatch: true,
+					fastBatch: options.interactionFriendly !== true,
 					completeCatalog: true,
 					deferInteractionGateCompletion: true,
 					reason: String(options.reason || 'startup-fast-catalog')
@@ -4349,7 +4902,9 @@
 				const apiExpectedTotal = Number(result?.expectedTotal);
 				const recentComplete = result?.catalogComplete === true;
 				const taskComplete = taskCatalog?.complete === true;
-				const apiComplete = recentComplete && taskComplete;
+				// Recent-dialog completeness is independent from the optional task-time
+				// enrichment index. Coupling them caused endless retries and REST pressure.
+				const apiComplete = recentComplete;
 				const chatLoadedCount = _getDialogRecentUniqueMeta().filter(meta => meta.isTask !== true).length;
 				const taskLoadedCount = _getDialogRecentUniqueMeta().filter(meta => meta.isTask === true).length;
 				_dialogRecentLastApiResult = {
@@ -4377,8 +4932,11 @@
 				_scheduleDialogRecentCacheWrite(80);
 				if (!apiComplete) {
 					if (apiOwnsMaterialization && !recentComplete) _dialogNativeBackgroundPendingModes.add('chats');
-					if (apiOwnsMaterialization && !taskComplete) _dialogNativeBackgroundPendingModes.add('tasks');
-					_scheduleDialogRecentApiCompletionRetry('catalog-truncated');
+					if (result?.interactionInterrupted === true) {
+						_scheduleDialogDeepRefresh('interaction-paused-audit', 60000);
+					} else {
+						_scheduleDialogRecentApiCompletionRetry('catalog-truncated');
+					}
 				} else {
 					_dialogRecentTruncated = false;
 					if (apiOwnsMaterialization && _dialogNativeOriginalScrollActive) {
@@ -4425,6 +4983,49 @@
 		const scope = _getDialogRecentRepositoryScope();
 		if (!scope?.portalHost || !scope?.userId) return '';
 		return `${String(scope.portalHost).toLowerCase()}~${String(scope.userId)}~${mode === 'tasks' ? 'tasks' : 'chats'}`;
+	}
+
+	function _getDialogNativeSharedAuditScopeKey() {
+		const scope = _getDialogRecentRepositoryScope();
+		if (!scope?.portalHost || !scope?.userId) return '';
+		return `${String(scope.portalHost).toLowerCase()}~${String(scope.userId)}`;
+	}
+
+	function _bindDialogNativeSharedExpectedCatalog(mode, sourceGeneration, sourceContainer, sourceViewport) {
+		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
+		const shared = _dialogNativeSharedExpectedCatalog;
+		if (!shared || shared.complete !== true || shared.scopeKey !== _getDialogNativeSharedAuditScopeKey() ||
+			Number(shared.catalogVersion) !== _DIALOG_CATALOG_CACHE_VERSION ||
+			Date.now() - Math.max(0, Number(shared.auditedAt) || 0) >= _getDialogAuditRefreshMs() ||
+			!_isDialogNativeSourceGenerationCurrent(targetMode, sourceContainer, sourceViewport, sourceGeneration)) return null;
+		const ids = Array.from(new Set((shared.idsByMode?.[targetMode] || []).map(normId).filter(Boolean)));
+		if (!ids.length) {
+			const sourceRows = _getDialogNativeSourceRows(sourceContainer);
+			if (sourceRows.length || !_isDialogNativeSourceExplicitlyEmpty(sourceContainer)) return null;
+		}
+		const proof = {
+			complete: true,
+			mode: targetMode,
+			scopeKey: _getDialogNativeExpectedAuditScopeKey(targetMode),
+			catalogVersion: _DIALOG_CATALOG_CACHE_VERSION,
+			sourceGeneration: Number(sourceGeneration),
+			sourceContainer,
+			sourceViewport,
+			auditedAt: Math.max(0, Number(shared.auditedAt) || 0),
+			startedAt: Math.max(0, Number(shared.startedAt) || 0),
+			ids,
+			count: ids.length,
+			pages: Math.max(0, Number(shared.pages) || 0),
+			metadata: shared.metadata instanceof Map ? shared.metadata : new Map(),
+			kind: 'api',
+			sharedCatalog: true,
+			emptyQuorumConfirmed: shared.emptyQuorumConfirmed === true,
+			totalMetadataInconsistent: shared.totalMetadataInconsistent === true,
+			paginationChainValid: true,
+			reason: 'shared-catalog'
+		};
+		_dialogNativeExpectedCatalogs.set(targetMode, proof);
+		return proof;
 	}
 
 	function _recordDialogNativeRepositoryExpectedCatalogs(snapshot, scope) {
@@ -4507,6 +5108,21 @@
 			_isDialogNativeSourceGenerationCurrent(targetMode, proof.sourceContainer, proof.sourceViewport, sourceGeneration);
 	}
 
+	function _getDialogNativeCurrentCatalogCount(mode, physicalCount = 0, sourceGeneration = null) {
+		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
+		const source = _dialogNativeSourceGenerations.get(targetMode);
+		const generation = Number(sourceGeneration ?? source?.generation) || 0;
+		const proof = _dialogNativeExpectedCatalogs.get(targetMode);
+		const proofCount = _isDialogNativeExpectedAuditCurrent(proof, targetMode, generation)
+			? Math.max(0, Number(proof.count) || (Array.isArray(proof.ids) ? proof.ids.length : 0))
+			: 0;
+		// The catalog counter describes the current fenced source, not every record
+		// retained in storage. Live deltas and tombstones may legitimately coexist with
+		// an in-flight physical generation; counting the whole metadata map made a
+		// complete 83-row source report 85 and prevented recovery from finishing.
+		return Math.max(0, Number(physicalCount) || 0, proofCount);
+	}
+
 	function _mergeDialogNativeExpectedAuditMeta(previous, meta, auditStartedAt = 0) {
 		const id = normId(meta?.id || previous?.id);
 		const startedAt = Math.max(0, Number(auditStartedAt) || 0);
@@ -4541,6 +5157,18 @@
 				mergedMeta.hasUnread = false;
 				mergedMeta.hasLater = false;
 				mergedMeta.hasMention = false;
+			}
+		}
+		const previousTaskAt = Math.max(0, Number(previous?.taskCatalogFetchedAt) || 0);
+		const incomingTaskAt = Math.max(0, Number(incomingMeta?.taskCatalogFetchedAt) || 0);
+		if (previousTaskAt > 0 && (previousTaskAt >= incomingTaskAt || (startedAt > 0 && previousTaskAt >= startedAt))) {
+			for (const field of ['isTask', 'taskId', 'taskUrl', 'timeTrackingEnabled', 'taskCatalogFetchedAt']) {
+				if (previous[field] !== undefined) mergedMeta[field] = previous[field];
+			}
+			if (previous.isTask === true) {
+				for (const field of ['title', 'displayTitle']) {
+					if (previous[field] !== undefined) mergedMeta[field] = previous[field];
+				}
 			}
 		}
 		return mergedMeta;
@@ -4610,9 +5238,53 @@
 		return merged;
 	}
 
+	function _reconcileDialogNativeExpectedAudit(audit) {
+		if (!audit || audit.kind !== 'api') return false;
+		const mode = audit.mode === 'tasks' ? 'tasks' : 'chats';
+		const fenced = audit.scopeKey === _getDialogNativeExpectedAuditScopeKey(mode) &&
+			Number(audit.sourceGeneration) > 0 &&
+			_isDialogNativeSourceGenerationCurrent(mode, audit.sourceContainer, audit.sourceViewport, audit.sourceGeneration);
+		if (!fenced) return false;
+		if (audit.complete !== true) {
+			const reason = `metadata-audit-incomplete:${String(audit.reason || audit.error || 'unknown')}`;
+			_dialogNativeMetadataRetryStates.set(mode, { reason, retryAttempt: 0, retryAt: 0 });
+			_dialogNativeBackgroundPendingModes.add(mode);
+			_scheduleDialogNativeMetadataRetry(mode, reason);
+			return false;
+		}
+		_clearDialogNativeMetadataRetry(mode);
+		if (!_isDialogNativeExpectedAuditCurrent(audit, mode, audit.sourceGeneration)) return false;
+		const materialization = _dialogNativeMaterializedSources.get(mode);
+		if (!materialization || materialization.sourceGeneration !== audit.sourceGeneration) return false;
+		const materializedIds = new Set(materialization.ids.map(normId).filter(Boolean));
+		const missing = Array.from(new Set((audit.ids || []).map(normId).filter(Boolean)))
+			.filter(id => !materializedIds.has(id));
+		if (!missing.length) {
+			materialization.apiConfirmed = true;
+			materialization.apiProjectionExtraCount = 0;
+			// A late metadata result may confirm readiness but cannot create the physical
+			// proof by itself. Preserve the fast-path decision made while the guarded
+			// viewport, bottom token and head fence were still observable.
+			materialization.needsColdConfirmation = materialization.exactPhysicalCatalogProof === true
+				? false
+				: Math.max(0, Number(materialization.nativePassCount) || 0) < 2;
+			materialization.apiValidatedAt = Date.now();
+			return false;
+		}
+		// im.recent.list is a metadata projection, not an exact description of the
+		// currently mounted native tab. It may contain service rows or dialogs from
+		// another Bitrix projection. Keep the mismatch for diagnostics, but never
+		// invalidate a physically confirmed native feed or start an endless retry.
+		materialization.apiConfirmed = false;
+		materialization.apiProjectionExtraCount = missing.length;
+		materialization.apiValidatedAt = Date.now();
+		return false;
+	}
+
 	async function _runDialogNativeExpectedCatalogAudit(mode, sourceGeneration, options = {}) {
 		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
 		const scopeKey = _getDialogNativeExpectedAuditScopeKey(targetMode);
+		const sharedScopeKey = _getDialogNativeSharedAuditScopeKey();
 		const source = _dialogNativeSourceGenerations.get(targetMode);
 		const sourceContainer = options.sourceContainer || source?.list || null;
 		const sourceViewport = options.sourceViewport || source?.viewport || null;
@@ -4621,6 +5293,9 @@
 			return { complete: false, mode: targetMode, sourceGeneration, reason: 'audit-scope-unavailable' };
 		}
 		let current = options.forceApi === true ? null : _dialogNativeExpectedCatalogs.get(targetMode);
+		if (options.forceApi !== true && !_isDialogNativeExpectedAuditCurrent(current, targetMode, sourceGeneration)) {
+			current = _bindDialogNativeSharedExpectedCatalog(targetMode, sourceGeneration, sourceContainer, sourceViewport);
+		}
 		if (options.forceApi !== true && !_isDialogNativeExpectedAuditCurrent(current, targetMode, sourceGeneration)) {
 			current = _bindDialogNativeRepositoryExpectedCatalog(targetMode, sourceGeneration);
 		}
@@ -4709,10 +5384,19 @@
 			}
 
 			let taskCatalog = null;
-			try {
-				const taskOutcome = await options.taskCatalogOutcomePromise;
-				if (!taskOutcome?.error) taskCatalog = taskOutcome?.value || null;
-			} catch {}
+			const recentRowsExplicitlyClassified = Array.from(recentIds).every(id => {
+				const value = metadata.get(id)?.isTask;
+				return value === true || value === false;
+			});
+			// A slow tasks.task.list crawl must not hold a complete chats audit when
+			// every im.recent.list row already carries an explicit task/non-task type.
+			// The task index still resolves and commits independently in the caller.
+			if (!recentRowsExplicitlyClassified) {
+				try {
+					const taskOutcome = await options.taskCatalogOutcomePromise;
+					if (!taskOutcome?.error) taskCatalog = taskOutcome?.value || null;
+				} catch {}
+			}
 			const taskChatIds = new Set(_getDialogRecentUniqueMeta().filter(meta => meta?.isTask === true).map(meta => normId(meta?.id)).filter(Boolean));
 			if (taskCatalog?.complete === true) {
 				for (const task of taskCatalog.rows || []) {
@@ -4722,19 +5406,61 @@
 				}
 			}
 			let classificationComplete = true;
-			const ids = [];
+			const idsByMode = { chats: [], tasks: [] };
 			for (const id of recentIds) {
 				const meta = metadata.get(id) || {};
 				const explicitlyClassified = meta.isTask === true || meta.isTask === false;
 				if (!explicitlyClassified && taskCatalog?.complete !== true) classificationComplete = false;
 				const isTask = meta.isTask === true || taskChatIds.has(id);
-				if ((targetMode === 'tasks') === isTask) ids.push(id);
+				idsByMode[isTask ? 'tasks' : 'chats'].push(id);
 			}
-			const emptyNativeContradiction = complete && classificationComplete && ids.length === 0 &&
-				_isDialogNativeSourceGenerationCurrent(targetMode, sourceContainer, sourceViewport, sourceGeneration) &&
-				_getDialogNativeSourceRows(sourceContainer).length > 0;
+			const ids = idsByMode[targetMode];
+			const sharedFenceCurrent = sharedScopeKey && sharedScopeKey === _getDialogNativeSharedAuditScopeKey() &&
+				_isDialogNativeSourceGenerationCurrent(targetMode, sourceContainer, sourceViewport, sourceGeneration);
+			if (complete && classificationComplete && !error && sharedFenceCurrent) {
+				_dialogNativeSharedExpectedCatalog = {
+					complete: true,
+					scopeKey: sharedScopeKey,
+					catalogVersion: _DIALOG_CATALOG_CACHE_VERSION,
+					auditedAt: Date.now(),
+					startedAt: auditStartedAt,
+					pages,
+					metadata,
+					idsByMode: {
+						chats: Array.from(new Set(idsByMode.chats.map(normId).filter(Boolean))),
+						tasks: Array.from(new Set(idsByMode.tasks.map(normId).filter(Boolean)))
+					},
+					emptyQuorumConfirmed,
+					totalMetadataInconsistent
+				};
+				const extendSharedTaskIds = outcome => {
+					if (outcome?.error || outcome?.value?.complete !== true ||
+						_dialogNativeSharedExpectedCatalog?.startedAt !== auditStartedAt ||
+						_dialogNativeSharedExpectedCatalog?.scopeKey !== sharedScopeKey ||
+						sharedScopeKey !== _getDialogNativeSharedAuditScopeKey() ||
+						!_isDialogNativeSourceGenerationCurrent(targetMode, sourceContainer, sourceViewport, sourceGeneration)) return;
+					const taskIds = new Set(_dialogNativeSharedExpectedCatalog.idsByMode.tasks || []);
+					for (const task of outcome.value.rows || []) {
+						const rawChatId = String(task?.CHAT_ID ?? task?.chatId ?? task?.chat?.id ?? '').trim();
+						const id = normId(/^chat/i.test(rawChatId) ? rawChatId : (/^\d+$/.test(rawChatId) ? `chat${rawChatId}` : ''));
+						if (id) taskIds.add(id);
+					}
+					_dialogNativeSharedExpectedCatalog.idsByMode.tasks = Array.from(taskIds);
+				};
+				if (taskCatalog?.complete === true) extendSharedTaskIds({ value: taskCatalog, error: null });
+				else options.taskCatalogOutcomePromise?.then(extendSharedTaskIds).catch(() => {});
+			}
+			const emptyAudit = complete && classificationComplete && ids.length === 0;
+			const sourceRows = emptyAudit &&
+				_isDialogNativeSourceGenerationCurrent(targetMode, sourceContainer, sourceViewport, sourceGeneration)
+				? _getDialogNativeSourceRows(sourceContainer)
+				: [];
+			const emptyNativeContradiction = emptyAudit && sourceRows.length > 0;
+			const emptyNativeConfirmed = emptyAudit && sourceRows.length === 0 &&
+				_isDialogNativeSourceExplicitlyEmpty(sourceContainer);
+			const emptyNativeUnconfirmed = emptyAudit && !emptyNativeContradiction && !emptyNativeConfirmed;
 			const proof = {
-				complete: complete && classificationComplete && !emptyNativeContradiction,
+				complete: complete && classificationComplete && !emptyNativeContradiction && !emptyNativeUnconfirmed,
 				mode: targetMode,
 				scopeKey,
 				catalogVersion: _DIALOG_CATALOG_CACHE_VERSION,
@@ -4750,11 +5476,14 @@
 				startedAt: auditStartedAt,
 				emptyQuorumConfirmed,
 				emptyNativeContradiction,
+				emptyNativeConfirmed,
+				emptyNativeUnconfirmed,
 				totalMetadataInconsistent,
 				paginationChainValid,
 				reason: error || (!complete ? 'audit-incomplete' : (!classificationComplete
 					? 'audit-mode-unclassified'
-					: (emptyNativeContradiction ? 'audit-empty-native-contradiction' : 'complete'))),
+					: (emptyNativeContradiction ? 'audit-empty-native-contradiction'
+						: (emptyNativeUnconfirmed ? 'audit-empty-native-unconfirmed' : 'complete')))),
 				error
 			};
 			const fenceCurrent = proof.scopeKey === _getDialogNativeExpectedAuditScopeKey(targetMode) &&
@@ -4782,12 +5511,38 @@
 
 	function _getDialogNativeSourceRows(container) {
 		if (!container) return [];
-		const selector = '.bx-im-list-recent-item__wrap,.bx-im-list-item,.bx-messenger-cl-item,[data-dialog-id],[data-dialog-id-value],[data-dialogid]';
+		const selector = '.bx-im-list-recent-item__wrap,.bx-im-list-item,.bx-messenger-cl-item,[data-dialog-id],[data-dialog-id-value],[data-dialogid],[data-chat-id],[data-user-id],[data-entity-id]';
 		return Array.from(container.querySelectorAll?.(selector) || []).filter(row => {
 			if (row.classList?.contains('pena-native-remote-row') || row.classList?.contains('pena-native-managed-row')) return false;
 			if (!_isUsableDialogCandidate(row, { allowNestedId: true })) return false;
 			const nestedOwner = row.parentElement?.closest?.(selector);
 			return !nestedOwner || !container.contains(nestedOwner);
+		});
+	}
+
+	function _isDialogNativeSourceExplicitlyEmpty(container) {
+		if (!container?.isConnected || _getDialogNativeSourceRows(container).length > 0 ||
+			_isDialogNativeBitrixBusy(container)) return false;
+		const selectors = [
+			'.bx-im-list-recent-empty-state',
+			'.bx-im-list-container-empty',
+			'.bx-im-list-recent__empty',
+			'.bx-im-list__empty',
+			'.bx-im-list-container__empty',
+			'[data-test-id*="empty"]',
+			'[class*="empty-state"]',
+			'[class*="list-empty"]'
+		];
+		return Array.from(container.querySelectorAll?.(selectors.join(',')) || []).some(node => {
+			if (node.closest?.('.pena-native-managed-empty,.pena-native-remote-row,.pena-native-managed-row')) return false;
+			let style;
+			try { style = getComputedStyle(node); } catch {}
+			if (style?.display === 'none' || style?.visibility === 'hidden' || Number(style?.opacity) === 0) return false;
+			const rect = node.getBoundingClientRect?.();
+			if (rect && rect.width <= 0 && rect.height <= 0) return false;
+			const signal = `${node.getAttribute?.('aria-label') || ''} ${node.getAttribute?.('data-test-id') || ''} ${node.className || ''} ${node.textContent || ''}`
+				.replace(/\s+/g, ' ').trim();
+			return /(?:empty|нет\s+(?:чат|диалог|задач)|ничего\s+не\s+найден|список\s+пуст|no\s+(?:chat|dialog|task)|nothing\s+found)/i.test(signal);
 		});
 	}
 
@@ -4939,7 +5694,9 @@
 			});
 		}
 		_dialogRecentLastError = '';
+		_dialogRecentLastErrorMode = '';
 		_dialogRecentLastSoftError = '';
+		_dialogRecentLastSoftErrorMode = '';
 		_dialogRecentLastSoftErrorAt = 0;
 		const changed = _hydrateDialogControlItemsFromRecent(state.mode || _pMode(), { pruneMissing: false });
 		_dialogRecentDataRevision += 1;
@@ -5003,6 +5760,18 @@
 		_dialogNativePrefetchPromise = (async () => {
 			const loadLimit = _getDialogRecentLoadLimit();
 			const originalTop = Number(sourceViewport.scrollTop) || 0;
+			const originalOverflowAnchor = {
+				value: sourceViewport.style.getPropertyValue('overflow-anchor'),
+				priority: sourceViewport.style.getPropertyPriority('overflow-anchor')
+			};
+			const originalScrollBehavior = {
+				value: sourceViewport.style.getPropertyValue('scroll-behavior'),
+				priority: sourceViewport.style.getPropertyPriority('scroll-behavior')
+			};
+			const restoreInlineProperty = (name, snapshot) => {
+				if (snapshot.value) sourceViewport.style.setProperty(name, snapshot.value, snapshot.priority);
+				else sourceViewport.style.removeProperty(name);
+			};
 			const visibleTop = _dialogControlManagedViewport?.isConnected
 				? (Number(_dialogControlManagedViewport.scrollTop) || 0)
 				: originalTop;
@@ -5016,11 +5785,17 @@
 			let lastProgressPublishedAt = 0;
 			_dialogNativePrefetchActive = true;
 			_dialogRecentProgress = {
-				phase: 'native-scroll', loadedCount: 0, expectedTotal: loadLimit || null,
+				mode, phase: 'native-scroll', loadedCount: 0, expectedTotal: loadLimit || null,
 				pagesLoaded: 0, full: true, partial: false, startedAt: state.startedAt, completedAt: 0
 			};
 			_publishDialogRecentSyncState();
+			// Let the shared promise assignment finish before touching the native source.
+			// Otherwise a synchronous source failure can overwrite the finally cleanup
+			// with an already rejected promise and block every later retry.
+			await Promise.resolve();
 			try {
+				sourceViewport.style.setProperty('overflow-anchor', 'none', 'important');
+				sourceViewport.style.setProperty('scroll-behavior', 'auto', 'important');
 				// A folder can remain selected between sessions. Its inline filtering must
 				// not shorten the Bitrix viewport while we traverse the complete source.
 				_syncDialogNativeTraversalRows(container);
@@ -5106,33 +5881,49 @@
 				if (!cancelled || _pMode() === mode) _completeDialogRecentInteractionGate();
 				if (!cancelled) {
 					_dialogNativePrefetchedModes.add(mode);
-					_dialogNativeModeCounts.set(mode, state.seen.size);
+					_dialogNativeModeCounts.set(mode, _getDialogNativeCurrentCatalogCount(mode, state.seen.size));
 					_dialogNativeModeLoadedAt.set(mode, Date.now());
+					_dialogNativeSilentPrefetchedSources.set(mode, {
+						list: container,
+						viewport: sourceViewport,
+						loadedAt: Date.now()
+					});
 					_markDialogRecentRepositoryFullCommit();
 					_scheduleDialogRecentCacheWrite(80);
 				}
 				_publishDialogRecentSyncState();
-				_clearDialogNativeTraversalRows(container);
-				applyFilters();
 				return { count: _countDialogRecentMeta(), received: state.seen.size, pages: passes, native: true, expanded, cancelled };
 			} finally {
 				_clearDialogNativeTraversalRows(container);
-				sourceViewport.scrollTop = originalTop;
-				sourceViewport.dispatchEvent(new Event('scroll'));
-				if (_dialogControlManagedViewport?.isConnected) {
-					const managedState = _dialogControlManagedRoot?._penaManagedState;
-					if (managedState) {
-						managedState.pendingScrollTop = restoreVisibleTop;
-						managedState.pendingFallbackTop = restoreVisibleTop;
+				try {
+					applyFilters();
+				} finally {
+					sourceViewport.scrollTop = originalTop;
+					sourceViewport.dispatchEvent(new Event('scroll'));
+					if (_dialogControlManagedViewport?.isConnected) {
+						const managedState = _dialogControlManagedRoot?._penaManagedState;
+						if (managedState) {
+							managedState.pendingScrollTop = restoreVisibleTop;
+							managedState.pendingFallbackTop = restoreVisibleTop;
+						}
+						_dialogControlManagedViewport.scrollTop = restoreVisibleTop;
+						_scheduleDialogControlManagedVirtualRender();
 					}
-					_dialogControlManagedViewport.scrollTop = restoreVisibleTop;
-					_scheduleDialogControlManagedVirtualRender();
+					// Virtual Bitrix rows are recycled one frame after the scroll event. Hold
+					// the anchor lock until that render settles, then enforce the saved source
+					// position again before returning control to the user.
+					await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+					sourceViewport.scrollTop = originalTop;
+					await new Promise(resolve => requestAnimationFrame(resolve));
+					sourceViewport.scrollTop = originalTop;
+					restoreInlineProperty('overflow-anchor', originalOverflowAnchor);
+					restoreInlineProperty('scroll-behavior', originalScrollBehavior);
+					_dialogNativePrefetchActive = false;
+					_dialogNativePrefetchMode = '';
+					_dialogNativePrefetchCancel = null;
+					_dialogNativePrefetchPromise = null;
+					_publishDialogRecentSyncState();
 				}
-				_dialogNativePrefetchActive = false;
-				_dialogNativePrefetchMode = '';
-				_dialogNativePrefetchCancel = null;
-				_dialogNativePrefetchPromise = null;
-				_publishDialogRecentSyncState();
 			}
 		})();
 		_publishDialogRecentSyncState();
@@ -5188,6 +5979,13 @@
 		const host = mount?.host || sourceViewport?.parentElement || null;
 		if (!host || host === document.body || host === document.documentElement) return null;
 		let overlay = host.querySelector(':scope > .pena-native-original-load-guard');
+		const containerMode = container?.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
+		const progressMode = String(_dialogRecentProgress.mode || '');
+		if (progressMode && progressMode !== containerMode) {
+			overlay?.remove();
+			host.classList.remove('pena-native-original-loading-host');
+			return null;
+		}
 		const silentBackgroundLoad = (_dialogNativeOriginalScrollActive && _dialogNativeOriginalScrollSilent) ||
 			(_dialogRecentApiLoadActive && _dialogRecentApiLoadSilent);
 		if (silentBackgroundLoad && !_dialogNativeHealthProbeActive) {
@@ -5198,7 +5996,9 @@
 		const apiCatalogBlocking = _dialogRecentApiLoadActive && (
 			_dialogRecentProgress.phase === 'full-sync' || !!_dialogTaskCatalogSyncPromise
 		);
-		if (!_dialogNativeOriginalScrollActive && !_dialogNativeHealthProbeActive && !apiCatalogBlocking) {
+		const nativeMaterializationBlocking = _dialogRecentProgress.phase === 'materializing' &&
+			String(_dialogRecentProgress.workStage || '') !== 'retry-wait';
+		if (!_dialogNativeOriginalScrollActive && !_dialogNativeHealthProbeActive && !apiCatalogBlocking && !nativeMaterializationBlocking) {
 			const completed = overlay && _dialogRecentProgress.phase === 'ready' && !_dialogRecentLastError;
 			const shownAt = Number(overlay?.dataset?.penaShownAt) || 0;
 			const remaining = completed ? Math.max(0, 320 - (Date.now() - shownAt)) : 0;
@@ -5242,30 +6042,46 @@
 	}
 
 	async function _runDialogNativeOriginalScrollLoad(options = {}) {
-		if (IS_OL_FRAME || !isInternalChatsDOM()) return { count: _countDialogRecentMeta(), skipped: true };
+		const requestedContainer = options.sourceContainer?.isConnected ? options.sourceContainer : null;
+		if (IS_OL_FRAME || (!requestedContainer && !isInternalChatsDOM())) return { count: _countDialogRecentMeta(), skipped: true };
 		const testUnavailableAttempts = Math.max(0, Number(window.__PENA_TEST_NATIVE_SOURCE_UNAVAILABLE_COUNT__) || 0);
 		if (testUnavailableAttempts > 0) {
 			window.__PENA_TEST_NATIVE_SOURCE_UNAVAILABLE_COUNT__ = testUnavailableAttempts - 1;
 			return { count: _countDialogRecentMeta(), skipped: true, unavailable: true };
 		}
 		if (_dialogNativeOriginalScrollPromise) return _dialogNativeOriginalScrollPromise;
-		const container = findContainer();
-		const sourceViewport = container ? findInternalScrollContainer(container) : null;
+		const container = requestedContainer || findContainer();
+		const requestedViewport = options.sourceViewport?.isConnected ? options.sourceViewport : null;
+		const sourceViewport = requestedViewport || (container ? findInternalScrollContainer(container) : null);
 		if (!container || !sourceViewport || sourceViewport === _dialogControlManagedViewport) {
 			return { count: _countDialogRecentMeta(), skipped: true, unavailable: true };
 		}
 		const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
+		if (options.sourceMode && options.sourceMode !== mode) {
+			return { count: _countDialogRecentMeta(), skipped: true, unavailable: true };
+		}
 		const sourceGeneration = _getDialogNativeSourceGeneration(mode, container, sourceViewport);
 		const previousMaterialization = _dialogNativeMaterializedSources.get(mode) || null;
-		const coldTaskCatalogOutcomePromise = !previousMaterialization?.ids?.length
-			? (options.taskCatalogOutcomePromise || _syncDialogTaskCatalog({ force: true, deferMerge: true }).then(
+		const sourceReplaced = !!previousMaterialization?.ids?.length && (
+			previousMaterialization.list !== container || previousMaterialization.viewport !== sourceViewport ||
+			Number(previousMaterialization.sourceGeneration) !== Number(sourceGeneration)
+		);
+		const coldMaterialization = !previousMaterialization?.ids?.length || sourceReplaced;
+		const materializationPass = previousMaterialization?.needsColdConfirmation === true &&
+			previousMaterialization?.list === container && previousMaterialization?.viewport === sourceViewport &&
+			Number(previousMaterialization?.sourceGeneration) === Number(sourceGeneration) ? 2 : 1;
+		const includeTaskCatalog = options.includeTaskCatalog === true || window.__PENA_TEST_NATIVE_TASK_AUDIT__ === true;
+		const verifyExpectedCatalog = options.verifyExpectedCatalog === true || window.__PENA_TEST_NATIVE_EXPECTED_AUDIT__ === true;
+		const coldTaskCatalogOutcomePromise = coldMaterialization && includeTaskCatalog
+			? (options.taskCatalogOutcomePromise || _syncDialogTaskCatalog({ deferMerge: true }).then(
 				value => ({ value, error: null }),
 				error => ({ value: null, error })
 			))
 			: null;
-		const expectedCatalogPromise = !previousMaterialization?.ids?.length
+		const expectedCatalogPromise = coldMaterialization && verifyExpectedCatalog
 			? (options.expectedCatalogPromise || _runDialogNativeExpectedCatalogAudit(mode, sourceGeneration, {
-				taskCatalogOutcomePromise: coldTaskCatalogOutcomePromise
+				taskCatalogOutcomePromise: coldTaskCatalogOutcomePromise,
+				forceApi: sourceReplaced
 			}))
 			: null;
 		if (options.reason === 'manual' || options.reason === 'mode-switch') {
@@ -5323,19 +6139,62 @@
 			const state = { mode, seen: new Set(), orderById: new Map(), startedAt: Date.now() };
 			const ownsAttemptState = () => Number(_dialogNativeAttemptStates.get(mode)?.startedAt) === state.startedAt;
 			const target = new Map(_dialogRecentMeta);
-			_dialogNativeBackgroundPendingModes.delete(mode);
+			if (!_dialogNativeMetadataRetryStates.has(mode)) _dialogNativeBackgroundPendingModes.delete(mode);
 			_dialogRecentDetailUiSilent = false;
 			_dialogNativeOriginalScrollActive = true;
 			// Scrolling the real Bitrix viewport is never a silent background action.
 			_dialogNativeOriginalScrollSilent = false;
 			_dialogNativeOriginalScrollMode = mode;
+			// A new fenced attempt owns the foreground state for this mode. Do not let
+			// the error from its previous automatic attempt stay painted while recovery
+			// is already running successfully.
+			if (_dialogRecentLastErrorMode === mode) {
+				_dialogRecentLastError = '';
+				_dialogRecentLastErrorMode = '';
+			}
+			if (_dialogRecentLastSoftErrorMode === mode) {
+				_dialogRecentLastSoftError = '';
+				_dialogRecentLastSoftErrorMode = '';
+				_dialogRecentLastSoftErrorAt = 0;
+			}
 			_setDialogNativeAttemptState(mode, {
 				state: 'loading', reason: String(options.reason || 'native-load'), startedAt: state.startedAt,
-				completedAt: 0, retryAt: 0
+				completedAt: 0, retryAt: 0, userActionRequired: false
 			});
 			_dialogRecentProgress = {
-				phase: 'native-scroll', loadedCount: 0, expectedTotal: null,
-				pagesLoaded: 0, full: true, partial: false, startedAt: state.startedAt, completedAt: 0
+				mode, phase: 'native-scroll', loadedCount: 0, expectedTotal: null,
+				pagesLoaded: 0, full: true, partial: false, startedAt: state.startedAt, completedAt: 0,
+				materializationPass,
+				workStage: 'traversal',
+				workPercent: materializationPass >= 2 ? 50 : 0,
+				displayPercent: materializationPass >= 2 ? Math.max(50, Number(_dialogRecentProgress.displayPercent) || 0) : 0
+			};
+			let nativeProgressPublishTimer = null;
+			let nativeProgressLastPublishedAt = 0;
+			const publishNativeProgress = (force = false) => {
+				const publish = () => {
+					nativeProgressPublishTimer = null;
+					if (Number(_dialogRecentProgress.startedAt) !== state.startedAt && _dialogRecentProgress.phase !== 'ready') return;
+					nativeProgressLastPublishedAt = performance.now();
+					_publishDialogRecentSyncState();
+				};
+				const elapsed = performance.now() - nativeProgressLastPublishedAt;
+				if (force || elapsed >= 120) {
+					if (nativeProgressPublishTimer) clearTimeout(nativeProgressPublishTimer);
+					publish();
+					return;
+				}
+				if (!nativeProgressPublishTimer) {
+					nativeProgressPublishTimer = setTimeout(publish, Math.max(0, 120 - elapsed));
+				}
+			};
+			const setNativeWorkProgress = (stage, value, force = false) => {
+				_dialogRecentProgress.workStage = String(stage || 'traversal');
+				_dialogRecentProgress.workPercent = Math.max(
+					Number(_dialogRecentProgress.workPercent) || 0,
+					Math.max(0, Math.min(99, Number(value) || 0))
+				);
+				publishNativeProgress(force);
 			};
 			_publishDialogRecentSyncState();
 			try {
@@ -5351,6 +6210,15 @@
 				sourceViewport.dispatchEvent(new Event('scroll'));
 				await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 				let nativeWindowRows = _captureDialogNativeWindow(container, target, state, loadLimit).rows;
+				const initialPhysicalSeenCount = state.seen.size;
+				const initialPhysicalScrollHeight = Math.max(0, Number(sourceViewport.scrollHeight) || 0);
+				let physicalExpansionObserved = false;
+				const notePhysicalExpansion = () => {
+					if (state.seen.size > initialPhysicalSeenCount ||
+						Math.max(0, Number(sourceViewport.scrollHeight) || 0) > initialPhysicalScrollHeight + .5) {
+						physicalExpansionObserved = true;
+					}
+				};
 				_dialogRecentProgress.loadedCount = state.seen.size;
 				const estimateExpectedTotal = () => {
 					const maxTop = Math.max(0, Number(sourceViewport.scrollHeight) - Number(sourceViewport.clientHeight));
@@ -5361,10 +6229,37 @@
 				_syncDialogNativeOriginalLoadUi(container);
 				const getNativeTraversalStep = clientHeight => {
 					// When Bitrix retains several screens of rows in DOM, crossing them one
-					// viewport at a time only wastes frames. A small recycled pool keeps the
-					// overlapping step that guarantees every virtual window is captured.
+					// viewport at a time only wastes frames. The requested step must still fit
+					// inside the actually rendered pool with a few rows of overlap. Otherwise a
+					// delayed scrollHeight expansion can jump from the old bottom straight past
+					// one recycled row, leaving an exact-ID hole in an apparently complete feed.
 					const multiplier = nativeWindowRows >= 80 ? 4 : nativeWindowRows >= 40 ? 2 : nativeWindowRows >= 24 ? 1.6 : .86;
-					return Math.max(160, Math.floor((Number(clientHeight) || 480) * multiplier));
+					const requestedStep = Math.max(160, Math.floor((Number(clientHeight) || 480) * multiplier));
+					const sourceRows = _getDialogNativeSourceRows(container);
+					const rowRects = sourceRows.map(row => row.getBoundingClientRect?.()).filter(Boolean);
+					const rowHeights = sourceRows
+						.map((row, index) => Number(rowRects[index]?.height) || Number(row.offsetHeight) ||
+							Number(row.firstElementChild?.getBoundingClientRect?.().height) || Number(row.firstElementChild?.offsetHeight) || 0)
+						.filter(height => height >= 20 && height <= 180)
+						.sort((left, right) => left - right);
+					const rowTops = Array.from(new Set(rowRects.map(rect => Math.round(Number(rect.top) || 0)))).sort((left, right) => left - right);
+					const rowSpacings = rowTops.slice(1).map((top, index) => top - rowTops[index])
+						.filter(spacing => spacing >= 20 && spacing <= 180).sort((left, right) => left - right);
+					const medianRowHeight = rowHeights.length
+						? rowHeights[Math.floor(rowHeights.length / 2)]
+						: (rowSpacings.length ? rowSpacings[Math.floor(rowSpacings.length / 2)] : 0);
+					if (!medianRowHeight || nativeWindowRows < 6) {
+						if (window.__PENA_TEST_DIALOG_META_INSPECT__ === true) window.__PENA_NATIVE_STEP_DEBUG__ = {
+							nativeWindowRows, rowHeights: rowHeights.slice(), rowSpacings: rowSpacings.slice(), medianRowHeight, requestedStep
+						};
+						return requestedStep;
+					}
+					const overlapRows = Math.max(4, Math.ceil(nativeWindowRows * .12));
+					const poolSafeStep = Math.floor(medianRowHeight * Math.max(1, nativeWindowRows - overlapRows));
+					if (window.__PENA_TEST_DIALOG_META_INSPECT__ === true) window.__PENA_NATIVE_STEP_DEBUG__ = {
+						nativeWindowRows, rowHeights: rowHeights.slice(), rowSpacings: rowSpacings.slice(), medianRowHeight, overlapRows, requestedStep, poolSafeStep
+					};
+					return Math.max(160, Math.min(requestedStep, poolSafeStep));
 				};
 				const getNativeProgressToken = () => {
 					const height = Number(sourceViewport.scrollHeight) || 0;
@@ -5382,6 +6277,14 @@
 					maxTime: traversalMaxTimeMs,
 					getStep: ({ clientHeight }) => getNativeTraversalStep(clientHeight),
 					getProgressToken: getNativeProgressToken,
+					onProgress: percent => {
+						if (state.seen.size <= 0) return;
+						_dialogRecentProgress.physicalPercent = Math.max(1, Math.min(94, Number(percent) || 0));
+						const fraction = _dialogRecentProgress.physicalPercent / 94;
+						setNativeWorkProgress('traversal', materializationPass >= 2
+							? 50 + fraction * 35
+							: (coldMaterialization ? 1 + fraction * 34 : 1 + fraction * 84));
+					},
 					onTick: () => {
 						if (!_isDialogNativeSourceGenerationCurrent(mode, container, sourceViewport, sourceGeneration)) {
 							cancellationReason = 'source-generation-changed';
@@ -5390,36 +6293,29 @@
 							return;
 						}
 						nativeWindowRows = _captureDialogNativeWindow(container, target, state, loadLimit).rows;
+						notePhysicalExpansion();
 						_syncDialogNativeTraversalRows(container);
 						_dialogRecentProgress.loadedCount = state.seen.size;
 						_dialogRecentProgress.expectedTotal = estimateExpectedTotal();
 						_dialogRecentProgress.pagesLoaded += 1;
-						_syncDialogNativeOriginalLoadUi(container);
+						publishNativeProgress();
 					}
 				});
 				const scrollResult = await runner;
 				await new Promise(resolve => requestAnimationFrame(resolve));
 				_captureDialogNativeWindow(container, target, state, loadLimit);
+				notePhysicalExpansion();
 				_dialogRecentProgress.loadedCount = state.seen.size;
 				_dialogRecentProgress.expectedTotal = estimateExpectedTotal();
-				let expectedCatalog = previousMaterialization?.ids?.length ? null : _dialogNativeExpectedCatalogs.get(mode);
+				// A fenced API proof obtained during pass 1 remains authoritative for the
+				// same source generation. Pass 2 must not replace it with an older persisted
+				// repository subset merely because a first materialization now exists.
+				let expectedCatalog = _dialogNativeExpectedCatalogs.get(mode);
 				let expectedApiAuditReason = '';
-				if (expectedCatalogPromise) {
-					try {
-						expectedCatalog = await expectedCatalogPromise;
-						expectedApiAuditReason = expectedCatalog?.kind === 'api' && expectedCatalog?.complete !== true
-							? String(expectedCatalog?.reason || expectedCatalog?.error || 'api-audit-incomplete')
-							: '';
-					}
-					catch (auditError) {
-						expectedApiAuditReason = String(auditError?.message || auditError || 'metadata-audit-failed');
-						expectedCatalog = {
-							complete: false,
-							mode,
-							sourceGeneration,
-							reason: expectedApiAuditReason
-						};
-					}
+				if (expectedCatalogPromise && !_isDialogNativeExpectedAuditCurrent(expectedCatalog, mode, sourceGeneration)) {
+					// The API baseline is supplemental metadata. A slow task index must never
+					// hold the physical Bitrix list or its loader after the native tail is proven.
+					expectedApiAuditReason = 'metadata-audit-pending';
 				}
 				if (!_isDialogNativeExpectedAuditCurrent(expectedCatalog, mode, sourceGeneration)) {
 					expectedCatalog = _bindDialogNativeRepositoryExpectedCatalog(mode, sourceGeneration) || expectedCatalog;
@@ -5431,6 +6327,21 @@
 					? Array.from(new Set(expectedCatalog.ids.map(normId).filter(Boolean)))
 					: [];
 				let expectedCatalogIdSet = new Set(expectedCatalogIds);
+				const adoptFreshExpectedCatalog = () => {
+					const candidate = _dialogNativeExpectedCatalogs.get(mode);
+					if (candidate === expectedCatalog || candidate?.kind !== 'api' ||
+						!_isDialogNativeExpectedAuditCurrent(candidate, mode, sourceGeneration)) return false;
+					expectedCatalog = candidate;
+					expectedCatalogCurrent = true;
+					expectedCatalogExact = true;
+					expectedApiAuditReason = '';
+					expectedCatalogIds = Array.from(new Set(candidate.ids.map(normId).filter(Boolean)));
+					expectedCatalogIdSet = new Set(expectedCatalogIds);
+					_mergeDialogNativeExpectedAuditTarget(target, candidate);
+					return true;
+				};
+				const hasExactPhysicalCatalogSet = () => expectedCatalogExact && physicalExpansionObserved &&
+					expectedCatalogIds.length === state.seen.size && expectedCatalogIds.every(id => state.seen.has(id));
 				let proofMissingIds = expectedCatalogCurrent
 					? expectedCatalogIds.filter(id => !state.seen.has(id))
 					: [];
@@ -5553,24 +6464,46 @@
 				let stableBottom = stopReason === 'idle' && isAtPhysicalBottom();
 				let confirmationToken = getNativeProgressToken();
 				let stableBottomSamples = 0;
-				const requiredStableBottomSamples = 7;
-				const coldExactProofRequired = !previousMaterialization?.ids?.length;
+				// A cold Bitrix list may schedule its next virtual page several seconds after
+				// the first bottom event. Keep a bounded physical quiet proof without waiting
+				// for the unrelated task-classification audit.
+				// A cold source keeps the long window needed to catch Bitrix' delayed page.
+				// Pass 2 repeats the complete traversal, so four unchanged bottom samples
+				// are enough to fence its final state without wasting another full second.
+				// A fresh, fenced API proof may shorten the cold quorum only after the
+				// native viewport has demonstrably expanded beyond its initial window and
+				// both ID sets match exactly. Otherwise retain the conservative delayed-page
+				// window and the second physical confirmation pass.
+				const getRequiredStableBottomSamples = () => coldMaterialization
+					? (hasExactPhysicalCatalogSet() ? 6 : 24)
+					: 4;
+				const publishBottomConfirmationProgress = (force = false) => {
+					const required = Math.max(1, getRequiredStableBottomSamples());
+					const ratio = Math.max(0, Math.min(1, stableBottomSamples / required));
+					const singlePassProof = materializationPass === 1 && hasExactPhysicalCatalogSet();
+					const completesThisPass = !coldMaterialization || materializationPass >= 2 || singlePassProof;
+					const start = completesThisPass ? 86 : 36;
+					const end = completesThisPass ? 97 : 48;
+					setNativeWorkProgress('tail-verification', start + ((end - start) * ratio), force);
+				};
+				adoptFreshExpectedCatalog();
 				const getMissingExpectedIds = () => expectedCatalogIds.filter(id => !state.seen.has(id));
 				let bottomSampleCount = 0;
 				const remainingTraversalActiveMs = Math.max(0,
 					traversalMaxTimeMs - Math.max(0, Number(scrollResult?.activeElapsed) || 0));
 				const bottomConfirmationWallStartedAt = performance.now();
 				let bottomConfirmationActiveMs = 0;
+				publishBottomConfirmationProgress(true);
 				const stopStaleBottomConfirmation = () => {
 					if (!cancelled && _isDialogNativeSourceGenerationCurrent(mode, container, sourceViewport, sourceGeneration)) return false;
 					stopReason = cancellationReason || 'source-generation-changed';
 					stableBottom = false;
 					return true;
 				};
-				while (stableBottom && bottomConfirmationActiveMs < remainingTraversalActiveMs && (
-					stableBottomSamples < requiredStableBottomSamples || (coldExactProofRequired && expectedCatalogCurrent && getMissingExpectedIds().length > 0)
-				)) {
+				while (stableBottom && bottomConfirmationActiveMs < remainingTraversalActiveMs &&
+					stableBottomSamples < getRequiredStableBottomSamples()) {
 					if (stopStaleBottomConfirmation()) break;
+					adoptFreshExpectedCatalog();
 					bottomSampleCount += 1;
 					if (document.hidden || _dialogLifecycleFrozen) {
 						await new Promise(resolve => setTimeout(resolve, 160));
@@ -5587,9 +6520,10 @@
 						await new Promise(resolve => setTimeout(resolve, 36));
 						if (stopStaleBottomConfirmation()) break;
 						nativeWindowRows = _captureDialogNativeWindow(container, target, state, loadLimit).rows;
+						notePhysicalExpansion();
 						_dialogRecentProgress.loadedCount = state.seen.size;
 						_dialogRecentProgress.expectedTotal = estimateExpectedTotal();
-						_syncDialogNativeOriginalLoadUi(container);
+						publishNativeProgress();
 						confirmationToken = getNativeProgressToken();
 						stableBottomSamples = 0;
 						const elapsed = Math.max(0, performance.now() - sampleStartedAt);
@@ -5603,11 +6537,14 @@
 					await new Promise(resolve => requestAnimationFrame(resolve));
 					if (stopStaleBottomConfirmation()) break;
 					_captureDialogNativeWindow(container, target, state, loadLimit);
+					notePhysicalExpansion();
+					adoptFreshExpectedCatalog();
 					const nextToken = getNativeProgressToken();
 					if (!isAtPhysicalBottom()) {
-						const maxTop = Math.max(0, Number(sourceViewport.scrollHeight) - Number(sourceViewport.clientHeight));
-						const beforeTop = Number(sourceViewport.scrollTop) || 0;
-						sourceViewport.scrollTop = Math.min(maxTop, beforeTop + getNativeTraversalStep(sourceViewport.clientHeight));
+						// The range grew while we were sampling the old bottom. Do not advance
+						// here: the next loop iteration performs one observed step, dispatches
+						// scroll and captures the recycled window. Advancing both here and there
+						// coalesces two steps and can skip exactly one native dialog.
 						confirmationToken = nextToken;
 						stableBottomSamples = 0;
 						const elapsed = Math.max(0, performance.now() - sampleStartedAt);
@@ -5630,15 +6567,52 @@
 						bottomConfirmationActiveMs += elapsed;
 					}
 					stableBottomSamples += 1;
+					publishBottomConfirmationProgress();
+				}
+				adoptFreshExpectedCatalog();
+				const requiredStableBottomSamples = getRequiredStableBottomSamples();
+				stableBottom = stableBottom && stableBottomSamples >= requiredStableBottomSamples && isAtPhysicalBottom();
+				publishBottomConfirmationProgress(true);
+				let exactPhysicalCatalogProof = false;
+				let headFenceChecked = false;
+				const mayUseExactApiFastPath = !previousMaterialization?.ids?.length;
+				if (mayUseExactApiFastPath && stableBottom && hasExactPhysicalCatalogSet() &&
+					_isDialogNativeSourceGenerationCurrent(mode, container, sourceViewport, sourceGeneration) &&
+					!_isDialogNativeBitrixBusy(container)) {
+					// The REST audit can race a newly arrived head dialog after reading page 1.
+					// Probe the real head under the same guard, then return to the proven tail.
+					// Any unseen head ID breaks exact equality and falls back to pass 2.
+					headFenceChecked = true;
+					const bottomTokenBeforeHeadFence = getNativeProgressToken();
+					sourceViewport.scrollTop = 0;
+					sourceViewport.dispatchEvent(new Event('scroll'));
+					await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+					await new Promise(resolve => setTimeout(resolve, 80));
+					_captureDialogNativeWindow(container, target, state, loadLimit);
+					notePhysicalExpansion();
+					const headSetStillExact = hasExactPhysicalCatalogSet();
+					const maxTop = Math.max(0, Number(sourceViewport.scrollHeight) - Number(sourceViewport.clientHeight));
+					sourceViewport.scrollTop = maxTop;
+					sourceViewport.dispatchEvent(new Event('scroll'));
+					await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+					await new Promise(resolve => setTimeout(resolve, 80));
+					_captureDialogNativeWindow(container, target, state, loadLimit);
+					notePhysicalExpansion();
+					exactPhysicalCatalogProof = headSetStillExact && hasExactPhysicalCatalogSet() && isAtPhysicalBottom() &&
+						getNativeProgressToken() === bottomTokenBeforeHeadFence &&
+						!_isDialogNativeBitrixBusy(container) &&
+						_isDialogNativeSourceGenerationCurrent(mode, container, sourceViewport, sourceGeneration);
+					if (exactPhysicalCatalogProof) setNativeWorkProgress('head-fence', 99, true);
 				}
 				const missingExpectedIds = expectedCatalogCurrent ? getMissingExpectedIds() : [];
+				const blockingExpectedIds = expectedCatalog?.kind === 'repository' ? missingExpectedIds : [];
+				const apiProjectionExtraIds = expectedCatalog?.kind === 'api' ? missingExpectedIds : [];
 				const unexpectedSeenIds = expectedCatalogCurrent
 					? Array.from(state.seen).map(normId).filter(id => id && !expectedCatalogIdSet.has(id))
 					: [];
-				stableBottom = stableBottom && stableBottomSamples >= requiredStableBottomSamples && isAtPhysicalBottom();
 				window.__PENA_NATIVE_BOTTOM_DEBUG__ = {
 					mode,
-					cold: coldExactProofRequired,
+					cold: coldMaterialization,
 					requiredQuietMs: 0,
 					quietMs: 0,
 					activeMs: Math.round(bottomConfirmationActiveMs),
@@ -5654,7 +6628,12 @@
 					expectedKind: String(expectedCatalog?.kind || ''),
 					expectedCount: expectedCatalogIds.length,
 					missingExpectedCount: missingExpectedIds.length,
+					blockingExpectedCount: blockingExpectedIds.length,
+					apiProjectionExtraCount: apiProjectionExtraIds.length,
 					unexpectedSeenCount: unexpectedSeenIds.length,
+					physicalExpansionObserved,
+					headFenceChecked,
+					exactPhysicalCatalogProof,
 					auditReason: String(expectedCatalog?.reason || ''),
 					scrollTop: Number(sourceViewport.scrollTop) || 0,
 					maxTop: Math.max(0, Number(sourceViewport.scrollHeight) - Number(sourceViewport.clientHeight))
@@ -5671,10 +6650,11 @@
 				const sourceCurrent = _isDialogNativeSourceGenerationCurrent(mode, container, sourceViewport, sourceGeneration);
 				const networkAvailable = _isDialogNetworkAvailable();
 				const bitrixBusy = _isDialogNativeBitrixBusy(container);
+				const exactEmptyCatalog = expectedCatalogExact && expectedCatalogIds.length === 0;
+				const sourceHasCatalogEvidence = state.seen.size > 0 || exactEmptyCatalog;
 				const traversalComplete = !cancelled && stableBottom && sourceCurrent && networkAvailable &&
-					!bitrixBusy && missingAvailable.length === 0 &&
-					(!coldExactProofRequired || (expectedCatalogExact && missingExpectedIds.length === 0)) &&
-					!['cancelled', 'timeout', 'unavailable'].includes(stopReason);
+					!bitrixBusy && sourceHasCatalogEvidence && blockingExpectedIds.length === 0 && missingAvailable.length === 0 &&
+					!['cancelled', 'timeout', 'unavailable', 'stalled'].includes(stopReason);
 				if (!traversalComplete) {
 					window.__PENA_NATIVE_FAILURE_DEBUG__ = {
 						at: Date.now(), mode, stopReason, stableBottom, sourceCurrent,
@@ -5685,43 +6665,107 @@
 						expectedKind: String(expectedCatalog?.kind || ''),
 						expectedCount: expectedCatalogIds.length,
 						missingExpected: missingExpectedIds.slice(0, _DIALOG_NATIVE_MISSING_VERIFY_LIMIT),
+						blockingExpected: blockingExpectedIds.slice(0, _DIALOG_NATIVE_MISSING_VERIFY_LIMIT),
+						apiProjectionExtra: apiProjectionExtraIds.slice(0, _DIALOG_NATIVE_MISSING_VERIFY_LIMIT),
 						unexpectedSeen: unexpectedSeenIds.slice(0, _DIALOG_NATIVE_MISSING_VERIFY_LIMIT),
 						previousCount: previousMaterialization?.ids?.length || 0
 					};
-					_dialogNativeBackgroundPendingModes.add(mode);
-					if (!cancelled) {
-						_dialogNativeTraversalFailedModes.add(mode);
-						_dialogNativeTraversalFailedAt.set(mode, Date.now());
-					}
 					if (previousMaterialization) {
-						previousMaterialization.invalidated = !sourceCurrent || missingAvailable.length > 0;
+						// A complete fenced API baseline is also physical evidence. If the
+						// traversal can only see a subset of it, the old same-node snapshot is
+						// no longer healthy even when scrollHeight stayed constant (Bitrix
+						// virtual lists commonly recycle a fixed-height pool after sleep).
+						previousMaterialization.invalidated = !sourceCurrent ||
+							blockingExpectedIds.length > 0 || missingAvailable.length > 0;
 						previousMaterialization.invalidatedReason = !sourceCurrent
 							? 'source-generation-changed'
-							: (missingAvailable.length ? 'previous-dialogs-missing' : 'native-incomplete');
+							: (blockingExpectedIds.length
+								? `expected-dialogs-missing:${blockingExpectedIds.length}`
+								: (missingAvailable.length ? 'previous-dialogs-missing' : 'native-incomplete'));
 					}
 					const failureReason = cancellationReason ||
 						(!sourceCurrent ? 'source-generation-changed' : '') ||
 						(!networkAvailable ? 'offline' : '') ||
 						(bitrixBusy ? 'bitrix-loader-active' : '') ||
-						(coldExactProofRequired && !expectedCatalogExact ? `api-proof-unavailable:${expectedApiAuditReason || String(expectedCatalog?.reason || 'incomplete')}` : '') ||
-						(missingExpectedIds.length ? `expected-dialogs-missing:${missingExpectedIds.length}` : '') ||
+						(!sourceHasCatalogEvidence ? 'source-empty-unconfirmed' : '') ||
+						(blockingExpectedIds.length ? `expected-dialogs-missing:${blockingExpectedIds.length}` : '') ||
 						(missingAvailable.length ? `previous-dialogs-missing:${missingAvailable.length}` : '') ||
-						(!stableBottom || ['cancelled', 'timeout', 'unavailable'].includes(stopReason) ? (stopReason || 'bottom-unconfirmed') : '') ||
+						(!stableBottom || ['cancelled', 'timeout', 'unavailable', 'stalled'].includes(stopReason) ? (stopReason || 'bottom-unconfirmed') : '') ||
 						'native-incomplete';
-					_dialogRecentLastError = _dialogNativePrefetchedModes.has(mode) ? '' : 'Не удалось подтвердить конец списка диалогов';
-					_dialogRecentLastSoftError = _dialogNativePrefetchedModes.has(mode) ? 'Полная лента будет проверена повторно' : '';
+					const superseded = cancelled || !sourceCurrent || failureReason === 'source-generation-changed';
+					if (superseded) {
+						// Mode/source replacement is not a failed load. Its lifecycle entry owns
+						// the next reconcile; retrying the detached source only creates an
+						// exponential background loop and a false red state.
+						_clearDialogNativeRecoveryRetry(mode);
+						if (_dialogNativeMetadataRetryStates.has(mode)) _dialogNativeBackgroundPendingModes.add(mode);
+						else _dialogNativeBackgroundPendingModes.delete(mode);
+						if (_dialogRecentLastErrorMode === mode) {
+							_dialogRecentLastError = '';
+							_dialogRecentLastErrorMode = '';
+						}
+						if (_dialogRecentLastSoftErrorMode === mode) {
+							_dialogRecentLastSoftError = '';
+							_dialogRecentLastSoftErrorMode = '';
+							_dialogRecentLastSoftErrorAt = 0;
+						}
+						_dialogRecentProgress = Object.assign({}, _dialogRecentProgress, {
+							phase: _dialogNativePrefetchedModes.has(mode) ? 'ready' : 'idle',
+							loadedCount: state.seen.size,
+							expectedTotal: state.seen.size || null,
+							partial: false,
+							completedAt: Date.now(),
+							workStage: 'superseded'
+						});
+						if (ownsAttemptState()) {
+							_setDialogNativeAttemptState(mode, {
+								state: 'idle', reason: 'source-fenced', retryAttempt: 0,
+								retryAt: 0, completedAt: Date.now(), userActionRequired: false
+							});
+						}
+						_publishDialogRecentSyncState();
+						return {
+							count: _countDialogRecentMeta(), received: state.seen.size, native: true,
+							cancelled: true, incomplete: true, superseded: true, reason: failureReason
+						};
+					}
+					_dialogNativeBackgroundPendingModes.add(mode);
+					_dialogNativeTraversalFailedModes.add(mode);
+					_dialogNativeTraversalFailedAt.set(mode, Date.now());
+					const automaticRecovery = _shouldKeepDialogNativeRecoveryInternal(mode, failureReason);
+					const hasUsableMaterialization = _dialogNativePrefetchedModes.has(mode);
+					_dialogRecentLastError = !automaticRecovery && !hasUsableMaterialization
+						? 'Не удалось подтвердить конец списка диалогов'
+						: '';
+					_dialogRecentLastErrorMode = _dialogRecentLastError ? mode : '';
+					_dialogRecentLastSoftError = automaticRecovery
+						? 'Bitrix24 ещё формирует список — проверяем повторно'
+						: (hasUsableMaterialization ? 'Полная лента будет проверена повторно' : '');
+					_dialogRecentLastSoftErrorMode = _dialogRecentLastSoftError ? mode : '';
+					_dialogRecentLastSoftErrorAt = _dialogRecentLastSoftError ? Date.now() : 0;
 					_dialogRecentProgress = Object.assign({}, _dialogRecentProgress, {
-						phase: _dialogNativePrefetchedModes.has(mode) || cancelled ? 'cached' : 'error',
+						phase: automaticRecovery ? 'materializing' : (hasUsableMaterialization ? 'cached' : 'error'),
 						loadedCount: _dialogRecentWindowCount,
 						expectedTotal: _dialogRecentWindowCount || null,
-						partial: false,
-						completedAt: Date.now()
+						partial: automaticRecovery,
+						completedAt: automaticRecovery ? 0 : Date.now(),
+						workStage: automaticRecovery ? 'retry-wait' : 'failed'
 					});
 					if (ownsAttemptState()) {
-						_setDialogNativeAttemptState(mode, {
-							state: 'retry', reason: failureReason, completedAt: Date.now()
-						});
-						_scheduleDialogNativeRecoveryRetry(mode, failureReason);
+						if (automaticRecovery) {
+							_scheduleDialogNativeRecoveryRetry(mode, failureReason);
+						} else {
+							// Automatic recovery has exhausted its bounded budget (or this
+							// failure is not transient). Expose one stable manual action without
+							// continuing to wake and rescan the same source behind the user.
+							const retryAttempt = Math.max(1,
+								Number(_dialogNativeRecoveryRetryAttempts.get(mode)) + 1 || 1);
+							_dialogNativeRecoveryRetryAttempts.set(mode, retryAttempt);
+							_setDialogNativeAttemptState(mode, {
+								state: 'retry', reason: failureReason, retryAttempt, retryAt: 0,
+								completedAt: Date.now(), userActionRequired: true
+							});
+						}
 					}
 					_publishDialogRecentSyncState();
 					return {
@@ -5729,6 +6773,7 @@
 						cancelled, incomplete: true, reason: failureReason
 					};
 				}
+				if (materializationPass >= 2 || !coldMaterialization) setNativeWorkProgress('commit', 99, true);
 				// No asynchronous work is allowed between this fence and the atomic commit.
 				// A remounted list or a mode/source switch must make the old pass read-only.
 				if (cancelled || !_isDialogNativeSourceGenerationCurrent(mode, container, sourceViewport, sourceGeneration)) {
@@ -5749,7 +6794,8 @@
 					truncated: false
 				});
 				const recorded = _recordDialogNativeMaterialization(
-					mode, container, sourceViewport, state.seen.size, state.seen, sourceGeneration
+					mode, container, sourceViewport, state.seen.size, state.seen, sourceGeneration,
+					{ exactPhysicalCatalogProof, physicalExpansionObserved }
 				);
 				if (!recorded) {
 					_dialogNativeBackgroundPendingModes.add(mode);
@@ -5760,7 +6806,6 @@
 				}
 				_dialogNativeTraversalFailedModes.delete(mode);
 				_dialogNativeTraversalFailedAt.delete(mode);
-				_dialogNativeBackgroundPendingModes.delete(mode);
 				if (finalCommit?.detailsPromise) {
 					_dialogRecentDetailUiSilent = true;
 					finalCommit.detailsPromise.finally(() => {
@@ -5768,19 +6813,41 @@
 						_publishDialogRecentSyncState();
 					});
 				}
-				_dialogNativePrefetchedModes.add(mode);
-				_dialogNativeModeCounts.set(mode, state.seen.size);
-				_dialogNativeModeLoadedAt.set(mode, Date.now());
+				const currentMaterialization = _dialogNativeMaterializedSources.get(mode);
+				const awaitingColdConfirmation = currentMaterialization?.needsColdConfirmation === true;
+				// The first cold pass is only a candidate snapshot. Publishing its count as
+				// confirmed makes a later failed confirmation replace the last-known-good
+				// catalog with a partial/intermediate value.
+				if (!awaitingColdConfirmation) {
+					_dialogNativeModeCounts.set(mode,
+						_getDialogNativeCurrentCatalogCount(mode, state.seen.size, sourceGeneration));
+				}
 				_dialogNativeScrollPositions.set(mode, { top: originalTop, left: originalLeft, trusted: true });
-				_clearDialogNativeRecoveryRetry(mode);
 				materializationSucceeded = true;
-				_markDialogRecentRepositoryFullCommit();
 				_scheduleDialogRecentCacheWrite(80);
-				_dialogRecentProgress = Object.assign({}, _dialogRecentProgress, {
-					phase: 'ready', loadedCount: state.seen.size, expectedTotal: state.seen.size,
-					partial: false, completedAt: Date.now()
-				});
+				if (awaitingColdConfirmation) {
+					_dialogNativePrefetchedModes.delete(mode);
+					_dialogNativeBackgroundPendingModes.add(mode);
+					_dialogRecentProgress = Object.assign({}, _dialogRecentProgress, {
+						phase: 'materializing', loadedCount: state.seen.size,
+						partial: true, completedAt: 0, workStage: 'second-pass-pending', workPercent: 50
+					});
+				} else {
+					_dialogNativePrefetchedModes.add(mode);
+					if (_dialogNativeMetadataRetryStates.has(mode)) _dialogNativeBackgroundPendingModes.add(mode);
+					else _dialogNativeBackgroundPendingModes.delete(mode);
+					_dialogNativeModeLoadedAt.set(mode, Date.now());
+					_clearDialogNativeRecoveryRetry(mode);
+					_markDialogRecentRepositoryFullCommit();
+					_dialogRecentProgress = Object.assign({}, _dialogRecentProgress, {
+						phase: 'ready', loadedCount: state.seen.size, expectedTotal: state.seen.size,
+						partial: false, completedAt: Date.now()
+					});
+				}
 				_publishDialogRecentSyncState();
+				if (awaitingColdConfirmation) {
+					_scheduleDialogNativeColdConfirmation(mode, container, sourceViewport, sourceGeneration, 80);
+				}
 				// Counter reconciliation is supplemental. Capture/atomic freshness guards are
 				// the correctness boundary, so a slow service call never holds materialization
 				// open and a stale source can never receive its result.
@@ -5793,6 +6860,10 @@
 				}).catch(() => {});
 				return { count: _countDialogRecentMeta(), received: state.seen.size, native: true, cancelled };
 			} finally {
+				if (nativeProgressPublishTimer) {
+					clearTimeout(nativeProgressPublishTimer);
+					nativeProgressPublishTimer = null;
+				}
 				_clearDialogNativeTraversalRows(container);
 				_dialogNativeOriginalScrollFinishing = true;
 				try {
@@ -5813,9 +6884,12 @@
 					await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 					if (materializationSucceeded && ownsAttemptState() &&
 						_isDialogNativeSourceGenerationCurrent(mode, container, sourceViewport, sourceGeneration)) {
+						const pendingConfirmation = _dialogNativeMaterializedSources.get(mode)?.needsColdConfirmation === true;
+						_ensureDialogNativeMetadataRetry(mode);
 						_setDialogNativeAttemptState(mode, {
-							state: 'idle', reason: materializationSuccessReason,
-							retryAttempt: 0, retryAt: 0, completedAt: Date.now()
+							state: pendingConfirmation ? 'waiting' : 'idle',
+							reason: pendingConfirmation ? 'cold-confirmation' : materializationSuccessReason,
+							retryAttempt: 0, retryAt: 0, completedAt: pendingConfirmation ? 0 : Date.now()
 						});
 					}
 				} finally {
@@ -5824,11 +6898,26 @@
 					_dialogNativeOriginalScrollMode = '';
 					_dialogNativeOriginalScrollCancel = null;
 					_dialogNativeOriginalScrollPromise = null;
+					if (_dialogNativePassThroughRefreshPending) {
+						_scheduleDialogNativePassThroughRefresh(0);
+					}
 					restoreInlineProperty('overflow-anchor', originalOverflowAnchor);
 					restoreInlineProperty('scroll-behavior', originalScrollBehavior);
 					_syncDialogNativeOriginalLoadUi(container);
 					_publishDialogRecentSyncState();
 					_dialogNativeOriginalScrollFinishing = false;
+					if (materializationSucceeded && _pMode() === mode && container?.isConnected &&
+						_isDialogNativeSourceGenerationCurrent(mode, container, sourceViewport, sourceGeneration)) {
+						const prefs = _getDialogControlViewPrefs(mode);
+						const needsSavedPresentation = !!String(filters.query || '').trim() || prefs.unreadOnly ||
+							prefs.sortMode !== 'date' || prefs.sortDirection !== 'desc';
+						if (needsSavedPresentation) {
+							// Traversal deliberately leaves Bitrix rows in source order. Re-apply a
+							// persisted custom view once, after the source and scroll anchor are stable.
+							_dialogControlNativeViewSig = '';
+							_scheduleDialogControlNativeView(container, { restoreDisplay: false });
+						}
+					}
 				}
 			}
 		})();
@@ -5852,26 +6941,44 @@
 			_isDialogControlNativePassThrough() &&
 			window.__PENA_TEST_API_CATALOG__ !== true
 		) {
+			// Coalesce before starting supplemental API/task work as well. Previously a
+			// second lifecycle request reused the physical traversal but still launched
+			// another full tasks.task.list crawl beside it.
+			if (_dialogNativeOriginalScrollPromise) {
+				const coalescedResult = await _dialogNativeOriginalScrollPromise;
+				return { ...coalescedResult, nativeFirst: true, coalesced: true };
+			}
 			// Production keeps Bitrix' own rows and scrollbar. REST metadata alone
 			// cannot make older rows appear in that native list, so the visible result
 			// is driven by the proven hidden-scroll traversal. A cold source also starts a
 			// complete metadata audit: its exact IDs are a baseline, never DOM-ready state.
-			const nativeContainer = findContainer();
-			const nativeViewport = nativeContainer ? findInternalScrollContainer(nativeContainer) : null;
+			const nativeContainer = options.sourceContainer?.isConnected ? options.sourceContainer : findContainer();
+			const nativeViewport = options.sourceViewport?.isConnected
+				? options.sourceViewport
+				: (nativeContainer ? findInternalScrollContainer(nativeContainer) : null);
 			const nativeMode = nativeContainer?.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
 			const nativeGeneration = nativeContainer && nativeViewport
 				? _getDialogNativeSourceGeneration(nativeMode, nativeContainer, nativeViewport)
 				: 0;
-			const coldMaterialization = !_dialogNativeMaterializedSources.get(nativeMode)?.ids?.length;
-			const refreshTaskCatalog = coldMaterialization || options.force === true || !_isDialogTaskCatalogMetadataFresh();
+			const existingMaterialization = _dialogNativeMaterializedSources.get(nativeMode) || null;
+			const sourceReplaced = !!existingMaterialization?.ids?.length && (
+				existingMaterialization.list !== nativeContainer || existingMaterialization.viewport !== nativeViewport ||
+				Number(existingMaterialization.sourceGeneration) !== Number(nativeGeneration)
+			);
+			const coldMaterialization = !existingMaterialization?.ids?.length || sourceReplaced;
+			const refreshTaskCatalog = options.forceTaskCatalog === true || options.includeTaskCatalog === true ||
+				window.__PENA_TEST_NATIVE_TASK_AUDIT__ === true;
+			const forceTaskCatalogNetwork = options.forceTaskCatalog === true || String(options.reason || '') === 'manual';
 			const taskCatalogOutcomePromise = refreshTaskCatalog
-				? _syncDialogTaskCatalog({ force: true, deferMerge: true }).then(
+				? _syncDialogTaskCatalog({ forceNetwork: forceTaskCatalogNetwork, deferMerge: true }).then(
 					value => ({ value, error: null }),
 					error => ({ value: null, error })
 				)
-				: Promise.resolve({ value: null, error: null });
-			const expectedCatalogPromise = coldMaterialization && nativeGeneration > 0
-				? _runDialogNativeExpectedCatalogAudit(nativeMode, nativeGeneration, { taskCatalogOutcomePromise })
+				: null;
+			const verifyExpectedCatalog = options.verifyExpectedCatalog === true ||
+				window.__PENA_TEST_NATIVE_EXPECTED_AUDIT__ === true;
+			const expectedCatalogPromise = coldMaterialization && nativeGeneration > 0 && verifyExpectedCatalog
+				? _runDialogNativeExpectedCatalogAudit(nativeMode, nativeGeneration, { taskCatalogOutcomePromise, forceApi: sourceReplaced })
 				: null;
 			let nativeResult;
 			try {
@@ -5883,9 +6990,10 @@
 			} finally {
 				expectedCatalogPromise?.then(audit => {
 					_commitDialogNativeExpectedAuditMetadata(audit);
+					_reconcileDialogNativeExpectedAudit(audit);
 					_publishDialogRecentSyncState();
 				}).catch(() => {});
-				taskCatalogOutcomePromise.then(outcome => {
+				taskCatalogOutcomePromise?.then(outcome => {
 					if (outcome.error) {
 						warn('Не удалось обновить индекс task-чатов', outcome.error?.message || outcome.error);
 						return;
@@ -5894,7 +7002,12 @@
 					_publishDialogRecentSyncState();
 				}).catch(() => {});
 			}
-			return { ...nativeResult, nativeFirst: true, taskCatalogBackground: refreshTaskCatalog };
+			return {
+				...nativeResult,
+				nativeFirst: true,
+				taskCatalogBackground: refreshTaskCatalog,
+				expectedAudit: !!expectedCatalogPromise
+			};
 		}
 		if (options.full !== false) {
 			try {
@@ -5985,12 +7098,25 @@
 		refreshHead: options => _refreshDialogRecentCatalog({
 			...(options || {}), force: true, full: false, incrementalOnly: true, silent: true, reason: 'diagnostic-head-refresh'
 		}),
+		...(window.__PENA_TEST_DIALOG_META_INSPECT__ === true ? {
+			inspectMeta: rawId => {
+				const meta = _getDialogRecentMeta(normId(rawId));
+				return meta ? {
+					isTask: meta.isTask === true,
+					taskId: String(meta.taskId || ''),
+					taskUrl: String(meta.taskUrl || '')
+				} : null;
+			}
+		} : {}),
 		cancel: () => _dialogNativePrefetchCancel?.(),
 		status: () => ({
 			active: _dialogNativePrefetchActive,
 			originalActive: _dialogNativeOriginalScrollActive || _dialogNativeOriginalScrollFinishing || _dialogNativeHealthProbeActive || (_dialogRecentApiLoadActive && !_dialogRecentApiLoadSilent && _dialogRecentProgress.phase === 'full-sync'),
 			apiActive: _dialogRecentApiLoadActive,
 			apiMode: _dialogRecentApiLoadMode,
+			modeLoadPending: !!_dialogNativeModeLoadTimer || _dialogNativeColdConfirmationTimers.size > 0,
+			modeLoadReason: _dialogNativeModeLoadReason || (_dialogNativeColdConfirmationTimers.size > 0 ? 'cold-confirmation' : ''),
+			coldConfirmation: { ..._dialogNativeColdConfirmationDebug },
 			taskCatalogComplete: _dialogTaskCatalogComplete,
 			taskCatalogFetchedAt: _dialogTaskCatalogFetchedAt,
 			catalogTtlMs: _getDialogCompleteCatalogTtlMs(),
@@ -6021,10 +7147,19 @@
 						lastFullAt: Math.max(0, Number(_dialogRecentLastFullAt) || 0)
 					},
 					materialization: {
-						state: materialization.invalidated ? 'stale' : (materialization.completedAt ? 'ready' : 'missing'),
+						state: materialization.invalidated ? 'stale' : (materialization.needsColdConfirmation ? 'confirming' : (materialization.completedAt ? 'ready' : 'missing')),
 						sourceGeneration: Math.max(0, Number(materialization.sourceGeneration) || 0),
 						validatedAt: Math.max(0, Number(materialization.validatedAt) || 0),
-						count: Math.max(0, Number(materialization.count) || 0)
+						lastTailProofAt: Math.max(0, Number(materialization.lastTailProofAt) || 0),
+						count: Math.max(0, Number(materialization.count) || 0),
+						nativePassCount: Math.max(0, Number(materialization.nativePassCount) || 0),
+						apiConfirmed: materialization.apiConfirmed === true,
+						apiProjectionExtraCount: Math.max(0, Number(materialization.apiProjectionExtraCount) || 0),
+						exactPhysicalCatalogProof: materialization.exactPhysicalCatalogProof === true,
+						physicalExpansionObserved: materialization.physicalExpansionObserved === true,
+						confirmationKind: String(materialization.confirmationKind || ''),
+						invalidated: materialization.invalidated === true,
+						needsColdConfirmation: materialization.needsColdConfirmation === true
 					},
 					expectedCatalog: {
 						complete: expectedCatalog.complete === true,
@@ -6037,23 +7172,51 @@
 				}];
 			})),
 			reconcile: {
-				active: !!(_dialogWakeReconcileTimer || _dialogWakeReconcilePromise),
+				active: !!(_dialogWakeReconcileTimer || _dialogWakeReconcilePromise || _dialogWakeReconcileQueuedRequest),
 				count: _dialogWakeReconcileCount,
 				lastAt: _dialogWakeReconcileLastAt,
 				lastReason: _dialogWakeReconcileLastReason
 			},
 			backgroundModes: [..._dialogNativeBackgroundPendingModes],
 			failedModes: [..._dialogNativeTraversalFailedModes],
-			retryPending: !!_dialogRecentApiRetryTimer || _dialogNativeRecoveryRetryTimers.size > 0,
+			metadataRetryModes: Object.fromEntries(_dialogNativeMetadataRetryStates),
+			sharedCatalog: _dialogNativeSharedExpectedCatalog?.complete === true ? {
+				auditedAt: Math.max(0, Number(_dialogNativeSharedExpectedCatalog.auditedAt) || 0),
+				modeCounts: {
+					chats: _dialogNativeSharedExpectedCatalog.idsByMode?.chats?.length || 0,
+					tasks: _dialogNativeSharedExpectedCatalog.idsByMode?.tasks?.length || 0
+				}
+			} : null,
+			retryPending: !!_dialogRecentApiRetryTimer || _dialogNativeRecoveryRetryTimers.size > 0 ||
+				_dialogNativeMetadataRetryTimers.size > 0,
 			retryAttempt: _dialogRecentApiRetryAttempt,
 			lastApiResult: _dialogRecentLastApiResult
 		})
 	});
 
 	function _refreshDialogNativeVisibleWindow() {
+		if (window.__PENA_TEST_PERF_METRICS__) {
+			window.__PENA_TEST_PERF_METRICS__.visibleWindowRefreshes =
+				(Number(window.__PENA_TEST_PERF_METRICS__.visibleWindowRefreshes) || 0) + 1;
+		}
 		const container = findContainer();
 		if (!container || IS_OL_FRAME) return { count: _countDialogRecentMeta(), skipped: true };
 		const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
+		const visibleIds = _getDialogNativeSourceRows(container)
+			.map(row => normId(getChatIdFromElement(row)))
+			.filter(Boolean);
+		// Recycled Bitrix rows are already represented in the complete catalog. Their
+		// identity change only requires repainting that physical row; cloning, sorting
+		// and serialising the whole catalog here used to block message rendering and
+		// scrolling for no useful work.
+		const hasUnknownVisibleDialog = visibleIds.some(id => {
+			const meta = _getDialogRecentMeta(id);
+			const nativeRank = Number(meta?.nativeRecentRank);
+			return !meta || !(Number(meta.recentListFetchedAt) > 0) || !Number.isFinite(nativeRank) || nativeRank < 0;
+		});
+		if (!hasUnknownVisibleDialog) {
+			return { count: _countDialogRecentMeta(), skipped: true, knownWindow: true };
+		}
 		const rankedMeta = _getDialogRecentUniqueMeta().filter(meta => {
 			const id = normId(meta?.id);
 			const rank = Number(meta?.nativeRecentRank);
@@ -6068,36 +7231,29 @@
 			if (!orderById.has(id)) orderById.set(id, rank);
 			nextNativeRank = Math.max(nextNativeRank, rank + 1);
 		});
-		// Bitrix recycles a small DOM window. A late row observed at the bottom must
-		// continue the proven global native order, not restart from local rank zero.
+		// This is deliberately patch-only. A viewport-sized sample is useful metadata,
+		// but it is not proof that Bitrix has materialized the whole virtual list.
 		const state = { mode, seen: new Set(), orderById, nextNativeRank, startedAt: Date.now() };
 		const target = new Map(_dialogRecentMeta);
 		const beforeSignature = _getDialogRecentRenderSignature(target);
 		const captured = _captureDialogNativeWindow(container, target, state);
-		if (!captured.added || (!captured.nativeAdded && beforeSignature === _getDialogRecentRenderSignature(target))) {
+		const afterSignature = _getDialogRecentRenderSignature(target);
+		if (!captured.added || (!captured.nativeAdded && beforeSignature === afterSignature)) {
 			return { count: _countDialogRecentMeta(), skipped: true };
 		}
-		// A visible-window merge enriches the complete REST catalog; it must never
-		// trim that catalog back to the legacy UI limit.
-		const loadLimit = 0;
-		const commitTarget = _trimDialogRecentMap(target, loadLimit, _getDialogRecentMandatoryItems());
-		_commitDialogNativeCatalog(commitTarget, state, { truncated: _dialogRecentTruncated });
-		const knownModeCount = _getDialogRecentUniqueMeta().filter(meta =>
-			Number(meta?.recentListFetchedAt) > 0 && (mode === 'tasks' ? meta?.isTask === true : meta?.isTask !== true)
-		).length;
-		const windowModeCount = Math.max(Number(_dialogNativeModeCounts.get(mode)) || 0, Math.min(knownModeCount, loadLimit || knownModeCount));
-		_dialogRecentWindowCount = windowModeCount;
-		_dialogNativeModeCounts.set(mode, windowModeCount);
-		if (_dialogRecentTruncated) {
-			_dialogNativeBackgroundPendingModes.add(mode);
-		} else {
-			_dialogNativeBackgroundPendingModes.delete(mode);
+		_dialogRecentMeta = target;
+		state.seen.forEach(_markDialogRecentRepositoryDirty);
+		_hydrateAllDialogControlModesFromRecent({ pruneMissing: false });
+		if (beforeSignature !== afterSignature) {
+			_dialogRecentDataRevision += 1;
+			_notifyDialogRecentDataChanged();
 		}
-		_dialogRecentProgress = Object.assign({}, _dialogRecentProgress, {
-			phase: 'ready', loadedCount: _dialogRecentWindowCount,
-			expectedTotal: _dialogRecentWindowCount, full: false, partial: false,
-			startedAt: Date.now(), completedAt: Date.now()
-		});
+		_dialogRecentWindowCount = Math.max(_dialogRecentWindowCount, state.seen.size);
+		// A visible-window patch may observe many already mounted rows, but it still
+		// has no bottom/source-generation proof. Keep it out of the confirmed mode
+		// count so a late MutationObserver cannot turn a failed traversal into a
+		// seemingly complete catalog.
+		_scheduleDialogRecentCacheWrite(80);
 		_publishDialogRecentSyncState();
 		return { count: _countDialogRecentMeta(), received: captured.added, native: true };
 	}
@@ -6176,6 +7332,7 @@
 
 	function _isDialogTaskCatalogMetadataFresh(now = Date.now()) {
 		return _dialogTaskCatalogComplete && _dialogTaskCatalogFetchedAt > 0 &&
+			_dialogTaskCatalogScopeKey === _getDialogNativeSharedAuditScopeKey() &&
 			Math.max(0, Number(now) || Date.now()) - _dialogTaskCatalogFetchedAt < _getDialogTaskCatalogRefreshMs();
 	}
 
@@ -6224,7 +7381,7 @@
 			(!active || (active.mode === targetMode && active.list === container));
 	}
 
-	function _recordDialogNativeMaterialization(mode, container, viewport, count, ids = [], expectedGeneration = 0) {
+	function _recordDialogNativeMaterialization(mode, container, viewport, count, ids = [], expectedGeneration = 0, options = {}) {
 		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
 		const previous = _dialogNativeMaterializedSources.get(targetMode);
 		const currentSource = _dialogNativeSourceGenerations.get(targetMode);
@@ -6233,7 +7390,23 @@
 		const snapshot = _getDialogNativeMaterializationSnapshot(container);
 		if (!snapshot || snapshot.viewport !== viewport ||
 			!_isDialogNativeSourceGenerationCurrent(targetMode, container, viewport, generation)) return false;
-		const orderedIds = Array.from(new Set(Array.from(ids || []).map(normId).filter(Boolean)));
+		const insertionIds = Array.from(new Set(Array.from(ids || []).map(normId).filter(Boolean)));
+		const insertionIndex = new Map(insertionIds.map((id, index) => [id, index]));
+		const orderedIds = insertionIds.slice().sort((left, right) => {
+			const leftRank = Number(_getDialogRecentMeta(left)?.nativeRecentRank);
+			const rightRank = Number(_getDialogRecentMeta(right)?.nativeRecentRank);
+			const leftRanked = Number.isFinite(leftRank) && leftRank >= 0;
+			const rightRanked = Number.isFinite(rightRank) && rightRank >= 0;
+			if (leftRanked && rightRanked && leftRank !== rightRank) return leftRank - rightRank;
+			if (leftRanked !== rightRanked) return leftRanked ? -1 : 1;
+			return (insertionIndex.get(left) || 0) - (insertionIndex.get(right) || 0);
+		});
+		const sameConfirmedSource = previous?.list === container && previous?.viewport === viewport &&
+			previous?.sourceGeneration === generation;
+		const nativePassCount = sameConfirmedSource ? Math.max(1, Number(previous?.nativePassCount) || 1) + 1 : 1;
+		const exactPhysicalCatalogProof = options.exactPhysicalCatalogProof === true;
+		const physicalExpansionObserved = options.physicalExpansionObserved === true ||
+			(sameConfirmedSource && previous?.physicalExpansionObserved === true);
 		_dialogNativeMaterializedSources.set(targetMode, {
 			...snapshot,
 			count: Math.max(0, Number(count) || 0),
@@ -6242,8 +7415,24 @@
 			tailIds: orderedIds.slice(-_DIALOG_NATIVE_TAIL_ANCHOR_COUNT),
 			sourceGeneration: generation,
 			revision: Math.max(0, Number(previous?.revision) || 0) + 1,
+			nativePassCount,
+			apiConfirmed: exactPhysicalCatalogProof || (sameConfirmedSource && previous?.apiConfirmed === true),
+			apiProjectionExtraCount: exactPhysicalCatalogProof
+				? 0
+				: (sameConfirmedSource ? Math.max(0, Number(previous?.apiProjectionExtraCount) || 0) : 0),
+			exactPhysicalCatalogProof: exactPhysicalCatalogProof ||
+				(sameConfirmedSource && previous?.exactPhysicalCatalogProof === true),
+			physicalExpansionObserved,
+			confirmationKind: exactPhysicalCatalogProof ? 'api-exact-head-fenced' : (nativePassCount >= 2 ? 'native-second-pass' : ''),
+			// A short first window still gets the second guarded traversal. When the
+			// viewport actually expanded and a fresh API audit matched it ID-for-ID after
+			// a guarded head probe, that second walk adds no new evidence and is skipped.
+			needsColdConfirmation: nativePassCount < 2 && !exactPhysicalCatalogProof,
 			completedAt: Date.now(),
-			validatedAt: Date.now()
+			validatedAt: Date.now(),
+			// Physical source health has its own clock. A silent REST/head refresh must
+			// never make a native tail proof look newer than it really is.
+			lastTailProofAt: Date.now()
 		});
 		return true;
 	}
@@ -6256,6 +7445,7 @@
 		if (previous.invalidated === true) return false;
 		if (previous.list !== current.list || previous.viewport !== current.viewport) return false;
 		if (previous.sourceGeneration !== _getDialogNativeSourceGeneration(targetMode, current.list, current.viewport)) return false;
+		if (!previous.ids?.length && !_isDialogNativeSourceExplicitlyEmpty(current.list)) return false;
 		if (current.list.querySelector?.('[data-pena-native-filter-display="none"]')) {
 			// PENA folders/search/unread filters collapse only the presented geometry.
 			// Do not mistake that display:none range for a collapsed Bitrix source and
@@ -6270,10 +7460,20 @@
 		return previousRange < meaningfulRange || currentRange >= previousRange * .8;
 	}
 
+	function _shouldProbeDialogNativeEntry(reason) {
+		const value = String(reason || '');
+		// Ordinary panel opens and chats/tasks switching are presentation events,
+		// never physical health probes. A collapsed range is already detected by
+		// materializationCurrent; tail probing belongs to long-pause lifecycle
+		// recovery or a genuinely replaced native source.
+		return /^(?:source-remount|source-ready-retry)$/i.test(value);
+	}
+
 	function _setDialogNativeAttemptState(mode, patch = {}) {
 		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
 		const previous = _dialogNativeAttemptStates.get(targetMode) || {
-			state: 'idle', reason: '', retryAttempt: 0, retryAt: 0, startedAt: 0, completedAt: 0
+			state: 'idle', reason: '', retryAttempt: 0, retryAt: 0, startedAt: 0, completedAt: 0,
+			userActionRequired: false
 		};
 		const next = { ...previous, ...patch };
 		_dialogNativeAttemptStates.set(targetMode, next);
@@ -6283,6 +7483,10 @@
 
 	function _clearDialogNativeRecoveryRetry(mode) {
 		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
+		_dialogNativeRecoveryRetryEpochs.set(
+			targetMode,
+			Math.max(0, Number(_dialogNativeRecoveryRetryEpochs.get(targetMode)) || 0) + 1
+		);
 		const timer = _dialogNativeRecoveryRetryTimers.get(targetMode);
 		if (timer) clearTimeout(timer);
 		_dialogNativeRecoveryRetryTimers.delete(targetMode);
@@ -6308,21 +7512,116 @@
 		return /^(?:retry:|online-recovery|manual|mode-switch|source-remount)/i.test(String(reason || ''));
 	}
 
-	function _scheduleDialogNativeRecoveryRetry(mode, reason = 'native-retry') {
+	function _shouldKeepDialogNativeRecoveryInternal(mode, reason) {
+		const kind = String(reason || '').split(':', 1)[0];
+		if (!['bitrix-loader-active', 'source-empty-unconfirmed', 'bottom-unconfirmed', 'stalled', 'timeout', 'unavailable', 'native-incomplete'].includes(kind)) {
+			return false;
+		}
+		const attempt = Math.max(0, Number(_dialogNativeRecoveryRetryAttempts.get(mode === 'tasks' ? 'tasks' : 'chats')) || 0);
+		return attempt < _DIALOG_NATIVE_AUTOMATIC_RETRY_LIMIT;
+	}
+
+	function _clearDialogNativeMetadataRetry(mode) {
 		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
-		if (_dialogNativeRecoveryRetryTimers.has(targetMode)) return;
-		const attempt = Math.max(0, Number(_dialogNativeRecoveryRetryAttempts.get(targetMode)) || 0);
+		const timer = _dialogNativeMetadataRetryTimers.get(targetMode);
+		if (timer) clearTimeout(timer);
+		_dialogNativeMetadataRetryTimers.delete(targetMode);
+		_dialogNativeMetadataRetryAttempts.delete(targetMode);
+		_dialogNativeMetadataRetryStates.delete(targetMode);
+	}
+
+	function _ensureDialogNativeMetadataRetry(mode) {
+		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
+		const metadataRetry = _dialogNativeMetadataRetryStates.get(targetMode);
+		if (!metadataRetry?.reason) return false;
+		_dialogNativeBackgroundPendingModes.add(targetMode);
+		_scheduleDialogNativeMetadataRetry(targetMode, metadataRetry.reason);
+		return true;
+	}
+
+	function _scheduleDialogNativeMetadataRetry(mode, reason = 'metadata-retry') {
+		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
+		if (_dialogNativeMetadataRetryTimers.has(targetMode)) return;
+		const attempt = Math.max(0, Number(_dialogNativeMetadataRetryAttempts.get(targetMode)) || 0);
 		const delays = _getDialogNativeRecoveryDelays();
 		const delay = delays[Math.min(attempt, delays.length - 1)];
 		const retryAt = Date.now() + delay;
-		_dialogNativeRecoveryRetryAttempts.set(targetMode, attempt + 1);
+		_dialogNativeMetadataRetryAttempts.set(targetMode, attempt + 1);
+		_dialogNativeMetadataRetryStates.set(targetMode, {
+			reason: String(_dialogNativeMetadataRetryStates.get(targetMode)?.reason || reason),
+			retryAttempt: attempt + 1,
+			retryAt
+		});
+		_dialogNativeBackgroundPendingModes.add(targetMode);
+		const timer = setTimeout(() => {
+			_dialogNativeMetadataRetryTimers.delete(targetMode);
+			// Do not wake a hidden/inactive Bitrix list. The next focus, visibility or
+			// mode-entry metadata checkpoint will resume this retry without touching DOM.
+			if (!_isDialogNetworkAvailable() || document.hidden || !isInternalChatsDOM() || _pMode() !== targetMode) return;
+			_scheduleDialogWakeReconcile(`metadata-retry:${reason}`, {
+				metadataOnly: true,
+				delay: 0
+			});
+		}, delay);
+		_dialogNativeMetadataRetryTimers.set(targetMode, timer);
+	}
+
+	function _scheduleDialogNativeRecoveryRetry(mode, reason = 'native-retry', options = {}) {
+		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
+		if (_dialogNativeRecoveryRetryTimers.has(targetMode)) return;
+		const retryEpoch = Math.max(0, Number(_dialogNativeRecoveryRetryEpochs.get(targetMode)) || 0) + 1;
+		_dialogNativeRecoveryRetryEpochs.set(targetMode, retryEpoch);
+		const sourceFence = _dialogNativeSourceGenerations.get(targetMode) || null;
+		const materializationRevisionFence = Math.max(
+			0,
+			Number(_dialogNativeMaterializedSources.get(targetMode)?.revision) || 0
+		);
+		const currentAttempt = Math.max(0, Number(_dialogNativeRecoveryRetryAttempts.get(targetMode)) || 0);
+		const attempt = options.preserveAttempt === true && currentAttempt > 0 ? currentAttempt : currentAttempt + 1;
+		const delays = _getDialogNativeRecoveryDelays();
+		const delay = delays[Math.min(Math.max(0, attempt - 1), delays.length - 1)];
+		const retryAt = Date.now() + delay;
+		_dialogNativeRecoveryRetryAttempts.set(targetMode, attempt);
+		const userActionRequired = attempt > _DIALOG_NATIVE_AUTOMATIC_RETRY_LIMIT;
 		_setDialogNativeAttemptState(targetMode, {
-			state: 'retry', reason, retryAttempt: attempt + 1, retryAt, completedAt: Date.now()
+			state: 'retry', reason, retryAttempt: attempt, retryAt, completedAt: Date.now(), userActionRequired
 		});
 		const timer = setTimeout(() => {
-			_dialogNativeRecoveryRetryTimers.delete(targetMode);
+			if (Number(_dialogNativeRecoveryRetryEpochs.get(targetMode)) !== retryEpoch) return;
+			if (_dialogNativeRecoveryRetryTimers.get(targetMode) === timer) {
+				_dialogNativeRecoveryRetryTimers.delete(targetMode);
+			}
+			const currentSource = _dialogNativeSourceGenerations.get(targetMode) || null;
+			const sourceFenceCurrent = !sourceFence || (
+				currentSource?.list === sourceFence.list && currentSource?.viewport === sourceFence.viewport &&
+				Number(currentSource?.generation) === Number(sourceFence.generation)
+			);
+			const materialization = _dialogNativeMaterializedSources.get(targetMode) || null;
+			// A folder/search can intentionally hide most native rows, so the generic
+			// current-check alone is not proof that this failed attempt was superseded.
+			// Only a newer committed physical revision may retire its retry timer.
+			const materializationAdvanced = Math.max(0, Number(materialization?.revision) || 0) >
+				materializationRevisionFence;
+			const materializationReady = materializationAdvanced && sourceFenceCurrent &&
+				_dialogNativePrefetchedModes.has(targetMode) &&
+				materialization?.invalidated !== true && materialization?.needsColdConfirmation !== true &&
+				materialization?.list === currentSource?.list && materialization?.viewport === currentSource?.viewport &&
+				Number(materialization?.sourceGeneration) === Number(currentSource?.generation) &&
+				_isDialogNativeMaterializationCurrent(targetMode, materialization?.list);
+			if (!sourceFenceCurrent || materializationReady) {
+				const activeAttempt = _dialogNativeAttemptStates.get(targetMode) || {};
+				if (String(activeAttempt.state || '') === 'retry' && String(activeAttempt.reason || '') === String(reason || '')) {
+					_setDialogNativeAttemptState(targetMode, {
+						state: 'idle', reason: materializationReady ? 'retry-superseded-ready' : 'retry-source-fenced',
+						retryAttempt: 0, retryAt: 0, completedAt: Date.now()
+					});
+				}
+				return;
+			}
 			if (!_isDialogNetworkAvailable() || document.hidden || !isInternalChatsDOM() || _pMode() !== targetMode) {
-				_scheduleDialogNativeRecoveryRetry(targetMode, reason);
+				// Keep one dormant retry marker, but do not perpetually re-arm timers for
+				// a hidden or inactive Bitrix source. Mode entry, visibility and online
+				// lifecycle checkpoints resume it with a single deduplicated reconcile.
 				return;
 			}
 			_scheduleDialogWakeReconcile(`retry:${reason}`, { tailProbe: true, delay: 0 });
@@ -6332,8 +7631,31 @@
 
 	function _isDialogNativeBitrixBusy(container) {
 		if (!container) return false;
-		return Array.from(container.querySelectorAll?.('[aria-busy="true"],[data-loading="true"],.bx-im-loader,.ui-loader') || [])
-			.some(node => !node.closest?.('.pena-native-load-guard,.pena-native-original-load-guard') && isVisibleElement(node));
+		const viewport = findInternalScrollContainer(container);
+		const busyFlagNodes = new Set([
+			container,
+			viewport,
+			container.parentElement,
+			viewport?.parentElement
+		].filter(Boolean));
+		if (Array.from(busyFlagNodes).some(node =>
+			node.matches?.('[aria-busy="true"],[data-loading="true"]') &&
+			!node.closest?.('.pena-native-load-guard,.pena-native-original-load-guard') &&
+			isVisibleElement(node)
+		)) return true;
+
+		const roots = new Set([container, viewport].filter(Boolean));
+		const loaders = new Set();
+		roots.forEach(root => root.querySelectorAll?.('.bx-im-loader,.ui-loader').forEach(node => loaders.add(node)));
+		const viewportRect = viewport?.getBoundingClientRect?.() || container.getBoundingClientRect?.();
+		return Array.from(loaders).some(node => {
+			if (node.closest?.('.pena-native-load-guard,.pena-native-original-load-guard') || !isVisibleElement(node)) return false;
+			if (node.closest?.(_CHAT_LIST_ITEM_SELECTOR)) return false;
+			const rect = node.getBoundingClientRect?.();
+			if (!rect || !viewportRect) return true;
+			return rect.right > viewportRect.left && rect.left < viewportRect.right &&
+				rect.bottom > viewportRect.top && rect.top < viewportRect.bottom;
+		});
 	}
 
 	async function _verifyDialogNativeMissingIds(mode, ids = []) {
@@ -6367,7 +7689,18 @@
 		if (!_isDialogNativeSourceGenerationCurrent(targetMode, container, viewport, generation)) {
 			return { healthy: false, reason: 'source-generation-changed' };
 		}
-		const scrollSnapshot = _captureDialogControlNativeScroll();
+		const capturedScrollSnapshot = _captureDialogControlNativeScroll();
+		const trustedPosition = _dialogNativeScrollPositions.get(targetMode);
+		const scrollSnapshot = capturedScrollSnapshot && trustedPosition?.trusted === true
+			? Object.assign({}, capturedScrollSnapshot, {
+				top: Math.max(0, Number(trustedPosition.top) || 0),
+				left: Math.max(0, Number(trustedPosition.left) || 0),
+				anchorRow: null,
+				anchorId: '',
+				anchorTitle: '',
+				anchorOffset: 0
+			})
+			: capturedScrollSnapshot;
 		const probeStartedAt = Date.now();
 		const probeFenceCurrent = () => _dialogNativeMaterializedSources.get(targetMode) === previous &&
 			_isDialogNativeSourceGenerationCurrent(targetMode, container, viewport, generation);
@@ -6433,11 +7766,12 @@
 			if (healthy) {
 				previous.invalidated = false;
 				previous.validatedAt = Date.now();
+				previous.lastTailProofAt = previous.validatedAt;
 				previous.scrollHeight = Math.max(0, Number(viewport.scrollHeight) || 0);
 				previous.clientHeight = Math.max(0, Number(viewport.clientHeight) || 0);
 				previous.tailIds = expectedTail.slice(-_DIALOG_NATIVE_TAIL_ANCHOR_COUNT);
 				probeSucceeded = true;
-				_dialogNativeBackgroundPendingModes.delete(targetMode);
+				if (!_ensureDialogNativeMetadataRetry(targetMode)) _dialogNativeBackgroundPendingModes.delete(targetMode);
 				_clearDialogNativeRecoveryRetry(targetMode);
 				return { healthy: true, observedTailIds };
 			}
@@ -6464,6 +7798,7 @@
 			_dialogNativeHealthProbeMode = '';
 			const ownsProbeAttempt = Number(_dialogNativeAttemptStates.get(targetMode)?.startedAt) === probeStartedAt;
 			if (probeSucceeded && ownsProbeAttempt) {
+				_ensureDialogNativeMetadataRetry(targetMode);
 				_setDialogNativeAttemptState(targetMode, {
 					state: 'idle', reason: 'tail-confirmed', completedAt: Date.now(), retryAttempt: 0, retryAt: 0
 				});
@@ -6479,33 +7814,89 @@
 
 	async function _runDialogWakeReconcile(reason = 'wake', options = {}) {
 		if (document.hidden || !isInternalChatsDOM()) return { skipped: true };
-		_dialogWakeReconcileCount += 1;
-		_dialogWakeReconcileLastAt = Date.now();
-		_dialogWakeReconcileLastReason = reason;
 		const container = findContainer();
 		const viewport = container ? findInternalScrollContainer(container) : null;
 		if (!container || !viewport) {
-			_scheduleDialogNativeModeLoad('wake-source-ready', 80);
+			if (options.metadataOnly !== true) _scheduleDialogNativeModeLoad('wake-source-ready', 80);
 			return { unavailable: true };
 		}
 		const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
-		_getDialogNativeSourceGeneration(mode, container, viewport);
-		if (options.tailProbe === true) {
+		const sourceGeneration = _getDialogNativeSourceGeneration(mode, container, viewport);
+		const recoveryIntent = /^(?:retry:|wake-repair|source-ready-retry|online-recovery)/i.test(String(reason || '')) ||
+			String(_dialogNativeAttemptStates.get(mode)?.state || '') === 'retry';
+		if (window.__PENA_TEST_EAGER_MATERIALIZATION__ !== true &&
+			!_dialogControlNeedsCompleteNativeMaterialization(mode) && !recoveryIntent) {
+			_refreshDialogNativeVisibleWindow();
+			_setDialogNativeAttemptState(mode, {
+				state: 'idle', reason: 'native-pass-through', completedAt: Date.now(), retryAt: 0,
+				userActionRequired: false
+			});
+			_publishDialogRecentSyncState();
+			return { deferred: true, native: true };
+		}
+		const expectedContext = options.context || null;
+		if (expectedContext?.mode && (
+			expectedContext.mode !== mode || (expectedContext.list && (
+				expectedContext.list !== container || expectedContext.viewport !== viewport ||
+				Number(expectedContext.sourceGeneration) !== Number(sourceGeneration)
+			))
+		)) {
+			return { skipped: true, reason: 'stale-reconcile-context' };
+		}
+		_dialogWakeReconcileCount += 1;
+		_dialogWakeReconcileLastAt = Date.now();
+		_dialogWakeReconcileLastReason = reason;
+		const metadataOnly = options.metadataOnly === true;
+		const metadataAuditNeeded = _dialogNativeMetadataRetryStates.has(mode);
+		// Metadata availability and physical DOM health are independent. A pending API
+		// retry must not suppress the one legitimate tail proof after a long pause.
+		const runTailProbe = !metadataOnly && options.tailProbe === true;
+		if (runTailProbe) {
 			_setDialogNativeAttemptState(mode, {
 				state: 'probing', reason: String(reason || 'wake-tail'), startedAt: Date.now(), completedAt: 0, retryAt: 0
 			});
 		}
-		await new Promise(resolve => setTimeout(resolve, 120));
-		if (!_isDialogModeCatalogFresh(mode) || !_isDialogNativeMaterializationCurrent(mode, container)) {
+		if (!metadataOnly) await new Promise(resolve => setTimeout(resolve, 120));
+		// The active list can change during the debounce. Do not let a reconcile
+		// captured for chats schedule a global recovery after the user switched to
+		// tasks (or vice versa).
+		if (!metadataOnly && !_isDialogNativeSourceGenerationCurrent(mode, container, viewport, sourceGeneration)) {
+			return { skipped: true, reason: 'stale-reconcile-context-after-wait' };
+		}
+		if (!metadataOnly && (!_isDialogModeCatalogFresh(mode) || !_isDialogNativeMaterializationCurrent(mode, container))) {
 			_scheduleDialogNativeModeLoad('wake-repair', 0);
 			return { repair: true, reason: 'source-invalid' };
 		}
-		if (options.tailProbe === true) {
+		if (!metadataOnly && runTailProbe) {
 			const probe = await _probeDialogNativeTail(mode, container);
 			if (!probe.healthy) {
 				_dialogNativeBackgroundPendingModes.add(mode);
 				_scheduleDialogNativeModeLoad('wake-repair', 0);
 				return { repair: true, reason: probe.reason };
+			}
+		}
+		if (metadataAuditNeeded && _isDialogNativeSourceGenerationCurrent(mode, container, viewport, sourceGeneration)) {
+			const taskCatalogOutcomePromise = _syncDialogTaskCatalog({ force: true, deferMerge: true }).then(
+				value => ({ value, error: null }),
+				error => ({ value: null, error })
+			);
+			const audit = await _runDialogNativeExpectedCatalogAudit(mode, sourceGeneration, {
+				forceApi: true,
+				sourceContainer: container,
+				sourceViewport: viewport,
+				taskCatalogOutcomePromise
+			});
+			taskCatalogOutcomePromise.then(outcome => {
+				if (outcome?.value && !outcome.value.discarded) _commitDialogTaskCatalogResult(outcome.value);
+			}).catch(() => {});
+			_commitDialogNativeExpectedAuditMetadata(audit);
+			const recoveryScheduled = _reconcileDialogNativeExpectedAudit(audit);
+			if (audit?.complete === true && !recoveryScheduled) {
+				_clearDialogNativeMetadataRetry(mode);
+				_dialogNativeBackgroundPendingModes.delete(mode);
+			}
+			if (audit?.complete !== true || recoveryScheduled) {
+				return { healthy: true, metadataDeferred: true, reason: String(audit?.reason || '') };
 			}
 		}
 		const now = Date.now();
@@ -6514,13 +7905,18 @@
 			let deltaResult = null;
 			try {
 				deltaResult = await _syncDialogRecentData({
-					full: false, incrementalOnly: true, silent: true, reason: `${reason}-delta`
+					// The freshness TTL already deduplicates ordinary focus events. Once it
+					// expires, bypass the generic five-second anti-spam guard: otherwise a
+					// just-finished recovery can suppress the first required wake delta.
+					force: true, full: false, incrementalOnly: true, silent: true, reason: `${reason}-delta`
 				});
 			} catch (error) {
 				deltaResult = { backgroundFailed: true, error: String(error?.message || error || 'metadata-refresh-failed') };
 			}
 			if (deltaResult?.backgroundFailed) {
-				_scheduleDialogNativeRecoveryRetry(mode, /offline/i.test(String(deltaResult.error || '')) ? 'offline' : 'metadata-retry');
+				const retryReason = `head-refresh-incomplete:${String(deltaResult.error || 'metadata-refresh-failed')}`;
+				_dialogNativeMetadataRetryStates.set(mode, { reason: retryReason, retryAttempt: 0, retryAt: 0 });
+				_scheduleDialogNativeMetadataRetry(mode, retryReason);
 				return { healthy: true, metadataDeferred: true, error: deltaResult.error || '' };
 			}
 		}
@@ -6532,57 +7928,137 @@
 		return { healthy: true };
 	}
 
+	function _captureDialogWakeReconcileRequest(reason, options = {}) {
+		const container = findContainer();
+		const viewport = container ? findInternalScrollContainer(container) : null;
+		const mode = container?.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : _pMode();
+		const context = {
+			mode,
+			list: container || null,
+			viewport: viewport || null,
+			sourceGeneration: container && viewport ? _getDialogNativeSourceGeneration(mode, container, viewport) : 0
+		};
+		return {
+			reason: String(reason || 'wake'),
+			tailProbe: options.tailProbe === true,
+			metadataOnly: options.metadataOnly === true,
+			context,
+			delay: options.delay === 0 ? 0 : Math.max(0, Number(options.delay) || _getDialogReconcileDebounceMs())
+		};
+	}
+
+	function _isSameDialogWakeReconcileContext(left, right) {
+		if (!left?.context || !right?.context) return !left?.context && !right?.context;
+		return left.context.mode === right.context.mode && left.context.list === right.context.list &&
+			left.context.viewport === right.context.viewport &&
+			Number(left.context.sourceGeneration) === Number(right.context.sourceGeneration);
+	}
+
+	function _mergeDialogWakeReconcileRequest(current, incoming) {
+		if (!current) return incoming;
+		// A request belongs to the source visible when it was scheduled. On a fast
+		// chats/tasks switch the newest context replaces the old one; a tail flag is
+		// never transferred to another list.
+		if (!_isSameDialogWakeReconcileContext(current, incoming)) return incoming;
+		return {
+			...incoming,
+			tailProbe: current.tailProbe || incoming.tailProbe,
+			metadataOnly: current.metadataOnly && incoming.metadataOnly,
+			delay: Math.min(current.delay, incoming.delay)
+		};
+	}
+
+	function _armDialogWakeReconcileRequest(request) {
+		if (!request) return;
+		if (_dialogWakeReconcilePromise) {
+			_dialogWakeReconcileQueuedRequest = _mergeDialogWakeReconcileRequest(_dialogWakeReconcileQueuedRequest, request);
+			return;
+		}
+		if (_dialogWakeReconcileTimer) {
+			_dialogWakeReconcilePendingRequest = _mergeDialogWakeReconcileRequest(_dialogWakeReconcilePendingRequest, request);
+			if (request.delay !== 0) return;
+			clearTimeout(_dialogWakeReconcileTimer);
+			_dialogWakeReconcileTimer = null;
+			request = _dialogWakeReconcilePendingRequest;
+			_dialogWakeReconcilePendingRequest = null;
+		}
+		_dialogWakeReconcilePendingRequest = request;
+		_dialogWakeReconcileTimer = setTimeout(() => {
+			_dialogWakeReconcileTimer = null;
+			const activeRequest = _dialogWakeReconcilePendingRequest;
+			_dialogWakeReconcilePendingRequest = null;
+			if (!activeRequest) return;
+			const targetMode = activeRequest.context?.mode || _pMode();
+			if (activeRequest.metadataOnly !== true && _isDialogNativeRecoveryDeferred(targetMode) &&
+				!_canBypassDialogNativeRecoveryDelay(activeRequest.reason)) return;
+			_dialogWakeReconcilePromise = _runDialogWakeReconcile(activeRequest.reason, activeRequest)
+				.catch(error => warn('Не удалось сверить ленту после паузы', error?.message || error))
+				.finally(() => {
+					_dialogWakeReconcilePromise = null;
+					const queued = _dialogWakeReconcileQueuedRequest;
+					_dialogWakeReconcileQueuedRequest = null;
+					if (queued) _armDialogWakeReconcileRequest(queued);
+				});
+		}, request.delay);
+	}
+
 	function _scheduleDialogWakeReconcile(reason = 'wake', options = {}) {
 		// A lifecycle burst may accompany thawing the exact traversal that is already
 		// proving this source. Let that fenced attempt resume; a second reconcile would
 		// only race its completion and start a duplicate walk.
 		if (_dialogNativeOriginalScrollActive || _dialogNativeOriginalScrollPromise) return;
-		if (_isDialogNativeRecoveryDeferred(_pMode()) && !_canBypassDialogNativeRecoveryDelay(reason)) return;
-		_dialogWakeReconcileNeedsTailProbe = _dialogWakeReconcileNeedsTailProbe || options.tailProbe === true;
+		const request = _captureDialogWakeReconcileRequest(reason, options);
+		const targetMode = request.context?.mode || _pMode();
+		if (request.metadataOnly !== true && _isDialogNativeRecoveryDeferred(targetMode) &&
+			!_canBypassDialogNativeRecoveryDelay(reason)) return;
 		_dialogWakeReconcileLastReason = reason;
-		if (_dialogWakeReconcileTimer || _dialogWakeReconcilePromise) return;
-		_dialogWakeReconcileTimer = setTimeout(() => {
-			_dialogWakeReconcileTimer = null;
-			const reconcileReason = _dialogWakeReconcileLastReason || reason;
-			if (_isDialogNativeRecoveryDeferred(_pMode()) && !_canBypassDialogNativeRecoveryDelay(reconcileReason)) {
-				_dialogWakeReconcileNeedsTailProbe = false;
-				return;
-			}
-			const tailProbe = _dialogWakeReconcileNeedsTailProbe;
-			_dialogWakeReconcileNeedsTailProbe = false;
-			_dialogWakeReconcilePromise = _runDialogWakeReconcile(reconcileReason, { tailProbe })
-				.catch(error => warn('Не удалось сверить ленту после паузы', error?.message || error))
-				.finally(() => {
-					_dialogWakeReconcilePromise = null;
-					if (_dialogWakeReconcileNeedsTailProbe) _scheduleDialogWakeReconcile('coalesced-wake', { tailProbe: true });
-				});
-		}, options.delay === 0 ? 0 : Math.max(0, Number(options.delay) || _getDialogReconcileDebounceMs()));
+		_armDialogWakeReconcileRequest(request);
 	}
 
 	async function _refreshDialogTaskCatalogMetadata(options = {}) {
 		if (!options.force && _isDialogTaskCatalogMetadataFresh()) return { cached: true, complete: true };
-		const taskCatalog = await _syncDialogTaskCatalog({ force: true, deferMerge: true });
+		const taskCatalog = await _syncDialogTaskCatalog({
+			forceNetwork: options.force === true,
+			deferMerge: true,
+			headOnly: options.headOnly === true,
+			maxPages: options.headOnly === true ? 4 : undefined
+		});
 		_commitDialogTaskCatalogResult(taskCatalog);
 		_markDialogRecentRepositoryFullCommit();
 		_scheduleDialogRecentCacheWrite(120);
 		_publishDialogRecentSyncState();
+		if (_dialogControlNativeWorkspaceTab === 'time' && (taskCatalog?.rows?.length || 0) > 0) {
+			const range = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
+			_loadDialogTimeRange(range, { force: true }).catch(() => {});
+		}
 		return taskCatalog;
 	}
 
-	function _scheduleDialogTaskCatalogRefresh(reason = 'task-metadata-stale', delay = 250) {
-		if (_dialogTaskCatalogRefreshTimer || _isDialogTaskCatalogMetadataFresh()) return;
+	function _scheduleDialogTaskCatalogRefresh(reason = 'task-metadata-stale', delay = 5000) {
+		const recentHead = _dialogTaskCatalogFetchedAt > 0 && Date.now() - _dialogTaskCatalogFetchedAt < _getDialogTaskCatalogRefreshMs();
+		if (_dialogTaskCatalogRefreshTimer || _isDialogTaskCatalogMetadataFresh() || recentHead) return;
 		_dialogTaskCatalogRefreshTimer = setTimeout(() => {
 			_dialogTaskCatalogRefreshTimer = null;
 			if (document.hidden || !isInternalChatsDOM()) return;
-			_refreshDialogTaskCatalogMetadata({ reason }).catch(error => {
+			const idleFor = Date.now() - _dialogNativeLastUserActivityAt;
+			if (idleFor < 3000) {
+				_scheduleDialogTaskCatalogRefresh(reason, 3000 - idleFor + 250);
+				return;
+			}
+			_refreshDialogTaskCatalogMetadata({ reason, headOnly: true }).catch(error => {
 				warn('Не удалось фоново обновить индекс task-чатов', error?.message || error);
 			});
-		}, Math.max(0, Number(delay) || 0));
+		}, Math.max(3000, Number(delay) || 0));
 	}
 
 	function _getDialogDeepRefreshIdleDelayMs() {
 		const testDelay = Number(window.__PENA_TEST_DIALOG_DEEP_IDLE_MS__);
 		return Number.isFinite(testDelay) && testDelay >= 20 ? testDelay : _DIALOG_DEEP_REFRESH_IDLE_MS;
+	}
+
+	function _getDialogDeepRefreshUserIdleMs() {
+		const testDelay = Number(window.__PENA_TEST_DIALOG_DEEP_USER_IDLE_MS__);
+		return Number.isFinite(testDelay) && testDelay >= 20 ? testDelay : _DIALOG_DEEP_REFRESH_USER_IDLE_MS;
 	}
 
 	function _scheduleDialogDeepRefresh(reason = 'deep-cache-stale', delay = _getDialogDeepRefreshIdleDelayMs()) {
@@ -6593,17 +8069,18 @@
 				_scheduleDialogDeepRefresh(reason, 60000);
 				return;
 			}
+			const requiredIdle = _getDialogDeepRefreshUserIdleMs();
 			const idleFor = Date.now() - _dialogNativeLastUserActivityAt;
-			if (idleFor < _DIALOG_DEEP_REFRESH_USER_IDLE_MS) {
-				_scheduleDialogDeepRefresh(reason, _DIALOG_DEEP_REFRESH_USER_IDLE_MS - idleFor + 250);
+			if (idleFor < requiredIdle) {
+				_scheduleDialogDeepRefresh(reason, requiredIdle - idleFor + 250);
 				return;
 			}
 			const metadataStale = !_dialogRecentLastFullAt || Date.now() - _dialogRecentLastFullAt >= _getDialogAuditRefreshMs();
 			if (!metadataStale) return;
 			const start = () => {
 				_dialogDeepRefreshIdleHandle = null;
-				if (Date.now() - _dialogNativeLastUserActivityAt < _DIALOG_DEEP_REFRESH_USER_IDLE_MS) {
-					_scheduleDialogDeepRefresh(reason, _DIALOG_DEEP_REFRESH_USER_IDLE_MS);
+				if (Date.now() - _dialogNativeLastUserActivityAt < _getDialogDeepRefreshUserIdleMs()) {
+					_scheduleDialogDeepRefresh(reason, _getDialogDeepRefreshUserIdleMs());
 					return;
 				}
 				// Full background work is metadata-only. Moving the real Bitrix viewport
@@ -6612,6 +8089,7 @@
 					full: true,
 					force: true,
 					silent: true,
+					interactionFriendly: true,
 					reason
 				}).catch(error => {
 					warn('Не удалось фоново обновить полный каталог', error?.message || error);
@@ -6632,36 +8110,169 @@
 
 	function _noteDialogCatalogUserActivity() {
 		_dialogNativeLastUserActivityAt = Date.now();
-		if (_dialogNativeOriginalScrollActive && _dialogNativeOriginalScrollSilent) {
-			_dialogNativeOriginalScrollCancel?.();
+		if (_dialogNativeOriginalScrollActive) {
+			_dialogNativeOriginalScrollCancel?.('user-interaction');
 		}
+	}
+
+	function _scheduleDialogNativeColdConfirmation(mode, container, viewport, sourceGeneration, delay = 80) {
+		if (IS_OL_FRAME || window.__PENA_FORCE_REST_CATALOG__ === true) return;
+		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
+		_dialogNativeColdConfirmationDebug = {
+			stage: 'scheduled', mode: targetMode, sourceGeneration: Number(sourceGeneration) || 0,
+			at: Date.now(), delay: Math.max(0, Number(delay) || 0)
+		};
+		const previousTimer = _dialogNativeColdConfirmationTimers.get(targetMode);
+		if (previousTimer) clearTimeout(previousTimer);
+		const arm = wait => {
+			const timer = setTimeout(() => {
+				if (_dialogNativeColdConfirmationTimers.get(targetMode) !== timer) return;
+				_dialogNativeColdConfirmationTimers.delete(targetMode);
+				_dialogNativeColdConfirmationDebug = { ..._dialogNativeColdConfirmationDebug, stage: 'fired', firedAt: Date.now() };
+				if (document.hidden || _dialogRecentRuntimeStarting || _dialogNativeOriginalScrollPromise) {
+					_dialogNativeColdConfirmationDebug = {
+						..._dialogNativeColdConfirmationDebug, stage: 'deferred', hidden: document.hidden,
+						runtimeStarting: _dialogRecentRuntimeStarting, traversalPending: !!_dialogNativeOriginalScrollPromise
+					};
+					arm(document.hidden ? 1000 : 140);
+					return;
+				}
+				const active = window.__PENA_ACTIVE_LIST_CONTEXT__;
+				// Applying the saved sort/filter can make Bitrix remount the same logical
+				// source between passes. Re-resolve it here instead of silently dropping
+				// the confirmation because the first pass captured an obsolete node. The
+				// lifecycle context has an absence grace period, so visible DOM wins here.
+				const selector = targetMode === 'tasks'
+					? '.bx-im-list-container-task__elements'
+					: '.bx-im-list-container-recent__elements';
+				const visibleContainer = findVisibleInternalContainer(selector);
+				if (!visibleContainer && active?.mode && active.mode !== targetMode) {
+					_dialogNativeColdConfirmationDebug = { ..._dialogNativeColdConfirmationDebug, stage: 'inactive-mode', activeMode: active.mode };
+					return;
+				}
+				const liveContainer = visibleContainer ||
+					(active?.mode === targetMode && active?.list?.isConnected ? active.list : null) ||
+					(container?.isConnected ? container : null);
+				const liveMode = liveContainer?.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
+				const liveViewport = liveContainer ? findInternalScrollContainer(liveContainer) : null;
+				if (!liveContainer || !liveViewport || liveMode !== targetMode) {
+					_dialogNativeColdConfirmationDebug = {
+						..._dialogNativeColdConfirmationDebug, stage: 'source-unavailable',
+						hasContainer: !!liveContainer, hasViewport: !!liveViewport, liveMode
+					};
+					return;
+				}
+				const liveGeneration = _getDialogNativeSourceGeneration(targetMode, liveContainer, liveViewport);
+				const materialization = _dialogNativeMaterializedSources.get(targetMode);
+				const sameSource = materialization?.list === liveContainer && materialization?.viewport === liveViewport &&
+					Number(materialization?.sourceGeneration) === Number(liveGeneration);
+				if (sameSource && materialization?.needsColdConfirmation !== true) {
+					_dialogNativeColdConfirmationDebug = { ..._dialogNativeColdConfirmationDebug, stage: 'already-confirmed' };
+					return;
+				}
+				const savedPosition = _dialogNativeScrollPositions.get(targetMode);
+				_dialogNativeColdConfirmationDebug = {
+					..._dialogNativeColdConfirmationDebug, stage: 'starting', liveGeneration,
+					sameSource, needsColdConfirmation: materialization?.needsColdConfirmation === true
+				};
+				_runDialogNativeOriginalScrollLoad({
+					full: true,
+					force: true,
+					reason: 'cold-confirmation',
+					sourceContainer: liveContainer,
+					sourceViewport: liveViewport,
+					sourceMode: targetMode,
+					...(savedPosition ? { restoreTop: savedPosition.top, restoreLeft: savedPosition.left } : {})
+				}).then(result => {
+					_dialogNativeColdConfirmationDebug = { ..._dialogNativeColdConfirmationDebug, stage: 'settled', result };
+				}).catch(error => {
+					_dialogNativeColdConfirmationDebug = { ..._dialogNativeColdConfirmationDebug, stage: 'failed', error: String(error?.message || error) };
+				});
+			}, Math.max(0, Number(wait) || 0));
+			_dialogNativeColdConfirmationTimers.set(targetMode, timer);
+		};
+		arm(delay);
 	}
 
 	function _scheduleDialogNativeModeLoad(reason = 'mode-enter', delay = 80) {
 		if (IS_OL_FRAME || window.__PENA_FORCE_REST_CATALOG__ === true) return;
+		const explicitFullIntent = reason === 'view-demand' || reason === 'cold-confirmation' ||
+			/^(?:retry:|wake-repair|source-ready-retry|online-recovery)/i.test(String(reason || '')) ||
+			window.__PENA_TEST_EAGER_MATERIALIZATION__ === true ||
+			window.__PENA_TEST_NATIVE_SCROLL__ === true;
+		const structuralInterrupt = ['mode-switch', 'source-remount', 'initial-mount'].includes(reason);
+		if (_dialogNativeModeLoadTimer && _dialogNativeModeLoadReason === 'cold-confirmation' &&
+			reason !== 'cold-confirmation' && !structuralInterrupt) {
+			// The mandatory second pass is a correctness fence, not ordinary debounce
+			// work. Panel/focus/wake events must not postpone it indefinitely.
+			return;
+		}
 		if (_isDialogControlNativePassThrough()) {
 			if (_isDialogNativeRecoveryDeferred(_pMode()) && !_canBypassDialogNativeRecoveryDelay(reason)) return;
 			if (_dialogNativeModeLoadTimer) clearTimeout(_dialogNativeModeLoadTimer);
+			_dialogNativeModeLoadReason = reason;
 			_dialogNativeModeLoadTimer = setTimeout(() => {
 				_dialogNativeModeLoadTimer = null;
+				_dialogNativeModeLoadReason = '';
 				const container = findContainer();
 				if (!container || !isInternalChatsDOM()) return;
 				const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
+				const completeViewRequested = explicitFullIntent || _dialogControlNeedsCompleteNativeMaterialization(mode);
+				if (!completeViewRequested) {
+					_refreshDialogNativeVisibleWindow();
+					_setDialogNativeAttemptState(mode, {
+						state: 'idle', reason: 'native-pass-through', completedAt: Date.now(), retryAt: 0,
+						userActionRequired: false
+					});
+					if (_isDialogRecentInteractionBlocked()) _completeDialogRecentInteractionGate();
+					_publishDialogRecentSyncState();
+					return;
+				}
 				if (_isDialogNativeRecoveryDeferred(mode) && !_canBypassDialogNativeRecoveryDelay(reason)) return;
 				_dialogNativeTraversalFailedModes.delete(mode);
 				_dialogNativeTraversalFailedAt.delete(mode);
 				const catalogFresh = _isDialogModeCatalogFresh(mode);
 				const nativeMaterializationFresh = catalogFresh && _isDialogNativeMaterializationCurrent(mode, container);
 				if (catalogFresh && nativeMaterializationFresh) {
+					if (mode === 'tasks') _scheduleDialogTaskCatalogRefresh('mode-task-metadata');
+					if (reason === 'mode-switch' || _dialogNativeMetadataRetryStates.has(mode)) {
+						_scheduleDialogWakeReconcile(`${reason}-metadata`, { metadataOnly: true });
+					}
 					const savedPosition = _dialogNativeScrollPositions.get(mode);
 					const viewport = findInternalScrollContainer(container);
 					if (savedPosition && viewport?.isConnected) {
-						viewport.scrollTop = Math.max(0, Number(savedPosition.top) || 0);
-						viewport.scrollLeft = Math.max(0, Number(savedPosition.left) || 0);
-						viewport.dispatchEvent(new Event('scroll'));
+						const nextTop = Math.max(0, Number(savedPosition.top) || 0);
+						const nextLeft = Math.max(0, Number(savedPosition.left) || 0);
+						if (Math.abs((Number(viewport.scrollTop) || 0) - nextTop) > 0.5 || Math.abs((Number(viewport.scrollLeft) || 0) - nextLeft) > 0.5) {
+							viewport.scrollTop = nextTop;
+							viewport.scrollLeft = nextLeft;
+							viewport.dispatchEvent(new Event('scroll'));
+						}
 					}
-					if (mode === 'tasks') _scheduleDialogTaskCatalogRefresh('mode-task-metadata');
-					return;
+					const materialization = _dialogNativeMaterializedSources.get(mode);
+					const needsColdConfirmation = materialization?.needsColdConfirmation === true;
+					if (needsColdConfirmation) {
+						if (reason === 'cold-confirmation') {
+							// The first pass may run before Bitrix has attached its lazy loader.
+							// Repeat the same full traversal once; this is the automatic equivalent
+							// of the manual refresh that previously repaired a short first window.
+						} else {
+							const source = _dialogNativeSourceGenerations.get(mode);
+							if (source?.list === container && source?.viewport === viewport) {
+								_scheduleDialogNativeColdConfirmation(mode, container, viewport, source.generation, 80);
+							}
+							return;
+						}
+					} else {
+						if (reason === 'cold-confirmation') return;
+						if (_shouldProbeDialogNativeEntry(reason, materialization)) {
+							// Bitrix reuses the same list/viewport and may silently replace its rows.
+							// DOM identity and scrollHeight are therefore insufficient: verify the
+							// saved tail IDs before accepting the automatic no-op path.
+							_scheduleDialogWakeReconcile(`${reason}-tail`, { tailProbe: true, delay: 0 });
+						}
+						return;
+					}
 				}
 				// A complete repository does not keep Bitrix' virtual list alive. When the
 				// native list instance is replaced or its scroll range collapses, repeat the
@@ -6701,12 +8312,24 @@
 			return;
 		}
 		if (_dialogNativeModeLoadTimer) clearTimeout(_dialogNativeModeLoadTimer);
+		_dialogNativeModeLoadReason = reason;
 		_dialogNativeModeLoadTimer = setTimeout(() => {
 			_dialogNativeModeLoadTimer = null;
+			_dialogNativeModeLoadReason = '';
 			const container = findContainer();
 			if (!container || !isInternalChatsDOM()) return;
 			const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
-			if (_isDialogModeCatalogFresh(mode)) {
+			// The managed compatibility view renders from our repository rather than
+			// Bitrix' live rows. A repository generation restored from another page
+			// may be structurally complete but its unread/status metadata can already
+			// be stale. Require one successful API proof in this document before the
+			// managed view is allowed to reuse it.
+			const sessionCatalogConfirmed = _dialogRecentLastApiResult?.complete === true;
+			const silentSourceProof = _dialogNativeSilentPrefetchedSources.get(mode);
+			const sessionSourceConfirmed = silentSourceProof?.list === container &&
+				silentSourceProof?.viewport === findInternalScrollContainer(container) &&
+				silentSourceProof.list?.isConnected && silentSourceProof.viewport?.isConnected;
+			if (_isDialogModeCatalogFresh(mode) && (sessionCatalogConfirmed || sessionSourceConfirmed)) {
 				if (mode === 'tasks') _scheduleDialogTaskCatalogRefresh('mode-task-metadata');
 				if (_isDialogRecentInteractionBlocked()) _completeDialogRecentInteractionGate();
 				return;
@@ -6737,26 +8360,143 @@
 		}, Math.max(100, Number(delay) || 450));
 	}
 
+	function _scheduleDialogNativeStatusRefresh(container = findContainer(), dialogIds = [], delay = 70) {
+		if (IS_OL_FRAME || !container?.isConnected || !_isDialogControlNativePassThrough()) return;
+		const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
+		const viewport = findInternalScrollContainer(container);
+		if (!viewport?.isConnected || viewport === _dialogControlManagedViewport) return;
+		const sourceGeneration = _getDialogNativeSourceGeneration(mode, container, viewport);
+		const ids = new Set(Array.from(dialogIds || []).map(normId).filter(Boolean));
+		const current = _dialogNativeStatusRefreshRequest;
+		if (current && current.mode === mode && current.container === container && current.viewport === viewport &&
+			current.sourceGeneration === sourceGeneration) {
+			if (!current.ids.size || !ids.size) current.ids.clear();
+			else ids.forEach(id => current.ids.add(id));
+		} else {
+			_dialogNativeStatusRefreshRequest = { mode, container, viewport, sourceGeneration, ids };
+		}
+		if (_dialogNativeStatusRefreshTimer) clearTimeout(_dialogNativeStatusRefreshTimer);
+		_dialogNativeStatusRefreshTimer = setTimeout(() => {
+			_dialogNativeStatusRefreshTimer = null;
+			const request = _dialogNativeStatusRefreshRequest;
+			_dialogNativeStatusRefreshRequest = null;
+			if (!request || document.hidden || _dialogNativePrefetchActive || _dialogNativeOriginalScrollActive ||
+				_dialogNativeOriginalScrollFinishing || _dialogNativeHealthProbeActive ||
+				!_isDialogNativeSourceGenerationCurrent(request.mode, request.container, request.viewport, request.sourceGeneration)) return;
+			_invalidateDialogControlDomReadCache();
+			let changed = false;
+			let observedAt = 0;
+			_getDialogNativeSourceRows(request.container).forEach(row => {
+				const id = normId(getChatIdFromElement(row));
+				if (!id || (request.ids.size && !request.ids.has(id))) return;
+				const previous = _getDialogRecentMeta(id);
+				if (!previous) return;
+				const meta = getItemMeta(row);
+				if (!meta || normId(meta.id) !== id) return;
+				const next = {
+					unreadCount: Math.max(0, Number(meta.unreadCount) || 0),
+					hasUnread: !!meta.hasUnread,
+					hasLater: !!meta.hasLater,
+					hasMention: !!meta.hasMention
+				};
+				const rowChanged = previous.unreadCount !== next.unreadCount || previous.hasUnread !== next.hasUnread ||
+					previous.hasLater !== next.hasLater || previous.hasMention !== next.hasMention;
+				if (!rowChanged) return;
+				observedAt = Math.max(observedAt, Number(meta.observedAt) || Date.now());
+				Object.assign(previous, next, {
+					counterFetchedAt: Number(meta.observedAt) || observedAt,
+					counterStale: false
+				});
+				if (_dialogRecentRepositoryReady) _markDialogRecentRepositoryDirty(id);
+				changed = true;
+			});
+			if (!changed || !_isDialogNativeSourceGenerationCurrent(request.mode, request.container, request.viewport, request.sourceGeneration)) return;
+			_dialogRecentCountersAt = Math.max(_dialogRecentCountersAt, observedAt || Date.now());
+			_dialogRecentCountersError = '';
+			_dialogRecentDataRevision += 1;
+			_scheduleDialogRecentCacheWrite(80);
+			_notifyDialogRecentCountersChanged(request.container);
+			_publishDialogRecentSyncState();
+		}, Math.max(30, Number(delay) || 70));
+	}
+
+	function _scheduleDialogNativePresentationRefresh(container = findContainer(), rows = [], delay = 500) {
+		if (IS_OL_FRAME || !container?.isConnected || !_isDialogControlNativePassThrough()) return;
+		const prefs = _getDialogControlViewPrefs();
+		const needsCustomPresentation = !!String(filters.query || '').trim() || prefs.unreadOnly ||
+			prefs.sortMode !== 'date' || prefs.sortDirection !== 'desc';
+		const changedRows = (Array.isArray(rows) ? rows : Array.from(rows || [])).filter(row => row?.isConnected);
+		// A Bitrix typing/status badge can be replaced inside an otherwise stable row.
+		// Rebind only rows that already own a PENA ring; this is a tiny presentation
+		// repair and must not fall back to a catalog/view rebuild.
+		const needsAvatarLayerRepair = changedRows.some(row => row.querySelector?.('.pena-native-avatar-ring'));
+		if (!needsCustomPresentation && !needsAvatarLayerRepair) return;
+		const refreshDelay = needsAvatarLayerRepair
+			? Math.min(80, Math.max(16, Number(delay) || 80))
+			: Math.max(250, Number(delay) || 500);
+		changedRows.forEach(row => {
+			if (row?.isConnected) _dialogNativePresentationRefreshRows.add(row);
+		});
+		if (_dialogNativePresentationRefreshTimer) clearTimeout(_dialogNativePresentationRefreshTimer);
+		_dialogNativePresentationRefreshTimer = setTimeout(() => {
+			_dialogNativePresentationRefreshTimer = null;
+			const pendingRows = Array.from(_dialogNativePresentationRefreshRows);
+			_dialogNativePresentationRefreshRows.clear();
+			if (document.hidden || !container.isConnected || _dialogNativeOriginalScrollActive ||
+				!_isDialogControlNativePassThrough()) return;
+			if (window.__PENA_TEST_PERF_METRICS__) {
+				window.__PENA_TEST_PERF_METRICS__.presentationRefreshes =
+					(Number(window.__PENA_TEST_PERF_METRICS__.presentationRefreshes) || 0) + 1;
+			}
+			// Message previews, delivery ticks and typing indicators are presentation
+			// changes, not catalog changes. Re-apply only an explicitly custom view after
+			// the burst goes quiet; never touch repository/materialization state here.
+			_invalidateDialogControlDomReadCache();
+			pendingRows.forEach(row => {
+				if (!row?.isConnected) return;
+				const ring = row.querySelector?.('.pena-native-avatar-ring');
+				const host = ring?.parentElement;
+				if (host) _syncDialogControlNativeAvatarLayers(row, host);
+			});
+			if (String(filters.query || '').trim()) {
+				const nativeFolderFilter = _getDialogControlNativeFilter();
+				pendingRows.forEach(row => {
+					if (row?.isConnected) _applyDialogControlRowFilter(row, nativeFolderFilter);
+				});
+			}
+			if (prefs.sortMode !== 'date' || prefs.sortDirection !== 'desc') {
+				_scheduleDialogControlNativeView(container, { restoreDisplay: false });
+			}
+		}, refreshDelay);
+	}
+
 	function _scheduleDialogNativePassThroughRefresh(delay = 120) {
+		_dialogNativePassThroughRefreshPending = true;
 		if (_dialogNativePassThroughRefreshTimer) clearTimeout(_dialogNativePassThroughRefreshTimer);
 		_dialogNativePassThroughRefreshTimer = setTimeout(() => {
 			_dialogNativePassThroughRefreshTimer = null;
-			if (document.hidden || !_isDialogControlNativePassThrough() || _dialogNativeOriginalScrollActive) return;
+			if (document.hidden || !_isDialogControlNativePassThrough()) {
+				_dialogNativePassThroughRefreshPending = false;
+				return;
+			}
+			if (_dialogNativeOriginalScrollActive) return;
+			_dialogNativePassThroughRefreshPending = false;
+			if (window.__PENA_TEST_PERF_METRICS__) {
+				window.__PENA_TEST_PERF_METRICS__.passThroughRefreshes =
+					(Number(window.__PENA_TEST_PERF_METRICS__.passThroughRefreshes) || 0) + 1;
+			}
 			_invalidateDialogControlDomReadCache();
+			_dialogControlNativeViewSig = '';
 			const mode = _pMode();
 			const apiLoadPromise = _dialogRecentApiLoadPromise;
 			// Visible rows may enrich a catalog only after the current document has
 			// completed its atomic traversal. Otherwise a post-timeout DOM mutation
 			// republishes the partial window that the traversal deliberately rejected.
-			if (!apiLoadPromise && _dialogNativePrefetchedModes.has(mode)) {
-				_refreshDialogNativeVisibleWindow();
-			}
+			if (!apiLoadPromise) _refreshDialogNativeVisibleWindow();
 			// Presentation is independent from the metadata audit. Apply the current
 			// folder/search/sort immediately instead of leaving recycled Bitrix rows raw
 			// for the whole duration of a long REST pagination pass.
-			_dialogControlNativeViewSig = '';
 			_scheduleDialogControlNativeView(findContainer(), { restoreDisplay: false });
-			_refreshDialogControlPanel(filtersHost);
 			if (apiLoadPromise && _dialogNativePassThroughApiResumePromise !== apiLoadPromise) {
 				_dialogNativePassThroughApiResumePromise = apiLoadPromise;
 				Promise.resolve(apiLoadPromise).finally(() => {
@@ -6792,9 +8532,12 @@
 				const now = Date.now();
 				const drifted = now - _dialogLifecycleLastHeartbeatAt >= _getDialogTimerDriftMs();
 				_dialogLifecycleLastHeartbeatAt = now;
-				_scheduleDialogWakeReconcile(drifted ? 'timer-resume' : 'periodic-freshness', { tailProbe: drifted });
+				_scheduleDialogWakeReconcile(drifted ? 'timer-resume' : 'periodic-freshness', {
+					tailProbe: drifted,
+					metadataOnly: !drifted
+				});
 			}, _DIALOG_RECENT_REFRESH_STALE_MS);
-			window.addEventListener('focus', () => _scheduleDialogWakeReconcile('focus-freshness'));
+			window.addEventListener('focus', () => _scheduleDialogWakeReconcile('focus-freshness', { metadataOnly: true }));
 			document.addEventListener('visibilitychange', () => {
 				if (document.hidden) {
 					_dialogLifecycleHiddenAt = Date.now();
@@ -6803,7 +8546,11 @@
 				const hiddenFor = _dialogLifecycleHiddenAt ? Date.now() - _dialogLifecycleHiddenAt : 0;
 				_dialogLifecycleHiddenAt = 0;
 				_dialogLifecycleLastHeartbeatAt = Date.now();
-				_scheduleDialogWakeReconcile('visibility-freshness', { tailProbe: hiddenFor >= _getDialogLongHiddenMs() });
+				const longHidden = hiddenFor >= _getDialogLongHiddenMs();
+				_scheduleDialogWakeReconcile('visibility-freshness', {
+					tailProbe: longHidden,
+					metadataOnly: !longHidden
+				});
 			});
 			document.addEventListener('freeze', () => {
 				_dialogLifecycleFrozen = true;
@@ -6827,9 +8574,26 @@
 			window.addEventListener('pageshow', event => {
 				if (event?.persisted) _scheduleDialogWakeReconcile('pageshow-persisted', { tailProbe: true });
 			});
+			window.addEventListener('offline', () => {
+				_dialogLifecycleObservedOffline = true;
+			});
 			window.addEventListener('online', () => {
-				for (const mode of ['chats', 'tasks']) _clearDialogNativeRecoveryRetry(mode);
-				_scheduleDialogWakeReconcile('online-recovery', { tailProbe: true, delay: 0 });
+				const mode = _pMode();
+				const hadOfflineTransition = _dialogLifecycleObservedOffline;
+				const materialization = _dialogNativeMaterializedSources.get(mode);
+				const attempt = _dialogNativeAttemptStates.get(mode);
+				const needsNativeRecovery = String(attempt?.state || '') === 'retry' ||
+					materialization?.invalidated === true || !_isDialogModeCatalogFresh(mode);
+				_dialogLifecycleObservedOffline = false;
+				if (!hadOfflineTransition && !_dialogNativeMetadataRetryStates.has(mode)) return;
+				if (needsNativeRecovery) {
+					_clearDialogNativeRecoveryRetry(mode);
+					_scheduleDialogWakeReconcile('online-recovery', { tailProbe: true, delay: 0 });
+					return;
+				}
+				// Chromium/Bitrix may emit duplicate online events without a real offline
+				// transition. They refresh metadata only and never move the native viewport.
+				_scheduleDialogWakeReconcile('online-freshness', { metadataOnly: true, delay: 0 });
 			});
 		}
 		_publishDialogRecentSyncState();
@@ -6839,6 +8603,7 @@
 		if (window.__PENA_TEST_SKIP_DIALOG_RUNTIME__ === true) return false;
 		if (IS_OL_FRAME || _dialogRecentSyncArmed || _dialogRecentRuntimeStarting || !isInternalChatsDOM()) return false;
 		_dialogRecentRuntimeStarting = true;
+		_armDialogRecentRepositoryConnectionRecovery();
 		if (!_dialogRecentInteractionGateInitialized) {
 			_dialogRecentInteractionGateInitialized = true;
 			if (_isDialogControlNativePassThrough()) _completeDialogRecentInteractionGate();
@@ -6848,24 +8613,20 @@
 			_dialogRecentRuntimeStarting = false;
 			_publishDialogRecentSyncState();
 			_armDialogRecentSync();
-			const mode = _pMode();
-			const cachedModeKnown = _dialogRecentCacheLoaded && _dialogNativePrefetchedModes.has(mode) &&
-				Math.max(0, Number(_dialogNativeModeLoadedAt.get(mode)) || 0) > 0;
 			if (window.__PENA_FORCE_REST_CATALOG__ === true) {
 				_scheduleDialogRecentSync({ delay: _dialogRecentCacheLoaded ? 100 : 0, full: !_dialogRecentCacheLoaded });
-			} else if (cachedModeKnown) {
-				_scheduleDialogRecentSync({ delay: 100, full: false, incrementalOnly: true, silent: true, reason: 'startup-delta' });
-				if (!_isDialogTaskCatalogMetadataFresh()) _scheduleDialogTaskCatalogRefresh('startup-tasks');
-				if (!_isDialogModeCatalogFresh(mode) || _dialogNativeBackgroundPendingModes.has(mode)) {
-					_scheduleDialogDeepRefresh('startup-cache-stale');
-				}
-			} else {
-				_scheduleDialogRecentSync({ delay: 0, full: true, reason: 'startup-cold' });
+			} else if (_isDialogControlNativePassThrough()) {
+				_refreshDialogNativeVisibleWindow();
 			}
+			// Repository metadata does not prove that the current Bitrix viewport is
+			// materialized. Always ask the deduplicated native loader to reconcile the
+			// visible source after bootstrap; a healthy source exits without scrolling.
+			_scheduleDialogNativeModeLoad('runtime-ready', 0);
 		}).catch(() => {
 			_dialogRecentRuntimeStarting = false;
 			_armDialogRecentSync();
-			_scheduleDialogRecentSync({ delay: 0, full: true });
+			if (_isDialogControlNativePassThrough()) _refreshDialogNativeVisibleWindow();
+			_scheduleDialogNativeModeLoad('runtime-recovery', 0);
 		});
 		return true;
 	}
@@ -6941,21 +8702,90 @@
 		return m ? m[1] : '';
 	}
 
+	let _dialogCurrentBitrixUserId = '';
+	let _dialogCurrentBitrixUserPromise = null;
+	const _dialogCurrentBitrixUserMigratedIds = new Set();
+	function _migrateDialogTimeSelfStorage(userId) {
+		const id = String(userId || '').trim();
+		if (!/^\d+$/.test(id) || _dialogCurrentBitrixUserMigratedIds.has(id)) return false;
+		_dialogCurrentBitrixUserMigratedIds.add(id);
+		let changed = false;
+		try {
+			const keys = Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index)).filter(Boolean);
+			for (const sourceKey of keys) {
+				const isVisits = sourceKey.startsWith(`${_PENA_TIME_VISITS_KEY}.self.`);
+				const isTracker = sourceKey === `${_PENA_TIME_TRACKER_KEY}.self`;
+				const isDraft = sourceKey === `${_PENA_TIME_MANUAL_DRAFT_KEY}.self`;
+				const isLease = sourceKey === `${_PENA_TIME_ACTIVITY_LEASE_KEY}.self`;
+				if (!isVisits && !isTracker && !isDraft && !isLease) continue;
+				const targetKey = sourceKey.replace(/\.self(?=\.|$)/, `.${id}`);
+				const sourceRaw = localStorage.getItem(sourceKey);
+				if (sourceRaw == null) continue;
+				if (isLease) {
+					// A lease belongs to the old page realm. Migrating it would block the
+					// confirmed user namespace with an owner that can no longer heartbeat.
+					localStorage.removeItem(sourceKey);
+					changed = true;
+					continue;
+				}
+				if (isVisits) {
+					let sourceVisits = [];
+					let targetVisits = [];
+					try { sourceVisits = JSON.parse(sourceRaw || '[]'); } catch {}
+					try { targetVisits = JSON.parse(localStorage.getItem(targetKey) || '[]'); } catch {}
+					const merged = _PENA_TIME_CONTROL?.mergeVisitedTasks?.([
+						...(Array.isArray(targetVisits) ? targetVisits : []),
+						...(Array.isArray(sourceVisits) ? sourceVisits : [])
+					]) || (Array.isArray(targetVisits) && targetVisits.length ? targetVisits : sourceVisits);
+					localStorage.setItem(targetKey, JSON.stringify(Array.isArray(merged) ? merged : []));
+				} else if (localStorage.getItem(targetKey) == null) {
+					localStorage.setItem(targetKey, sourceRaw);
+				}
+				localStorage.removeItem(sourceKey);
+				changed = true;
+			}
+		} catch {}
+		return changed;
+	}
+
+	function _acceptCurrentBitrixUserId(rawId) {
+		const id = String(rawId || '').trim();
+		if (!/^\d+$/.test(id)) return '';
+		_dialogCurrentBitrixUserId = id;
+		_migrateDialogTimeSelfStorage(id);
+		return id;
+	}
+
 	function _getCurrentBitrixUserId() {
+		if (/^\d+$/.test(_dialogCurrentBitrixUserId)) return _dialogCurrentBitrixUserId;
 		const topWin = _getSafeTopWindow();
 		for (const BXNS of [window.BX, topWin?.BX].filter(Boolean)) {
 			try {
 				const id = typeof BXNS?.message === 'function' ? BXNS.message('USER_ID') : '';
-				if (/^\d+$/.test(String(id || ''))) return String(id);
+				if (/^\d+$/.test(String(id || ''))) return _acceptCurrentBitrixUserId(id);
 			} catch {}
 			try {
 				const id = BXNS?.Messenger?.Common?.getUserId?.() || BXNS?.user?.id;
-				if (/^\d+$/.test(String(id || ''))) return String(id);
+				if (/^\d+$/.test(String(id || ''))) return _acceptCurrentBitrixUserId(id);
 			} catch {}
 		}
-		const pathMatch = /\/company\/personal\/user\/(\d+)\//i.exec(window.location.pathname || '');
-		if (pathMatch) return pathMatch[1];
 		return '';
+	}
+
+	async function _ensureCurrentBitrixUserId() {
+		const current = _getCurrentBitrixUserId();
+		if (current) return current;
+		if (_dialogCurrentBitrixUserPromise) return _dialogCurrentBitrixUserPromise;
+		_dialogCurrentBitrixUserPromise = _callBxRestPageWithTimeout('user.current', {}, 8000)
+			.then(response => {
+				const data = response?.data;
+				const record = data?.result || data || {};
+				const id = String(record?.ID ?? record?.id ?? '').trim();
+				if (!/^\d+$/.test(id)) throw new Error('user.current did not return a numeric ID');
+				return _acceptCurrentBitrixUserId(id);
+			})
+			.finally(() => { _dialogCurrentBitrixUserPromise = null; });
+		return _dialogCurrentBitrixUserPromise;
 	}
 
 	function _buildTaskUrl(taskId) {
@@ -7081,23 +8911,67 @@ function _rememberTaskMetaForDialogControlItem(item, meta) {
 		const id = String(taskId || '').trim();
 		if (!/^\d+$/.test(id)) return null;
 		const task = _extractTaskRecordFromData(data);
+		const taskChatDialogId = _rememberDialogTimeTaskChat(id, task?.CHAT_ID ?? task?.chatId ?? task?.chat?.id) ||
+			_getDialogTimeTaskChatDialogId(id);
 		const enabled = _readDialogTaskTimeTrackingFlag(task);
-		if (enabled != null) _dialogTimeTaskEligibility.set(id, enabled);
+		if (enabled != null) _setDialogTimeTaskEligibility(id, enabled);
 		const title = _extractTaskTitleFromData(data);
 		if (title) _dialogTimeTaskTitles.set(id, title);
-		return enabled;
+		let metaChanged = false;
+		for (const meta of _getDialogRecentUniqueMeta()) {
+			if (String(meta?.taskId || '') !== id) continue;
+			let rowChanged = false;
+			if (enabled != null && meta.timeTrackingEnabled !== enabled) {
+				meta.timeTrackingEnabled = enabled;
+				rowChanged = true;
+			}
+			if (title && meta.displayTitle !== title) {
+				meta.displayTitle = title;
+				meta.title = title.toLowerCase();
+				rowChanged = true;
+			}
+			if (!rowChanged) continue;
+			metaChanged = true;
+			_markDialogRecentRepositoryDirty(meta.id);
+		}
+		if (metaChanged) {
+			_dialogRecentDataRevision += 1;
+			_scheduleDialogRecentCacheWrite(80);
+			_notifyDialogRecentDataChanged();
+		}
+		if (title) {
+			const dateKey = _getDialogTimeTodayKey();
+			const visits = _readDialogTimeVisits(dateKey);
+			let visitsChanged = false;
+			visits.forEach(visit => {
+				if (String(visit.taskId || '') !== id || visit.title === title) return;
+				visit.title = title;
+				visitsChanged = true;
+			});
+			if (visitsChanged) _writeDialogTimeVisits(visits, dateKey);
+		}
+		return enabled == null ? null : (enabled === true && !!taskChatDialogId);
 	}
 
-	function _ensureDialogTimeTaskEligibility(taskId) {
+	function _ensureDialogTimeTaskEligibility(taskId, options = {}) {
 		const id = String(taskId || '').trim();
 		if (!/^\d+$/.test(id)) return Promise.resolve(false);
-		if (_dialogTimeTaskEligibility.has(id)) return Promise.resolve(_dialogTimeTaskEligibility.get(id) === true);
+		const fresh = _getFreshDialogTimeTaskEligibility(id);
+		if (fresh != null && options.force !== true) return Promise.resolve(fresh);
 		if (_dialogTimeTaskEligibilityInFlight.has(id)) return _dialogTimeTaskEligibilityInFlight.get(id);
+		const scope = _getDialogNativeSharedAuditScopeKey();
+		const revision = _dialogTimeTaskRevisions.get(id) || 0;
 		const request = _callBxRestMethod('tasks.task.get', {
 			taskId: id,
 			select: ['ID', 'TITLE', 'CHAT_ID', 'ALLOW_TIME_TRACKING']
-		}).then(data => _rememberDialogTimeTaskEligibility(id, data) === true)
-			.catch(() => false)
+		}, options).then(data => {
+			if (scope !== _getDialogNativeSharedAuditScopeKey() || revision !== (_dialogTimeTaskRevisions.get(id) || 0)) return null;
+			const enabled = _rememberDialogTimeTaskEligibility(id, data);
+			return enabled == null ? null : enabled === true;
+		})
+			// Network/permission transport errors are not an explicit ALLOW_TIME_TRACKING=N.
+			// Keep already collected work and retry instead of deleting it.
+			.catch(() => null)
 			.finally(() => {
 				_dialogTimeTaskEligibilityInFlight.delete(id);
 				_queueDialogTimeUiSync();
@@ -7167,8 +9041,19 @@ function _rememberTaskMetaForDialogControlItem(item, meta) {
 		if (!meta?.taskUrl) return false;
 		_rememberTaskMetaForDialogControlItem(item, meta);
 		const opened = _openBitrixUrl(meta.taskUrl);
-		if (opened && meta.taskId) _rememberDialogTimeTaskVisit(meta.taskId, item.title || '', item.id || '');
+		if (opened && meta.taskId) _rememberDialogTimeTaskVisit(meta.taskId, item.title || '', item.id || '', { takeover: true });
 		return opened;
+	}
+
+	function _isDialogControlLiveStatusElement(element) {
+		if (!element || element.hidden || element.getAttribute?.('aria-hidden') === 'true') return false;
+		if (element.closest?.('[hidden],[aria-hidden="true"]')) return false;
+		if (/(?:^|\s)(?:--|-|_)(?:hidden|invisible|disabled|inactive)(?:\s|$)/i.test(String(element.className || ''))) return false;
+		try {
+			const style = getComputedStyle(element);
+			if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+		} catch {}
+		return true;
 	}
 
 	function hasMentionMarker(el) {
@@ -7184,7 +9069,10 @@ function _rememberTaskMetaForDialogControlItem(item, meta) {
 			'[data-test-id*="mention" i]'
 		].join(',');
 		try {
-			if (el.matches?.(selector) || el.querySelector?.(selector)) return true;
+			const markers = [];
+			if (el.matches?.(selector)) markers.push(el);
+			markers.push(...Array.from(el.querySelectorAll?.(selector) || []));
+			if (markers.length) return markers.some(_isDialogControlLiveStatusElement);
 		} catch {}
 		const own = [
 			el.className,
@@ -7192,7 +9080,7 @@ function _rememberTaskMetaForDialogControlItem(item, meta) {
 			el.getAttribute?.('aria-label'),
 			el.dataset ? Object.values(el.dataset).join(' ') : ''
 		].join(' ').toLowerCase();
-		return /mention|упом/.test(own);
+		return /mention|упом/.test(own) && _isDialogControlLiveStatusElement(el);
 	}
 
 	let rankMap = new Map();
@@ -7268,6 +9156,7 @@ let _debugModeActive = false;
 	const _LS_DIALOG_CONTROL = 'pena.dialogControl.v1';
 	const _LS_DIALOG_CONTROL_SEGMENTS = 'pena.dialogControlSegments.v1';
 	const _LS_DIALOG_CONTROL_NATIVE = 'pena.dialogControlNative.v1';
+	const _dialogControlNativeModeMigrated = new Set();
 	const _LS_DIALOG_CONTROL_NATIVE_FOLDER = 'pena.dialogControlNativeFolder.v1';
 	const _LS_DIALOG_RECENT_CACHE = 'pena.dialogRecentCache.v2';
 	const _LS_DIALOG_RECENT_LOAD_LIMIT = 'pena.dialogRecentLoadLimit.v1';
@@ -7276,6 +9165,7 @@ let _debugModeActive = false;
 	const _LS_DIALOG_RECENT_DEFAULT_DYNAMIC = 'pena.dialogRecentLoadLimit.defaultAll.v3';
 	const _DIALOG_REPOSITORY_REQUEST_EVENT = 'pena-dialog-repository-request';
 	const _DIALOG_REPOSITORY_RESPONSE_EVENT = 'pena-dialog-repository-response';
+	const _DIALOG_REPOSITORY_CONNECTION_EVENT = 'pena-dialog-repository-connection';
 	const _DIALOG_CONTROL_ALL_SEGMENT_ID = '__all__';
 	const _DIALOG_CONTROL_ALL_NATIVE_FOLDER_ID = '__all_folders__';
 let _dialogControlActive = false;
@@ -7286,6 +9176,8 @@ let _dialogControlStorageSyncArmed = false;
 let _dialogControlMultiSelected = new Set();
 let _dialogControlMultiSelectionAnchorId = '';
 let _dialogControlCurrentIds = { chats: null, tasks: null };
+let _dialogControlCurrentSeenAt = { chats: 0, tasks: 0 };
+let _dialogControlCurrentSources = { chats: null, tasks: null };
 let _dialogControlDraggingSegmentId = '';
 let _dialogControlDraggingSegmentTs = 0;
 let _dialogControlSegmentPointerDrag = null;
@@ -7321,13 +9213,16 @@ let _dialogControlTitleLastSyncAt = 0;
 	const _DIALOG_API_WATERMARK_VERSION = 1;
 	const _DIALOG_RECENT_FULL_REFRESH_MS = 24 * 60 * 60 * 1000;
 	const _DIALOG_TASK_CATALOG_REFRESH_MS = 15 * 60 * 1000;
-	const _DIALOG_DEEP_REFRESH_IDLE_MS = 10 * 1000;
-	const _DIALOG_DEEP_REFRESH_USER_IDLE_MS = 5 * 1000;
+	// A full REST audit is maintenance work, never startup work. Let Bitrix settle
+	// first and pause the audit as soon as the user comes back to the interface.
+	const _DIALOG_DEEP_REFRESH_IDLE_MS = 2 * 60 * 1000;
+	const _DIALOG_DEEP_REFRESH_USER_IDLE_MS = 30 * 1000;
 	const _DIALOG_LONG_HIDDEN_MS = 15 * 60 * 1000;
 	const _DIALOG_TIMER_DRIFT_MS = 2 * 60 * 1000;
 	const _DIALOG_NATIVE_TAIL_ANCHOR_COUNT = 5;
 	const _DIALOG_NATIVE_MISSING_VERIFY_LIMIT = 20;
 	const _DIALOG_NATIVE_RETRY_DELAYS_MS = Object.freeze([1000, 2000, 5000, 15000, 30000, 60000]);
+	const _DIALOG_NATIVE_AUTOMATIC_RETRY_LIMIT = 3;
 	const _DIALOG_TASK_CATALOG_PAGE_SIZE = 50;
 	const _DIALOG_TASK_CATALOG_MAX_PAGES = 500;
 	const _DIALOG_RECENT_DELTA_OVERLAP_MS = 60 * 1000;
@@ -7370,6 +9265,7 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogRecentLegacyMigrationPending = false;
 	let _dialogRecentRepositoryReconnectTimer = null;
 	let _dialogRecentRepositoryReconnectAttempt = 0;
+	let _dialogRecentRepositoryConnectionArmed = false;
 	let _dialogRecentRepositoryWriteRetryAttempt = 0;
 	const _dialogRecentRepositoryOwnerToken = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 	let _dialogRecentWindowCount = 0;
@@ -7379,12 +9275,14 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogRecentCountersError = '';
 	let _dialogRecentEmptyFullPasses = 0;
 	let _dialogRecentSyncPromise = null;
+	let _dialogRecentSyncUiSilent = false;
 	let _dialogRecentActiveLoadLimit = null;
 	let _dialogRecentQueuedOptions = null;
 	let _dialogRecentQueuedPromise = null;
 	let _dialogRecentDetailSyncPromise = null;
 	let _dialogRecentDetailQueued = false;
 	const _dialogRecentDetailQueuedWindowIds = new Set();
+	const _dialogRecentDetailQueuedMandatoryIds = new Set();
 	const _dialogRecentAuthorProfiles = new Map();
 	const _dialogRecentAuthorQueuedIds = new Set();
 	const _dialogRecentAuthorAttemptAt = new Map();
@@ -7401,11 +9299,20 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogNativePrefetchActive = false;
 	let _dialogNativePrefetchMode = '';
 	let _dialogNativeModeLoadTimer = null;
+	let _dialogNativeModeLoadReason = '';
+	const _dialogNativeColdConfirmationTimers = new Map();
+	let _dialogNativeColdConfirmationDebug = {};
 	let _dialogNativeVisibleRefreshTimer = null;
 	let _dialogNativePassThroughRefreshTimer = null;
+	let _dialogNativePassThroughRefreshPending = false;
+	let _dialogNativeStatusRefreshTimer = null;
+	let _dialogNativeStatusRefreshRequest = null;
 	let _dialogNativePassThroughApiResumePromise = null;
+	let _dialogNativePresentationRefreshTimer = null;
+	const _dialogNativePresentationRefreshRows = new Set();
 	let _dialogNativePassThroughCaptureViewport = null;
 	let _dialogNativePassThroughCaptureHandler = null;
+	let _dialogNativePassThroughCaptureRaf = null;
 	let _dialogNativeOriginalScrollPromise = null;
 	let _dialogNativeOriginalScrollCancel = null;
 	let _dialogNativeOriginalScrollActive = false;
@@ -7416,17 +9323,23 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogNativeHealthProbeMode = '';
 	// Every Bitrix page loads each mode once, then the catalog goes idle.
 	const _dialogNativePrefetchedModes = new Set();
+	const _dialogNativeSilentPrefetchedSources = new Map();
 	const _dialogNativeModeCounts = new Map();
 	const _dialogNativeModeLoadedAt = new Map();
 	const _dialogNativeMaterializedSources = new Map();
 	const _dialogNativeExpectedCatalogs = new Map();
 	const _dialogNativeRepositoryExpectedCatalogs = new Map();
 	const _dialogNativeExpectedAuditPromises = new Map();
+	let _dialogNativeSharedExpectedCatalog = null;
 	let _dialogNativeExpectedAuditDiscardCount = 0;
 	const _dialogNativeSourceGenerations = new Map();
 	const _dialogNativeAttemptStates = new Map();
 	const _dialogNativeRecoveryRetryTimers = new Map();
 	const _dialogNativeRecoveryRetryAttempts = new Map();
+	const _dialogNativeRecoveryRetryEpochs = new Map();
+	const _dialogNativeMetadataRetryStates = new Map();
+	const _dialogNativeMetadataRetryTimers = new Map();
+	const _dialogNativeMetadataRetryAttempts = new Map();
 	const _dialogNativeScrollPositions = new Map();
 	const _dialogNativeModeLoadUnavailableRetries = new Map();
 	const _dialogNativeBackgroundPendingModes = new Set();
@@ -7441,6 +9354,9 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogRecentApiRetryAttempt = 0;
 	let _dialogRecentLastApiResult = null;
 	let _dialogTaskCatalogSyncPromise = null;
+	let _dialogTaskCatalogSyncScopeKey = '';
+	let _dialogTaskCatalogScopeKey = '';
+	let _dialogTaskCatalogLastResult = null;
 	let _dialogTaskCatalogRefreshTimer = null;
 	let _dialogTaskCatalogComplete = false;
 	let _dialogTaskCatalogFetchedAt = 0;
@@ -7450,20 +9366,25 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogNativeLastUserActivityAt = 0;
 	let _dialogWakeReconcileTimer = null;
 	let _dialogWakeReconcilePromise = null;
+	let _dialogWakeReconcilePendingRequest = null;
+	let _dialogWakeReconcileQueuedRequest = null;
 	let _dialogWakeReconcileCount = 0;
 	let _dialogWakeReconcileLastAt = 0;
 	let _dialogWakeReconcileLastReason = '';
-	let _dialogWakeReconcileNeedsTailProbe = false;
 	let _dialogLifecycleHiddenAt = 0;
+	let _dialogLifecycleObservedOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
 	let _dialogLifecycleLastHeartbeatAt = Date.now();
 	let _dialogLifecycleFrozen = false;
 	let _dialogRecentLastAttemptAt = 0;
 	let _dialogRecentLastSuccessAt = 0;
 	let _dialogRecentLastFullAt = 0;
 	let _dialogRecentLastError = '';
+	let _dialogRecentLastErrorMode = '';
 	let _dialogRecentLastSoftError = '';
+	let _dialogRecentLastSoftErrorMode = '';
 	let _dialogRecentLastSoftErrorAt = 0;
 	let _dialogRecentProgress = {
+		mode: '',
 		phase: 'idle',
 		loadedCount: 0,
 		expectedTotal: null,
@@ -7489,6 +9410,7 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogControlNativeMutating = false;
 	let _dialogControlNativeMutatingTimer = null;
 	const _dialogControlNativeDateOrder = new Map();
+	const _dialogControlNativeCustomSortModes = new Set();
 	let _dialogControlNativeFilterPass = false;
 	let _dialogControlNativeSyncRaf = null;
 	let _dialogControlNativeSyncContainer = null;
@@ -7509,18 +9431,41 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogTimeUiSyncQueued = false;
 	let _dialogTimePortalDateKey = '';
 	let _dialogTimePortalDatePromise = null;
-	let _dialogTimeDraftRange = null;
+	let _dialogTimePortalUtcOffsetMinutes = null;
+	let _dialogTimeView = 'day';
 	const _dialogTimeTaskTitles = new Map();
+	const _dialogTimeTaskChatDialogIds = new Map();
+	const _dialogTimeTaskIdsByChatDialogId = new Map();
 	const _dialogTimeTaskTitleAttempted = new Map();
 	const _dialogTimeTaskEligibility = new Map();
+	const _dialogTimeTaskRevisions = new Map();
+	const _dialogTimeChangedTaskTimers = new Map();
+	const _dialogTimeTaskEligibilityCheckedAt = new Map();
+	const _DIALOG_TIME_TASK_ELIGIBILITY_TTL_MS = Math.max(
+		50,
+		Number(window.__PENA_TEST_TIME_ELIGIBILITY_TTL_MS__) || 15 * 60 * 1000
+	);
 	const _dialogTimeTaskEligibilityInFlight = new Map();
+	const _dialogTimeTaskEligibilityRetryTimers = new Map();
+	const _dialogTimeTaskEligibilityRetryAttempts = new Map();
+	const _dialogTimeFrameId = (() => {
+		try { return crypto.randomUUID(); } catch { return `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
+	})();
+	let _dialogTimeOwnedActivityId = '';
+	let _dialogTimeTrackerMemory = null;
+	let _dialogTimeTrackerMemoryLoadedAt = 0;
+	const _dialogTimePendingActivities = new Map();
+	let _dialogTimePendingActiveId = '';
+	let _dialogTimeQualificationTimer = null;
+	let _dialogTimeDeferredFlushTimer = null;
+	let _dialogTimeDeferredFlushPromise = null;
 	let _dialogTimeTitleLoadPromise = null;
+	let _dialogTimeTitleLoadQueued = false;
 	let _dialogTimeTrackerTick = null;
 	let _dialogTimeActivityTick = null;
 	let _dialogTimeActionInFlight = false;
-	let _dialogTimeSavingActivityId = '';
-	let _dialogTimeEditingActivityId = '';
-	let _dialogTimeDeleteConfirmTaskId = '';
+	let _dialogTimeEditingEntryId = '';
+	let _dialogTimeDeleteConfirmEntryId = '';
 	let _dialogTimeTrackerCancelConfirmTaskId = '';
 	let _dialogTimeManualError = '';
 	let _dialogTimeManualExpanded = false;
@@ -7530,9 +9475,17 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogTimeManualSearchLoading = false;
 	let _dialogTimeManualSearchTimer = null;
 	let _dialogTimeManualSearchToken = 0;
-	let _dialogTimeTrackedExpanded = false;
+	let _dialogTimeManualActiveIndex = -1;
+	let _dialogTimeTrackerSelectedTaskId = '';
+	let _dialogTimeTrackedExpanded = true;
 	let _dialogTimeVisitTrackingArmed = false;
 	const _dialogTimeSidePanelEventNamespaces = new WeakSet();
+	let _dialogTimeActiveSidePanelTaskId = '';
+	let _dialogTimeSidePanelArmTimer = null;
+	let _dialogTimeGlobalEventsArm = null;
+	let _dialogTimeCoordinatorRuntimeSync = null;
+	let _dialogTimeOutgoingIntentAt = 0;
+	const _dialogTimeOutgoingPullSeen = new Map();
 	let _dialogControlColorEyedropper = null;
 	let _dialogControlEyedropperClickToken = null;
 	let _dialogControlNativeRowUidSeq = 1;
@@ -7999,6 +9952,7 @@ if (_presetChannel) {
 
 	function getItemMetaInternal(el) {
 	const id = getChatIdFromElement(el);
+	const taskChatMode = _currentPanelMode === 'tasks';
 		const title = (
 			el.querySelector('.bx-im-chat-title__text')?.getAttribute('title') ||
 			el.querySelector('.bx-im-chat-title__text')?.textContent || ''
@@ -8013,6 +9967,10 @@ if (_presetChannel) {
 
 			const numEl = el.querySelector('.bx-im-list-recent-item__counter_number');
 			if (numEl) {
+				if (!_isDialogControlLiveStatusElement(numEl)) {
+					counterValue = 0;
+					return false;
+				}
 				const n = parseInt((numEl.textContent || '').replace(/\D+/g, ''), 10);
 				counterValue = Number.isFinite(n) ? n : 0;
 				return Number.isFinite(n) && n > 0;
@@ -8020,6 +9978,10 @@ if (_presetChannel) {
 
 			const cntWrap = el.querySelector('.bx-im-list-recent-item__counters');
 			if (cntWrap) {
+				if (!_isDialogControlLiveStatusElement(cntWrap)) {
+					counterValue = 0;
+					return false;
+				}
 				const n = parseInt((cntWrap.textContent || '').replace(/\D+/g, ''), 10);
 				counterValue = Number.isFinite(n) ? n : 0;
 				return Number.isFinite(n) && n > 0;
@@ -8033,7 +9995,7 @@ if (_presetChannel) {
 		// после чего в DOM появляется counter_number с классом --no-counter (пустой элемент,
 		// число отсутствует). У обычных прочитанных чатов counter_number не рендерится вовсе.
 		const _noCounterEl = el.querySelector('.bx-im-list-recent-item__counter_number');
-		const hasLater = !hasUnread && !!_noCounterEl && _noCounterEl.classList.contains('--no-counter');
+		const hasLater = !hasUnread && !!_noCounterEl && _isDialogControlLiveStatusElement(_noCounterEl) && _noCounterEl.classList.contains('--no-counter');
 		const hasSelfAuthor = !!el.querySelector('.bx-im-list-recent-item__self_author-icon');
 		const msgText = el.querySelector('.bx-im-list-recent-item__message_text');
 		const hasAuthorAvatar = !!(msgText && msgText.querySelector('.bx-im-list-recent-item__author-avatar'));
@@ -8062,19 +10024,14 @@ if (_presetChannel) {
 	if (itemType === 'other') {
 		const customCats = loadCustomCats();
 		for (const cc of customCats) {
-			if (cc.rxPattern) {
-				try {
-					const ccRx = new RegExp(cc.rxPattern, 'i');
-					if (ccRx.test(cl) || ccRx.test(title)) { itemType = cc.type; break; }
-				} catch {}
-			}
+			if (cc._penaRx?.test(cl) || cc._penaRx?.test(title)) { itemType = cc.type; break; }
 		}
 	}
 
 	const meta = { id, hasUnread, hasLater, hasMention, unreadCount: counterValue, lastText, title, type: itemType, status: 0, isWhatsApp: false, isTelegram: false, isSystemMessage, isSystemUnreadOnly, observedAt: Date.now() };
 
 	// project mapping only in "task chats" mode
-	if (isTasksChatsModeNow() && window.__anitProjectLookup?.chatToProject) {
+	if (taskChatMode && window.__anitProjectLookup?.chatToProject) {
 		const chatId = extractChatIdNumber(el);
 		if (chatId !== null) {
 			const chatToProject = window.__anitProjectLookup.chatToProject;
@@ -8092,7 +10049,7 @@ if (_presetChannel) {
 	}
 
 	// responsible mapping only in "task chats" mode
-	if (isTasksChatsModeNow() && window.__anitProjectLookup?.chatToResponsible) {
+	if (taskChatMode && window.__anitProjectLookup?.chatToResponsible) {
 		const chatId = extractChatIdNumber(el);
 		if (chatId !== null) {
 			const chatToResponsible = window.__anitProjectLookup.chatToResponsible;
@@ -8110,7 +10067,7 @@ if (_presetChannel) {
 	}
 
 	// status mapping only in "task chats" mode (если расширение поддерживает статусы)
-	if (isTasksChatsModeNow() && window.__anitProjectLookup?.chatToStatus) {
+	if (taskChatMode && window.__anitProjectLookup?.chatToStatus) {
 		const chatId = extractChatIdNumber(el);
 		if (chatId !== null) {
 			const chatToStatus = window.__anitProjectLookup.chatToStatus;
@@ -8161,6 +10118,7 @@ if (_presetChannel) {
 	}
 
 	function matchByFilters(meta) {
+	const taskChatMode = _currentPanelMode === 'tasks';
 	if (filters.unreadOnly && !meta.hasUnread && !meta.hasLater) return false;
 
 	const sel = Array.isArray(filters.typesSelected) ? filters.typesSelected : [];
@@ -8171,7 +10129,7 @@ if (_presetChannel) {
 	if (!haystack.includes(q)) return false;
 }
 	// project filter only in "task chats" mode
-	if (isTasksChatsModeNow()) {
+	if (taskChatMode) {
 		const pSel = Array.isArray(filters.projectIndexes) ? filters.projectIndexes : [];
 		if (pSel.length) {
 			const pi = (typeof meta.projectIndex === 'number') ? meta.projectIndex : -1;
@@ -8179,7 +10137,7 @@ if (_presetChannel) {
 		}
 	}
 	// responsible filter only in "task chats" mode
-	if (isTasksChatsModeNow()) {
+	if (taskChatMode) {
 		const rSel = Array.isArray(filters.responsibleIndexes) ? filters.responsibleIndexes : [];
 		if (rSel.length) {
 			const ri = (typeof meta.responsibleIndex === 'number') ? meta.responsibleIndex : 0;
@@ -8187,7 +10145,7 @@ if (_presetChannel) {
 		}
 	}
 	// status filter only in "task chats" mode (если расширение поддерживает статусы)
-	if (!IS_OL_FRAME && isTasksChatsModeNow() && window.__anitProjectLookup?.statuses) {
+	if (!IS_OL_FRAME && taskChatMode && window.__anitProjectLookup?.statuses) {
 		const sSel = Array.isArray(filters.statusIndexes) ? filters.statusIndexes : [];
 		if (sSel.length) {
 			const si = (typeof meta.statusIndex === 'number') ? meta.statusIndex : 0;
@@ -8195,7 +10153,7 @@ if (_presetChannel) {
 		}
 	}
 	// скрытые проекты и исполнители (только в чатах задач)
-	if (isTasksChatsModeNow()) {
+	if (taskChatMode) {
 		const hProj = Array.isArray(filters.hiddenProjectIndexes) ? filters.hiddenProjectIndexes : [];
 		if (hProj.length && typeof meta.projectIndex === 'number' && hProj.includes(meta.projectIndex)) return false;
 		const hResp = Array.isArray(filters.hiddenResponsibleIndexes) ? filters.hiddenResponsibleIndexes : [];
@@ -8255,7 +10213,16 @@ if (_presetChannel) {
 		if (visible && nativeFolderFilter) visible = _matchesDialogControlNativeFilter(el, meta, nativeFolderFilter);
 		if (el.dataset.penaNativeOriginalDisplay === undefined) el.dataset.penaNativeOriginalDisplay = el.style.display || '';
 		el.dataset.penaNativeFilterDisplay = visible ? '' : 'none';
-		el.style.display = visible ? el.dataset.penaNativeOriginalDisplay : 'none';
+		const traversalActive = !IS_OL_FRAME && !!el.closest?.('.pena-native-traversal-active');
+		if (traversalActive) {
+			// A queued search/folder refresh may run between native traversal ticks.
+			// Keep every Bitrix row in layout so scrollHeight cannot collapse, and
+			// isolate the user's active projection with visibility until traversal ends.
+			el.classList.toggle('pena-native-traversal-visible', visible);
+			el.style.display = el.dataset.penaNativeOriginalDisplay || '';
+		} else {
+			el.style.display = visible ? el.dataset.penaNativeOriginalDisplay : 'none';
+		}
 		return visible;
 	}
 
@@ -8267,8 +10234,32 @@ if (_presetChannel) {
 		_dialogControlNativeFilterPass = true;
 		try {
 			if (filtersHost) _refreshDialogControlPanel(filtersHost);
+			const mode = _pMode();
+			const nativeFolderFilter = _getDialogControlNativeFilter();
+			const demandedIds = new Set(Array.from(nativeFolderFilter?.ids || []).map(normId).filter(Boolean));
+			const normalizedQuery = _normalizeDialogControlTitle(filters.query || '');
+			if (normalizedQuery) {
+				_getDialogControlItemsForMode(mode).forEach(item => {
+					if (_isDialogControlFolder(item)) return;
+					const id = normId(item.id);
+					const title = _normalizeDialogControlTitle(item.title || _getDialogRecentMeta(id)?.displayTitle || '');
+					if (id && title.includes(normalizedQuery)) demandedIds.add(id);
+				});
+			}
+			if (demandedIds.size) {
+				// Folder/search demand validates only the matching cached rows. Never
+				// fan out details for every controlled dialog merely because a view changed.
+				_scheduleDialogRecentMandatoryDetails(new Set(), { includeMandatory: false, mandatoryIds: demandedIds });
+			}
 			if (_isDialogControlNativePassThrough()) {
-				const nativeFolderFilter = _getDialogControlNativeFilter();
+				const materialization = _dialogNativeMaterializedSources.get(mode);
+				if (_dialogControlNeedsCompleteNativeMaterialization(mode) &&
+					(!materialization || !_isDialogNativeMaterializationCurrent(mode, container))) {
+					// Search, folders, unread and custom sorting must operate on the whole
+					// Bitrix source. Start the single fenced traversal on demand, but keep
+					// the already visible native rows interactive while it is collected.
+					_scheduleDialogNativeModeLoad('view-demand', 220);
+				}
 				_getCurrentFilterRows(container).forEach(row => _applyDialogControlRowFilter(row, nativeFolderFilter));
 				_scheduleDialogControlNativeView(container, { restoreDisplay: false, forceShow: true });
 			} else {
@@ -8487,6 +10478,25 @@ if (_presetChannel) {
 		} catch {
 			return { sortMode: 'date', sortDirection: 'desc', unreadOnly: false };
 		}
+	}
+
+	function _dialogControlNeedsCompleteNativeMaterialization(mode = _pMode()) {
+		if (IS_OL_FRAME || !_isDialogControlNativePassThrough()) return false;
+		const prefs = _getDialogControlViewPrefs(mode);
+		if (String(filters.query || '').trim()) return true;
+		if (prefs.unreadOnly || filters.unreadOnly) return true;
+		if (prefs.sortMode !== 'date' || prefs.sortDirection !== 'desc') return true;
+		if (_getDialogControlActiveSegmentId(mode) || _getDialogControlNativeActiveFolderId(mode)) return true;
+		return [
+			filters.typesSelected,
+			filters.projectIndexes,
+			filters.responsibleIndexes,
+			filters.statusIndexes,
+			filters.hiddenProjectIndexes,
+			filters.hiddenResponsibleIndexes,
+			filters.selectedTags,
+			filters.selectedIntersectionTags
+		].some(value => Array.isArray(value) && value.length > 0);
 	}
 
 	function _setDialogControlViewPrefs(patch = {}, mode = _pMode()) {
@@ -8860,7 +10870,23 @@ if (_presetChannel) {
 
 	function _setDialogControlCurrentId(dialogId) {
 		if (!_dialogControlCurrentIds || typeof _dialogControlCurrentIds !== 'object') _dialogControlCurrentIds = { chats: null, tasks: null };
-		_dialogControlCurrentIds[_pMode()] = dialogId ? normId(dialogId) : null;
+		if (!_dialogControlCurrentSeenAt || typeof _dialogControlCurrentSeenAt !== 'object') _dialogControlCurrentSeenAt = { chats: 0, tasks: 0 };
+		if (!_dialogControlCurrentSources || typeof _dialogControlCurrentSources !== 'object') _dialogControlCurrentSources = { chats: null, tasks: null };
+		const mode = _pMode();
+		_dialogControlCurrentIds[mode] = dialogId ? normId(dialogId) : null;
+		_dialogControlCurrentSeenAt[mode] = dialogId ? Date.now() : 0;
+		_dialogControlCurrentSources[mode] = dialogId
+			? (window.__PENA_ACTIVE_LIST_CONTEXT__?.list || findContainer() || null)
+			: null;
+	}
+
+	function _clearDialogControlCurrentGrace(mode = '') {
+		const modes = mode === 'tasks' || mode === 'chats' ? [mode] : ['chats', 'tasks'];
+		for (const key of modes) {
+			_dialogControlCurrentIds[key] = null;
+			_dialogControlCurrentSeenAt[key] = 0;
+			_dialogControlCurrentSources[key] = null;
+		}
 	}
 
 	function _isLikelyActiveChatElement(el) {
@@ -9722,10 +11748,7 @@ if (_presetChannel) {
 			const saturation = 0.62 + ((attempt % 5) * 0.04);
 			const value = 0.78 + ((attempt % 4) * 0.035);
 			const color = _hsvToHex(hue, saturation, value).toLowerCase();
-			if (!used.has(color)) {
-				_saveCustomDialogControlColors([color, ..._getCustomDialogControlColors()]);
-				return color;
-			}
+			if (!used.has(color)) return color;
 		}
 		return '#4d9dff';
 	}
@@ -9746,19 +11769,20 @@ if (_presetChannel) {
 		if (message) _showDialogDockToast(message, 'ok');
 	}
 
-	function _startDialogControlColorEyedropper(targetIds, h = filtersHost) {
+	function _startDialogControlColorEyedropper(targetIds, h = filtersHost, options = {}) {
 		const ids = _normalizeDialogControlMoveIds(targetIds);
-		if (!ids.length) return;
+		const onPickColor = typeof options.onPickColor === 'function' ? options.onPickColor : null;
+		if (!ids.length && !onPickColor) return;
 		if (_dialogControlEyedropperClickToken) {
 			window.__PENA_INTERACTIONS__?.reset?.('superseded');
 			_dialogControlEyedropperClickToken = null;
 		}
 		_stopDialogControlColorEyedropper();
-		const state = { targetIds: ids, mode: _pMode(), hovered: null, onMove: null, onPick: null, onKeyDown: null };
+		const state = { targetIds: ids, mode: _pMode(), hovered: null, onMove: null, onPick: null, onKeyDown: null, onPickColor };
 		try {
 			state.token = window.__PENA_INTERACTIONS__?.begin?.('eyedropper', {
 				mode: state.mode,
-				dialogId: ids[0]
+				dialogId: ids[0] || String(options.identity || 'palette')
 			}) || null;
 		} catch { state.token = null; }
 		state.onMove = (event) => {
@@ -9817,8 +11841,11 @@ if (_presetChannel) {
 			}
 			const idsToPaint = [...state.targetIds];
 			_stopDialogControlColorEyedropper('', { preserveInteraction: !!state.token });
-			_setDialogControlItemsColor(idsToPaint, color);
-			_refreshDialogControlAfterStructureChange(h, { forceShow: true });
+			if (state.onPickColor) state.onPickColor(color);
+			else {
+				_setDialogControlItemsColor(idsToPaint, color);
+				_refreshDialogControlAfterStructureChange(h, { forceShow: true });
+			}
 			_showDialogDockToast(`Взят цвет ${color}`, 'ok');
 		};
 		state.onKeyDown = (event) => {
@@ -9841,13 +11868,14 @@ if (_presetChannel) {
 	function _isDialogControlNativeMode() {
 		if (IS_OL_FRAME) return false;
 		if (!_isPenaExtensionEnabled()) return false;
-		try {
-			const key = _dialogControlNativeModeKey();
+		const key = _dialogControlNativeModeKey();
+		if (!_dialogControlNativeModeMigrated.has(key)) try {
 			// The detached catalog was removed. Older releases could leave this flag
 			// at "0", which disabled the only remaining folders/sorting/time panel on
 			// an otherwise enabled extension. Migrate every existing profile to the
 			// native Bitrix list instead of preserving that dead-end state.
 			if (localStorage.getItem(key) !== '1') localStorage.setItem(key, '1');
+			_dialogControlNativeModeMigrated.add(key);
 		} catch { return true; }
 		return true;
 	}
@@ -10651,6 +12679,13 @@ if (_presetChannel) {
 		host.classList.add('pena-native-folder-switcher-host');
 		if (switcherCreated) host.classList.remove('pena-native-folder-switcher-ready');
 		const needsRelocation = switcherCreated || switcher.parentElement !== host || switcher.nextElementSibling !== viewport;
+		if (needsRelocation) {
+			// The same managed panel is reused between Chats and Task Chats. Hide its
+			// old mode-bound content before moving the node; the following render swaps
+			// the new state atomically and removes --mounting.
+			switcher.classList.add('--mounting');
+			switcher.querySelectorAll('.pena-native-sync-chip').forEach(chip => { chip.hidden = true; });
+		}
 		const constrainToViewport = viewportRect.width > 0 && parentRect?.width > viewportRect.width + 48;
 		if (constrainToViewport) {
 			switcher.style.setProperty('--pena-native-panel-width', `${viewportRect.width}px`);
@@ -10669,7 +12704,7 @@ if (_presetChannel) {
 			previousHost.style.removeProperty('--pena-native-panel-height');
 			previousHost.querySelectorAll?.('.pena-native-list-scroll-viewport').forEach(previousViewport => previousViewport.classList.remove('pena-native-list-scroll-viewport'));
 		}
-		switcher.classList.remove('--mounting');
+		if (!needsRelocation) switcher.classList.remove('--mounting');
 		if (!switcher._penaNativeWheelForwardAttached) {
 			switcher._penaNativeWheelForwardAttached = true;
 			switcher.addEventListener('wheel', (e) => {
@@ -10730,13 +12765,37 @@ if (_presetChannel) {
 		const statuses = Array.from(switcher?.querySelectorAll?.('.pena-native-sync-status-text,.pena-native-sync-chip') || []);
 		if (!statuses.length) return;
 		const sync = window.__PENA_RECENT_SYNC__ || {};
+		const panelHost = switcher?.parentElement || null;
+		const hostLists = Array.from(panelHost?.querySelectorAll?.(
+			'.bx-im-list-container-task__elements,.bx-im-list-container-recent__elements'
+		) || []);
+		const lifecycleList = window.__PENA_ACTIVE_LIST_CONTEXT__?.list || null;
+		const panelContainer = (lifecycleList?.isConnected && panelHost?.contains?.(lifecycleList) ? lifecycleList : null) ||
+			hostLists.find(list => isVisibleElement(list)) ||
+			(hostLists.length === 1 ? hostLists[0] : null) ||
+			switcher?._penaNativeRenderContext?.container || null;
+		const panelMode = panelContainer?.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
+		const publishedSyncMode = String(sync.mode || '');
+		const publishedModeMatches = publishedSyncMode
+			? publishedSyncMode === panelMode
+			: panelMode === _pMode();
+		const panelAttempt = _dialogNativeAttemptStates.get(panelMode) || {};
+		const panelMaterialization = _dialogNativeMaterializedSources.get(panelMode) || {};
+		const panelRecoveryScheduled = String(panelAttempt.state || '') === 'retry' ||
+			panelMaterialization.invalidated === true || _dialogNativeRecoveryRetryTimers.has(panelMode);
+		const panelRecoveryActionRequired = panelRecoveryScheduled && panelAttempt.userActionRequired === true;
+		const panelMaterializationReady = _dialogNativePrefetchedModes.has(panelMode) &&
+			panelMaterialization.invalidated !== true && panelMaterialization.needsColdConfirmation !== true;
+		const syncError = publishedModeMatches
+			? String(sync.error || '')
+			: (_dialogRecentLastErrorMode === panelMode && !panelMaterializationReady ? String(_dialogRecentLastError || '') : '');
 		const received = Math.max(0, Number(sync.count) || 0);
 		const loaded = Math.max(0, Number(sync.loadedCount) || 0);
 		const total = Number.isFinite(sync.expectedTotal) ? Math.max(0, Number(sync.expectedTotal)) : null;
 		const percent = Number.isFinite(sync.percent) ? Math.max(0, Math.min(100, Number(sync.percent))) : null;
 		const gatePercent = Number.isFinite(sync.gatePercent) ? Math.max(0, Math.min(100, Number(sync.gatePercent))) : 0;
 		const gateLocked = !!sync.gateLocked;
-		const gateError = String(sync.gateError || '');
+		const gateError = publishedModeMatches ? String(sync.gateError || '') : '';
 		const windowCount = Math.max(0, Number(sync.windowCount) || 0);
 		const controlledOutsideReady = Math.max(0, Number(sync.controlledOutsideReadyCount) || 0);
 		const controlledPending = Math.max(0, Number(sync.controlledPendingCount) || 0);
@@ -10750,6 +12809,13 @@ if (_presetChannel) {
 		const detailsVisible = !!sync.detailsInFlight && !sync.detailsSilent;
 		const unavailableCount = Math.max(0, Number(sync.unavailableCount) || 0);
 		const truncated = !!sync.truncated;
+		const visibleInFlight = publishedModeMatches && !!sync.inFlight && !sync.uiSilent;
+		const recoveryPending = publishedModeMatches
+			? (!!sync.recoveryActionRequired || !!sync.recoveryPending)
+			: (panelRecoveryActionRequired && !panelMaterializationReady);
+		const recoveryMessage = publishedModeMatches
+			? String(sync.backgroundError || sync.attemptReason || '')
+			: String(panelAttempt.reason || '');
 		const transientDetailFailures = Math.max(0, detailsFailed - detailsUnavailable);
 		const inList = _getDialogControlItemsForMode(_pMode()).filter(item =>
 			!_isDialogControlFolder(item) && !_isDialogControlItemUnavailable(item)
@@ -10759,7 +12825,7 @@ if (_presetChannel) {
 			// The overlay is the single loading surface. Keep the compact chip only as
 			// a recoverable error action; stale folder metadata must not leave an
 			// unexplained permanent "Проверить N" status in the main toolbar.
-			const compactVisible = !!gateError || (!!sync.error && !sync.inFlight);
+			const compactVisible = !!gateError || recoveryPending || (!!syncError && !visibleInFlight);
 			if (compact) status.hidden = !compactVisible;
 			else status.hidden = false;
 			if (gateLocked) {
@@ -10768,7 +12834,7 @@ if (_presetChannel) {
 					: (compact
 						? `${Math.round(gatePercent)}%`
 						: `Загрузка и проверка диалогов: ${loaded}${total != null ? ` из ${total}` : ''} · ${gatePercent}%`);
-			} else if (sync.inFlight) {
+			} else if (visibleInFlight) {
 				status.textContent = compact
 					? `${Math.round(percent ?? gatePercent)}%`
 					: (total != null ? `Загрузка: ${loaded} из ${total} · ${percent ?? 0}%` : `Загрузка: ${loaded} · страниц ${sync.pagesLoaded || 0}`);
@@ -10776,8 +12842,10 @@ if (_presetChannel) {
 				status.textContent = compact
 					? `${detailsTotal > 0 ? Math.round((detailsCompleted / detailsTotal) * 100) : 0}%`
 					: `Догружаем сохранённые диалоги: ${detailsCompleted} из ${detailsTotal} · доступно ${inList}`;
-			} else if (sync.error) {
+			} else if (syncError) {
 				status.textContent = compact ? 'Повторить' : `Ошибка обновления · доступно ${inList}`;
+			} else if (recoveryPending) {
+				status.textContent = compact ? 'Повторить' : `Проверка списка не завершена · доступно ${inList}`;
 			} else if (controlledPending > 0) {
 				status.textContent = compact
 					? `Проверить ${controlledPending}`
@@ -10797,10 +12865,16 @@ if (_presetChannel) {
 			} else {
 				status.textContent = compact ? 'Подготовка' : 'Подготовка списка диалогов';
 			}
-			status.classList.toggle('--loading', gateLocked && !gateError || !!sync.inFlight || (detailsVisible && controlledPending > 0));
-			status.classList.toggle('--error', !!gateError || (!!sync.error && !sync.inFlight && controlledPending <= 0));
-			status.classList.toggle('--warning', !gateLocked && !sync.inFlight && controlledPending > 0 && !sync.detailsInFlight);
-			status.classList.toggle('--ready', !gateLocked && !!sync.ready && !sync.inFlight && !sync.error && controlledPending <= 0);
+			const visualLoading = !!(gateLocked && !gateError || visibleInFlight || (detailsVisible && controlledPending > 0));
+			const visualError = !visualLoading && !!(gateError || (syncError && controlledPending <= 0));
+			const visualWarning = !visualLoading && !visualError && !gateLocked &&
+				(recoveryPending || (controlledPending > 0 && !sync.detailsInFlight));
+			const visualReady = !visualLoading && !visualError && !visualWarning && !gateLocked &&
+				!!sync.ready && !syncError && !recoveryPending && controlledPending <= 0;
+			status.classList.toggle('--loading', visualLoading);
+			status.classList.toggle('--error', visualError);
+			status.classList.toggle('--warning', visualWarning);
+			status.classList.toggle('--ready', visualReady);
 			const detailTitle = detailsTotal > 0
 				? `; детали: ${detailsCompleted} из ${detailsTotal}${transientDetailFailures ? `, временные ошибки: ${transientDetailFailures}` : ''}`
 				: '';
@@ -10809,7 +12883,9 @@ if (_presetChannel) {
 				: (controlledPending > 0 ? `; ещё не проверено: ${controlledPending}` : '');
 			const unavailableTitle = unavailableCount > 0 ? `; недоступно или удалено: ${unavailableCount}` : '';
 			const truncatedTitle = truncated ? '; список ограничен настройкой загрузки' : '';
-			status.title = sync.error || sync.countersError || (sync.inFlight
+			// A pending controlled dialog has a more useful recovery target than the
+			// aggregate verification error. Keep its title/ID visible in the tooltip.
+			status.title = (controlledPending > 0 ? '' : syncError) || (recoveryPending ? recoveryMessage : '') || sync.countersError || (visibleInFlight
 				? `Загружено ${loaded}${total != null ? ` из ${total}` : ''}, страниц: ${sync.pagesLoaded || 0}`
 				: `Последние диалоги: ${windowCount || received}${controlledOutsideReady > 0 ? `; дополнительно загружено: ${controlledOutsideReady}` : ''}${pendingTitle}${truncatedTitle}${unavailableTitle}${detailTitle}`);
 		});
@@ -10817,6 +12893,15 @@ if (_presetChannel) {
 
 	function _getDialogTimeRange(kind = 'today') {
 		return _PENA_TIME_CONTROL?.getQuickRange?.(kind, _dialogTimePortalDateKey || new Date()) || _dialogTimeRange;
+	}
+
+	function _getDialogTimeSelectedRange() {
+		return _PENA_TIME_CONTROL?.normalizeRange?.(_dialogTimeRange?.from, _dialogTimeRange?.to) || _dialogTimeRange;
+	}
+
+	function _getDialogTimeStatsRange() {
+		const selected = _getDialogTimeSelectedRange()?.to || _getDialogTimeTodayKey();
+		return _PENA_TIME_CONTROL?.normalizeRange?.(_PENA_TIME_CONTROL.addDays(selected, -6), selected) || { from: selected, to: selected, key: `${selected}:${selected}` };
 	}
 
 	function _setDialogTimeCacheRecord(key, record) {
@@ -10834,8 +12919,16 @@ if (_presetChannel) {
 		if (_dialogTimePortalDatePromise) return _dialogTimePortalDatePromise;
 		const localToday = _PENA_TIME_CONTROL.getQuickRange('today');
 		_dialogTimePortalDatePromise = _callBxRestPageWithTimeout('server.time', {}, 8000).then(response => {
-			const match = /^(\d{4}-\d{2}-\d{2})/.exec(String(response?.data || ''));
+			const rawServerTime = String(response?.data || '');
+			const match = /^(\d{4}-\d{2}-\d{2})/.exec(rawServerTime);
 			if (!match || !_PENA_TIME_CONTROL.parseDateKey(match[1])) return '';
+			const offsetMatch = /([+-])(\d{2}):?(\d{2})$/.exec(rawServerTime);
+			if (offsetMatch) {
+				const minutes = Number(offsetMatch[2]) * 60 + Number(offsetMatch[3]);
+				_dialogTimePortalUtcOffsetMinutes = (offsetMatch[1] === '-' ? -1 : 1) * minutes;
+			} else if (/z$/i.test(rawServerTime)) {
+				_dialogTimePortalUtcOffsetMinutes = 0;
+			}
 			_dialogTimePortalDateKey = match[1];
 			if (_dialogTimeRange.from === localToday.from && _dialogTimeRange.to === localToday.to) {
 				_dialogTimeRange = _PENA_TIME_CONTROL.getQuickRange('today', _dialogTimePortalDateKey);
@@ -10847,9 +12940,30 @@ if (_presetChannel) {
 		return _dialogTimePortalDatePromise;
 	}
 
-	async function _warmDialogTimeToday() {
-		await _ensureDialogTimePortalDate();
-		return _loadDialogTimeRange(_getDialogTimeRange('today'));
+	function _syncDialogTimePortalDay() {
+		if (!_PENA_TIME_CONTROL || !_dialogTimePortalDateKey) return false;
+		let nextKey = '';
+		if (Number.isFinite(_dialogTimePortalUtcOffsetMinutes)) {
+			const clock = new Date(Date.now() + Number(_dialogTimePortalUtcOffsetMinutes) * 60000);
+			nextKey = `${clock.getUTCFullYear()}-${String(clock.getUTCMonth() + 1).padStart(2, '0')}-${String(clock.getUTCDate()).padStart(2, '0')}`;
+		} else {
+			nextKey = _PENA_TIME_CONTROL.toDateKey?.(new Date()) || '';
+		}
+		if (!nextKey || nextKey === _dialogTimePortalDateKey) return false;
+		const previousKey = _dialogTimePortalDateKey;
+		const followsToday = _dialogTimeRange?.from === previousKey && _dialogTimeRange?.to === previousKey;
+		const previous = _readDialogTimeVisits(previousKey);
+		if (previous.length && _PENA_TIME_CONTROL.closeActivitySession) {
+			_writeDialogTimeVisits(_PENA_TIME_CONTROL.closeActivitySession(previous), previousKey);
+		}
+		_dialogTimePortalDateKey = nextKey;
+		if (followsToday) _dialogTimeRange = _PENA_TIME_CONTROL.getQuickRange('today', nextKey);
+		if (_dialogControlNativeWorkspaceTab === 'time') {
+			const visibleRange = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
+			_loadDialogTimeRange(visibleRange, { force: true }).catch(() => {});
+		}
+		_queueDialogTimeUiSync();
+		return true;
 	}
 
 	function _getDialogTimeCacheKey(range = _dialogTimeRange) {
@@ -10882,33 +12996,124 @@ if (_presetChannel) {
 		return _getDialogTimeRange('today')?.from || _PENA_TIME_CONTROL?.toDateKey?.() || '';
 	}
 
+	function _buildDialogTimeWriteFields(seconds, dateKey, commentText = '') {
+		return _PENA_TIME_CONTROL?.buildElapsedWriteFields?.({
+			seconds,
+			dateKey,
+			offsetMinutes: _dialogTimePortalUtcOffsetMinutes,
+			commentText
+		}) || { SECONDS: seconds, COMMENT_TEXT: String(commentText || ''), CREATED_DATE: `${dateKey}T12:00:00` };
+	}
+
+	function _invalidateDialogTimeCachesForDates(...dateKeys) {
+		const dates = dateKeys.map(value => String(value || '')).filter(value => _PENA_TIME_CONTROL?.parseDateKey?.(value));
+		if (!dates.length) return;
+		for (const [key, record] of _dialogTimeCache) {
+			const range = record?.data?.range;
+			if (range && dates.some(dateKey => dateKey >= range.from && dateKey <= range.to)) _dialogTimeCache.delete(key);
+		}
+	}
+
 	function _getDialogTimeScopedStorageKey(prefix, dateKey = '') {
-		const userId = _getCurrentBitrixUserId() || 'self';
+		const userId = _getCurrentBitrixUserId();
+		if (!/^\d+$/.test(String(userId || ''))) return '';
 		return `${prefix}.${userId}${dateKey ? `.${dateKey}` : ''}`;
+	}
+
+	function _getDialogTimeActivityLeaseKey() {
+		return _getDialogTimeScopedStorageKey(_PENA_TIME_ACTIVITY_LEASE_KEY);
+	}
+
+	function _readDialogTimeActivityLease() {
+		try {
+			const key = _getDialogTimeActivityLeaseKey();
+			if (!key) return null;
+			const value = JSON.parse(localStorage.getItem(key) || 'null');
+			if (!value || !value.frameId || !value.activityId) return null;
+			return {
+				frameId: String(value.frameId),
+				activityId: String(value.activityId),
+				heartbeatAt: Math.max(0, Number(value.heartbeatAt) || 0)
+			};
+		} catch { return null; }
+	}
+
+	function _claimDialogTimeActivityLease(activityId, options = {}) {
+		const id = String(activityId || '');
+		const key = _getDialogTimeActivityLeaseKey();
+		if (!id || !key) return false;
+		const now = Date.now();
+		const previous = _readDialogTimeActivityLease();
+		const foreignFresh = !!previous && previous.frameId !== _dialogTimeFrameId &&
+			now - previous.heartbeatAt <= _PENA_TIME_ACTIVITY_LEASE_STALE_MS;
+		if (foreignFresh) {
+			const sameActivity = previous.activityId === id;
+			const canTakeOver = options.takeover === true && (!sameActivity || options.force === true);
+			if (!canTakeOver) {
+				_dialogTimeOwnedActivityId = '';
+				return false;
+			}
+		}
+		try {
+			localStorage.setItem(key, JSON.stringify({
+				frameId: _dialogTimeFrameId,
+				activityId: id,
+				heartbeatAt: now
+			}));
+			const confirmed = _readDialogTimeActivityLease();
+			const owns = confirmed?.frameId === _dialogTimeFrameId && confirmed.activityId === id;
+			_dialogTimeOwnedActivityId = owns ? id : '';
+			return owns;
+		} catch { return false; }
+	}
+
+	function _releaseDialogTimeActivityLease() {
+		const key = _getDialogTimeActivityLeaseKey();
+		if (!key) {
+			_dialogTimeOwnedActivityId = '';
+			return;
+		}
+		const lease = _readDialogTimeActivityLease();
+		if (lease?.frameId === _dialogTimeFrameId) {
+			try { localStorage.removeItem(key); } catch {}
+		}
+		_dialogTimeOwnedActivityId = '';
 	}
 
 	function _readDialogTimeVisits(dateKey = _getDialogTimeTodayKey()) {
 		try {
-			const value = JSON.parse(localStorage.getItem(_getDialogTimeScopedStorageKey(_PENA_TIME_VISITS_KEY, dateKey)) || '[]');
+			const key = _getDialogTimeScopedStorageKey(_PENA_TIME_VISITS_KEY, dateKey);
+			if (!key) return [];
+			const value = JSON.parse(localStorage.getItem(key) || '[]');
 			return _PENA_TIME_CONTROL?.mergeVisitedTasks?.(value) || [];
 		} catch { return []; }
 	}
 
 	function _writeDialogTimeVisits(visits, dateKey = _getDialogTimeTodayKey()) {
 		try {
-			localStorage.setItem(_getDialogTimeScopedStorageKey(_PENA_TIME_VISITS_KEY, dateKey), JSON.stringify(visits || []));
+			const key = _getDialogTimeScopedStorageKey(_PENA_TIME_VISITS_KEY, dateKey);
+			if (!key) return false;
+			const next = Array.isArray(visits) ? visits : [];
+			if (!next.length) localStorage.removeItem(key);
+			else localStorage.setItem(key, JSON.stringify(next));
 			return true;
 		} catch { return false; }
 	}
 
 	function _persistDialogTimeActivity(activity = {}, options = {}) {
-		if (!_PENA_TIME_CONTROL) return false;
+		if (!_PENA_TIME_CONTROL || !_isDialogTimeLocalCoordinator()) return false;
 		const rawTaskId = String(activity.taskId || '').trim();
 		const taskId = /^\d+$/.test(rawTaskId) ? rawTaskId : '';
 		const dialogId = normId(activity.dialogId || '');
 		if (!taskId) return false;
+		const activityId = `task:${taskId}`;
+		if (!_claimDialogTimeActivityLease(activityId, {
+			takeover: options.takeover === true || options.qualify === true,
+			force: options.forceLease === true
+		})) return false;
 		const dateKey = _getDialogTimeTodayKey();
-		const normalizedTitle = String(activity.title || '').replace(/\s+/g, ' ').trim();
+		const fallbackTitle = String(activity.title || '').replace(/\s+/g, ' ').trim();
+		const normalizedTitle = _getDialogTimeTaskTitle(taskId, fallbackTitle);
 		let current = _readDialogTimeVisits(dateKey);
 		const next = _PENA_TIME_CONTROL.recordActivityTouch(current, {
 			taskId,
@@ -10919,8 +13124,24 @@ if (_presetChannel) {
 			qualify: options.qualify === true,
 			reason: String(options.reason || (options.qualify === true ? 'message' : 'open'))
 		});
-		_writeDialogTimeVisits(next, dateKey);
-		if (taskId && normalizedTitle) _dialogTimeTaskTitles.set(taskId, normalizedTitle);
+		const persisted = options.closeSession === true && _PENA_TIME_CONTROL.closeActivitySession
+			? _PENA_TIME_CONTROL.closeActivitySession(next)
+			: next;
+		const lease = _readDialogTimeActivityLease();
+		if (lease?.frameId !== _dialogTimeFrameId || lease.activityId !== activityId) {
+			_dialogTimeOwnedActivityId = '';
+			return false;
+		}
+		if (!_writeDialogTimeVisits(persisted, dateKey)) {
+			_releaseDialogTimeActivityLease();
+			return false;
+		}
+		// A native chat caption is only a fallback. Never overwrite the canonical
+		// task title already returned by tasks.task.get/tasks.task.list.
+		if (taskId && normalizedTitle && !_isDialogTimePlaceholderTaskTitle(taskId, normalizedTitle) &&
+			!_dialogTimeTaskTitles.has(taskId)) {
+			_dialogTimeTaskTitles.set(taskId, normalizedTitle);
+		}
 		_queueDialogTimeUiSync();
 		return true;
 	}
@@ -10931,48 +13152,233 @@ if (_presetChannel) {
 		const dateKey = _getDialogTimeTodayKey();
 		const current = _readDialogTimeVisits(dateKey);
 		const next = current.filter(item => String(item.taskId || '') !== id);
-		if (next.length !== current.length) _writeDialogTimeVisits(next, dateKey);
+		if (next.length !== current.length && _writeDialogTimeVisits(next, dateKey)) _queueDialogTimeUiSync();
+	}
+
+	function _scheduleDialogTimeEligibilityRetry(activity = {}, options = {}) {
+		const taskId = String(activity.taskId || '').trim();
+		if (!/^\d+$/.test(taskId) || _dialogTimeTaskEligibilityRetryTimers.has(taskId)) return;
+		const attempt = Math.max(0, Number(_dialogTimeTaskEligibilityRetryAttempts.get(taskId)) || 0);
+		const delays = [1000, 2500, 5000, 15000, 30000, 60000];
+		const delay = delays[Math.min(attempt, delays.length - 1)];
+		_dialogTimeTaskEligibilityRetryAttempts.set(taskId, attempt + 1);
+		const timer = setTimeout(() => {
+			_dialogTimeTaskEligibilityRetryTimers.delete(taskId);
+			if (!_isDialogTimeLocalCoordinator()) {
+				_dialogTimeTaskEligibilityRetryAttempts.delete(taskId);
+				return;
+			}
+			_ensureDialogTimeTaskEligibility(taskId).then(enabled => {
+				if (enabled === true) {
+					_dialogTimeTaskEligibilityRetryAttempts.delete(taskId);
+					_persistDialogTimeActivity(activity, options);
+				} else if (enabled === false) {
+					_dialogTimeTaskEligibilityRetryAttempts.delete(taskId);
+					_removeDialogTimeActivity(taskId);
+				} else {
+					_scheduleDialogTimeEligibilityRetry(activity, options);
+				}
+			}).catch(() => _scheduleDialogTimeEligibilityRetry(activity, options));
+		}, delay);
+		_dialogTimeTaskEligibilityRetryTimers.set(taskId, timer);
+	}
+
+	function _getDialogTimePendingQualificationMs() {
+		const testMs = Number(window.__PENA_TEST_TIME_ACTIVITY_QUALIFY_MS__);
+		return Number.isFinite(testMs) && testMs >= 50 ? testMs : 60 * 1000;
+	}
+
+	function _qualifyPendingDialogTimeDuration(entry, now = Date.now()) {
+		if (!entry || entry.durationQualified || !entry.active) return false;
+		if (Math.max(0, Number(entry.visibleMs) || 0) + Math.max(0, Number(now) - Number(entry.startedAt || now)) < _getDialogTimePendingQualificationMs()) return false;
+		entry.qualify = true;
+		entry.qualifyReason = 'duration';
+		entry.durationQualified = true;
+		return true;
+	}
+
+	function _finishDialogTimePendingActivity() {
+		clearTimeout(_dialogTimeQualificationTimer);
+		const entry = _dialogTimePendingActivities.get(_dialogTimePendingActiveId);
+		if (entry?.active) {
+			_qualifyPendingDialogTimeDuration(entry);
+			entry.active = false;
+			entry.paused = false;
+			if (entry.qualify) _scheduleDialogTimeDeferredFlush(0);
+		}
+		_dialogTimePendingActiveId = '';
+	}
+
+	function _stageDialogTimeActivity(activity = {}, options = {}) {
+		const taskId = String(activity.taskId || '').trim();
+		if (!/^\d+$/.test(taskId)) return false;
+		const now = Date.now();
+		const activityId = `task:${taskId}`;
+		if (_dialogTimePendingActiveId && _dialogTimePendingActiveId !== activityId) {
+			const previous = _dialogTimePendingActivities.get(_dialogTimePendingActiveId);
+			if (previous) {
+				_qualifyPendingDialogTimeDuration(previous, now);
+				previous.active = false;
+			}
+		}
+		let entry = _dialogTimePendingActivities.get(activityId);
+		if (!entry || (entry.active === false && !entry.paused)) {
+			entry = {
+				activityId,
+				taskId,
+				title: '',
+				dialogId: '',
+				startedAt: now,
+				lastSeenAt: now,
+				active: true,
+				persisted: false,
+				qualify: false,
+				qualifyReason: '',
+				durationQualified: false,
+				takeover: false
+			};
+			_dialogTimePendingActivities.set(activityId, entry);
+		}
+		if (entry.paused) { entry.startedAt = now; entry.paused = false; }
+		entry.title = String(activity.title || entry.title || '').replace(/\s+/g, ' ').trim();
+		entry.dialogId = normId(activity.dialogId || entry.dialogId || '');
+		entry.lastSeenAt = now;
+		entry.active = true;
+		entry.takeover = entry.takeover || options.takeover === true;
+		if (options.qualify === true) {
+			entry.qualify = true;
+			entry.qualifyReason = String(options.reason || 'message');
+			entry.durationQualified = true;
+		}
+		_dialogTimePendingActiveId = activityId;
+		clearTimeout(_dialogTimeQualificationTimer);
+		if (!entry.durationQualified) {
+			const remaining = Math.max(0, _getDialogTimePendingQualificationMs() - (entry.visibleMs || 0) - (now - entry.startedAt));
+			_dialogTimeQualificationTimer = setTimeout(() => {
+				if (!_isDialogTimeFrameActive() || _dialogTimePendingActiveId !== activityId) return;
+				if (String(_getActiveDialogTimeActivity()?.taskId || '') !== taskId) return;
+				if (_qualifyPendingDialogTimeDuration(entry)) _scheduleDialogTimeDeferredFlush(0);
+			}, remaining + 10);
+		}
+		return true;
+	}
+
+	function _scheduleDialogTimeDeferredFlush(delay = 1200) {
+		const wait = Math.max(0, Number(delay) || 0);
+		if (_dialogTimeDeferredFlushTimer) {
+			if (wait > 0) return;
+			clearTimeout(_dialogTimeDeferredFlushTimer);
+		}
+		_dialogTimeDeferredFlushTimer = setTimeout(() => {
+			_dialogTimeDeferredFlushTimer = null;
+			_flushDialogTimePendingActivities().catch(() => {});
+		}, wait);
+	}
+
+	async function _flushDialogTimePendingActivities() {
+		if (_dialogTimeDeferredFlushPromise || !_PENA_TIME_CONTROL || !_isDialogTimeLocalCoordinator()) {
+			return _dialogTimeDeferredFlushPromise || false;
+		}
+		const pending = Array.from(_dialogTimePendingActivities.values()).filter(entry => entry.qualify || !entry.persisted);
+		if (!pending.length) return false;
+		const needsIdentity = pending.some(entry => entry.qualify) || _dialogControlNativeWorkspaceTab === 'time';
+		if (!_getCurrentBitrixUserId() && !needsIdentity) return false;
+		_dialogTimeDeferredFlushPromise = (async () => {
+			if (!_getCurrentBitrixUserId()) await _ensureCurrentBitrixUserId().catch(() => '');
+			if (!_getCurrentBitrixUserId()) return false;
+			let retryNeeded = false;
+			for (const entry of pending) {
+				if (!_dialogTimePendingActivities.has(entry.activityId)) continue;
+				let eligibility = _getFreshDialogTimeTaskEligibility(entry.taskId);
+				if (entry.qualify) {
+					// Qualification is a write boundary. A cached Y or N may predate a
+					// portal-side toggle whose live event was lost; confirm both values.
+					eligibility = await _ensureDialogTimeTaskEligibility(entry.taskId, { force: true }).catch(() => null);
+				}
+				if (eligibility === false) {
+					if (!entry.qualify && entry.active) continue;
+					_dialogTimePendingActivities.delete(entry.activityId);
+					_removeDialogTimeActivity(entry.taskId);
+					continue;
+				}
+				if (eligibility !== true) {
+					if (entry.qualify) retryNeeded = true;
+					continue;
+				}
+				const wrote = _persistDialogTimeActivity(entry, {
+					qualify: entry.qualify === true,
+					reason: entry.qualifyReason || (entry.qualify ? 'message' : 'open'),
+					takeover: entry.takeover || entry.qualify,
+					closeSession: entry.qualify === true
+				});
+				if (!wrote) {
+					retryNeeded = retryNeeded || entry.qualify;
+					continue;
+				}
+				entry.persisted = true;
+				entry.qualify = false;
+				entry.qualifyReason = '';
+				entry.takeover = false;
+				if (!entry.active) _dialogTimePendingActivities.delete(entry.activityId);
+			}
+			if (retryNeeded) _scheduleDialogTimeDeferredFlush(5000);
+			return true;
+		})().finally(() => {
+			_dialogTimeDeferredFlushPromise = null;
+		});
+		return _dialogTimeDeferredFlushPromise;
 	}
 
 	function _rememberDialogTimeActivity(activity = {}, options = {}) {
+		if (!_isDialogTimeLocalCoordinator()) return false;
 		const taskId = String(activity.taskId || '').trim();
 		if (!/^\d+$/.test(taskId)) return false;
-		if (_dialogTimeTaskEligibility.get(taskId) === true) return _persistDialogTimeActivity(activity, options);
-		if (_dialogTimeTaskEligibility.get(taskId) === false) {
-			_removeDialogTimeActivity(taskId);
-			return false;
-		}
-		_ensureDialogTimeTaskEligibility(taskId).then(enabled => {
-			if (enabled) _persistDialogTimeActivity(activity, options);
-			else _removeDialogTimeActivity(taskId);
-		}).catch(() => {});
-		return false;
+		if (!_stageDialogTimeActivity(activity, options)) return false;
+		if (_dialogControlNativeWorkspaceTab === 'time') _queueDialogTimeUiSync();
+		// Never perform REST, lease negotiation or localStorage writes in Bitrix'
+		// click/send event. The deferred flush runs after native interaction settles.
+		_scheduleDialogTimeDeferredFlush(options.qualify === true ? 1200 : 1500);
+		return true;
 	}
 
-	function _closeDialogTimeActivitySession() {
+	function _closeDialogTimeActivitySession(options = {}) {
 		if (!_PENA_TIME_CONTROL?.closeActivitySession) return;
+		const lease = _readDialogTimeActivityLease();
+		const leaseStale = !!lease && Date.now() - lease.heartbeatAt > _PENA_TIME_ACTIVITY_LEASE_STALE_MS;
+		const ownsLease = lease?.frameId === _dialogTimeFrameId;
+		const force = options?.force === true;
+		// Every Bitrix frame shares localStorage. A frame that cannot see the task
+		// must not close the session owned and heartbeated by another frame.
+		if (!force && !ownsLease && !leaseStale && !(lease == null && _dialogTimeOwnedActivityId)) return false;
 		const dateKey = _getDialogTimeTodayKey();
 		const current = _readDialogTimeVisits(dateKey);
-		if (!current.length) return;
+		if (!current.length) {
+			_releaseDialogTimeActivityLease();
+			return false;
+		}
 		_writeDialogTimeVisits(_PENA_TIME_CONTROL.closeActivitySession(current), dateKey);
+		if (ownsLease || leaseStale || force) {
+			try { localStorage.removeItem(_getDialogTimeActivityLeaseKey()); } catch {}
+		}
+		_dialogTimeOwnedActivityId = '';
 		_queueDialogTimeUiSync();
+		return true;
 	}
 
-	function _markDialogTimeActivityAccounted(activityId, accountedAt = Date.now()) {
+	function _markDialogTimeActivityAccounted(activityId, accountedAt = Date.now(), dateKey = _getDialogTimeTodayKey()) {
 		if (!_PENA_TIME_CONTROL?.markActivityAccounted || !activityId) return;
-		const dateKey = _getDialogTimeTodayKey();
 		const current = _readDialogTimeVisits(dateKey);
 		_writeDialogTimeVisits(_PENA_TIME_CONTROL.markActivityAccounted(current, activityId, accountedAt), dateKey);
 	}
 
-	function _markDialogTimeTaskAccounted(taskId, accountedAt = Date.now()) {
+	function _markDialogTimeTaskAccounted(taskId, accountedAt = Date.now(), dateKey = _getDialogTimeTodayKey()) {
 		const id = String(taskId || '');
 		if (!/^\d+$/.test(id)) return;
-		_markDialogTimeActivityAccounted(`task:${id}`, accountedAt);
+		_markDialogTimeActivityAccounted(`task:${id}`, accountedAt, dateKey);
 	}
 
-	function _rememberDialogTimeTaskVisit(taskId, title = '', dialogId = '') {
-		return _rememberDialogTimeActivity({ taskId, title, dialogId });
+	function _rememberDialogTimeTaskVisit(taskId, title = '', dialogId = '', options = {}) {
+		return _rememberDialogTimeActivity({ taskId, title, dialogId }, options);
 	}
 
 	function _rememberTaskChatDialogVisit(dialogId, title = '', taskId = '', options = {}) {
@@ -10991,10 +13397,19 @@ if (_presetChannel) {
 	}
 
 	function _readDialogTimeTracker() {
+		if (Date.now() - _dialogTimeTrackerMemoryLoadedAt < 500) {
+			return _dialogTimeTrackerMemory ? { ..._dialogTimeTrackerMemory } : null;
+		}
 		try {
-			const tracker = JSON.parse(localStorage.getItem(_getDialogTimeScopedStorageKey(_PENA_TIME_TRACKER_KEY)) || 'null');
-			if (!tracker || !/^\d+$/.test(String(tracker.taskId || '')) || !Number.isFinite(Number(tracker.startedAt))) return null;
-			return {
+			const key = _getDialogTimeScopedStorageKey(_PENA_TIME_TRACKER_KEY);
+			if (!key) return null;
+			const tracker = JSON.parse(localStorage.getItem(key) || 'null');
+			if (!tracker || !/^\d+$/.test(String(tracker.taskId || '')) || !Number.isFinite(Number(tracker.startedAt))) {
+				_dialogTimeTrackerMemory = null;
+				_dialogTimeTrackerMemoryLoadedAt = Date.now();
+				return null;
+			}
+			_dialogTimeTrackerMemory = {
 				taskId: String(tracker.taskId),
 				title: String(tracker.title || ''),
 				dialogId: String(tracker.dialogId || ''),
@@ -11003,16 +13418,22 @@ if (_presetChannel) {
 				pendingSeconds: Math.max(0, Number(tracker.pendingSeconds) || 0),
 				error: String(tracker.error || '')
 			};
+			_dialogTimeTrackerMemoryLoadedAt = Date.now();
+			return { ..._dialogTimeTrackerMemory };
 		} catch { return null; }
 	}
 
 	function _writeDialogTimeTracker(tracker) {
 		const key = _getDialogTimeScopedStorageKey(_PENA_TIME_TRACKER_KEY);
+		if (!key) return false;
 		try {
 			if (tracker) localStorage.setItem(key, JSON.stringify(tracker));
 			else localStorage.removeItem(key);
 		} catch {}
+		_dialogTimeTrackerMemory = tracker ? { ...tracker } : null;
+		_dialogTimeTrackerMemoryLoadedAt = Date.now();
 		_queueDialogTimeUiSync();
+		return true;
 	}
 
 	function _getDialogTimeTrackerSeconds(tracker = _readDialogTimeTracker()) {
@@ -11035,7 +13456,7 @@ if (_presetChannel) {
 				_dialogTimeTrackerTick = null;
 				return;
 			}
-			if (_dialogControlNativeWorkspaceTab === 'time') _queueDialogTimeUiSync();
+			_queueDialogTimeUiSync();
 		}, 1000);
 	}
 
@@ -11052,46 +13473,91 @@ if (_presetChannel) {
 		return null;
 	}
 
+	function _isDialogTimePlaceholderTaskTitle(taskId, title) {
+		const id = String(taskId || '').trim();
+		const value = String(title || '').replace(/\s+/g, ' ').trim();
+		if (!value) return true;
+		return value.toLocaleLowerCase('ru') === `chat${id}`.toLocaleLowerCase('ru') ||
+			value === id || value === `Задача #${id}`;
+	}
+
 	function _getDialogTimeTaskTitle(taskId, fallback = '') {
 		const id = String(taskId || '');
-		return _dialogTimeTaskTitles.get(id) || _findDialogTimeTaskItem(id)?.title || String(fallback || '').trim() || `Задача #${id}`;
+		const candidates = [
+			_dialogTimeTaskTitles.get(id),
+			_findDialogTimeTaskItem(id)?.title,
+			String(fallback || '').trim()
+		];
+		return candidates.find(title => !_isDialogTimePlaceholderTaskTitle(id, title)) || `Задача #${id}`;
 	}
 
 	async function _loadDialogTimeTaskTitles(data, visits = _readDialogTimeVisits()) {
-		if (_dialogTimeTitleLoadPromise) return _dialogTimeTitleLoadPromise;
+		if (_dialogTimeTitleLoadPromise) {
+			// Activity can arrive from another Bitrix frame while an older title batch is
+			// running. Remember that newer input instead of silently dropping it.
+			_dialogTimeTitleLoadQueued = true;
+			return _dialogTimeTitleLoadPromise;
+		}
 		const fallbackById = new Map(visits.map(visit => [String(visit.taskId || ''), visit.title || '']));
 		const taskIds = Array.from(new Set([
 			...(data?.tasks || []).map(task => String(task.taskId || '')),
 			...visits.map(visit => String(visit.taskId || ''))
 		].filter(id => /^\d+$/.test(id))));
 		taskIds.forEach(id => {
-			const localTitle = fallbackById.get(id) || _findDialogTimeTaskItem(id)?.title || '';
-			if (localTitle && !_dialogTimeTaskTitles.has(id)) _dialogTimeTaskTitles.set(id, localTitle);
+			const localTitle = _findDialogTimeTaskItem(id)?.title || fallbackById.get(id) || '';
+			if (!_isDialogTimePlaceholderTaskTitle(id, localTitle) && !_dialogTimeTaskTitles.has(id)) {
+				_dialogTimeTaskTitles.set(id, localTitle);
+			}
 		});
 		const now = Date.now();
 		const missing = taskIds.filter(id =>
-			(!_dialogTimeTaskTitles.has(id) || !_dialogTimeTaskEligibility.has(id)) &&
+			(_isDialogTimePlaceholderTaskTitle(id, _dialogTimeTaskTitles.get(id)) ||
+				_getFreshDialogTimeTaskEligibility(id, now) == null) &&
 			now - (_dialogTimeTaskTitleAttempted.get(id) || 0) >= 60000
 		).slice(0, 50);
 		if (!missing.length) return null;
 		missing.forEach(id => _dialogTimeTaskTitleAttempted.set(id, now));
-		_dialogTimeTitleLoadPromise = _callBxRestPagesFast(missing.map(taskId => ({
-			method: 'tasks.task.get',
-			params: { taskId, select: ['ID', 'TITLE', 'CHAT_ID', 'ALLOW_TIME_TRACKING'] }
-		})), 12000).then(pages => {
-			pages.forEach((page, index) => {
-				_rememberDialogTimeTaskEligibility(missing[index], page?.data);
+		_dialogTimeTitleLoadPromise = (async () => {
+			let cursor = 0;
+			const workers = Array.from({ length: Math.min(4, missing.length) }, async () => {
+				while (cursor < missing.length) {
+					const taskId = missing[cursor++];
+					try {
+						const data = await _callBxRestMethod('tasks.task.get', {
+							taskId,
+							select: ['ID', 'TITLE', 'CHAT_ID', 'ALLOW_TIME_TRACKING']
+						});
+						_rememberDialogTimeTaskEligibility(taskId, data);
+					} catch {
+						const visit = visits.find(item => String(item.taskId || '') === taskId);
+						if (visit && (Number(visit.lastQualifiedAt) > Number(visit.accountedAt) || visit.sessionActive === true)) {
+							_scheduleDialogTimeEligibilityRetry(visit, { passive: true });
+						}
+					}
+				}
 			});
-		}).catch(() => {}).finally(() => {
+			await Promise.allSettled(workers);
+		})().finally(() => {
 			_dialogTimeTitleLoadPromise = null;
 			_queueDialogTimeUiSync();
+			if (_dialogTimeTitleLoadQueued) {
+				_dialogTimeTitleLoadQueued = false;
+				const selected = _getDialogTimeSelectedRange();
+				const visibleRange = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : selected;
+				const current = _getDialogTimeRecord(visibleRange)?.data || null;
+				_loadDialogTimeTaskTitles(current, _readDialogTimeVisits(selected.from)).catch(() => {});
+			}
 		});
 		return _dialogTimeTitleLoadPromise;
 	}
 
 	function _getDialogTimeTaskCandidates(data, visits) {
 		const map = new Map();
-		visits.filter(visit => /^\d+$/.test(String(visit.taskId || '')) && _dialogTimeTaskEligibility.get(String(visit.taskId)) === true).forEach(visit => {
+		visits.filter(visit => {
+			const taskId = String(visit.taskId || '');
+			const qualified = Number(visit.visits) > 0 && Number(visit.lastQualifiedAt) > 0;
+			return /^\d+$/.test(taskId) && _getDialogTimeTaskEligibilityForDisplay(taskId) && qualified;
+		}).forEach(visit => {
 			const taskId = String(visit.taskId);
 			const title = _getDialogTimeTaskTitle(taskId, visit.title);
 			if (title === `Задача #${taskId}`) return;
@@ -11099,18 +13565,30 @@ if (_presetChannel) {
 		});
 		(data?.tasks || []).forEach(task => {
 			const id = String(task.taskId || '');
-			if (!id || id === 'unknown' || _dialogTimeTaskEligibility.get(id) !== true) return;
+			if (!id || id === 'unknown' || !_getDialogTimeTaskEligibilityForDisplay(id)) return;
 			const title = _getDialogTimeTaskTitle(id);
 			if (title === `Задача #${id}`) return;
 			map.set(id, { ...(map.get(id) || {}), taskId: id, title, trackedSeconds: task.seconds || 0 });
 		});
+		_getDialogTimeEligibleTaskIds().forEach(taskId => {
+			if (!map.has(taskId)) map.set(taskId, { taskId, title: _getDialogTimeTaskTitle(taskId), dialogId: _getDialogTimeTaskChatDialogId(taskId) });
+		});
+		const selected = _dialogTimeManualSelectedTask;
+		if (selected?.taskId && _getDialogTimeTaskEligibilityForDisplay(String(selected.taskId))) {
+			map.set(String(selected.taskId), {
+				...(map.get(String(selected.taskId)) || {}),
+				taskId: String(selected.taskId),
+				title: _getDialogTimeTaskTitle(String(selected.taskId), selected.title),
+				dialogId: selected.dialogId || ''
+			});
+		}
 		return Array.from(map.values()).sort((a, b) => (b.visitedAt || 0) - (a.visitedAt || 0) || (b.trackedSeconds || 0) - (a.trackedSeconds || 0));
 	}
 
 	function _filterDialogTimeDataByEligibility(data) {
 		if (!data?.items || !_PENA_TIME_CONTROL?.aggregateElapsedItems) return data || null;
 		const next = _PENA_TIME_CONTROL.aggregateElapsedItems(data.items.filter(item =>
-			_dialogTimeTaskEligibility.get(String(item.taskId || '')) === true
+			_getDialogTimeTaskEligibilityForDisplay(String(item.taskId || ''))
 		));
 		next.range = data.range;
 		next.pages = data.pages;
@@ -11120,25 +13598,90 @@ if (_presetChannel) {
 
 	function _readDialogTimeManualDraft() {
 		try {
-			const value = JSON.parse(localStorage.getItem(_getDialogTimeScopedStorageKey(_PENA_TIME_MANUAL_DRAFT_KEY)) || 'null');
+			const key = _getDialogTimeScopedStorageKey(_PENA_TIME_MANUAL_DRAFT_KEY);
+			if (!key) return { taskId: '', title: '', query: '', hours: '', minutes: '', dateKey: '' };
+			const value = JSON.parse(localStorage.getItem(key) || 'null');
 			return value && typeof value === 'object'
 				? {
 					taskId: String(value.taskId || ''),
 					title: String(value.title || ''),
 					query: String(value.query || value.title || ''),
 					hours: String(value.hours || ''),
-					minutes: String(value.minutes || '')
+					minutes: String(value.minutes || ''),
+					dateKey: _PENA_TIME_CONTROL?.parseDateKey?.(value.dateKey) ? String(value.dateKey) : ''
 				}
-				: { taskId: '', title: '', query: '', hours: '', minutes: '' };
-		} catch { return { taskId: '', title: '', query: '', hours: '', minutes: '' }; }
+				: { taskId: '', title: '', query: '', hours: '', minutes: '', dateKey: '' };
+		} catch { return { taskId: '', title: '', query: '', hours: '', minutes: '', dateKey: '' }; }
 	}
 
 	function _writeDialogTimeManualDraft(draft = null) {
 		try {
 			const key = _getDialogTimeScopedStorageKey(_PENA_TIME_MANUAL_DRAFT_KEY);
+			if (!key) return false;
 			if (draft) localStorage.setItem(key, JSON.stringify(draft));
 			else localStorage.removeItem(key);
-		} catch {}
+			return true;
+		} catch { return false; }
+	}
+
+	function _selectDialogTimeManualTask(task, panel) {
+		if (!task?.taskId) return;
+		_dialogTimeManualSelectedTask = task;
+		_dialogTimeTrackerSelectedTaskId = String(task.taskId);
+		_dialogTimeManualSearchQuery = task.title;
+		_dialogTimeManualSearchResults = [];
+		_dialogTimeManualActiveIndex = -1;
+		_dialogTimeManualError = '';
+		const draft = _readDialogTimeManualDraft();
+		_writeDialogTimeManualDraft({
+			...draft,
+			taskId: task.taskId,
+			title: task.title,
+			query: task.title,
+			dateKey: _getDialogTimeSelectedRange()?.from || _getDialogTimeTodayKey()
+		});
+		_renderDialogTimeManualSearch(panel);
+		_queueDialogTimeUiSync();
+	}
+
+	function _prepareDialogTimeManualEntry(task, panel = _dialogControlNativeSwitcherNode?.querySelector('.pena-native-time-panel')) {
+		if (!task?.taskId || !panel) return;
+		_dialogTimeManualExpanded = true;
+		_selectDialogTimeManualTask({
+			taskId: String(task.taskId),
+			title: _getDialogTimeTaskTitle(task.taskId, task.title),
+			dialogId: String(task.dialogId || '')
+		}, panel);
+		const hours = panel.querySelector('.pena-native-time-manual-hours');
+		const minutes = panel.querySelector('.pena-native-time-manual-minutes');
+		if (hours) hours.value = '';
+		if (minutes) minutes.value = '';
+		_writeDialogTimeManualDraft({
+			taskId: String(task.taskId),
+			title: _getDialogTimeTaskTitle(task.taskId, task.title),
+			query: _getDialogTimeTaskTitle(task.taskId, task.title),
+			hours: '',
+			minutes: '',
+			dateKey: _getDialogTimeSelectedRange()?.from || _getDialogTimeTodayKey()
+		});
+		_queueDialogTimeUiSync();
+		requestAnimationFrame(() => hours?.focus?.({ preventScroll: true }));
+	}
+
+	function _setDialogTimeFullTaskTitle(node, value, actionLabel = '') {
+		if (!node) return '';
+		const title = String(value || '').replace(/\s+/g, ' ').trim();
+		// The extension owns one accessible, viewport-clamped tooltip. A native
+		// title here would surface a second browser tooltip after a long hover.
+		node.removeAttribute('title');
+		if (!title) {
+			delete node.dataset.penaFullTaskTitle;
+			if (actionLabel) node.setAttribute('aria-label', actionLabel);
+			return '';
+		}
+		node.dataset.penaFullTaskTitle = title;
+		node.setAttribute('aria-label', actionLabel ? `${actionLabel}: ${title}` : title);
+		return title;
 	}
 
 	function _renderDialogTimeManualSearch(panel = _dialogControlNativeSwitcherNode?.querySelector('.pena-native-time-panel')) {
@@ -11153,15 +13696,20 @@ if (_presetChannel) {
 		if (selected) {
 			selected.hidden = !_dialogTimeManualSelectedTask;
 			const title = selected.querySelector('span');
-			if (title) title.textContent = _dialogTimeManualSelectedTask?.title || '';
+			const fullTitle = _dialogTimeManualSelectedTask?.title || '';
+			if (title) title.textContent = fullTitle;
+			_setDialogTimeFullTaskTitle(selected, fullTitle, 'Сменить задачу');
 		}
 		if (!results) return;
 		results.replaceChildren();
 		if (_dialogTimeManualSelectedTask || !_dialogTimeManualSearchQuery.trim()) {
 			results.hidden = true;
+			input?.setAttribute('aria-expanded', 'false');
+			input?.removeAttribute('aria-activedescendant');
 			return;
 		}
 		results.hidden = false;
+		input?.setAttribute('aria-expanded', 'true');
 		if (_dialogTimeManualSearchLoading && !_dialogTimeManualSearchResults.length) {
 			const status = document.createElement('span');
 			status.className = 'pena-native-time-manual-search-status';
@@ -11170,30 +13718,51 @@ if (_presetChannel) {
 			return;
 		}
 		if (!_dialogTimeManualSearchResults.length) {
-			const empty = document.createElement('span');
+			const empty = document.createElement('div');
 			empty.className = 'pena-native-time-manual-search-status';
-			empty.textContent = _dialogTimeManualError || 'Подходящие задачи не найдены';
+			const copy = document.createElement('span');
+			copy.textContent = _dialogTimeManualError || 'Подходящие задачи не найдены';
+			empty.appendChild(copy);
+			if (_dialogTimeManualError === 'Поиск недоступен. Повторите') {
+				const retry = document.createElement('button');
+				retry.type = 'button';
+				retry.className = 'pena-native-time-search-retry';
+				retry.textContent = 'Повторить';
+				retry.addEventListener('click', event => {
+					event.preventDefault();
+					event.stopPropagation();
+					_dialogTimeManualError = '';
+					input?.focus?.({ preventScroll: true });
+					_searchDialogTimeEligibleTasks(_dialogTimeManualSearchQuery, ++_dialogTimeManualSearchToken).catch(() => {});
+				});
+				empty.appendChild(retry);
+			}
 			results.appendChild(empty);
 			return;
 		}
-		_dialogTimeManualSearchResults.forEach(task => {
+		if (_dialogTimeManualActiveIndex < 0 || _dialogTimeManualActiveIndex >= _dialogTimeManualSearchResults.length) {
+			_dialogTimeManualActiveIndex = 0;
+		}
+		_dialogTimeManualSearchResults.forEach((task, index) => {
 			const option = document.createElement('button');
 			option.type = 'button';
 			option.className = 'pena-native-time-manual-result';
-			option.textContent = task.title;
+			option.id = `pena-time-task-option-${task.taskId}`;
+			option.setAttribute('role', 'option');
+			option.setAttribute('aria-selected', index === _dialogTimeManualActiveIndex ? 'true' : 'false');
+			option.tabIndex = -1;
+			option.innerHTML = '<span class="pena-native-time-manual-result-title"></span><span class="pena-native-time-manual-result-id"></span>';
+			option.querySelector('.pena-native-time-manual-result-title').textContent = task.title;
+			option.querySelector('.pena-native-time-manual-result-id').textContent = `#${task.taskId}`;
+			_setDialogTimeFullTaskTitle(option, task.title, 'Выбрать задачу');
 			option.addEventListener('click', event => {
 				event.preventDefault();
 				event.stopPropagation();
-				_dialogTimeManualSelectedTask = task;
-				_dialogTimeManualSearchQuery = task.title;
-				_dialogTimeManualError = '';
-				const draft = _readDialogTimeManualDraft();
-				_writeDialogTimeManualDraft({ ...draft, taskId: task.taskId, title: task.title, query: task.title });
-				_renderDialogTimeManualSearch(panel);
-				_queueDialogTimeUiSync();
+				_selectDialogTimeManualTask(task, panel);
 			});
 			results.appendChild(option);
 		});
+		input?.setAttribute('aria-activedescendant', `pena-time-task-option-${_dialogTimeManualSearchResults[_dialogTimeManualActiveIndex].taskId}`);
 	}
 
 	function _getDialogTimeLocalTaskSearchResults(query) {
@@ -11203,7 +13772,7 @@ if (_presetChannel) {
 		const add = (taskId, title, dialogId = '') => {
 			const id = String(taskId || '').trim();
 			const cleanTitle = String(title || '').replace(/\s+/g, ' ').trim();
-			if (!/^\d+$/.test(id) || !cleanTitle || _dialogTimeTaskEligibility.get(id) !== true) return;
+			if (!/^\d+$/.test(id) || !cleanTitle || !_getDialogTimeTaskEligibilityForDisplay(id)) return;
 			const haystack = `${cleanTitle} ${id}`.toLocaleLowerCase('ru');
 			if (!haystack.includes(normalizedQuery)) return;
 			byId.set(id, { taskId: id, title: cleanTitle, dialogId: normId(dialogId || '') });
@@ -11224,7 +13793,7 @@ if (_presetChannel) {
 				const bStarts = b.title.toLocaleLowerCase('ru').startsWith(normalizedQuery) ? 0 : 1;
 				return aStarts - bStarts || a.title.localeCompare(b.title, 'ru');
 			})
-			.slice(0, 20);
+			.slice(0, 50);
 	}
 
 	function _getDialogTimeTaskSearchError(error) {
@@ -11233,9 +13802,9 @@ if (_presetChannel) {
 		return 'Поиск недоступен. Повторите';
 	}
 
-	async function _searchDialogTimeEligibleTasks(query) {
+	async function _searchDialogTimeEligibleTasks(query, token = ++_dialogTimeManualSearchToken) {
 		const normalizedQuery = String(query || '').replace(/\s+/g, ' ').trim();
-		const token = ++_dialogTimeManualSearchToken;
+		if (token !== _dialogTimeManualSearchToken) return [];
 		if (!normalizedQuery) {
 			_dialogTimeManualSearchLoading = false;
 			_dialogTimeManualSearchResults = [];
@@ -11243,34 +13812,119 @@ if (_presetChannel) {
 			return [];
 		}
 		const localResults = _getDialogTimeLocalTaskSearchResults(normalizedQuery);
+		let lastPublishedResults = localResults;
 		_dialogTimeManualSearchResults = localResults;
 		_dialogTimeManualSearchLoading = true;
 		_dialogTimeManualError = '';
 		_renderDialogTimeManualSearch();
 		try {
-			const page = await _callBxRestReadPage('tasks.task.list', {
-				filter: { '%TITLE': normalizedQuery },
-				select: ['ID', 'TITLE', 'CHAT_ID', 'ALLOW_TIME_TRACKING'],
-				order: { ACTIVITY: 'desc' },
-				start: 0
-			}, { timeoutMs: 12000, attempts: 2 });
-			if (token !== _dialogTimeManualSearchToken || normalizedQuery !== _dialogTimeManualSearchQuery.trim()) return [];
+			const scope = _getDialogNativeSharedAuditScopeKey();
+			const isCurrent = () => token === _dialogTimeManualSearchToken && scope === _getDialogNativeSharedAuditScopeKey() && _dialogControlNativeWorkspaceTab === 'time';
 			const byId = new Map(localResults.map(task => [task.taskId, task]));
-			_extractDialogTaskCatalogRows(page?.data).forEach(task => {
+			const unknown = [];
+			let orderIndex = 0;
+			const normalizedLower = normalizedQuery.toLocaleLowerCase('ru');
+			const currentQuery = () => String(_dialogTimeManualSearchQuery || '').replace(/\s+/g, ' ').trim();
+			const publishResults = () => {
+				if (!isCurrent() || normalizedQuery !== currentQuery()) return [];
+				_dialogTimeManualSearchResults = Array.from(byId.values())
+					.sort((a, b) => {
+						const rank = task => {
+							const title = String(task.title || '').toLocaleLowerCase('ru');
+							if (String(task.taskId) === normalizedQuery) return 0;
+							if (title === normalizedLower) return 1;
+							if (title.startsWith(normalizedLower)) return 2;
+							return 3;
+						};
+						return rank(a) - rank(b) || (a.orderIndex || 0) - (b.orderIndex || 0) || a.title.localeCompare(b.title, 'ru');
+					})
+					.slice(0, 50)
+					.map(({ orderIndex: _orderIndex, ...task }) => task);
+				lastPublishedResults = _dialogTimeManualSearchResults;
+				_renderDialogTimeManualSearch();
+				return _dialogTimeManualSearchResults;
+			};
+			const collectTask = task => {
 				const taskId = String(task?.ID ?? task?.id ?? '').trim();
 				const title = String(task?.TITLE ?? task?.title ?? '').replace(/\s+/g, ' ').trim();
-				if (!/^\d+$/.test(taskId) || !title || _readDialogTaskTimeTrackingFlag(task) !== true) return;
-				byId.set(taskId, { taskId, title, dialogId: normId(task?.CHAT_ID ?? task?.chatId ?? '') });
-				_dialogTimeTaskEligibility.set(taskId, true);
+				if (!/^\d+$/.test(taskId) || !title) return;
+				if (taskId !== normalizedQuery && !title.toLocaleLowerCase('ru').includes(normalizedLower)) return;
+				const rawChatId = String(task?.CHAT_ID ?? task?.chatId ?? '').trim();
+				const dialogId = normId(rawChatId && !/^chat/i.test(rawChatId) ? `chat${rawChatId}` : rawChatId);
+				_rememberDialogTimeTaskChat(taskId, dialogId);
+				const candidate = { taskId, title, dialogId, orderIndex: orderIndex++ };
+				if (!isCurrent()) return;
+				const enabled = _readDialogTaskTimeTrackingFlag(task);
 				_dialogTimeTaskTitles.set(taskId, title);
+				if (enabled === false) {
+					_setDialogTimeTaskEligibility(taskId, false);
+					byId.delete(taskId);
+					return;
+				}
+				if (enabled === true) {
+					_setDialogTimeTaskEligibility(taskId, true);
+					byId.set(taskId, candidate);
+					return;
+				}
+				unknown.push({ index: candidate.orderIndex, candidate });
+			};
+			if (/^\d+$/.test(normalizedQuery)) {
+				try {
+					const exactData = await _callBxRestMethod('tasks.task.get', {
+						taskId: normalizedQuery,
+						select: ['ID', 'TITLE', 'CHAT_ID', 'ALLOW_TIME_TRACKING']
+					});
+					if (!isCurrent()) return [];
+					collectTask(_extractTaskRecordFromData(exactData));
+					publishResults();
+				} catch {}
+			}
+			let start = 0;
+			const seenStarts = new Set();
+			for (let pageIndex = 0; pageIndex < 40 && !seenStarts.has(start); pageIndex += 1) {
+				if (!isCurrent()) return [];
+				seenStarts.add(start);
+				const page = await _callBxRestReadPage('tasks.task.list', {
+					filter: { TITLE: `%${normalizedQuery}%` },
+					select: ['ID', 'TITLE', 'CHAT_ID', 'ALLOW_TIME_TRACKING', 'ACTIVITY_DATE'],
+					order: { ACTIVITY_DATE: 'desc' },
+					start
+				}, { timeoutMs: 12000, attempts: 2, isCurrent });
+				if (!isCurrent() || normalizedQuery !== currentQuery()) return [];
+				const batch = _extractDialogTaskCatalogRows(page?.data);
+				batch.forEach(collectTask);
+				publishResults();
+				if (byId.size >= 50) break;
+				const root = page?.data?.result || page?.data || {};
+				const explicitNext = Number(page?.next);
+				const hasExplicitNext = Number.isFinite(explicitNext) && explicitNext > start;
+				const hasMore = root?.hasMore === true || root?.hasMorePages === true;
+				const explicitEnd = root?.hasMore === false || root?.hasMorePages === false;
+				if (hasExplicitNext) {
+					start = explicitNext;
+					continue;
+				}
+				if (!batch.length || explicitEnd || (!hasMore && batch.length < 50)) break;
+				start += 50;
+			}
+			let cursor = 0;
+			const verified = [];
+			const workers = Array.from({ length: Math.min(2, unknown.length) }, async () => {
+				while (cursor < unknown.length && isCurrent()) {
+					const entry = unknown[cursor++];
+					if (await _ensureDialogTimeTaskEligibility(entry.candidate.taskId, { isCurrent }) === true) verified.push(entry);
+				}
 			});
-			_dialogTimeManualSearchResults = Array.from(byId.values()).slice(0, 20);
-			return _dialogTimeManualSearchResults;
+			await Promise.allSettled(workers);
+			if (!isCurrent() || normalizedQuery !== currentQuery()) return [];
+			verified.sort((a, b) => a.index - b.index).forEach(entry => byId.set(entry.candidate.taskId, entry.candidate));
+			return publishResults();
 		} catch (error) {
-			if (token !== _dialogTimeManualSearchToken) return [];
-			_dialogTimeManualSearchResults = localResults;
-			_dialogTimeManualError = localResults.length ? '' : _getDialogTimeTaskSearchError(error);
-			return localResults;
+			const currentQuery = String(_dialogTimeManualSearchQuery || '').replace(/\s+/g, ' ').trim();
+			if (token !== _dialogTimeManualSearchToken || normalizedQuery !== currentQuery) return [];
+			_dialogTimeManualSearchResults = lastPublishedResults;
+			_dialogTimeManualError = lastPublishedResults.length ? '' : _getDialogTimeTaskSearchError(error);
+			return lastPublishedResults;
 		} finally {
 			if (token === _dialogTimeManualSearchToken) {
 				_dialogTimeManualSearchLoading = false;
@@ -11282,35 +13936,40 @@ if (_presetChannel) {
 
 	function _scheduleDialogTimeManualSearch(query) {
 		_dialogTimeManualSearchQuery = String(query || '');
+		// Invalidate the running request at input time, not after the debounce.
+		// Otherwise a late failure can repaint results for the previous query.
+		const token = ++_dialogTimeManualSearchToken;
+		const scheduledQuery = _dialogTimeManualSearchQuery;
 		_dialogTimeManualSelectedTask = null;
 		_dialogTimeManualSearchResults = _getDialogTimeLocalTaskSearchResults(_dialogTimeManualSearchQuery);
+		_dialogTimeManualActiveIndex = _dialogTimeManualSearchResults.length ? 0 : -1;
 		_dialogTimeManualError = '';
 		if (_dialogTimeManualSearchTimer) clearTimeout(_dialogTimeManualSearchTimer);
 		_dialogTimeManualSearchTimer = setTimeout(() => {
 			_dialogTimeManualSearchTimer = null;
-			_searchDialogTimeEligibleTasks(_dialogTimeManualSearchQuery).catch(() => {});
+			_searchDialogTimeEligibleTasks(scheduledQuery, token).catch(() => {});
 		}, 240);
 		_renderDialogTimeManualSearch();
 	}
 
-	function _applyDialogTimeOptimisticEntry(taskId, seconds) {
+	function _applyDialogTimeOptimisticEntry(taskId, seconds, dateKey, itemId = '') {
 		if (!_PENA_TIME_CONTROL?.aggregateElapsedItems) return;
-		const today = _getDialogTimeRange('today');
-		const key = _getDialogTimeCacheKey(today);
+		const day = _PENA_TIME_CONTROL.normalizeRange(dateKey, dateKey);
+		const key = _getDialogTimeCacheKey(day);
 		const record = _dialogTimeCache.get(key);
 		const previous = record?.data || null;
-		const createdAt = new Date().toISOString();
+		const createdAt = _buildDialogTimeWriteFields(seconds, dateKey).CREATED_DATE;
 		const next = _PENA_TIME_CONTROL.aggregateElapsedItems([
 			...(previous?.items || []),
-			{ id: `pena-local-${Date.now()}`, taskId: String(taskId), userId: _getCurrentBitrixUserId(), seconds, createdAt }
+			{ id: String(itemId || `pena-local-${Date.now()}`), taskId: String(taskId), userId: _getCurrentBitrixUserId(), seconds, createdAt }
 		]);
-		next.range = previous?.range || today;
+		next.range = previous?.range || day;
 		next.pages = previous?.pages || 1;
 		next.totalAvailable = Math.max(Number(previous?.totalAvailable) || 0, next.entryCount);
 		_setDialogTimeCacheRecord(key, { status: 'ready', data: next, error: '', updatedAt: Date.now() });
 	}
 
-	async function _addDialogTimeManualEntry(task, hours, minutes) {
+	async function _addDialogTimeManualEntry(task, hours, minutes, dateKey = _getDialogTimeSelectedRange()?.from) {
 		if (_dialogTimeActionInFlight || !_PENA_TIME_CONTROL) return;
 		const taskId = String(task?.taskId || '').trim();
 		if (!/^\d+$/.test(taskId)) {
@@ -11321,8 +13980,17 @@ if (_presetChannel) {
 		let duration;
 		try {
 			duration = _PENA_TIME_CONTROL.normalizeManualDuration(hours, minutes);
+			if (!_PENA_TIME_CONTROL.parseDateKey(dateKey)) throw new RangeError('Выберите корректную дату');
 		} catch (error) {
 			_dialogTimeManualError = String(error?.message || 'Проверьте введённое время');
+			_queueDialogTimeUiSync();
+			return;
+		}
+		const eligibility = await _ensureDialogTimeTaskEligibility(taskId);
+		if (eligibility !== true) {
+			_dialogTimeManualError = eligibility === false
+				? 'В задаче выключен учёт времени'
+				: 'Не удалось подтвердить учёт времени в задаче';
 			_queueDialogTimeUiSync();
 			return;
 		}
@@ -11330,19 +13998,20 @@ if (_presetChannel) {
 		_dialogTimeManualError = '';
 		_queueDialogTimeUiSync();
 		let saved = false;
+		let savedItemId = '';
 		try {
-			await _callBxRestMethod('task.elapseditem.add', {
+			const itemId = await _callBxRestMethod('task.elapseditem.add', {
 				TASKID: Number(taskId),
-				ARFIELDS: { SECONDS: duration.seconds }
+				ARFIELDS: _buildDialogTimeWriteFields(duration.seconds, dateKey)
 			});
+			savedItemId = typeof itemId === 'object' ? String(itemId?.id || itemId?.ID || itemId?.result || '') : (typeof itemId === 'boolean' ? '' : String(itemId || ''));
 			saved = true;
 			try {
 				_writeDialogTimeManualDraft(null);
 				_dialogTimeManualSelectedTask = null;
 				_dialogTimeManualSearchQuery = '';
 				_dialogTimeManualSearchResults = [];
-				_markDialogTimeTaskAccounted(taskId);
-				_applyDialogTimeOptimisticEntry(taskId, duration.seconds);
+				_markDialogTimeTaskAccounted(taskId, Date.now(), dateKey);
 				const panel = _dialogControlNativeSwitcherNode?.querySelector('.pena-native-time-panel');
 				const hoursInput = panel?.querySelector('.pena-native-time-manual-hours');
 				const minutesInput = panel?.querySelector('.pena-native-time-manual-minutes');
@@ -11357,89 +14026,90 @@ if (_presetChannel) {
 			_dialogTimeActionInFlight = false;
 			_queueDialogTimeUiSync();
 		}
-		if (saved) _loadDialogTimeRange(_getDialogTimeRange('today'), { force: true }).catch(() => {});
-	}
-
-	async function _addDialogTimeEstimatedEntry(activity, overrideSeconds = 0) {
-		if (_dialogTimeActionInFlight || !_PENA_TIME_CONTROL?.estimateActivitySeconds) return;
-		const taskId = String(activity?.taskId || '');
-		if (!/^\d+$/.test(taskId)) return;
-		const seconds = overrideSeconds > 0
-			? Math.min(24 * 3600, Math.max(60, Math.round(Number(overrideSeconds) || 0)))
-			: _PENA_TIME_CONTROL.estimateActivitySeconds(activity);
-		if (seconds < 60) return;
-		const accountedThrough = Math.max(0, Number(activity.visitedAt) || Date.now());
-		_dialogTimeActionInFlight = true;
-		_dialogTimeSavingActivityId = String(activity.activityId || `task:${taskId}`);
-		_queueDialogTimeUiSync();
-		let saved = false;
-		try {
-			await _callBxRestMethod('task.elapseditem.add', {
-				TASKID: Number(taskId),
-				ARFIELDS: { SECONDS: seconds }
-			});
-			saved = true;
-			try {
-				_markDialogTimeActivityAccounted(_dialogTimeSavingActivityId, accountedThrough);
-				_applyDialogTimeOptimisticEntry(taskId, seconds);
-			} catch {}
-			_showDialogDockToast(`Учтено: ${_PENA_TIME_CONTROL.formatDuration(seconds)}`, 'ok');
-		} catch (error) {
-			_showDialogDockToast(`${_getDialogTimeTaskTitle(taskId, activity.title)}: время не сохранено`, 'danger');
-		} finally {
-			_dialogTimeActionInFlight = false;
-			_dialogTimeSavingActivityId = '';
-			_queueDialogTimeUiSync();
+		if (saved) {
+			_invalidateDialogTimeCachesForDates(dateKey);
+			_applyDialogTimeOptimisticEntry(taskId, duration.seconds, dateKey, savedItemId);
+			const visibleRange = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
+			_loadDialogTimeRange(visibleRange, { force: true }).catch(() => {});
 		}
-		if (saved) _loadDialogTimeRange(_getDialogTimeRange('today'), { force: true }).catch(() => {});
 	}
 
-	async function _deleteDialogTimeTaskEntries(task) {
+	async function _deleteDialogTimeEntry(entry) {
 		if (_dialogTimeActionInFlight) return;
-		const taskId = String(task?.taskId || '');
-		const entryIds = Array.from(new Set(task?.entryIds || [])).map(String).filter(Boolean);
-		if (!/^\d+$/.test(taskId) || !entryIds.length) return;
-		if (_dialogTimeDeleteConfirmTaskId !== taskId) {
-			_dialogTimeDeleteConfirmTaskId = taskId;
+		const taskId = String(entry?.taskId || '');
+		const entryId = String(entry?.id || '');
+		const dateKey = String(entry?.dateKey || String(entry?.createdAt || '').slice(0, 10));
+		if (!/^\d+$/.test(taskId) || !entryId || entryId.startsWith('pena-local-')) return;
+		if (_dialogTimeDeleteConfirmEntryId !== entryId) {
+			_dialogTimeDeleteConfirmEntryId = entryId;
 			_queueDialogTimeUiSync();
 			setTimeout(() => {
-				if (_dialogTimeDeleteConfirmTaskId === taskId) {
-					_dialogTimeDeleteConfirmTaskId = '';
+				if (_dialogTimeDeleteConfirmEntryId === entryId) {
+					_dialogTimeDeleteConfirmEntryId = '';
 					_queueDialogTimeUiSync();
 				}
 			}, 3500);
 			return;
 		}
 		_dialogTimeActionInFlight = true;
-		_dialogTimeDeleteConfirmTaskId = '';
+		_dialogTimeDeleteConfirmEntryId = '';
 		_queueDialogTimeUiSync();
 		try {
-			await _callBxRestPagesFast(entryIds.map(itemId => ({
-				method: 'task.elapseditem.delete',
-				params: { TASKID: Number(taskId), ITEMID: Number(itemId) || itemId }
-			})), 12000);
-			const today = _getDialogTimeRange('today');
-			const key = _getDialogTimeCacheKey(today);
-			const previous = _dialogTimeCache.get(key)?.data;
-			if (previous?.items && _PENA_TIME_CONTROL?.aggregateElapsedItems) {
-				const removed = new Set(entryIds);
-				const next = _PENA_TIME_CONTROL.aggregateElapsedItems(previous.items.filter(item => !removed.has(String(item.id || ''))));
-				next.range = previous.range || today;
-				next.pages = previous.pages || 1;
-				next.totalAvailable = next.entryCount;
-				_setDialogTimeCacheRecord(key, { status: 'ready', data: next, error: '', updatedAt: Date.now() });
-			}
-			_showDialogDockToast('Записи удалены', 'ok');
+			await _callBxRestMethod('task.elapseditem.delete', {
+				TASKID: Number(taskId),
+				ITEMID: Number(entryId) || entryId
+			});
+			_invalidateDialogTimeCachesForDates(dateKey);
+			_showDialogDockToast('Запись удалена', 'ok');
 		} catch (error) {
-			_showDialogDockToast('Не удалось удалить записи', 'danger');
+			_showDialogDockToast('Не удалось удалить запись', 'danger');
 		} finally {
 			_dialogTimeActionInFlight = false;
 			_queueDialogTimeUiSync();
 		}
-		_loadDialogTimeRange(_getDialogTimeRange('today'), { force: true }).catch(() => {});
+		const visibleRange = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
+		_loadDialogTimeRange(visibleRange, { force: true }).catch(() => {});
 	}
 
-	function _startDialogTimeTracker(task) {
+	async function _updateDialogTimeEntry(entry, hours, minutes, dateKey) {
+		if (_dialogTimeActionInFlight || !_PENA_TIME_CONTROL) return;
+		const taskId = String(entry?.taskId || '');
+		const entryId = String(entry?.id || '');
+		const previousDateKey = String(entry?.dateKey || String(entry?.createdAt || '').slice(0, 10));
+		let duration;
+		try {
+			duration = _PENA_TIME_CONTROL.normalizeManualDuration(hours, minutes);
+			if (!_PENA_TIME_CONTROL.parseDateKey(dateKey)) throw new RangeError('Выберите корректную дату');
+		} catch (error) {
+			_showDialogDockToast(String(error?.message || 'Проверьте введённое время'), 'danger');
+			return;
+		}
+		if (!/^\d+$/.test(taskId) || !entryId || entryId.startsWith('pena-local-') || await _ensureDialogTimeTaskEligibility(taskId) !== true) {
+			_showDialogDockToast('Запись недоступна для изменения', 'danger');
+			return;
+		}
+		_dialogTimeActionInFlight = true;
+		_queueDialogTimeUiSync();
+		try {
+			await _callBxRestMethod('task.elapseditem.update', {
+				TASKID: Number(taskId),
+				ITEMID: Number(entryId) || entryId,
+				ARFIELDS: _buildDialogTimeWriteFields(duration.seconds, dateKey, entry.commentText || '')
+			});
+			_dialogTimeEditingEntryId = '';
+			_invalidateDialogTimeCachesForDates(previousDateKey, dateKey);
+			_showDialogDockToast('Запись обновлена', 'ok');
+		} catch (error) {
+			_showDialogDockToast('Не удалось обновить запись', 'danger');
+		} finally {
+			_dialogTimeActionInFlight = false;
+			_queueDialogTimeUiSync();
+		}
+		const visibleRange = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
+		_loadDialogTimeRange(visibleRange, { force: true }).catch(() => {});
+	}
+
+	async function _startDialogTimeTracker(task) {
 		if (_dialogTimeActionInFlight) return;
 		if (_readDialogTimeTracker()) {
 			_showDialogDockToast('Сначала остановите текущий трекинг', 'danger');
@@ -11447,11 +14117,15 @@ if (_presetChannel) {
 		}
 		const taskId = String(task?.taskId || '').trim();
 		if (!/^\d+$/.test(taskId)) return;
+		if (await _ensureDialogTimeTaskEligibility(taskId) !== true) {
+			_showDialogDockToast('В задаче недоступен учёт времени', 'danger');
+			return;
+		}
 		const title = _getDialogTimeTaskTitle(taskId, task?.title);
 		_dialogTimeTrackerCancelConfirmTaskId = '';
 		const tracker = { taskId, title, dialogId: String(task?.dialogId || ''), startedAt: Date.now(), dateKey: _getDialogTimeTodayKey(), pendingSeconds: 0, error: '' };
 		_writeDialogTimeTracker(tracker);
-		_rememberDialogTimeTaskVisit(taskId, title, tracker.dialogId);
+		_rememberDialogTimeTaskVisit(taskId, title, tracker.dialogId, { takeover: true });
 		_ensureDialogTimeTrackerTick();
 		_showDialogDockToast(`Трекинг запущен: ${title}`, 'ok');
 	}
@@ -11466,13 +14140,14 @@ if (_presetChannel) {
 		try {
 			await _callBxRestMethod('task.elapseditem.add', {
 				TASKID: Number(pending.taskId),
-				ARFIELDS: { SECONDS: pending.pendingSeconds }
+				ARFIELDS: _buildDialogTimeWriteFields(pending.pendingSeconds, pending.dateKey)
 			});
 			saved = true;
 			try {
 				_writeDialogTimeTracker(null);
-				_markDialogTimeTaskAccounted(pending.taskId);
-				_applyDialogTimeOptimisticEntry(pending.taskId, pending.pendingSeconds);
+				_markDialogTimeTaskAccounted(pending.taskId, Date.now(), pending.dateKey);
+				_invalidateDialogTimeCachesForDates(pending.dateKey);
+				_applyDialogTimeOptimisticEntry(pending.taskId, pending.pendingSeconds, pending.dateKey);
 				_ensureDialogTimeTrackerTick();
 			} catch {}
 			_showDialogDockToast('Время сохранено в задачу', 'ok');
@@ -11483,13 +14158,16 @@ if (_presetChannel) {
 			_dialogTimeActionInFlight = false;
 			_queueDialogTimeUiSync();
 		}
-		if (saved) _loadDialogTimeRange(_getDialogTimeRange('today'), { force: true }).catch(() => {});
+		if (saved) {
+			const visibleRange = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
+			_loadDialogTimeRange(visibleRange, { force: true }).catch(() => {});
+		}
 	}
 
 	function _cancelDialogTimeTracker() {
 		const tracker = _readDialogTimeTracker();
 		const taskId = String(tracker?.taskId || '');
-		if (!tracker || tracker.pendingSeconds <= 0 || _dialogTimeActionInFlight) return;
+		if (!tracker || _dialogTimeActionInFlight) return;
 		if (_dialogTimeTrackerCancelConfirmTaskId !== taskId) {
 			_dialogTimeTrackerCancelConfirmTaskId = taskId;
 			_queueDialogTimeUiSync();
@@ -11503,14 +14181,21 @@ if (_presetChannel) {
 		_dialogTimeTrackerCancelConfirmTaskId = '';
 		_writeDialogTimeTracker(null);
 		_ensureDialogTimeTrackerTick();
-		_showDialogDockToast('Несохранённое время сброшено', 'ok');
+		_showDialogDockToast('Таймер отменён', 'ok');
 	}
 
 	function _openDialogTimeTask(taskId, title = '') {
 		const id = String(taskId || '');
 		if (!/^\d+$/.test(id)) return false;
-		_rememberDialogTimeTaskVisit(id, _getDialogTimeTaskTitle(id, title));
-		return _openBitrixUrl(_buildTaskUrl(id));
+		const opened = _openBitrixUrl(_buildTaskUrl(id));
+		if (opened) {
+			_rememberDialogTimeTaskVisit(id, _getDialogTimeTaskTitle(id, title), '', { takeover: true });
+			// The task is the next workspace. Do not leave a modal floating over it.
+			_dialogControlNativeSwitcherNode
+				?.querySelector('.pena-native-time-header-actions > .pena-native-popover-close')
+				?.click();
+		}
+		return opened;
 	}
 
 	async function _openDialogTimeActivity(activity = {}) {
@@ -11520,91 +14205,219 @@ if (_presetChannel) {
 
 	function _getActiveDialogTimeActivity() {
 		if (IS_OL_FRAME || !_PENA_TIME_CONTROL || document.visibilityState === 'hidden') return null;
-		const snapshot = _getActiveDialogControlScreenSnapshot(true);
-		if (snapshot?.taskId) {
-			return { taskId: String(snapshot.taskId), title: _getActiveDialogTitleFromScreen(), dialogId: '' };
+		if (!isTasksChatsModeNow()) return null;
+		if (/^\d+$/.test(_dialogTimeActiveSidePanelTaskId)) {
+			const dialogId = _getDialogTimeTaskChatDialogId(_dialogTimeActiveSidePanelTaskId);
+			return {
+				taskId: _dialogTimeActiveSidePanelTaskId,
+				title: _getDialogTimeTaskTitle(_dialogTimeActiveSidePanelTaskId),
+				dialogId
+			};
 		}
 		const dialogId = normId(_readDialogControlOpenedId());
-		if (!dialogId || !isTasksChatsModeNow()) return null;
+		if (!dialogId) return null;
+		const nativeRow = findChatElementById(dialogId);
+		const nativeTitle = nativeRow ? getChatTitleFromElement(nativeRow) : '';
+		const nativeTask = _extractTaskMetaFromElement(nativeRow, nativeTitle);
 		const item = _getDialogControlItemsForMode('tasks')
 			.find(candidate => !_isDialogControlFolder(candidate) && normId(candidate.id) === dialogId);
-		if (!item || !/^\d+$/.test(String(item.taskId || ''))) return null;
-		const title = item.title || _getActiveDialogTitleFromScreen() || _getDialogRecentMeta(dialogId)?.title || '';
-		return { taskId: String(item.taskId), title, dialogId };
+		const meta = _getDialogRecentMeta(dialogId);
+		const taskId = String(nativeTask?.taskId || item?.taskId || meta?.taskId || '').trim();
+		if (!/^\d+$/.test(taskId) || (!nativeTask && !item && meta?.isTask !== true)) return null;
+		const title = _getDialogTimeTaskTitle(
+			taskId,
+			item?.title || meta?.displayTitle || nativeTitle || _getActiveDialogTitleFromScreen() || meta?.title || ''
+		);
+		return { taskId, title, dialogId };
 	}
 
 	function _captureActiveDialogTimeActivity(options = {}) {
+		if (!_isDialogTimeLocalCoordinator()) return false;
 		const activity = _getActiveDialogTimeActivity();
 		if (!activity) return false;
+		if (!_getCurrentBitrixUserId()) {
+			// Coordinator probes are passive. They may observe Bitrix restoring an
+			// already-selected row, but must not turn that into startup REST traffic.
+			if (options.allowEnsure !== true && options.qualify !== true && _dialogControlNativeWorkspaceTab !== 'time') return false;
+			_ensureCurrentBitrixUserId()
+				.then(() => _captureActiveDialogTimeActivity(options))
+				.catch(() => {});
+			return false;
+		}
 		return _rememberDialogTimeActivity(activity, options);
 	}
 
+	function _isDialogTimeFrameActive() {
+		if (IS_OL_FRAME || document.visibilityState === 'hidden') return false;
+		const active = window.__PENA_ACTIVE_LIST_CONTEXT__;
+		if (active?.list?.isConnected && (active.mode === 'tasks' || active.mode === 'chats')) return true;
+		const container = findContainer();
+		if (!container?.isConnected || !isInternalChatsDOM()) return false;
+		return !active?.list || active.list === container;
+	}
+
+	function _isDialogTimeLocalCoordinator() {
+		return _isDialogTimeFrameActive();
+	}
+
 	function _syncActiveDialogTimeActivity() {
+		if (!_getCurrentBitrixUserId()) {
+			if (_dialogControlNativeWorkspaceTab === 'time') {
+				_ensureCurrentBitrixUserId()
+					.then(() => _syncActiveDialogTimeActivity())
+					.catch(() => {});
+			}
+			return;
+		}
+		if (!_isDialogTimeLocalCoordinator()) {
+			if (_dialogTimeOwnedActivityId) _closeDialogTimeActivitySession({ force: true });
+			return;
+		}
+		_syncDialogTimePortalDay();
 		const activity = _getActiveDialogTimeActivity();
 		if (!activity) {
-			_closeDialogTimeActivitySession();
+			const pending = _dialogTimePendingActivities.get(_dialogTimePendingActiveId);
+			if (pending) {
+				_qualifyPendingDialogTimeDuration(pending);
+				pending.active = false;
+				if (pending.qualify) _scheduleDialogTimeDeferredFlush(0);
+			}
+			_dialogTimePendingActiveId = '';
+			if (_dialogTimeOwnedActivityId) _closeDialogTimeActivitySession();
 			return;
 		}
 		const taskId = String(activity.taskId || '');
-		if (_dialogTimeTaskEligibility.get(taskId) !== true) {
-			_rememberDialogTimeActivity(activity, { passive: true });
+		const eligibility = _getFreshDialogTimeTaskEligibility(taskId);
+		if (eligibility === false) {
+			_stageDialogTimeActivity(activity, { passive: true });
+			const candidate = _dialogTimePendingActivities.get(`task:${taskId}`);
+			if (candidate && _qualifyPendingDialogTimeDuration(candidate)) _scheduleDialogTimeDeferredFlush(0);
 			return;
 		}
+		_stageDialogTimeActivity(activity, { passive: true });
+		const pending = _dialogTimePendingActivities.get(`task:${taskId}`);
+		if (pending && _qualifyPendingDialogTimeDuration(pending)) _scheduleDialogTimeDeferredFlush(0);
 		const dateKey = _getDialogTimeTodayKey();
 		let current = _readDialogTimeVisits(dateKey);
 		const id = `task:${taskId}`;
 		const existing = current.find(item => item.activityId === id);
 		if (!existing?.sessionActive) {
-			_persistDialogTimeActivity(activity, { passive: true });
+			_scheduleDialogTimeDeferredFlush(1200);
 			return;
 		}
+		if (!_claimDialogTimeActivityLease(id)) return;
 		current = _PENA_TIME_CONTROL.syncActivitySession(current, id, Date.now());
 		const synced = current.find(item => item.activityId === id);
 		if (synced) {
 			synced.title = activity.title || synced.title;
 			synced.dialogId = activity.dialogId || synced.dialogId;
 		}
+		const lease = _readDialogTimeActivityLease();
+		if (lease?.frameId !== _dialogTimeFrameId || lease.activityId !== id) {
+			_dialogTimeOwnedActivityId = '';
+			return;
+		}
 		_writeDialogTimeVisits(current, dateKey);
+		if (eligibility == null && synced?.sessionQualified) {
+			_ensureDialogTimeTaskEligibility(taskId).then(enabled => {
+				if (enabled === false) _removeDialogTimeActivity(taskId);
+			}).catch(() => {});
+		}
 		if (_dialogControlNativeWorkspaceTab === 'time') _queueDialogTimeUiSync();
 	}
 
 	function _armDialogTimeVisitTracking() {
-		if (_dialogTimeVisitTrackingArmed || IS_OL_FRAME || !_PENA_TIME_CONTROL) return;
+		if (IS_OL_FRAME || !_PENA_TIME_CONTROL || !_isDialogTimeLocalCoordinator()) return;
+		if (_dialogTimeVisitTrackingArmed) {
+			_dialogTimeCoordinatorRuntimeSync?.();
+			_dialogTimeGlobalEventsArm?.();
+			return;
+		}
 		_dialogTimeVisitTrackingArmed = true;
+		const markOutgoingIntent = event => {
+			const target = event.target instanceof Element ? event.target : null;
+			if (!target) return;
+			if (event.type === 'keydown' && event.key !== 'Enter') return;
+			if (event.type === 'pointerdown' && !target.closest('button,[role="button"]')) return;
+			const enterInComposer = event.type === 'keydown' && event.key === 'Enter' &&
+				!event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey &&
+				(target.matches('textarea') || target.matches('[contenteditable="true"]'));
+			const button = event.type === 'pointerdown' ? target.closest('button,[role="button"]') : null;
+			const signature = button ? [
+				button.className,
+				button.getAttribute('data-locator'),
+				button.getAttribute('data-testid'),
+				button.getAttribute('aria-label'),
+				button.getAttribute('title')
+			].filter(Boolean).join(' ') : '';
+			const sendButton = !!button && /(?:^|[\s_-])(?:send|отправ[а-яё]*)(?:[\s_-]|$)/i.test(signature);
+			if (!enterInComposer && !sendButton) return;
+			if (!_isDialogTimeLocalCoordinator() || _currentPanelMode !== 'tasks') return;
+			_dialogTimeOutgoingIntentAt = Date.now();
+		};
+		document.addEventListener('pointerdown', markOutgoingIntent, true);
+		document.addEventListener('keydown', markOutgoingIntent, true);
 		document.addEventListener('click', event => {
+			if (!_isDialogTimeLocalCoordinator()) return;
 			const target = event.target instanceof Element ? event.target : null;
 			if (!target || target.closest?.('.pena-native-time-panel')) return;
 			if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
 			if (target.closest?.('button,input,select,textarea,[contenteditable="true"],.pena-native-folder-switcher')) return;
-			const link = target.closest?.('a[href*="/tasks/task/view/"]');
-			if (link) {
-				const taskId = _extractTaskIdFromTaskUrl(link.getAttribute('href') || '');
-				if (taskId) _rememberDialogTimeTaskVisit(taskId, link.textContent || link.getAttribute('title') || '');
-				return;
-			}
 			const row = getChatItemElement(target);
 			if (!row) return;
 			if (!isTasksChatsModeNow()) return;
 			const title = getChatTitleFromElement(row);
 			const meta = _extractTaskMetaFromElement(row, title);
 			const dialogId = getChatIdFromElement(row);
-			const item = _getDialogControlItemsForMode('tasks')
-				.find(candidate => !_isDialogControlFolder(candidate) && normId(candidate.id) === normId(dialogId));
-			_rememberTaskChatDialogVisit(dialogId, title, meta?.taskId || item?.taskId || '');
+			if (dialogId) _setDialogControlCurrentId(dialogId);
+			_rememberTaskChatDialogVisit(dialogId, title, meta?.taskId || _getDialogRecentMeta(dialogId)?.taskId || '', { takeover: true });
 		}, true);
 		const captureAfterRoute = () => {
+			_dialogTimeCoordinatorRuntimeSync?.();
 			setTimeout(_captureActiveDialogTimeActivity, 120);
 			setTimeout(_captureActiveDialogTimeActivity, 600);
 		};
 		window.addEventListener('popstate', captureAfterRoute, true);
 		window.addEventListener('hashchange', captureAfterRoute, true);
 		document.addEventListener('visibilitychange', () => {
-			if (document.visibilityState === 'hidden') _closeDialogTimeActivitySession();
-			else captureAfterRoute();
+			if (document.visibilityState === 'hidden') {
+				clearTimeout(_dialogTimeQualificationTimer);
+				const entry = _dialogTimePendingActivities.get(_dialogTimePendingActiveId);
+				if (entry?.active) {
+					_qualifyPendingDialogTimeDuration(entry);
+					entry.visibleMs = (entry.visibleMs || 0) + Math.max(0, Date.now() - entry.startedAt);
+					entry.active = false; entry.paused = true;
+				}
+				const lease = _readDialogTimeActivityLease();
+				if (lease?.frameId === _dialogTimeFrameId) _closeDialogTimeActivitySession({ force: true });
+				_dialogTimeCoordinatorRuntimeSync?.();
+			}
+			else {
+				_syncDialogTimePortalDay();
+				_refreshDialogTimeTaskCatalog().catch(() => {});
+				_dialogTimeCoordinatorRuntimeSync?.();
+				captureAfterRoute();
+			}
 		}, true);
-		window.addEventListener('pagehide', _closeDialogTimeActivitySession, true);
-		let sidePanelArmAttempts = 0;
+		window.addEventListener('pagehide', () => {
+			if (_isDialogTimeLocalCoordinator()) _finishDialogTimePendingActivity();
+			const lease = _readDialogTimeActivityLease();
+			if (lease?.frameId === _dialogTimeFrameId) _closeDialogTimeActivitySession({ force: true });
+		}, true);
+		window.addEventListener('storage', event => {
+			if (!event.key) return;
+			if (event.key === _getDialogTimeScopedStorageKey(_PENA_TIME_TRACKER_KEY)) {
+				_dialogTimeTrackerMemoryLoadedAt = 0;
+			}
+			if (event.key === _getDialogTimeActivityLeaseKey() || event.key.startsWith(`${_PENA_TIME_VISITS_KEY}.`)) {
+				_queueDialogTimeUiSync();
+			}
+		}, true);
 		const armSidePanelEvents = () => {
+			_dialogTimeSidePanelArmTimer = null;
+			// content.js runs in every Bitrix frame. Only the realm that currently owns
+			// the visible internal Messenger may subscribe to shared top.BX events.
+			if (!_isDialogTimeFrameActive()) return;
 			let ready = false;
 			const topWin = _getSafeTopWindow();
 			new Set([window, topWin].filter(Boolean)).forEach(root => {
@@ -11614,40 +14427,123 @@ if (_presetChannel) {
 				if (_dialogTimeSidePanelEventNamespaces.has(BXNS)) return;
 				_dialogTimeSidePanelEventNamespaces.add(BXNS);
 				const captureSlider = event => {
+					if (!_isDialogTimeFrameActive() || _currentPanelMode !== 'tasks') return;
 					let url = '';
 					try { url = String(event?.getSlider?.()?.getUrl?.() || ''); } catch {}
 					const taskId = _extractTaskIdFromTaskUrl(url);
-					if (taskId) _rememberDialogTimeTaskVisit(taskId, '');
+					const dialogId = taskId ? _getDialogTimeTaskChatDialogId(taskId) : '';
+					_dialogTimeActiveSidePanelTaskId = taskId || '';
+					if (taskId) _rememberDialogTimeTaskVisit(taskId, '', dialogId, { takeover: true });
 					captureAfterRoute();
 				};
+				const taskChanged = (...args) => {
+					if (!_isDialogTimeFrameActive()) return;
+					const command = String(args[0]?.command || args[0] || '');
+					if (!/task.*(?:add|update)|(?:add|update).*task/i.test(command)) return;
+					const payload = args[0]?.params || args[1] || {};
+					const task = payload.task || payload.TASK || payload;
+					const id = String(task.taskId ?? task.TASK_ID ?? task.ID ?? task.id ?? payload.FIELDS_AFTER?.ID ?? '');
+					if (!/^\d+$/.test(id)) return;
+					if (_dialogControlNativeWorkspaceTab !== 'time' && !_dialogTimePendingActivities.has('task:' + id) && !_dialogTimeTaskEligibility.has(id)) return;
+					_dialogTimeTaskRevisions.set(id, (_dialogTimeTaskRevisions.get(id) || 0) + 1);
+					_dialogTimeTaskEligibilityCheckedAt.delete(id);
+					if (_dialogTimeChangedTaskTimers.has(id)) return;
+					const scope = _getDialogNativeSharedAuditScopeKey();
+					_dialogTimeChangedTaskTimers.set(id, setTimeout(async () => {
+						try {
+							if (scope !== _getDialogNativeSharedAuditScopeKey()) return;
+							await _dialogTimeTaskEligibilityInFlight.get(id);
+							await _ensureDialogTimeTaskEligibility(id);
+							if (scope !== _getDialogNativeSharedAuditScopeKey()) return;
+							if (_dialogTimeManualSearchQuery && !_dialogTimeManualSelectedTask) {
+								_dialogTimeManualSearchResults = _getDialogTimeLocalTaskSearchResults(_dialogTimeManualSearchQuery);
+								_renderDialogTimeManualSearch();
+							}
+						} finally { _dialogTimeChangedTaskTimers.delete(id); }
+					}, 350));
+				};
+				BXNS.addCustomEvent('onPullEvent-tasks', taskChanged);
 				BXNS.addCustomEvent('SidePanel.Slider:onOpenComplete', captureSlider);
 				BXNS.addCustomEvent('SidePanel.Slider:onLoad', captureSlider);
-				BXNS.addCustomEvent('SidePanel.Slider:onCloseComplete', _closeDialogTimeActivitySession);
+				BXNS.addCustomEvent('SidePanel.Slider:onCloseComplete', () => {
+					_finishDialogTimePendingActivity();
+					_dialogTimeActiveSidePanelTaskId = '';
+					if (_isDialogTimeFrameActive()) _closeDialogTimeActivitySession();
+				});
 				const captureOutgoingTaskMessage = (...eventArgs) => {
 					const command = String(eventArgs[0]?.command || eventArgs[0] || '');
 					if (!/message/i.test(command) || /delete|update|read|reaction/i.test(command)) return;
+					if (!_isDialogTimeFrameActive() || _currentPanelMode !== 'tasks') return;
 					const params = eventArgs[0]?.params || eventArgs[1] || {};
 					const message = params?.message || params?.MESSAGE || params || {};
 					const authorId = String(
 						message?.author_id ?? message?.authorId ?? message?.sender_id ?? message?.senderId ??
 						params?.author_id ?? params?.authorId ?? params?.sender_id ?? params?.senderId ?? ''
 					);
+					const ownMarker = message?.is_own ?? message?.isOwn ?? message?.ownMessage ??
+						params?.is_own ?? params?.isOwn ?? params?.ownMessage;
+					const explicitlyOwn = ownMarker === true || ownMarker === 1 || /^(?:1|y|yes|true)$/i.test(String(ownMarker || ''));
+					const hasLocalIntent = Date.now() - _dialogTimeOutgoingIntentAt <= 5000;
+					if (!_getCurrentBitrixUserId()) {
+						// A generic incoming pull event is not permission to perform REST. On
+						// fallback portals resolve identity only after a local send gesture or
+						// an explicit Bitrix own-message marker, then replay the same event.
+						if (!explicitlyOwn && !hasLocalIntent) return;
+						setTimeout(() => {
+							_ensureCurrentBitrixUserId()
+								.then(() => captureOutgoingTaskMessage(...eventArgs))
+								.catch(() => {});
+						}, 1200);
+						return;
+					}
 					const currentUserId = String(_getCurrentBitrixUserId() || '');
 					if (!currentUserId || authorId !== currentUserId) return;
+					_dialogTimeOutgoingIntentAt = 0;
 					const rawDialogId = String(
 						message?.dialog_id ?? message?.dialogId ?? params?.dialog_id ?? params?.dialogId ?? ''
 					);
 					const rawChatId = String(message?.chat_id ?? message?.chatId ?? params?.chat_id ?? params?.chatId ?? '');
 					const dialogId = normId(rawDialogId || (rawChatId ? `chat${rawChatId}` : ''));
 					if (!dialogId) return;
+					const stableMessageId = message?.id ?? message?.message_id ?? message?.messageId ?? params?.id ?? params?.message_id ?? '';
+					const pullFingerprint = String(stableMessageId ||
+						`${authorId}:${dialogId}:${message?.date ?? message?.DATE ?? message?.text ?? message?.MESSAGE ?? ''}`);
+					const pullNow = Date.now();
+					const duplicateWindow = stableMessageId ? 10000 : 100;
+					if (pullFingerprint && pullNow - Number(_dialogTimeOutgoingPullSeen.get(pullFingerprint) || 0) < duplicateWindow) return;
+					if (pullFingerprint) _dialogTimeOutgoingPullSeen.set(pullFingerprint, pullNow);
+					if (_dialogTimeOutgoingPullSeen.size > 64) {
+						_dialogTimeOutgoingPullSeen.forEach((seenAt, key) => {
+							if (pullNow - seenAt > 10000) _dialogTimeOutgoingPullSeen.delete(key);
+						});
+					}
 					const meta = _getDialogRecentMeta(dialogId);
-					const taskItem = _getDialogControlItemsForMode('tasks').find(item =>
-						!_isDialogControlFolder(item) && normId(item.id) === dialogId
-					) || null;
-					const rememberedActivity = _readDialogTimeVisits().find(item => normId(item.dialogId) === dialogId) || null;
-					const taskId = String(meta?.taskId || taskItem?.taskId || rememberedActivity?.taskId || '').trim();
-					if (meta?.isTask !== true && !taskItem && !rememberedActivity && !/^\d+$/.test(taskId)) return;
-					_rememberTaskChatDialogVisit(dialogId, taskItem?.title || meta?.displayTitle || meta?.title || '', taskId, {
+					const active = _getActiveDialogTimeActivity();
+					const pending = Array.from(_dialogTimePendingActivities.values()).find(item => item.dialogId === dialogId) || null;
+					const mappedTaskId = _dialogTimeTaskIdsByChatDialogId.get(dialogId) || '';
+					const fallbackTaskItem = meta?.taskId || active?.taskId || pending?.taskId || mappedTaskId
+						? null
+						: _getDialogControlItemsForMode('tasks').find(item =>
+							!_isDialogControlFolder(item) && normId(item.id) === dialogId
+						) || null;
+					const nativeRow = meta?.taskId || active?.taskId || pending?.taskId || mappedTaskId || fallbackTaskItem?.taskId
+						? null
+						: findChatElementById(dialogId);
+					const nativeTaskMeta = nativeRow
+						? _extractTaskMetaFromElement(nativeRow, getChatTitleFromElement(nativeRow))
+						: null;
+					const taskId = String(
+						meta?.taskId ||
+						(active?.dialogId === dialogId ? active.taskId : '') ||
+						pending?.taskId ||
+						mappedTaskId ||
+						fallbackTaskItem?.taskId ||
+						_extractTaskIdFromTaskUrl(fallbackTaskItem?.taskUrl || '') ||
+						nativeTaskMeta?.taskId
+					).trim();
+					if (!/^\d+$/.test(taskId) || (meta?.isTask !== true && active?.taskId !== taskId && !pending && !mappedTaskId && !fallbackTaskItem && !nativeTaskMeta)) return;
+					_rememberDialogTimeTaskChat(taskId, dialogId);
+					_rememberTaskChatDialogVisit(dialogId, active?.title || pending?.title || fallbackTaskItem?.title || meta?.displayTitle || meta?.title || '', taskId, {
 						qualify: true,
 						reason: 'message'
 					});
@@ -11655,14 +14551,35 @@ if (_presetChannel) {
 				BXNS.addCustomEvent('onPullEvent-im', captureOutgoingTaskMessage);
 				BXNS.addCustomEvent('onPullEvent-im-v2', captureOutgoingTaskMessage);
 			});
-			if (!ready && sidePanelArmAttempts < 20) {
-				sidePanelArmAttempts += 1;
-				setTimeout(armSidePanelEvents, 500);
+			// Bitrix initializes this namespace lazily and may replace it after sleep.
+			// Keep one deduplicated probe alive; WeakSet prevents duplicate handlers.
+			if (!_dialogTimeSidePanelArmTimer) {
+				_dialogTimeSidePanelArmTimer = setTimeout(armSidePanelEvents, ready ? 5000 : 500);
 			}
 		};
-		armSidePanelEvents();
-		setTimeout(_captureActiveDialogTimeActivity, 500);
-		if (!_dialogTimeActivityTick) _dialogTimeActivityTick = setInterval(_syncActiveDialogTimeActivity, 5000);
+		_dialogTimeGlobalEventsArm = armSidePanelEvents;
+		const syncCoordinatorRuntime = () => {
+			if (!_isDialogTimeLocalCoordinator()) {
+				if (_dialogTimeActivityTick) {
+					clearInterval(_dialogTimeActivityTick);
+					_dialogTimeActivityTick = null;
+				}
+				const lease = _readDialogTimeActivityLease();
+				if (lease?.frameId === _dialogTimeFrameId) _closeDialogTimeActivitySession({ force: true });
+				return false;
+			}
+			if (_isDialogTimeFrameActive()) armSidePanelEvents();
+			if (!_dialogTimeActivityTick) {
+				_dialogTimeActivityTick = setInterval(() => {
+					if (_isDialogTimeLocalCoordinator()) _syncActiveDialogTimeActivity();
+					else _dialogTimeCoordinatorRuntimeSync?.();
+				}, 60000);
+			}
+			setTimeout(_captureActiveDialogTimeActivity, 500);
+			return true;
+		};
+		_dialogTimeCoordinatorRuntimeSync = syncCoordinatorRuntime;
+		syncCoordinatorRuntime();
 	}
 
 	function _queueDialogTimeUiSync() {
@@ -11678,14 +14595,16 @@ if (_presetChannel) {
 		if (!switcher || !_PENA_TIME_CONTROL) return;
 		const today = _getDialogTimeRange('today');
 		const todayRecord = _getDialogTimeRecord(today);
+		const rawTodayData = todayRecord?.data || null;
+		const visibleTodayData = _filterDialogTimeDataByEligibility(rawTodayData);
 		const tracker = _readDialogTimeTracker();
 		const timeButton = switcher.querySelector('.pena-native-time-button');
 		const timeButtonLabel = timeButton?.querySelector('.pena-native-time-button-label');
 		if (timeButtonLabel) {
 			const compact = tracker
 				? _PENA_TIME_CONTROL.formatDurationCompact(_getDialogTimeTrackerSeconds(tracker))
-				: (todayRecord?.data
-					? _PENA_TIME_CONTROL.formatDurationCompact(todayRecord.data.totalSeconds)
+				: (visibleTodayData
+					? _PENA_TIME_CONTROL.formatDurationCompact(visibleTodayData.totalSeconds)
 					: (todayRecord?.status === 'loading' ? '…' : '--:--'));
 			timeButtonLabel.textContent = tracker ? `Сейчас ${compact}` : `Сегодня ${compact}`;
 			timeButton.title = todayRecord?.error || 'Затраченное время за сегодня';
@@ -11699,10 +14618,29 @@ if (_presetChannel) {
 			_ensureDialogTimeTrackerTick();
 			return;
 		}
-		const record = todayRecord;
+		const selectedDay = _getDialogTimeSelectedRange();
+		const visibleRange = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : selectedDay;
+		const record = _getDialogTimeRecord(visibleRange);
 		const rawData = record?.data || null;
 		const data = _filterDialogTimeDataByEligibility(rawData);
 		panel.classList.toggle('--loading', record?.status === 'loading');
+		panel.classList.toggle('--stats', _dialogTimeView === 'stats');
+		panel.querySelectorAll('.pena-native-time-view-tab').forEach(tab => {
+			const active = tab.dataset.view === _dialogTimeView;
+			tab.classList.toggle('--active', active);
+			tab.setAttribute('aria-selected', active ? 'true' : 'false');
+		});
+		const dateInput = panel.querySelector('.pena-native-time-date-input');
+		if (dateInput && document.activeElement !== dateInput) dateInput.value = selectedDay.from;
+		if (dateInput) dateInput.max = today.from;
+		const nextDate = panel.querySelector('.pena-native-time-date-next');
+		if (nextDate) nextDate.disabled = selectedDay.from >= today.from;
+		const todayDate = panel.querySelector('.pena-native-time-date-today');
+		if (todayDate) todayDate.hidden = selectedDay.from === today.from;
+		const caption = panel.querySelector('.pena-native-time-caption');
+		if (caption) caption.textContent = _dialogTimeView === 'stats'
+			? `${_formatDialogTimeDate(visibleRange.from)} — ${_formatDialogTimeDate(visibleRange.to)}`
+			: (selectedDay.from === today.from ? 'Сегодня' : _formatDialogTimeDate(selectedDay.from));
 		const total = panel.querySelector('.pena-native-time-total-value');
 		if (total) total.textContent = data ? _PENA_TIME_CONTROL.formatDuration(data.totalSeconds) : '—';
 		const plural = (count, one, few, many) => {
@@ -11714,17 +14652,48 @@ if (_presetChannel) {
 		if (meta) {
 			meta.textContent = data
 				? `${data.taskCount} ${plural(data.taskCount, 'задача', 'задачи', 'задач')} · ${data.entryCount} ${plural(data.entryCount, 'запись', 'записи', 'записей')}`
-				: (record?.status === 'loading' ? 'Собираем данные за сегодня…' : (record?.error ? 'Не удалось обновить данные' : 'Сегодня записей пока нет'));
+				: (record?.status === 'loading' ? 'Собираем данные…' : (record?.error ? 'Не удалось обновить данные' : 'Записей пока нет'));
 		}
 		const refresh = panel.querySelector('.pena-native-time-refresh');
 		if (refresh) {
 			refresh.disabled = record?.status === 'loading';
 			refresh.classList.toggle('--loading', record?.status === 'loading');
+			refresh.title = _dialogTimeView === 'stats' ? 'Обновить статистику за 7 дней' : 'Обновить выбранную дату';
+			refresh.setAttribute('aria-label', refresh.title);
+		}
+		const body = panel.querySelector('.pena-native-time-body');
+		if (body) body.hidden = _dialogTimeView === 'stats';
+		const stats = panel.querySelector('.pena-native-time-stats');
+		const statsList = panel.querySelector('.pena-native-time-stats-list');
+		if (stats) stats.hidden = _dialogTimeView !== 'stats';
+		if (statsList && _dialogTimeView === 'stats') {
+			const byDay = new Map((data?.days || []).map(day => [day.dateKey, day]));
+			const rows = [];
+			for (let dateKey = visibleRange.to; dateKey >= visibleRange.from; dateKey = _PENA_TIME_CONTROL.addDays(dateKey, -1)) {
+				const day = byDay.get(dateKey) || { seconds: 0, entries: 0 };
+				const row = document.createElement('button');
+				row.type = 'button';
+				row.className = 'pena-native-time-stats-row';
+				row.innerHTML = '<span class="pena-native-time-stats-date"></span><strong class="pena-native-time-stats-duration"></strong><span class="pena-native-time-stats-entries"></span>';
+				row.querySelector('.pena-native-time-stats-date').textContent = _formatDialogTimeDate(dateKey);
+				row.querySelector('.pena-native-time-stats-duration').textContent = _PENA_TIME_CONTROL.formatDuration(day.seconds || 0);
+				row.querySelector('.pena-native-time-stats-entries').textContent = `${day.entries || 0} ${plural(day.entries || 0, 'запись', 'записи', 'записей')}`;
+				row.addEventListener('click', event => {
+					event.preventDefault();
+					event.stopPropagation();
+					_dialogTimeView = 'day';
+					_setDialogTimeRange({ from: dateKey, to: dateKey });
+				});
+				rows.push(row);
+				if (dateKey === visibleRange.from) break;
+			}
+			statsList.replaceChildren(...rows);
 		}
 
-		const visits = _readDialogTimeVisits(today.from);
+		const visits = _readDialogTimeVisits(selectedDay.from);
 		_loadDialogTimeTaskTitles(rawData, visits).catch(() => {});
 		const candidates = _getDialogTimeTaskCandidates(data, visits);
+		const selectedIsToday = selectedDay.from === today.from;
 		const trackerTitle = panel.querySelector('.pena-native-time-tracker-title');
 		const trackerDuration = panel.querySelector('.pena-native-time-tracker-duration');
 		const trackerHint = panel.querySelector('.pena-native-time-tracker-hint');
@@ -11735,7 +14704,11 @@ if (_presetChannel) {
 		const stop = panel.querySelector('.pena-native-time-stop');
 		const cancelTracker = panel.querySelector('.pena-native-time-cancel');
 		if (trackerInfo) trackerInfo.hidden = !tracker;
-		if (trackerTitle) trackerTitle.textContent = tracker ? _getDialogTimeTaskTitle(tracker.taskId, tracker.title) : '';
+		if (trackerTitle) {
+			const fullTitle = tracker ? _getDialogTimeTaskTitle(tracker.taskId, tracker.title) : '';
+			trackerTitle.textContent = fullTitle;
+			_setDialogTimeFullTaskTitle(trackerTitle, fullTitle, 'Текущая задача');
+		}
 		if (trackerDuration) trackerDuration.textContent = tracker ? _PENA_TIME_CONTROL.formatDurationCompact(_getDialogTimeTrackerSeconds(tracker)) : '0:00';
 		if (trackerHint) {
 			trackerHint.textContent = _dialogTimeTrackerCancelConfirmTaskId === String(tracker?.taskId || '')
@@ -11746,13 +14719,21 @@ if (_presetChannel) {
 			trackerHint.hidden = !tracker;
 			trackerHint.classList.toggle('--error', !!tracker?.error);
 		}
-		panel.querySelector('.pena-native-time-tracker')?.classList.toggle('--active', !!tracker && tracker.pendingSeconds <= 0);
-		panel.querySelector('.pena-native-time-tracker')?.classList.toggle('--pending', !!tracker?.pendingSeconds);
+		const trackerSection = panel.querySelector('.pena-native-time-tracker');
+		if (trackerSection) {
+			trackerSection.hidden = _dialogTimeView === 'stats' || (!selectedIsToday && !tracker);
+			trackerSection.classList.toggle('--active', !!tracker && tracker.pendingSeconds <= 0);
+			trackerSection.classList.toggle('--pending', !!tracker?.pendingSeconds);
+		}
 		if (trackerSelect) {
 			const optionsKey = candidates.map(task => `${task.taskId}:${task.title}`).join('|');
 			if (trackerSelect.dataset.penaOptionsKey !== optionsKey) {
 				const previous = trackerSelect.value;
 				const options = document.createDocumentFragment();
+				const placeholder = document.createElement('option');
+				placeholder.value = '';
+				placeholder.textContent = 'Выберите задачу';
+				options.appendChild(placeholder);
 				candidates.forEach(task => {
 					const option = document.createElement('option');
 					option.value = task.taskId;
@@ -11760,16 +14741,21 @@ if (_presetChannel) {
 					options.appendChild(option);
 				});
 				trackerSelect.replaceChildren(options);
-				trackerSelect.value = candidates.some(task => task.taskId === previous) ? previous : (candidates[0]?.taskId || '');
+				const preferred = _dialogTimeTrackerSelectedTaskId || previous;
+				trackerSelect.value = candidates.some(task => task.taskId === preferred) ? preferred : '';
 				trackerSelect.dataset.penaOptionsKey = optionsKey;
 			}
-			trackerSelect.disabled = !!tracker || _dialogTimeActionInFlight;
+			trackerSelect.disabled = !!tracker || _dialogTimeActionInFlight || !selectedIsToday;
 			trackerSelect.hidden = !!tracker || !candidates.length;
+			const selectedTitle = trackerSelect.value
+				? String(trackerSelect.selectedOptions?.[0]?.textContent || '')
+				: '';
+			_setDialogTimeFullTaskTitle(trackerSelect, selectedTitle, 'Задача для трекинга');
 		}
 		if (trackerEmpty) trackerEmpty.hidden = !!tracker || !!candidates.length;
 		if (start) {
 			start.hidden = !!tracker || !candidates.length;
-			start.disabled = _dialogTimeActionInFlight || !trackerSelect?.value;
+			start.disabled = _dialogTimeActionInFlight || !trackerSelect?.value || !selectedIsToday;
 		}
 		if (stop) {
 			stop.hidden = !tracker;
@@ -11777,8 +14763,7 @@ if (_presetChannel) {
 			stop.textContent = tracker?.pendingSeconds > 0 ? 'Повторить' : 'Остановить';
 		}
 		if (cancelTracker) {
-			const pending = !!tracker?.pendingSeconds;
-			cancelTracker.hidden = !pending;
+			cancelTracker.hidden = !tracker;
 			cancelTracker.disabled = _dialogTimeActionInFlight;
 			cancelTracker.textContent = _dialogTimeTrackerCancelConfirmTaskId === String(tracker?.taskId || '') ? 'Сбросить?' : 'Отменить';
 		}
@@ -11792,13 +14777,17 @@ if (_presetChannel) {
 		if (manualHours) manualHours.disabled = _dialogTimeActionInFlight;
 		if (manualMinutes) manualMinutes.disabled = _dialogTimeActionInFlight;
 		if (manualSubmit) {
-			manualSubmit.disabled = _dialogTimeActionInFlight || !_dialogTimeManualSelectedTask?.taskId;
+			const hours = Math.max(0, Number(manualHours?.value) || 0);
+			const minutes = Math.max(0, Number(manualMinutes?.value) || 0);
+			const validDuration = hours * 60 + minutes >= 1 && hours * 60 + minutes <= 1440 && minutes <= 59;
+			manualSubmit.disabled = _dialogTimeActionInFlight || !_dialogTimeManualSelectedTask?.taskId || !validDuration;
 			manualSubmit.textContent = _dialogTimeActionInFlight ? 'Сохраняем…' : 'Добавить';
 		}
 		const manual = panel.querySelector('.pena-native-time-manual');
 		const manualToggle = panel.querySelector('.pena-native-time-manual-toggle');
-		if (manual) manual.hidden = !_dialogTimeManualExpanded;
+		if (manual) manual.hidden = !_dialogTimeManualExpanded || _dialogTimeView === 'stats';
 		if (manualToggle) manualToggle.setAttribute('aria-expanded', _dialogTimeManualExpanded ? 'true' : 'false');
+		if (manualToggle) manualToggle.closest('.pena-native-time-manual-block').hidden = _dialogTimeView === 'stats';
 		if (manualError) {
 			const formError = _dialogTimeManualSelectedTask ? _dialogTimeManualError : '';
 			manualError.hidden = !formError;
@@ -11808,14 +14797,14 @@ if (_presetChannel) {
 		const createTaskRow = (task, options = {}) => {
 			const row = document.createElement('div');
 			row.className = 'pena-native-time-task-row';
-			row.classList.toggle('--single', !options.estimateSeconds && !options.deleteEntries);
+			row.classList.toggle('--single', !options.activityAction);
 			const body = document.createElement('button');
 			body.type = 'button';
 			body.className = 'pena-native-time-task-main';
-			body.title = 'Открыть задачу';
 			const title = document.createElement('span');
 			title.className = 'pena-native-time-task-title';
 			title.textContent = _getDialogTimeTaskTitle(task.taskId, task.title);
+			_setDialogTimeFullTaskTitle(body, title.textContent, 'Открыть задачу');
 			const detail = document.createElement('span');
 			detail.className = 'pena-native-time-task-detail';
 			detail.textContent = options.detail || `Задача #${task.taskId}`;
@@ -11826,178 +14815,251 @@ if (_presetChannel) {
 				_openDialogTimeActivity(task);
 			});
 			row.appendChild(body);
-			if (options.deleteEntries) {
-				const remove = document.createElement('button');
-				remove.type = 'button';
-				remove.className = 'pena-native-time-row-delete';
-				remove.title = `Удалить ${options.deleteEntries.length} ${options.deleteEntries.length === 1 ? 'запись' : 'записи'}`;
-				remove.setAttribute('aria-label', remove.title);
-				remove.disabled = _dialogTimeActionInFlight;
-				remove.classList.toggle('--confirm', _dialogTimeDeleteConfirmTaskId === String(task.taskId));
-				remove.innerHTML = _dialogTimeDeleteConfirmTaskId === String(task.taskId)
-					? '<span>Точно?</span>'
-					: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5"/></svg>';
-				remove.addEventListener('click', event => {
+			if (options.activityAction) {
+				const action = document.createElement('button');
+				action.type = 'button';
+				action.className = 'pena-native-time-activity-add';
+				action.textContent = 'Добавить';
+				action.disabled = _dialogTimeActionInFlight;
+				action.setAttribute('aria-label', `Добавить время вручную: ${title.textContent}`);
+				action.addEventListener('click', event => {
 					event.preventDefault();
 					event.stopPropagation();
-					_deleteDialogTimeTaskEntries(task);
+					_prepareDialogTimeManualEntry(task, panel);
 				});
-				row.appendChild(remove);
+				row.appendChild(action);
 				return row;
 			}
-			if (!options.estimateSeconds) return row;
-			const actions = document.createElement('div');
-			actions.className = 'pena-native-time-estimate-actions';
-			if (_dialogTimeEditingActivityId === task.activityId) {
-				const input = document.createElement('input');
-				input.type = 'text';
-				input.inputMode = 'numeric';
-				input.pattern = '[0-9]*';
-				input.className = 'pena-native-time-estimate-minutes';
-				input.value = String(Math.max(1, Math.round(options.estimateSeconds / 60)));
-				input.setAttribute('aria-label', 'Минуты для учёта');
-				const save = document.createElement('button');
-				save.type = 'button';
-				save.className = 'pena-native-time-estimate-save';
-				save.textContent = 'Учесть';
-				save.addEventListener('click', event => {
-					event.preventDefault();
-					event.stopPropagation();
-					const minutes = Math.min(1440, Math.max(1, Number(input.value) || 0));
-					_dialogTimeEditingActivityId = '';
-					_addDialogTimeEstimatedEntry(task, minutes * 60);
-				});
-				const cancel = document.createElement('button');
-				cancel.type = 'button';
-				cancel.className = 'pena-native-time-estimate-cancel';
-				cancel.title = 'Отменить корректировку';
-				cancel.setAttribute('aria-label', cancel.title);
-				cancel.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
-				cancel.addEventListener('click', event => {
-					event.preventDefault();
-					event.stopPropagation();
-					_dialogTimeEditingActivityId = '';
-					_queueDialogTimeUiSync();
-				});
-				actions.append(input, save, cancel);
-				row.appendChild(actions);
-				return row;
-			}
-			const edit = document.createElement('button');
-			edit.type = 'button';
-			edit.className = 'pena-native-time-estimate-edit';
-			edit.title = 'Скорректировать время';
-			edit.setAttribute('aria-label', edit.title);
-			edit.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 16-1 5 5-1L19 9l-4-4L4 16Zm9-9 4 4"/></svg>';
-			edit.addEventListener('click', event => {
-				event.preventDefault();
-				event.stopPropagation();
-				_dialogTimeEditingActivityId = task.activityId;
-				_queueDialogTimeUiSync();
-			});
-			const action = document.createElement('button');
-			action.type = 'button';
-			action.className = 'pena-native-time-estimate-add';
-			const estimateLabel = _PENA_TIME_CONTROL.formatDuration(options.estimateSeconds);
-			action.title = `Учесть оценку: ${estimateLabel}`;
-			action.setAttribute('aria-label', `Учесть ${estimateLabel}: ${title.textContent}`);
-			action.disabled = _dialogTimeActionInFlight;
-			action.textContent = _dialogTimeSavingActivityId === task.activityId ? '…' : `Учесть ${estimateLabel}`;
-			action.addEventListener('click', event => {
-				event.preventDefault();
-				event.stopPropagation();
-				_addDialogTimeEstimatedEntry(task);
-			});
-			actions.append(edit, action);
-			row.appendChild(actions);
 			return row;
 		};
 
 		const suggestions = _PENA_TIME_CONTROL.selectUntrackedVisits(visits, data?.tasks || [])
-			.filter(task => _dialogTimeTaskEligibility.get(String(task.taskId || '')) === true)
-			.slice(0, 4);
+			.filter(task => _getDialogTimeTaskEligibilityForDisplay(String(task.taskId || '')));
+		const contactCount = suggestions.reduce((sum, task) => sum + Math.max(0, Number(task.visits) || 0), 0);
+		const suggestionsHeading = panel.querySelector('.pena-native-time-suggestions .pena-native-time-section-copy strong');
+		if (suggestionsHeading) suggestionsHeading.textContent = `Контакты · ${contactCount}`;
 		const suggestionsList = panel.querySelector('.pena-native-time-suggestions-list');
 		const suggestionsSection = panel.querySelector('.pena-native-time-suggestions');
-		if (suggestionsSection) suggestionsSection.hidden = false;
+		if (suggestionsSection) suggestionsSection.hidden = _dialogTimeView === 'stats';
 		if (suggestionsList) {
-			const suggestionsKey = `${_dialogTimeActionInFlight ? _dialogTimeSavingActivityId || 'busy' : 'ready'}:${_dialogTimeEditingActivityId}:${suggestions.map(task => `${task.activityId || task.taskId}:${task.taskId ? _getDialogTimeTaskTitle(task.taskId, task.title) : task.title}:${task.visits}:${task.activeSeconds}:${task.accountedAt}`).join('|')}`;
+			const suggestionsKey = `${_dialogTimeActionInFlight ? 'busy' : 'ready'}:${suggestions.map(task => `${task.activityId || task.taskId}:${task.taskId ? _getDialogTimeTaskTitle(task.taskId, task.title) : task.title}:${task.visits}:${task.accountedAt}`).join('|')}`;
 			if (suggestionsList.dataset.penaRenderKey !== suggestionsKey) {
 				suggestionsList.replaceChildren(...(suggestions.length
-					? suggestions.map(task => {
-						const estimateSeconds = _PENA_TIME_CONTROL.estimateActivitySeconds(task);
-						return createTaskRow(task, {
-							estimateSeconds,
-							detail: `${task.visits} ${plural(task.visits, 'касание', 'касания', 'касаний')} · ≈ ${_PENA_TIME_CONTROL.formatDuration(estimateSeconds)}`
-						});
-					})
+					? suggestions.map(task => createTaskRow(task, {
+						activityAction: true,
+						detail: `${task.visits} ${plural(task.visits, 'контакт', 'контакта', 'контактов')}`
+					}))
 					: [Object.assign(document.createElement('div'), {
 						className: 'pena-native-time-empty',
-						textContent: 'Откройте чат задачи'
+						textContent: 'Нет новых квалифицированных контактов'
 					})]));
 				suggestionsList.dataset.penaRenderKey = suggestionsKey;
 			}
 		}
 
-		const tracked = (data?.tasks || []).filter(task =>
-			task.taskId && task.taskId !== 'unknown' && _dialogTimeTaskEligibility.get(String(task.taskId)) === true
+		const createEntryRow = entry => {
+			const row = document.createElement('div');
+			row.className = 'pena-native-time-task-row pena-native-time-entry-row';
+			const entryId = String(entry.id || '');
+			const dateKey = entry.dateKey || String(entry.createdAt || '').slice(0, 10) || selectedDay.from;
+			if (_dialogTimeEditingEntryId === entryId) {
+				row.classList.add('--editing');
+				const totalMinutes = Math.max(1, Math.round((Number(entry.seconds) || 0) / 60));
+				const makeInput = (className, label, value) => {
+					const field = document.createElement('label');
+					field.className = 'pena-native-time-entry-duration-field';
+					const input = document.createElement('input');
+					input.type = 'text';
+					input.inputMode = 'numeric';
+					input.pattern = '[0-9]*';
+					input.className = className;
+					input.value = String(value);
+					input.setAttribute('aria-label', label);
+					const suffix = document.createElement('span');
+					suffix.textContent = label;
+					field.append(input, suffix);
+					return { field, input };
+				};
+				const hours = makeInput('pena-native-time-entry-hours', 'ч', Math.floor(totalMinutes / 60));
+				const minutes = makeInput('pena-native-time-entry-minutes', 'мин', totalMinutes % 60);
+				const date = document.createElement('input');
+				date.type = 'date';
+				date.className = 'pena-native-time-entry-date';
+				date.value = dateKey;
+				date.max = today.from;
+				date.setAttribute('aria-label', 'Дата записи');
+				const save = document.createElement('button');
+				save.type = 'button';
+				save.className = 'pena-native-time-entry-save';
+				save.textContent = 'Сохранить';
+				save.addEventListener('click', event => {
+					event.preventDefault();
+					event.stopPropagation();
+					_updateDialogTimeEntry(entry, hours.input.value, minutes.input.value, date.value);
+				});
+				const cancel = document.createElement('button');
+				cancel.type = 'button';
+				cancel.className = 'pena-native-time-entry-cancel';
+				cancel.textContent = 'Отмена';
+				cancel.addEventListener('click', event => {
+					event.preventDefault();
+					event.stopPropagation();
+					_dialogTimeEditingEntryId = '';
+					_queueDialogTimeUiSync();
+				});
+				row.append(hours.field, minutes.field, date, save, cancel);
+				return row;
+			}
+			const body = document.createElement('button');
+			body.type = 'button';
+			body.className = 'pena-native-time-task-main';
+			body.innerHTML = '<span class="pena-native-time-task-title"></span><span class="pena-native-time-task-detail"></span>';
+			const title = _getDialogTimeTaskTitle(entry.taskId);
+			body.querySelector('.pena-native-time-task-title').textContent = title;
+			body.querySelector('.pena-native-time-task-detail').textContent = _PENA_TIME_CONTROL.formatDuration(entry.seconds);
+			_setDialogTimeFullTaskTitle(body, title, 'Открыть задачу');
+			body.addEventListener('click', event => {
+				event.preventDefault();
+				event.stopPropagation();
+				_openDialogTimeTask(entry.taskId, title);
+			});
+			const edit = document.createElement('button');
+			edit.type = 'button';
+			edit.className = 'pena-native-time-row-edit';
+			edit.title = 'Изменить запись';
+			edit.setAttribute('aria-label', edit.title);
+			edit.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 15-1 6 6-1L21 8l-5-5L4 15Zm10-10 5 5"/></svg>';
+			edit.disabled = _dialogTimeActionInFlight || entryId.startsWith('pena-local-');
+			edit.addEventListener('click', event => {
+				event.preventDefault();
+				event.stopPropagation();
+				_dialogTimeEditingEntryId = entryId;
+				_dialogTimeDeleteConfirmEntryId = '';
+				_queueDialogTimeUiSync();
+			});
+			const remove = document.createElement('button');
+			remove.type = 'button';
+			remove.className = 'pena-native-time-row-delete';
+			remove.disabled = _dialogTimeActionInFlight || entryId.startsWith('pena-local-');
+			remove.classList.toggle('--confirm', _dialogTimeDeleteConfirmEntryId === entryId);
+			remove.title = 'Удалить запись';
+			remove.setAttribute('aria-label', remove.title);
+			remove.innerHTML = _dialogTimeDeleteConfirmEntryId === entryId
+				? '<span>Удалить?</span>'
+				: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5"/></svg>';
+			remove.addEventListener('click', event => {
+				event.preventDefault();
+				event.stopPropagation();
+				_deleteDialogTimeEntry(entry);
+			});
+			row.append(body, edit, remove);
+			if (_dialogTimeDeleteConfirmEntryId === entryId) {
+				const cancelDelete = document.createElement('button');
+				cancelDelete.type = 'button';
+				cancelDelete.className = 'pena-native-time-row-delete-cancel';
+				cancelDelete.textContent = 'Отмена';
+				cancelDelete.addEventListener('click', event => {
+					event.preventDefault();
+					event.stopPropagation();
+					_dialogTimeDeleteConfirmEntryId = '';
+					_queueDialogTimeUiSync();
+				});
+				row.appendChild(cancelDelete);
+			}
+			return row;
+		};
+
+		const tracked = (data?.items || []).filter(entry =>
+			entry.taskId && entry.taskId !== 'unknown' && _getDialogTimeTaskEligibilityForDisplay(String(entry.taskId))
 		);
-		const activityByTask = new Map(visits.filter(visit => visit.taskId).map(visit => [String(visit.taskId), visit]));
 		const trackedToggle = panel.querySelector('.pena-native-time-tracked-toggle');
 		const trackedList = panel.querySelector('.pena-native-time-tracked-list');
 		if (trackedToggle) {
 			trackedToggle.setAttribute('aria-expanded', _dialogTimeTrackedExpanded ? 'true' : 'false');
-			trackedToggle.querySelector('.pena-native-time-tracked-label').textContent = `Учтено · ${tracked.length}`;
+			trackedToggle.querySelector('.pena-native-time-tracked-label').textContent = `Записи · ${tracked.length}`;
 			trackedToggle.querySelector('.pena-native-time-tracked-total').textContent = _PENA_TIME_CONTROL.formatDuration(data?.totalSeconds || 0);
 		}
 		if (trackedList) {
 			trackedList.hidden = !_dialogTimeTrackedExpanded;
-			const trackedKey = `${tracker ? 'locked' : 'ready'}:${_dialogTimeDeleteConfirmTaskId}:${tracked.map(task => `${task.taskId}:${_getDialogTimeTaskTitle(task.taskId)}:${task.seconds}:${task.entries}:${activityByTask.get(String(task.taskId))?.visits || 0}`).join('|')}`;
+			const trackedKey = `${_dialogTimeActionInFlight ? 'busy' : 'ready'}:${_dialogTimeEditingEntryId}:${_dialogTimeDeleteConfirmEntryId}:${tracked.map(entry => `${entry.id}:${entry.taskId}:${entry.seconds}:${entry.dateKey}`).join('|')}`;
 			if (trackedList.dataset.penaRenderKey !== trackedKey) {
 				trackedList.replaceChildren(...(tracked.length
-					? tracked.map(task => {
-						const activity = activityByTask.get(String(task.taskId));
-						const touchCopy = activity ? ` · ${activity.visits} ${plural(activity.visits, 'касание', 'касания', 'касаний')}` : '';
-						return createTaskRow(task, {
-							detail: `${_PENA_TIME_CONTROL.formatDuration(task.seconds)} · ${task.entries} ${task.entries === 1 ? 'запись' : 'записи'}${touchCopy}`,
-							deleteEntries: task.entryIds || []
-						});
-					})
-					: [Object.assign(document.createElement('div'), { className: 'pena-native-time-empty', textContent: 'Сегодня ещё ничего не оттрекано' })]));
+					? tracked.map(createEntryRow)
+					: [Object.assign(document.createElement('div'), { className: 'pena-native-time-empty', textContent: 'За выбранную дату записей нет' })]));
 				trackedList.dataset.penaRenderKey = trackedKey;
 			}
 		}
 		_ensureDialogTimeTrackerTick();
 	}
 
+	async function _callDialogTimeElapsedPages(paramsList) {
+		const jobs = (Array.isArray(paramsList) ? paramsList : []).map(params => ({
+			method: 'task.elapseditem.getlist',
+			params
+		}));
+		let lastError = null;
+		for (let attempt = 0; attempt < 2; attempt += 1) {
+			try {
+				return await _callBxRestPagesFast(jobs, 12000 + attempt * 8000);
+			} catch (error) {
+				lastError = error;
+				if (attempt > 0 || !_isBxRestReadRetryable(error)) throw error;
+				await _sleepDialogControl(250);
+			}
+		}
+		throw lastError || new Error('Не удалось получить записи времени');
+	}
+
+	const _dialogTimeForcedRefreshes = new Map();
 	async function _loadDialogTimeRange(range = _dialogTimeRange, { force = false } = {}) {
 		if (!_PENA_TIME_CONTROL) throw new Error('Модуль учета времени недоступен');
 		const normalized = _PENA_TIME_CONTROL.normalizeRange(range?.from, range?.to);
-		const key = _getDialogTimeCacheKey(normalized);
-		const cached = _dialogTimeCache.get(key);
-		if (!force && cached?.data && Date.now() - cached.updatedAt < _PENA_TIME_CACHE_TTL_MS) return cached.data;
-		if (!force && cached?.error && Date.now() - (cached.failedAt || 0) < 15000) return cached.data || null;
-		if (_dialogTimeInFlight.has(key)) return _dialogTimeInFlight.get(key);
-		const userId = _getCurrentBitrixUserId();
+		const pendingKey = _getDialogTimeCacheKey(normalized);
+		const userId = _getCurrentBitrixUserId() || await _ensureCurrentBitrixUserId().catch(() => '');
 		if (!userId) {
 			const error = new Error('Не удалось определить текущего пользователя');
-			_setDialogTimeCacheRecord(key, { status: 'error', data: cached?.data || null, error: error.message, updatedAt: cached?.updatedAt || 0, failedAt: Date.now() });
+			_setDialogTimeCacheRecord(pendingKey, { status: 'error', data: null, error: error.message, updatedAt: 0, failedAt: Date.now() });
 			_queueDialogTimeUiSync();
 			throw error;
 		}
-		_setDialogTimeCacheRecord(key, { status: 'loading', data: cached?.data || null, error: '', updatedAt: cached?.updatedAt || 0 });
+		// user.current may resolve while this call is in flight. Build the cache key
+		// only after that resolution so data cannot be stranded under `self:`.
+		// Do not crawl tasks.task.list here: opening the panel must stay independent
+		// from a potentially huge task catalog. Cached eligibility plus explicit
+		// search are enough for the first paint.
+		const key = _getDialogTimeCacheKey(normalized);
+		const cached = _dialogTimeCache.get(key);
+		const taskIds = _getDialogTimeWorkingTaskIds(normalized);
+		const taskIdsKey = taskIds.join(',');
+		if (!force && cached?.data && cached.taskIdsKey === taskIdsKey && Date.now() - cached.updatedAt < _PENA_TIME_CACHE_TTL_MS) return cached.data;
+		if (!force && cached?.error && Date.now() - (cached.failedAt || 0) < 15000) return cached.data || null;
+		if (_dialogTimeInFlight.has(key)) {
+			const running = _dialogTimeInFlight.get(key);
+			if (!force) return running;
+			if (_dialogTimeForcedRefreshes.has(key)) return _dialogTimeForcedRefreshes.get(key);
+			// A read started before add/update/delete is not a refresh of that write.
+			// Coalesce all forced callers into one successor after the old read settles.
+			const refresh = running.catch(() => null)
+				.then(() => _loadDialogTimeRange(normalized, { force: true }))
+				.finally(() => _dialogTimeForcedRefreshes.delete(key));
+			_dialogTimeForcedRefreshes.set(key, refresh);
+			return refresh;
+		}
+		_setDialogTimeCacheRecord(key, { status: 'loading', data: cached?.data || null, error: '', updatedAt: cached?.updatedAt || 0, taskIdsKey });
 		_queueDialogTimeUiSync();
 		const request = _PENA_TIME_CONTROL.loadElapsedItems({
 			from: normalized.from,
 			to: normalized.to,
 			userId,
-			callPage: params => _callBxRestReadPage('task.elapseditem.getlist', params, { timeoutMs: 12000, attempts: 2 })
+			taskIds,
+			callPages: _callDialogTimeElapsedPages
 		}).then(data => {
-			_setDialogTimeCacheRecord(key, { status: 'ready', data, error: '', updatedAt: Date.now() });
+			_setDialogTimeCacheRecord(key, { status: 'ready', data, error: '', updatedAt: Date.now(), taskIdsKey });
 			_loadDialogTimeTaskTitles(data).catch(() => {});
 			return data;
 		}).catch(error => {
 			const message = _getDialogTimeFriendlyError(error);
-			_setDialogTimeCacheRecord(key, { status: 'error', data: cached?.data || null, error: message, updatedAt: cached?.updatedAt || 0, failedAt: Date.now() });
+			_setDialogTimeCacheRecord(key, { status: 'error', data: cached?.data || null, error: message, updatedAt: cached?.updatedAt || 0, failedAt: Date.now(), taskIdsKey });
 			throw error;
 		}).finally(() => {
 			_dialogTimeInFlight.delete(key);
@@ -12009,10 +15071,15 @@ if (_presetChannel) {
 
 	function _setDialogTimeRange(range, { force = false } = {}) {
 		if (!_PENA_TIME_CONTROL) return;
-		_dialogTimeDraftRange = null;
 		_dialogTimeRange = _PENA_TIME_CONTROL.normalizeRange(range?.from, range?.to);
+		const draft = _readDialogTimeManualDraft();
+		if (draft.taskId || draft.query || draft.hours || draft.minutes) {
+			_writeDialogTimeManualDraft({ ...draft, dateKey: _dialogTimeRange.from });
+		}
 		_syncDialogTimeUi(_dialogControlNativeSwitcherNode);
-		_loadDialogTimeRange(_dialogTimeRange, { force }).catch(() => {});
+		if (_dialogControlNativeWorkspaceTab !== 'time') return;
+		const visibleRange = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _dialogTimeRange;
+		_loadDialogTimeRange(visibleRange, { force }).catch(() => {});
 	}
 
 	function _createDialogControlPopoverClose(label = 'Закрыть панель') {
@@ -12025,30 +15092,147 @@ if (_presetChannel) {
 		close.addEventListener('click', event => {
 			event.preventDefault();
 			event.stopPropagation();
+			const closingTab = _dialogControlNativeWorkspaceTab;
 			_dialogControlNativeWorkspaceTab = '';
 			_dialogControlNativeSwitcherSig = '';
 			const switcher = _dialogControlNativeSwitcherNode;
 			const context = switcher?._penaNativeRenderContext;
 			if (context?.container) _renderDialogControlNativeSwitcher(context.container, context.source);
+			if (closingTab) requestAnimationFrame(() => {
+				_dialogControlNativeSwitcherNode?.querySelector(`[data-pena-workspace-tab="${closingTab}"]`)?.focus?.({ preventScroll: true });
+			});
 		});
 		return close;
 	}
 
 	function _createDialogTimePanel() {
-		_dialogTimeManualExpanded = false;
-		_dialogTimeTrackedExpanded = false;
+		_dialogTimeManualExpanded = true;
+		_dialogTimeTrackedExpanded = true;
 		_captureActiveDialogTimeActivity({ passive: true });
 		const panel = document.createElement('div');
 		panel.className = 'pena-native-time-panel pena-native-command-popover';
+		panel.setAttribute('role', 'dialog');
+		panel.setAttribute('aria-modal', 'true');
+		panel.setAttribute('aria-labelledby', 'pena-time-panel-title');
+		panel.tabIndex = -1;
+		panel.addEventListener('keydown', event => {
+			if (event.key === 'Escape') {
+				event.preventDefault();
+				event.stopPropagation();
+				if (_dialogTimeDeleteConfirmEntryId) {
+					_dialogTimeDeleteConfirmEntryId = '';
+					_queueDialogTimeUiSync();
+					return;
+				}
+				if (_dialogTimeTrackerCancelConfirmTaskId) {
+					_dialogTimeTrackerCancelConfirmTaskId = '';
+					_queueDialogTimeUiSync();
+					return;
+				}
+				if (_dialogTimeEditingEntryId) {
+					_dialogTimeEditingEntryId = '';
+					_queueDialogTimeUiSync();
+					return;
+				}
+				panel.querySelector('.pena-native-time-header-actions > .pena-native-popover-close')?.click();
+				return;
+			}
+			if (event.key !== 'Tab') return;
+			const focusable = Array.from(panel.querySelectorAll('button:not([disabled]):not([hidden]),a[href],input:not([disabled]):not([hidden]),select:not([disabled]):not([hidden]),[tabindex]:not([tabindex="-1"])'))
+				.filter(node => node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden');
+			if (!focusable.length) {
+				event.preventDefault();
+				panel.focus({ preventScroll: true });
+				return;
+			}
+			const first = focusable[0];
+			const last = focusable[focusable.length - 1];
+			if (event.shiftKey && (document.activeElement === first || document.activeElement === panel)) {
+				event.preventDefault();
+				last.focus({ preventScroll: true });
+			} else if (!event.shiftKey && document.activeElement === last) {
+				event.preventDefault();
+				first.focus({ preventScroll: true });
+			}
+		});
 		const panelHeader = document.createElement('header');
 		panelHeader.className = 'pena-native-time-panel-head';
 		const panelTitle = document.createElement('strong');
 		panelTitle.className = 'pena-native-time-panel-title';
+		panelTitle.id = 'pena-time-panel-title';
 		panelTitle.textContent = 'Учёт времени';
-		panelHeader.append(panelTitle, _createDialogControlPopoverClose('Закрыть учёт времени'));
+		const viewTabs = document.createElement('div');
+		viewTabs.className = 'pena-native-time-view-tabs';
+		viewTabs.setAttribute('role', 'tablist');
+		[['day', 'День'], ['stats', '7 дней']].forEach(([view, label]) => {
+			const tab = document.createElement('button');
+			tab.type = 'button';
+			tab.className = 'pena-native-time-view-tab';
+			tab.dataset.view = view;
+			tab.setAttribute('role', 'tab');
+			tab.textContent = label;
+			tab.addEventListener('click', event => {
+				event.preventDefault();
+				event.stopPropagation();
+				_dialogTimeView = view;
+				const range = view === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
+				_syncDialogTimeUi(_dialogControlNativeSwitcherNode || panel.closest('.pena-native-folder-switcher'));
+				_loadDialogTimeRange(range).catch(() => {});
+			});
+			viewTabs.appendChild(tab);
+		});
+		const headerActions = document.createElement('div');
+		headerActions.className = 'pena-native-time-header-actions';
+		const fullReport = document.createElement('a');
+		fullReport.className = 'pena-native-time-report';
+		fullReport.href = _PENA_TIME_REPORT_URL;
+		fullReport.target = '_blank';
+		fullReport.rel = 'noopener noreferrer';
+		fullReport.innerHTML = '<span>Отчёт</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M10 14l9-9M19 14v5H5V5h5"/></svg>';
+		headerActions.append(fullReport, _createDialogControlPopoverClose('Закрыть учёт времени'));
+		panelHeader.append(panelTitle, viewTabs, headerActions);
 
 		const summary = document.createElement('div');
 		summary.className = 'pena-native-time-summary';
+		const dateControls = document.createElement('div');
+		dateControls.className = 'pena-native-time-date-controls';
+		const makeDateStep = (className, label, delta) => {
+			const button = document.createElement('button');
+			button.type = 'button';
+			button.className = className;
+			button.title = label;
+			button.setAttribute('aria-label', label);
+			button.innerHTML = delta < 0
+				? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>'
+				: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>';
+			button.addEventListener('click', event => {
+				event.preventDefault();
+				event.stopPropagation();
+				const next = _PENA_TIME_CONTROL.addDays(_getDialogTimeSelectedRange().from, delta);
+				_setDialogTimeRange({ from: next, to: next });
+			});
+			return button;
+		};
+		const previousDate = makeDateStep('pena-native-time-date-step pena-native-time-date-prev', 'Предыдущий день', -1);
+		const dateInput = document.createElement('input');
+		dateInput.type = 'date';
+		dateInput.className = 'pena-native-time-date-input';
+		dateInput.value = _getDialogTimeSelectedRange().from;
+		dateInput.setAttribute('aria-label', 'Дата учёта времени');
+		dateInput.addEventListener('change', () => {
+			if (_PENA_TIME_CONTROL.parseDateKey(dateInput.value)) _setDialogTimeRange({ from: dateInput.value, to: dateInput.value });
+		});
+		const nextDate = makeDateStep('pena-native-time-date-step pena-native-time-date-next', 'Следующий день', 1);
+		const todayDate = document.createElement('button');
+		todayDate.type = 'button';
+		todayDate.className = 'pena-native-time-date-today';
+		todayDate.textContent = 'Сегодня';
+		todayDate.addEventListener('click', event => {
+			event.preventDefault();
+			event.stopPropagation();
+			_setDialogTimeRange(_getDialogTimeRange('today'));
+		});
+		dateControls.append(previousDate, dateInput, nextDate, todayDate);
 		const summaryText = document.createElement('div');
 		summaryText.className = 'pena-native-time-summary-main';
 		const caption = document.createElement('span');
@@ -12066,11 +15250,24 @@ if (_presetChannel) {
 		refresh.className = 'pena-native-time-refresh';
 		refresh.title = 'Обновить данные за сегодня';
 		refresh.setAttribute('aria-label', 'Обновить данные за сегодня');
-		refresh.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.8-4.2L4 9m0 0V4m0 5h5"/><path d="M4 13a8 8 0 0 0 14.8 4.2L20 15m0 0v5m0-5h-5"/></svg>';
+		refresh.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 7a7 7 0 0 1 11.5-.7L20 9M4 15l2.4 2.7A7 7 0 0 0 17.9 17"/></svg>';
 		refresh.addEventListener('click', event => {
 			event.preventDefault();
 			event.stopPropagation();
-			_loadDialogTimeRange(_getDialogTimeRange('today'), { force: true }).then(data => {
+			const range = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
+			_refreshDialogTimeTaskCatalog({ force: true }).catch(() => {});
+			_loadDialogTimeRange(range, { force: true }).then(async data => {
+				const visits = _readDialogTimeVisits(_getDialogTimeSelectedRange().from);
+				visits.forEach(visit => {
+					const taskId = String(visit.taskId || '');
+					if (_isDialogTimePlaceholderTaskTitle(taskId, _getDialogTimeTaskTitle(taskId, visit.title))) {
+						_dialogTimeTaskTitleAttempted.delete(taskId);
+					}
+				});
+				// A previous title batch may still be settling. The second call joins the
+				// queued follow-up and makes the explicit refresh authoritative.
+				await _loadDialogTimeTaskTitles(data, visits);
+				await _loadDialogTimeTaskTitles(data, _readDialogTimeVisits(_getDialogTimeSelectedRange().from));
 				const visible = _filterDialogTimeDataByEligibility(data);
 				const duration = _PENA_TIME_CONTROL?.formatDuration?.(visible?.totalSeconds || 0) || '0 мин';
 				const taskCount = visible?.taskCount || 0;
@@ -12082,16 +15279,20 @@ if (_presetChannel) {
 		const summaryActions = document.createElement('div');
 		summaryActions.className = 'pena-native-time-summary-actions';
 		summaryActions.append(refresh);
-		summary.append(summaryText, summaryActions);
+		summary.append(summaryText, dateControls, summaryActions);
 
 		const tracker = document.createElement('section');
 		tracker.className = 'pena-native-time-tracker';
+		const trackerHeader = document.createElement('div');
+		trackerHeader.className = 'pena-native-time-section-copy';
+		trackerHeader.innerHTML = '<strong>Таймер</strong>';
 		const trackerInfo = document.createElement('div');
 		trackerInfo.className = 'pena-native-time-tracker-info';
 		trackerInfo.hidden = true;
 		const trackerTitle = document.createElement('strong');
 		trackerTitle.className = 'pena-native-time-tracker-title';
 		trackerTitle.textContent = '';
+		trackerTitle.tabIndex = 0;
 		const trackerDuration = document.createElement('b');
 		trackerDuration.className = 'pena-native-time-tracker-duration';
 		trackerDuration.textContent = '0:00';
@@ -12112,12 +15313,22 @@ if (_presetChannel) {
 		start.type = 'button';
 		start.className = 'pena-native-time-start';
 		start.textContent = 'Начать';
+		taskSelect.addEventListener('change', () => {
+			_dialogTimeTrackerSelectedTaskId = taskSelect.value;
+			start.disabled = _dialogTimeActionInFlight || !taskSelect.value;
+			_setDialogTimeFullTaskTitle(
+				taskSelect,
+				taskSelect.value ? String(taskSelect.selectedOptions?.[0]?.textContent || '') : '',
+				'Задача для трекинга'
+			);
+		});
 		start.addEventListener('click', event => {
 			event.preventDefault();
 			event.stopPropagation();
-			const today = _getDialogTimeRange('today');
-			const data = _getDialogTimeRecord(today)?.data || null;
-			const task = _getDialogTimeTaskCandidates(data, _readDialogTimeVisits(today.from)).find(candidate => candidate.taskId === taskSelect.value);
+			const selected = _getDialogTimeSelectedRange();
+			if (selected.from !== _getDialogTimeTodayKey()) return;
+			const data = _getDialogTimeRecord(selected)?.data || null;
+			const task = _getDialogTimeTaskCandidates(data, _readDialogTimeVisits(selected.from)).find(candidate => candidate.taskId === taskSelect.value);
 			if (task) _startDialogTimeTracker(task);
 		});
 		const stop = document.createElement('button');
@@ -12141,13 +15352,13 @@ if (_presetChannel) {
 			_cancelDialogTimeTracker();
 		});
 		trackerControls.append(taskSelect, trackerEmpty, start, stop, cancelTracker);
-		tracker.append(trackerInfo, trackerHint, trackerControls);
+		tracker.append(trackerHeader, trackerInfo, trackerHint, trackerControls);
 
 		const manualToggle = document.createElement('button');
 		manualToggle.type = 'button';
 		manualToggle.className = 'pena-native-time-manual-toggle';
 		manualToggle.setAttribute('aria-expanded', 'false');
-		manualToggle.innerHTML = '<span>Добавить вручную</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>';
+		manualToggle.innerHTML = '<span>Добавить время</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>';
 		manualToggle.addEventListener('click', event => {
 			event.preventDefault();
 			event.stopPropagation();
@@ -12166,14 +15377,19 @@ if (_presetChannel) {
 		manualSearch.className = 'pena-native-time-manual-search';
 		manualSearch.placeholder = 'Найти задачу';
 		manualSearch.setAttribute('aria-label', 'Поиск задачи для ручного учёта времени');
+		manualSearch.setAttribute('role', 'combobox');
+		manualSearch.setAttribute('aria-autocomplete', 'list');
+		manualSearch.setAttribute('aria-expanded', 'false');
+		manualSearch.setAttribute('aria-controls', 'pena-time-task-results');
 		const manualSelected = document.createElement('button');
 		manualSelected.type = 'button';
 		manualSelected.className = 'pena-native-time-manual-selected';
-		manualSelected.title = 'Сменить задачу';
 		manualSelected.innerHTML = '<span></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg>';
 		manualSelected.hidden = true;
 		const manualResults = document.createElement('div');
 		manualResults.className = 'pena-native-time-manual-results';
+		manualResults.id = 'pena-time-task-results';
+		manualResults.setAttribute('role', 'listbox');
 		manualResults.hidden = true;
 		manualSearchWrap.append(manualSearch, manualSelected, manualResults);
 		const manualFields = document.createElement('div');
@@ -12212,11 +15428,29 @@ if (_presetChannel) {
 			title: _dialogTimeManualSelectedTask?.title || '',
 			query: _dialogTimeManualSearchQuery,
 			hours: hoursField.input.value,
-			minutes: minutesField.input.value
+			minutes: minutesField.input.value,
+			dateKey: _getDialogTimeSelectedRange().from
 		});
 		manualSearch.addEventListener('input', () => {
 			_scheduleDialogTimeManualSearch(manualSearch.value);
 			saveDraft();
+		});
+		manualSearch.addEventListener('keydown', event => {
+			const results = _dialogTimeManualSearchResults;
+			if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && results.length) {
+				event.preventDefault();
+				event.stopPropagation();
+				const direction = event.key === 'ArrowDown' ? 1 : -1;
+				_dialogTimeManualActiveIndex = (_dialogTimeManualActiveIndex + direction + results.length) % results.length;
+				_renderDialogTimeManualSearch(panel);
+				panel.querySelector(`#pena-time-task-option-${results[_dialogTimeManualActiveIndex].taskId}`)?.scrollIntoView?.({ block: 'nearest' });
+				return;
+			}
+			if (event.key === 'Enter' && results.length && _dialogTimeManualActiveIndex >= 0) {
+				event.preventDefault();
+				event.stopPropagation();
+				_selectDialogTimeManualTask(results[_dialogTimeManualActiveIndex], panel);
+			}
 		});
 		manualSelected.addEventListener('click', event => {
 			event.preventDefault();
@@ -12224,18 +15458,25 @@ if (_presetChannel) {
 			_dialogTimeManualSelectedTask = null;
 			_dialogTimeManualSearchQuery = '';
 			_dialogTimeManualSearchResults = [];
+			_dialogTimeManualActiveIndex = -1;
 			manualSearch.value = '';
 			saveDraft();
 			_renderDialogTimeManualSearch(panel);
 			manualSearch.focus({ preventScroll: true });
 		});
-		hoursField.input.addEventListener('input', saveDraft);
-		minutesField.input.addEventListener('input', saveDraft);
+		const syncManualValidity = () => {
+			saveDraft();
+			const totalMinutes = (Math.max(0, Number(hoursField.input.value) || 0) * 60) + Math.max(0, Number(minutesField.input.value) || 0);
+			manualSubmit.disabled = _dialogTimeActionInFlight || !_dialogTimeManualSelectedTask?.taskId ||
+				totalMinutes < 1 || totalMinutes > 1440 || Math.max(0, Number(minutesField.input.value) || 0) > 59;
+		};
+		hoursField.input.addEventListener('input', syncManualValidity);
+		minutesField.input.addEventListener('input', syncManualValidity);
 		manualSubmit.addEventListener('click', event => {
 			event.preventDefault();
 			event.stopPropagation();
 			saveDraft();
-			_addDialogTimeManualEntry(_dialogTimeManualSelectedTask, hoursField.input.value, minutesField.input.value);
+			_addDialogTimeManualEntry(_dialogTimeManualSelectedTask, hoursField.input.value, minutesField.input.value, _getDialogTimeSelectedRange().from);
 		});
 		manualFields.append(hoursField.field, minutesField.field, manualSubmit);
 		const manualError = document.createElement('span');
@@ -12248,7 +15489,7 @@ if (_presetChannel) {
 		const suggestionsHeader = document.createElement('div');
 		suggestionsHeader.className = 'pena-native-time-section-copy';
 		suggestionsHeader.innerHTML = '<strong>Активность</strong>';
-		suggestionsHeader.title = 'Оценка основана на времени, когда задача была открыта; касания показаны для контекста';
+		suggestionsHeader.title = 'Только квалифицированные контакты с task-чатами';
 		const suggestionsList = document.createElement('div');
 		suggestionsList.className = 'pena-native-time-suggestions-list';
 		suggestions.append(suggestionsHeader, suggestionsList);
@@ -12259,7 +15500,7 @@ if (_presetChannel) {
 		trackedToggle.type = 'button';
 		trackedToggle.className = 'pena-native-time-tracked-toggle';
 		trackedToggle.setAttribute('aria-expanded', 'false');
-		trackedToggle.innerHTML = '<span class="pena-native-time-tracked-label">Учтено · 0</span><span class="pena-native-time-tracked-total">0:00</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>';
+		trackedToggle.innerHTML = '<span class="pena-native-time-tracked-label">Записи · 0</span><span class="pena-native-time-tracked-total">0:00</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>';
 		trackedToggle.addEventListener('click', event => {
 			event.preventDefault();
 			event.stopPropagation();
@@ -12271,17 +15512,190 @@ if (_presetChannel) {
 		trackedList.hidden = true;
 		tracked.append(trackedToggle, trackedList);
 
-		const footer = document.createElement('div');
-		footer.className = 'pena-native-time-footer';
-		const fullReport = document.createElement('a');
-		fullReport.href = _PENA_TIME_REPORT_URL;
-		fullReport.target = '_blank';
-		fullReport.rel = 'noopener noreferrer';
-		fullReport.textContent = 'Полный отчёт';
-		fullReport.innerHTML += '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M10 14l9-9M19 14v5H5V5h5"/></svg>';
-		footer.appendChild(fullReport);
-		panel.append(panelHeader, summary, tracker, suggestions, manualToggle, manual, tracked, footer);
+		const activityColumn = document.createElement('div');
+		activityColumn.className = 'pena-native-time-column pena-native-time-column-activity';
+		activityColumn.append(tracker, suggestions);
+		const recordsColumn = document.createElement('div');
+		recordsColumn.className = 'pena-native-time-column pena-native-time-column-records';
+		const manualBlock = document.createElement('section');
+		manualBlock.className = 'pena-native-time-manual-block';
+		manualBlock.append(manualToggle, manual);
+		recordsColumn.append(manualBlock, tracked);
+		const body = document.createElement('div');
+		body.className = 'pena-native-time-body';
+		body.append(activityColumn, recordsColumn);
+		const stats = document.createElement('section');
+		stats.className = 'pena-native-time-stats';
+		stats.hidden = true;
+		const statsHeader = document.createElement('div');
+		statsHeader.className = 'pena-native-time-section-copy';
+		statsHeader.innerHTML = '<strong>Статистика за 7 дней</strong><span>Нажмите день, чтобы открыть записи</span>';
+		const statsList = document.createElement('div');
+		statsList.className = 'pena-native-time-stats-list';
+		stats.append(statsHeader, statsList);
+		const scroll = document.createElement('div');
+		scroll.className = 'pena-native-time-scroll';
+		scroll.append(summary, stats, body);
+		panel.append(panelHeader, scroll);
+		Promise.all([
+			_ensureDialogTimePortalDate(),
+			_ensureCurrentBitrixUserId()
+		]).then(() => {
+			if (_dialogControlNativeWorkspaceTab !== 'time') return;
+			_armDialogTimeVisitTracking();
+			const range = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
+			_loadDialogTimeRange(range).catch(() => {});
+			_refreshDialogTimeTaskCatalog().catch(() => {});
+			_queueDialogTimeUiSync();
+		}).catch(() => {});
 		return panel;
+	}
+
+	function _armDialogTimeTitleTooltip(modal, panel) {
+		if (!modal || !panel) return null;
+		const tooltip = document.createElement('div');
+		tooltip.className = 'pena-native-time-title-tooltip';
+		tooltip.id = 'pena-time-title-tooltip';
+		tooltip.setAttribute('role', 'tooltip');
+		tooltip.hidden = true;
+		modal.appendChild(tooltip);
+		let active = null;
+		let pointerAnchor = null;
+		let focusedReshowFrame = 0;
+		const measureCanvas = document.createElement('canvas');
+		const isTruncated = anchor => {
+			if (!anchor?.isConnected || !anchor.getClientRects?.().length) return false;
+			if (anchor.matches?.('select')) {
+				const text = String(anchor.selectedOptions?.[0]?.textContent || '');
+				const style = getComputedStyle(anchor);
+				const context = measureCanvas.getContext?.('2d');
+				if (!context) return text.length > 24;
+				context.font = style.font || `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+				const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0) + 24;
+				return context.measureText(text).width + padding > anchor.clientWidth + 1;
+			}
+			const target = anchor.matches?.('.pena-native-time-tracker-title')
+				? anchor
+				: (anchor.querySelector?.('.pena-native-time-task-title,.pena-native-time-manual-result-title,.pena-native-time-manual-selected > span') || anchor);
+			return target.scrollWidth > target.clientWidth + 1 || target.scrollHeight > target.clientHeight + 1;
+		};
+		const hide = () => {
+			if (focusedReshowFrame) {
+				cancelAnimationFrame(focusedReshowFrame);
+				focusedReshowFrame = 0;
+			}
+			if (active?.getAttribute?.('aria-describedby') === tooltip.id) active.removeAttribute('aria-describedby');
+			active = null;
+			tooltip.hidden = true;
+			tooltip.textContent = '';
+		};
+		const show = anchor => {
+			const title = String(anchor?.dataset?.penaFullTaskTitle || '').trim();
+			if (!title || !isTruncated(anchor)) {
+				hide();
+				return;
+			}
+			if (active && active !== anchor && active.getAttribute?.('aria-describedby') === tooltip.id) {
+				active.removeAttribute('aria-describedby');
+			}
+			active = anchor;
+			anchor.setAttribute('aria-describedby', tooltip.id);
+			tooltip.textContent = title;
+			tooltip.hidden = false;
+			tooltip.style.left = '0px';
+			tooltip.style.top = '0px';
+			const anchorRect = anchor.getBoundingClientRect();
+			const tooltipRect = tooltip.getBoundingClientRect();
+			const margin = 12;
+			const gap = 7;
+			const maxLeft = Math.max(margin, window.innerWidth - tooltipRect.width - margin);
+			const left = Math.max(margin, Math.min(anchorRect.left, maxLeft));
+			let top = anchorRect.bottom + gap;
+			if (top + tooltipRect.height > window.innerHeight - margin) top = anchorRect.top - tooltipRect.height - gap;
+			top = Math.max(margin, Math.min(top, Math.max(margin, window.innerHeight - tooltipRect.height - margin)));
+			tooltip.style.left = `${Math.round(left)}px`;
+			tooltip.style.top = `${Math.round(top)}px`;
+		};
+		const resolveAnchor = target => target?.closest?.('[data-pena-full-task-title]');
+		const resolveFocusedAnchor = () => {
+			const anchor = resolveAnchor(document.activeElement);
+			return anchor && panel.contains(anchor) ? anchor : null;
+		};
+		panel.addEventListener('pointerover', event => {
+			const anchor = resolveAnchor(event.target);
+			if (!anchor || !panel.contains(anchor) || anchor.contains(event.relatedTarget)) return;
+			pointerAnchor = anchor;
+			// Moving content under a stationary pointer can dispatch pointerover while
+			// Chromium auto-scrolls a newly focused row into view. Keyboard focus owns
+			// the tooltip until focus leaves that task.
+			show(resolveFocusedAnchor() || anchor);
+		});
+		panel.addEventListener('pointerout', event => {
+			const anchor = resolveAnchor(event.target);
+			if (!anchor || anchor.contains(event.relatedTarget)) return;
+			if (pointerAnchor === anchor) pointerAnchor = null;
+			const focused = resolveFocusedAnchor();
+			if (focused) show(focused);
+			else hide();
+		});
+		panel.addEventListener('focusin', event => {
+			const anchor = resolveAnchor(event.target);
+			if (anchor && panel.contains(anchor)) show(anchor);
+		});
+		panel.addEventListener('focusout', event => {
+			if (!active || active.contains?.(event.relatedTarget)) return;
+			requestAnimationFrame(() => {
+				const focused = resolveFocusedAnchor();
+				if (focused) show(focused);
+				else if (pointerAnchor?.isConnected && panel.contains(pointerAnchor)) show(pointerAnchor);
+				else hide();
+			});
+		});
+		panel.addEventListener('scroll', () => {
+			const focused = resolveFocusedAnchor();
+			if (!focused) {
+				hide();
+				return;
+			}
+			// Keyboard focus can make Chromium scroll the inner panel after focusin.
+			// Reposition once that automatic scroll has settled instead of hiding the
+			// only way to inspect the truncated task title.
+			if (focusedReshowFrame) cancelAnimationFrame(focusedReshowFrame);
+			focusedReshowFrame = requestAnimationFrame(() => {
+				focusedReshowFrame = requestAnimationFrame(() => {
+					focusedReshowFrame = 0;
+					const currentFocused = resolveFocusedAnchor();
+					if (currentFocused) show(currentFocused);
+				});
+			});
+		}, true);
+		panel.addEventListener('keydown', event => {
+			if (event.key === 'Escape' && !tooltip.hidden) hide();
+		}, true);
+		return tooltip;
+	}
+
+	function _createDialogTimeModal() {
+		const modal = document.createElement('div');
+		modal.className = 'pena-native-time-modal';
+		if (typeof modal.showPopover === 'function') modal.setAttribute('popover', 'manual');
+		const backdrop = document.createElement('div');
+		backdrop.className = 'pena-native-time-backdrop';
+		backdrop.setAttribute('aria-hidden', 'true');
+		const panel = _createDialogTimePanel();
+		_armDialogTimeTitleTooltip(modal, panel);
+		backdrop.addEventListener('pointerdown', event => {
+			event.preventDefault();
+			event.stopPropagation();
+			event.stopImmediatePropagation?.();
+			panel.querySelector('.pena-native-time-header-actions > .pena-native-popover-close')?.click();
+		}, true);
+		modal.append(backdrop, panel);
+		requestAnimationFrame(() => {
+			if (!panel.isConnected || panel.contains(document.activeElement)) return;
+			panel.focus({ preventScroll: true });
+		});
+		return modal;
 	}
 
 	function _syncDialogControlNativeTabStatuses(switcher, groupStatuses, folderStatuses, segmentStatus) {
@@ -12297,7 +15711,64 @@ if (_presetChannel) {
 		});
 	}
 
+	function _syncDialogControlNativeCounterStatuses(switcher, items) {
+		if (!switcher?.isConnected) return;
+		const source = Array.isArray(items) ? items : [];
+		const emptyStatus = () => ({ childCount: 0, unreadCount: 0, hasUnread: false, hasMention: false, hasLater: false });
+		const addMeta = (status, meta) => {
+			if (!status || !meta) return;
+			status.childCount += 1;
+			if (meta.hasMention) status.hasMention = true;
+			if (meta.hasLater && !meta.hasUnread) status.hasLater = true;
+			if (meta.hasUnread) {
+				status.hasUnread = true;
+				status.unreadCount += Math.max(1, Number(meta.unreadCount) || 0);
+			} else if (meta.hasMention || meta.hasLater) {
+				status.unreadCount += 1;
+			}
+		};
+
+		const groupStatuses = new Map();
+		switcher.querySelectorAll('.pena-native-group-tab').forEach(btn => {
+			groupStatuses.set(String(btn.dataset.nativeSegmentId || ''), emptyStatus());
+		});
+		const folderStatuses = new Map();
+		switcher.querySelectorAll('.pena-native-folder-tab[data-native-folder-id]').forEach(btn => {
+			const id = String(btn.dataset.nativeFolderId || '');
+			if (id) folderStatuses.set(id, emptyStatus());
+		});
+		const segmentStatus = emptyStatus();
+		const activeSegmentId = _getDialogControlActiveSegmentId();
+		const folderSegmentIds = new Map(source
+			.filter(_isDialogControlFolder)
+			.map(folder => [String(folder.id || ''), String(folder.segmentId || '')]));
+		const catalogOnlyIndex = new Map();
+
+		source.forEach(item => {
+			if (_isDialogControlFolder(item) || _isDialogControlItemUnavailable(item) ||
+				!_matchesDialogControlGlobalFilters(item, catalogOnlyIndex)) return;
+			const meta = _getDialogControlItemLiveMeta(item, catalogOnlyIndex);
+			if (!meta) return;
+			addMeta(groupStatuses.get(''), meta);
+			const memberships = new Set([
+				String(item.segmentId || ''),
+				folderSegmentIds.get(String(item.folderId || '')) || ''
+			].filter(Boolean));
+			memberships.forEach(segmentId => addMeta(groupStatuses.get(segmentId), meta));
+			if (!activeSegmentId || memberships.has(activeSegmentId)) {
+				addMeta(segmentStatus, meta);
+				addMeta(folderStatuses.get(String(item.folderId || '')), meta);
+			}
+		});
+
+		_syncDialogControlNativeTabStatuses(switcher, groupStatuses, folderStatuses, segmentStatus);
+	}
+
 	function _renderDialogControlNativeSwitcher(container, items) {
+		if (window.__PENA_TEST_PERF_METRICS__) {
+			window.__PENA_TEST_PERF_METRICS__.switcherRenders =
+				(Number(window.__PENA_TEST_PERF_METRICS__.switcherRenders) || 0) + 1;
+		}
 		if (IS_OL_FRAME || !_isDialogControlNativeMode() || !container) {
 			_clearDialogControlNativeSwitcher();
 			return;
@@ -12306,6 +15777,7 @@ if (_presetChannel) {
 		if (_dialogControlNativeWorkspaceTab === 'control') _dialogControlNativeWorkspaceTab = '';
 		const switcher = _ensureDialogControlNativeSwitcher(container);
 		if (!switcher) return;
+		switcher.classList.toggle('--time-modal-open', _dialogControlNativeWorkspaceTab === 'time');
 		switcher._penaNativeRenderContext = { container, source };
 		_markDialogControlNativeMutation();
 		const groupTabs = _getDialogControlSegmentTabs(_getDialogControlSegments());
@@ -12373,8 +15845,8 @@ if (_presetChannel) {
 		}
 		_dialogControlNativeSwitcherSig = switcherSig;
 		switcher.dataset.penaNativeSig = switcherSig;
-		const preservedTimePanel = _dialogControlNativeWorkspaceTab === 'time'
-			? switcher.querySelector('.pena-native-time-panel')
+		const preservedTimeModal = _dialogControlNativeWorkspaceTab === 'time'
+			? switcher.querySelector('.pena-native-time-modal')
 			: null;
 
 		// Build the next tab layout off-screen and swap it in one operation. Clearing
@@ -12387,17 +15859,30 @@ if (_presetChannel) {
 			const btn = document.createElement('button');
 			btn.type = 'button';
 			btn.className = 'pena-native-command-btn';
+			btn.dataset.penaWorkspaceTab = id;
 			if (options.className) btn.classList.add(options.className);
 			btn.classList.toggle('--active', _dialogControlNativeWorkspaceTab === id);
-			btn.setAttribute('aria-haspopup', 'menu');
+			btn.setAttribute('aria-haspopup', id === 'time' ? 'dialog' : 'menu');
 			btn.setAttribute('aria-expanded', _dialogControlNativeWorkspaceTab === id ? 'true' : 'false');
 			btn.innerHTML = `${icon}<span${options.labelClass ? ` class="${options.labelClass}"` : ''}>${label}</span><svg class="pena-native-command-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>`;
 			btn.addEventListener('click', (e) => {
 				e.preventDefault();
 				e.stopPropagation();
-				_dialogControlNativeWorkspaceTab = _dialogControlNativeWorkspaceTab === id ? '' : id;
+				const opening = _dialogControlNativeWorkspaceTab !== id;
+				_dialogControlNativeWorkspaceTab = opening ? id : '';
 				_dialogControlNativeSwitcherSig = '';
 				_renderDialogControlNativeSwitcher(container, source);
+				if (opening) {
+					const panelMode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
+					if (id === 'filters' && _dialogControlNeedsCompleteNativeMaterialization(panelMode)) {
+						_scheduleDialogNativeModeLoad('view-demand', 160);
+					} else if (_isDialogControlNativePassThrough()) {
+						// Managed mode reads unread state from its REST catalog. Its native
+						// source is hidden, so a DOM sample would falsely report every badge
+						// as read and erase authoritative counters merely by opening a panel.
+						_refreshDialogNativeVisibleWindow();
+					}
+				}
 			});
 			return btn;
 		};
@@ -12410,7 +15895,7 @@ if (_presetChannel) {
 			workspaceTabs.append(makeWorkspaceTab(
 				'time',
 				'Сегодня --:--',
-				'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>',
+				'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 6.5V12l3.5 2"/></svg>',
 				{ className: 'pena-native-time-button', labelClass: 'pena-native-time-button-label' }
 			));
 		}
@@ -12423,7 +15908,9 @@ if (_presetChannel) {
 		syncChip.addEventListener('click', event => {
 			const sync = window.__PENA_RECENT_SYNC__ || {};
 			const pending = Math.max(0, Number(sync.controlledPendingCount) || 0);
-			if (sync.inFlight || sync.detailsInFlight || (!sync.error && !sync.gateError && pending <= 0)) return;
+			const recoveryActionRequired = !!sync.recoveryActionRequired || !!sync.recoveryPending;
+			if (sync.inFlight || sync.detailsInFlight ||
+				(!sync.error && !sync.gateError && !recoveryActionRequired && pending <= 0)) return;
 			event.preventDefault();
 			event.stopPropagation();
 			if (pending > 0 && !sync.gateError) {
@@ -12457,6 +15944,19 @@ if (_presetChannel) {
 				};
 				_requestDialogControlFrame(apply);
 			};
+			const markExplicitNativeSort = patch => {
+				const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
+				const current = _getDialogControlViewPrefs();
+				const changed = (patch.sortMode != null && patch.sortMode !== current.sortMode) ||
+					(patch.sortDirection != null && patch.sortDirection !== current.sortDirection);
+				// A same-value click on a cold native feed is just reaffirming Bitrix'
+				// default and must not reorder its canonical rows. Once a complete source
+				// has been proven, the same click is an explicit request to apply PENA's
+				// complete-catalog sort (including off-screen live updates).
+				if (changed || _dialogNativeMaterializedSources.has(mode)) {
+					_dialogControlNativeCustomSortModes.add(mode);
+				}
+			};
 			[['color', 'Цвет'], ['date', 'Дата']].forEach(([mode, label]) => {
 				const btn = document.createElement('button');
 				btn.type = 'button';
@@ -12465,6 +15965,7 @@ if (_presetChannel) {
 				btn.setAttribute('aria-pressed', viewPrefs.sortMode === mode ? 'true' : 'false');
 				btn.classList.toggle('--active', viewPrefs.sortMode === mode);
 				btn.addEventListener('click', () => {
+					markExplicitNativeSort({ sortMode: mode });
 					applyViewPreference({ sortMode: mode });
 				});
 				sortOptions.appendChild(btn);
@@ -12483,7 +15984,10 @@ if (_presetChannel) {
 				btn.setAttribute('aria-pressed', viewPrefs.sortDirection === direction ? 'true' : 'false');
 				btn.classList.toggle('--active', viewPrefs.sortDirection === direction);
 				btn.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${icon}</svg>`;
-				btn.addEventListener('click', () => applyViewPreference({ sortDirection: direction }));
+				btn.addEventListener('click', () => {
+					markExplicitNativeSort({ sortDirection: direction });
+					applyViewPreference({ sortDirection: direction });
+				});
 				directionOptions.appendChild(btn);
 			});
 			sortGroup.append(sortLabel, sortOptions, directionOptions);
@@ -12516,9 +16020,12 @@ if (_presetChannel) {
 				if (syncButton.disabled) return;
 				syncButton.disabled = true;
 				syncButton.classList.add('--loading');
-				try {
-					await _refreshDialogRecentCatalog({ force: true, full: true, reason: 'manual' });
-				} catch {}
+			try {
+				const result = await _refreshDialogRecentCatalog({ force: true, full: true, reason: 'manual' });
+				if (result?.incomplete) _showDialogDockToast('Проверка не завершена — повторяем автоматически', 'danger');
+			} catch {
+				_showDialogDockToast('Не удалось обновить чаты', 'danger');
+			}
 				finally {
 					syncButton.disabled = false;
 					syncButton.classList.remove('--loading');
@@ -12530,7 +16037,11 @@ if (_presetChannel) {
 			workspaceTabs.appendChild(filterPanel);
 		}
 		if (_dialogControlNativeWorkspaceTab === 'time' && _PENA_TIME_CONTROL) {
-			workspaceTabs.appendChild(preservedTimePanel || _createDialogTimePanel());
+			const timeModal = preservedTimeModal || _createDialogTimeModal();
+			workspaceTabs.appendChild(timeModal);
+			requestAnimationFrame(() => {
+				if (timeModal.isConnected && timeModal.showPopover && !timeModal.matches(':popover-open')) timeModal.showPopover();
+			});
 		}
 		const groupRow = document.createElement('div');
 		groupRow.className = 'pena-native-group-tabs';
@@ -12878,19 +16389,16 @@ if (_presetChannel) {
 				btn.classList.add('--colored');
 				_applyDialogControlNativeColorVars(btn, color);
 			}
-			// «Все папки» is a common system tab, not a user folder.
-			btn.draggable = !!folder;
+			// «Все папки» participates in the visual tab order, but remains a
+			// synthetic aggregate: group drop targets reject its sentinel id.
+			btn.draggable = true;
 			btn.addEventListener('dragstart', (e) => {
-				if (!folder) {
-					e.preventDefault();
-					return;
-				}
 				e.stopPropagation();
-				nativeDraggingFolderId = id;
+				nativeDraggingFolderId = sortId;
 				if (e.dataTransfer) {
 					e.dataTransfer.effectAllowed = 'move';
-					try { e.dataTransfer.setData(nativeFolderDragMime, id); } catch {}
-					try { e.dataTransfer.setData('text/plain', id); } catch {}
+					try { e.dataTransfer.setData(nativeFolderDragMime, sortId); } catch {}
+					try { e.dataTransfer.setData('text/plain', sortId); } catch {}
 				}
 				btn.classList.add('--native-dragging');
 			});
@@ -12968,10 +16476,6 @@ if (_presetChannel) {
 		switcher.replaceChildren(switcherContent);
 		_syncDialogRecentStatusControl(switcher);
 		_syncDialogTimeUi(switcher);
-		_warmDialogTimeToday().then(() => {
-			_syncDialogTimeUi(switcher);
-			if (_dialogControlNativeWorkspaceTab === 'time') _loadDialogTimeRange(_getDialogTimeRange('today')).catch(() => {});
-		}).catch(() => {});
 		// The panel is assembled in a fragment, so it can be revealed immediately
 		// after the atomic swap without exposing a half-built layout.
 		switcher.classList.remove('--mounting');
@@ -12988,19 +16492,61 @@ if (_presetChannel) {
 		}, 180);
 	}
 
-	function _readDialogControlOpenedId(root = window) {
+	function _readDialogControlOpenedId(root = window, allowInteractionGrace = true) {
 		const values = [];
 		try { values.push(root.BX?.Messenger?.Application?.getCurrentDialogId?.()); } catch {}
 		try { values.push(root.BX?.Messenger?.Application?.getCurrentDialog?.()?.dialogId); } catch {}
 		try { values.push(root.BX?.Messenger?.Application?.getCurrentDialog?.()?.id); } catch {}
+		try { values.push(root.BX?.Messenger?.Public?.getCurrentDialogId?.()); } catch {}
 		const direct = values.map(normId).find(Boolean);
-		if (direct) return direct;
-		const selected = root.document?.querySelector?.([
+		if (direct) {
+			if (root === window) _setDialogControlCurrentId(direct);
+			return direct;
+		}
+		const selectedSelector = [
 			'.bx-im-list-recent-item__wrap.--selected[data-id]',
 			'.bx-im-list-recent-item__wrap[aria-current="true"][data-id]',
+			'.bx-im-list-recent-item__wrap[aria-selected="true"][data-id]',
+			'.bx-im-list-recent-item__wrap[data-selected="true"][data-id]',
+			'.bx-im-list-recent-item__wrap[data-active="true"][data-id]',
+			'[class*="bx-im-list" i] [data-id][aria-current="true"]',
+			'[class*="bx-im-list" i] [data-id][aria-selected="true"]',
+			'[class*="bx-im-list" i] [data-id][class*="--selected"]',
+			'[class*="bx-im-list" i] [data-id][class*="--active"]',
 			'.bx-messenger-cl-item-active[data-userid]'
-		].join(','));
-		return normId(selected?.dataset?.id || selected?.dataset?.dialogId || selected?.dataset?.userid || '');
+		].join(',');
+		const selected = Array.from(root.document?.querySelectorAll?.(selectedSelector) || [])
+			.find(candidate => allowInteractionGrace || (
+				!candidate.classList?.contains('pena-native-remote-row') &&
+				!candidate.closest?.('.pena-native-managed-list')
+			)) || null;
+		const selectedId = normId(selected?.dataset?.id || selected?.dataset?.dialogId || selected?.dataset?.userid || '');
+		if (selectedId) {
+			if (root === window) _setDialogControlCurrentId(selectedId);
+			return selectedId;
+		}
+		if (root === window) {
+			for (const [id, row] of buildChatElementIndex()) {
+				if (!allowInteractionGrace && (row.classList?.contains('pena-native-remote-row') || row.closest?.('.pena-native-managed-list'))) continue;
+				if (!_isLikelyActiveChatElement(row)) continue;
+				_setDialogControlCurrentId(id);
+				return normId(id);
+			}
+			// A capture-phase click stores the intended dialog before Bitrix has
+			// actually opened it. That grace is useful for time tracking, but it is
+			// not proof that the public messenger API succeeded.
+			if (!allowInteractionGrace) return '';
+			const mode = _pMode();
+			const cached = normId(_dialogControlCurrentIds?.[mode]);
+			const seenAt = Math.max(0, Number(_dialogControlCurrentSeenAt?.[mode]) || 0);
+			const source = window.__PENA_ACTIVE_LIST_CONTEXT__?.list || findContainer() || null;
+			const sameSource = !!source && _dialogControlCurrentSources?.[mode] === source;
+			// Some Bitrix builds drop the selected class while recycling the active
+			// row. Keep an explicit user-opened task long enough to qualify one minute;
+			// a mode/source switch or another click replaces this grace immediately.
+			if (cached && sameSource && Date.now() - seenAt <= 90000) return cached;
+		}
+		return '';
 	}
 
 	async function _verifyDialogControlOpened(dialogId, roots, timeout = 900) {
@@ -13009,7 +16555,7 @@ if (_presetChannel) {
 		let observedAny = false;
 		do {
 			for (const root of roots) {
-				const current = _readDialogControlOpenedId(root);
+				const current = _readDialogControlOpenedId(root, false);
 				if (!current) continue;
 				observedAny = true;
 				if (current === expected) return true;
@@ -13023,7 +16569,7 @@ if (_presetChannel) {
 		const dialogId = _normalizeDialogControlRestDialogId(_getDialogControlRestDialogId(item?.id, null, item));
 		if (!dialogId) return false;
 		const topWin = _getSafeTopWindow();
-		const roots = [window, topWin].filter(Boolean);
+		const roots = Array.from(new Set([window, topWin].filter(Boolean)));
 		for (const root of roots) {
 			const api = root.BX?.Messenger?.Public;
 			if (typeof api?.openChat !== 'function') continue;
@@ -13053,12 +16599,12 @@ if (_presetChannel) {
 		const meta = _getDialogRecentMeta(item.id);
 		if (meta && !_isDialogRecentPublishable(meta)) return false;
 		if (await _openDialogControlViaBitrixApi(item)) {
-			if (mode === 'tasks') _rememberTaskChatDialogVisit(item.id || '', item.title || '', item.taskId || '');
+			if (mode === 'tasks') _rememberTaskChatDialogVisit(item.id || '', item.title || '', item.taskId || '', { takeover: true });
 			return true;
 		}
 		const nativeRow = _findFreshBitrixChatElementById(item.id);
 		const opened = !!nativeRow && openChatElement(nativeRow, item.id);
-		if (opened && mode === 'tasks') _rememberTaskChatDialogVisit(item.id || '', item.title || '', item.taskId || '');
+		if (opened && mode === 'tasks') _rememberTaskChatDialogVisit(item.id || '', item.title || '', item.taskId || '', { takeover: true });
 		return opened;
 	}
 
@@ -13091,6 +16637,64 @@ if (_presetChannel) {
 			}
 			return new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'short' }).format(date);
 		} catch { return ''; }
+	}
+
+	function _getDialogControlNativeDisplayedDate(row, now = new Date()) {
+		if (!row) return 0;
+		const selectors = [
+			'.bx-im-list-recent-item__date',
+			'.bx-im-list-recent-item__date_text',
+			'.bx-im-list-recent-item__date-text',
+			'.bx-im-list-item__date',
+			'time[datetime]'
+		];
+		let node = null;
+		for (const selector of selectors) {
+			node = row.matches?.(selector) ? row : row.querySelector?.(selector);
+			if (node) break;
+		}
+		if (!node) return 0;
+		const explicit = String(node.getAttribute?.('datetime') || node.dataset?.timestamp || node.dataset?.date || node.getAttribute?.('title') || '').trim();
+		if (explicit) {
+			const numeric = Number(explicit);
+			if (Number.isFinite(numeric) && numeric > 0) return numeric < 1e12 ? numeric * 1000 : numeric;
+			const parsed = _parseDialogRecentDate(explicit);
+			if (parsed) return parsed;
+		}
+		const label = String(node.textContent || '').replace(/\s+/g, ' ').trim().toLocaleLowerCase('ru');
+		if (!label) return 0;
+		const base = new Date(now);
+		base.setSeconds(0, 0);
+		const time = /(?:^|\s)(\d{1,2}):(\d{2})(?:$|\s)/.exec(label);
+		const hours = time ? Math.min(23, Number(time[1]) || 0) : 0;
+		const minutes = time ? Math.min(59, Number(time[2]) || 0) : 0;
+		if (time && !/вчера|yesterday/i.test(label) && !/\d{1,2}\s+[а-яa-z]/i.test(label)) {
+			base.setHours(hours, minutes, 0, 0);
+			return base.getTime();
+		}
+		if (/вчера|yesterday/i.test(label)) {
+			base.setDate(base.getDate() - 1);
+			base.setHours(hours, minutes, 0, 0);
+			return base.getTime();
+		}
+		const monthNames = ['янв', 'фев', 'мар', 'апр', 'ма[йя]', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+		const dated = new RegExp(`(\\d{1,2})\\s+(${monthNames.join('|')})(?:[а-я.]*)?(?:\\s+(\\d{4}))?`, 'i').exec(label);
+		if (dated) {
+			const month = monthNames.findIndex(pattern => new RegExp(`^${pattern}`, 'i').test(dated[2]));
+			const year = Number(dated[3]) || base.getFullYear();
+			const candidate = new Date(year, Math.max(0, month), Number(dated[1]), hours, minutes, 0, 0);
+			if (!dated[3] && candidate.getTime() > base.getTime() + 36 * 3600000) candidate.setFullYear(year - 1);
+			return candidate.getTime();
+		}
+		const weekdays = { вс: 0, пн: 1, вт: 2, ср: 3, чт: 4, пт: 5, сб: 6, sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+		const weekdayKey = Object.keys(weekdays).find(key => new RegExp(`(?:^|\\s)${key}(?:[.,\\s]|$)`, 'i').test(label));
+		if (weekdayKey) {
+			const delta = (base.getDay() - weekdays[weekdayKey] + 7) % 7 || 7;
+			base.setDate(base.getDate() - delta);
+			base.setHours(hours, minutes, 0, 0);
+			return base.getTime();
+		}
+		return 0;
 	}
 
 	function _createDialogControlNativeRemoteRow(item, meta, nativeRow = null) {
@@ -13900,6 +17504,7 @@ if (_presetChannel) {
 		const infos = (Array.isArray(rowInfos) ? rowInfos : []).filter(info => info?.row?.parentElement);
 		if (infos.length < 2) return false;
 		const mode = _pMode();
+		const restoreNativeOrder = prefs.sortMode === 'date' && prefs.sortDirection === 'desc';
 		let state = _dialogControlNativeDateOrder.get(mode);
 		const currentKeys = infos.map(_getDialogControlNativeSortKey);
 		if (!state) {
@@ -13908,6 +17513,10 @@ if (_presetChannel) {
 		} else {
 			state.keys = _mergeDialogControlNativeSortKeys(state.keys, currentKeys);
 		}
+		// Default date-desc is Bitrix' own order. On a fresh page leave its DOM
+		// completely untouched; only restore our captured order after a custom sort
+		// has actually moved rows.
+		if (restoreNativeOrder && !_dialogControlNativeCustomSortModes.has(mode)) return false;
 		const dateRank = new Map(state.keys.map((key, index) => [key, index]));
 		const fallbackRank = new Map(currentKeys.map((key, index) => [key, index]));
 		const getItem = info => (Array.isArray(info.ids) ? info.ids.map(id => itemMap.get(id)).find(Boolean) : null) || (info.id ? itemMap.get(info.id) : null) || (info.titleKey ? itemTitleMap.get(info.titleKey) : null) || null;
@@ -13924,26 +17533,75 @@ if (_presetChannel) {
 			const metas = ids.map(id => _getDialogRecentMeta(id)).filter(Boolean);
 			return metas.find(meta => Number(meta.lastMessageTs) > 0) || metas[0] || null;
 		};
-		const messageDate = info => Number(dateMeta(info)?.lastMessageTs) || 0;
+		const displayedDates = new WeakMap();
+		const displayedDate = info => {
+			if (!info?.row) return 0;
+			if (!displayedDates.has(info.row)) displayedDates.set(info.row, _getDialogControlNativeDisplayedDate(info.row));
+			return displayedDates.get(info.row) || 0;
+		};
+		const messageDates = new WeakMap();
+		const messageDateRecord = info => {
+			if (messageDates.has(info)) return messageDates.get(info);
+			const nativeDisplayed = displayedDate(info);
+			const meta = dateMeta(info);
+			const item = getItem(info);
+			const metaDate = Number(meta?.lastMessageTs) || 0;
+			const metaSource = String(meta?.lastMessageTsSource || '');
+			const itemDate = Number(item?.lastMessageTs) || Number(item?.addedAt) || 0;
+			const itemSource = String(item?.lastMessageTsSource || '');
+			let record;
+			if (nativeDisplayed) record = { value: nativeDisplayed, source: 'native-display' };
+			else if (metaDate && metaSource && metaSource !== 'native-order') record = { value: metaDate, source: metaSource };
+			else if (itemDate) record = { value: itemDate, source: itemSource || 'catalog' };
+			else record = { value: metaDate, source: metaSource };
+			messageDates.set(info, record);
+			return record;
+		};
+		const messageDate = info => messageDateRecord(info).value;
+		const messageDateSource = info => messageDateRecord(info).source;
 		const nativeRank = info => {
 			const value = Number(dateMeta(info)?.nativeRecentRank);
 			return Number.isFinite(value) && value >= 0 ? value : null;
 		};
-		const isSyntheticDate = info => dateMeta(info)?.lastMessageTsSource === 'native-order';
 		const valueDirection = prefs.sortDirection === 'asc' ? 1 : -1;
 		const recentRankDirection = prefs.sortDirection === 'desc' ? 1 : -1;
 		const desired = infos.slice().sort((a, b) => {
-			if (prefs.sortMode === 'date') {
-				const aNativeRank = nativeRank(a);
-				const bNativeRank = nativeRank(b);
-				if ((isSyntheticDate(a) || isSyntheticDate(b)) && aNativeRank != null && bNativeRank != null && aNativeRank !== bNativeRank) {
-					return (aNativeRank - bNativeRank) * recentRankDirection;
-				}
+			if (restoreNativeOrder) {
+				// Rows first materialized while a custom sort is active are absent from
+				// the original key snapshot. Their persisted message dates are the only
+				// trustworthy way to place them back into Bitrix' date-desc feed.
 				const aDate = messageDate(a);
 				const bDate = messageDate(b);
-				if (aDate && bDate && aDate !== bDate) return (aDate - bDate) * valueDirection;
-				if (!aDate && bDate) return valueDirection;
-				if (aDate && !bDate) return -valueDirection;
+				if (aDate && bDate && aDate !== bDate) return bDate - aDate;
+				if (!aDate && bDate) return 1;
+				if (aDate && !bDate) return -1;
+				const aNativeRank = nativeRank(a);
+				const bNativeRank = nativeRank(b);
+				if (aNativeRank != null && bNativeRank != null && aNativeRank !== bNativeRank) {
+					return aNativeRank - bNativeRank;
+				}
+				return rank(a) - rank(b);
+			}
+			if (prefs.sortMode === 'date') {
+				const aDate = messageDate(a);
+				const bDate = messageDate(b);
+				if (!aDate && !bDate) return (rank(a) - rank(b)) * recentRankDirection;
+				// Unknown dates never outrank dated rows in either direction.
+				if (!aDate) return 1;
+				if (!bDate) return -1;
+				const aSource = messageDateSource(a);
+				const bSource = messageDateSource(b);
+				const bothDisplayed = aSource === 'native-display' && bSource === 'native-display';
+				const bothReal = aSource && bSource && aSource !== 'native-order' && bSource !== 'native-order';
+				// Native labels are the closest match to the original Bitrix order. For
+				// metadata, only compare two real timestamps. A synthetic native-order
+				// value is a rank surrogate and cannot be compared to wall-clock time.
+				if ((bothDisplayed || bothReal) && aDate !== bDate) return (aDate - bDate) * valueDirection;
+				const aNativeRank = nativeRank(a);
+				const bNativeRank = nativeRank(b);
+				if (aNativeRank != null && bNativeRank != null && aNativeRank !== bNativeRank) {
+					return (aNativeRank - bNativeRank) * recentRankDirection;
+				}
 			}
 			if (prefs.sortMode === 'color') {
 				const aColor = colorRank(a);
@@ -13953,6 +17611,8 @@ if (_presetChannel) {
 			}
 			return (rank(a) - rank(b)) * recentRankDirection;
 		});
+		if (restoreNativeOrder) _dialogControlNativeCustomSortModes.delete(mode);
+		else _dialogControlNativeCustomSortModes.add(mode);
 		let changed = false;
 		const byParent = new Map();
 		infos.forEach(info => {
@@ -13977,23 +17637,43 @@ if (_presetChannel) {
 		return changed;
 	}
 
-	function _getDialogControlItemForNativeRow(row, items = _getDialogControlItems()) {
+	function _buildDialogControlNativeItemIndex(items = _getDialogControlItems()) {
+		const byId = new Map();
+		const byTitle = new Map();
+		(Array.isArray(items) ? items : []).forEach(item => {
+			if (!item || _isDialogControlFolder(item)) return;
+			_getDialogControlItemIdentityKeys(item).forEach(id => {
+				if (id && !byId.has(id)) byId.set(id, item);
+			});
+			const titleKey = _normalizeDialogControlTitle(item.title);
+			if (titleKey && !byTitle.has(titleKey)) byTitle.set(titleKey, item);
+		});
+		return { byId, byTitle };
+	}
+
+	function _getDialogControlItemForNativeRow(row, items = _getDialogControlItems(), itemIndex = null) {
 		if (!row) return null;
 		const rowIds = _getDialogControlNativeRowIdentityKeys(row);
 		const titleKey = _normalizeDialogControlTitle(getChatTitleFromElement(row));
-		const source = Array.isArray(items) ? items : [];
-		return source.find(item => !_isDialogControlFolder(item) && (
-			_getDialogControlItemIdentityKeys(item).some(id => rowIds.includes(id)) ||
-			(titleKey && _normalizeDialogControlTitle(item.title) === titleKey)
-		)) || null;
+		const index = itemIndex || _buildDialogControlNativeItemIndex(items);
+		for (const id of rowIds) {
+			const item = index.byId.get(id);
+			if (item) return item;
+		}
+		return (titleKey && index.byTitle.get(titleKey)) || null;
 	}
 
 	function _syncDialogControlNativeMultiSelection(container = findContainer()) {
 		if (IS_OL_FRAME || !container || !_isDialogControlNativeMode()) return;
+		if (!_dialogControlMultiSelected.size) {
+			container.querySelectorAll?.('.--native-multi-selected').forEach(row => row.classList.remove('--native-multi-selected'));
+			return;
+		}
 		const items = _getDialogControlItems();
+		const itemIndex = _buildDialogControlNativeItemIndex(items);
 		_pruneDialogControlMultiSelection(items);
 		_getDialogControlNativeRows(container).forEach(row => {
-			const item = _getDialogControlItemForNativeRow(row, items);
+			const item = _getDialogControlItemForNativeRow(row, items, itemIndex);
 			const selected = !!item && _dialogControlMultiSelected.has(String(item.id));
 			row.classList.toggle('--native-multi-selected', selected);
 		});
@@ -14295,6 +17975,10 @@ if (_presetChannel) {
 		}, true);
 		document.addEventListener('drop', () => window.__PENA_INTERACTIONS__?.reset?.('drop'), true);
 		document.addEventListener('pointercancel', () => {
+			// Chromium emits pointercancel as part of a successfully started HTML5
+			// drag. The DataTransfer payload is protected during dragover, so the
+			// in-memory ids must live until drop/dragend instead of being discarded.
+			if (_dialogControlNativeDraggingIds.length) return;
 			window.__PENA_INTERACTIONS__?.reset?.('pointercancel');
 			_dialogControlNativeDraggingIds = [];
 			_clearDialogControlNativeDropMarks();
@@ -14421,6 +18105,7 @@ if (_presetChannel) {
 		delete row.dataset.penaNativeColor;
 		delete row.dataset.penaNativeNeedsPosition;
 		row.querySelectorAll?.('.pena-native-color-label,.pena-native-avatar-ring').forEach(el => el.remove());
+		_clearDialogControlNativeAvatarLayers(row);
 		row.querySelectorAll?.('.pena-native-avatar-ring-host').forEach(el => {
 			el.classList.remove('pena-native-avatar-ring-host');
 			el.style.removeProperty('--pena-native-color');
@@ -14548,6 +18233,112 @@ if (_presetChannel) {
 			.forEach(el => el.remove());
 	}
 
+	function _clearDialogControlNativeAvatarLayers(row) {
+		if (!row) return;
+		row.querySelectorAll?.('.pena-native-avatar-native-overlay').forEach(el => {
+			el.classList.remove('pena-native-avatar-native-overlay');
+		});
+		row.querySelectorAll?.('.pena-native-avatar-stack-host').forEach(el => {
+			el.classList.remove('pena-native-avatar-stack-host');
+		});
+	}
+
+	function _syncDialogControlNativeAvatarLayers(row, host) {
+		_clearDialogControlNativeAvatarLayers(row);
+		if (!row || !host) return;
+		const knownStackRoot = host.closest?.([
+			'.bx-im-list-recent-item__avatar',
+			'.bx-im-list-recent-item__avatar_container',
+			'.bx-im-list-item__avatar',
+			'.bx-messenger-cl-avatar'
+		].join(','));
+		const avatarLikeParent = host.parentElement?.matches?.('[class*="avatar" i]') ? host.parentElement : null;
+		let stackRoot = knownStackRoot || avatarLikeParent || host;
+		// Newer Bitrix builds add another avatar wrapper between the portrait and
+		// the typing/status badge. Climb the avatar chain so a badge that is a
+		// sibling of the nearest container still shares the ring's stacking root.
+		for (let cursor = stackRoot?.parentElement, depth = 0; cursor && cursor !== row && depth < 4; cursor = cursor.parentElement, depth += 1) {
+			if (!cursor.matches?.('[class*="avatar" i],.bx-messenger-cl-avatar')) break;
+			stackRoot = cursor;
+		}
+		if (!stackRoot || !row.contains(stackRoot)) return;
+		stackRoot.classList.add('pena-native-avatar-stack-host');
+		const overlays = new Set();
+		if (stackRoot !== host) {
+			Array.from(stackRoot.children || []).forEach(candidate => {
+				if (candidate === host || candidate.contains?.(host)) return;
+				overlays.add(candidate);
+			});
+		} else {
+			// Some Bitrix builds put both the portrait and a transient status/typing
+			// icon directly inside the avatar host and give that icon an opaque class.
+			// Preserve the portrait below the ring, but lift every non-avatar sibling.
+			Array.from(host.children || []).forEach(candidate => {
+				if (candidate.classList?.contains('pena-native-avatar-ring')) return;
+				const portraitLike = candidate.matches?.('img,picture,canvas,[class*="avatar" i]') ||
+					candidate.querySelector?.('img,picture,canvas,[class*="avatar" i]');
+				if (!portraitLike) overlays.add(candidate);
+			});
+		}
+		stackRoot.querySelectorAll?.([
+			'[class*="typing" i]',
+			'[class*="writing" i]',
+			'[aria-label*="печатает" i]'
+		].join(',')).forEach(candidate => {
+			if (candidate !== host && !candidate.contains?.(host)) overlays.add(candidate);
+		});
+		overlays.forEach(candidate => {
+			if (!candidate.classList?.contains('pena-native-avatar-ring')) {
+				candidate.classList?.add('pena-native-avatar-native-overlay');
+			}
+		});
+	}
+
+	function _resolveDialogControlNativeAvatarRingHost(row, avatar) {
+		if (!row || !avatar) return null;
+		if (!avatar.matches?.('img')) return avatar;
+		const candidates = [];
+		const seen = new Set();
+		const add = candidate => {
+			if (!candidate || candidate === row || !row.contains(candidate) || seen.has(candidate)) return;
+			seen.add(candidate);
+			candidates.push(candidate);
+		};
+		[
+			'.bx-im-avatar__content',
+			'.bx-im-component-avatar__content',
+			'.bx-im-avatar__container',
+			'.bx-im-component-avatar__container',
+			'.bx-im-list-recent-item__avatar_container',
+			'.bx-im-list-recent-item__avatar',
+			'.bx-im-list-item__avatar'
+		].forEach(selector => add(avatar.closest?.(selector)));
+		for (let cursor = avatar.parentElement, depth = 0; cursor && cursor !== row && depth < 7; cursor = cursor.parentElement, depth += 1) {
+			add(cursor);
+		}
+		const avatarRect = avatar.getBoundingClientRect?.() || { left: 0, top: 0, width: 0, height: 0 };
+		const scored = candidates.map((candidate, index) => {
+			const rect = candidate.getBoundingClientRect?.() || { left: 0, top: 0, width: 0, height: 0 };
+			const width = Math.max(0, Number(rect.width) || 0);
+			const height = Math.max(0, Number(rect.height) || 0);
+			const ratio = width > 0 && height > 0 ? Math.min(width, height) / Math.max(width, height) : 0;
+			const usableSize = width >= 20 && height >= 20 && width <= 80 && height <= 80;
+			const edgeDelta = avatarRect.width > 0 && avatarRect.height > 0
+				? Math.abs(Number(rect.left) - Number(avatarRect.left)) + Math.abs(Number(rect.top) - Number(avatarRect.top)) +
+					Math.abs(width - Number(avatarRect.width)) + Math.abs(height - Number(avatarRect.height))
+				: 100;
+			let score = ratio * 100 - index;
+			if (usableSize) score += 80;
+			if (ratio >= .9) score += 120;
+			if (edgeDelta <= 3) score += 90;
+			if (candidate.matches?.('.bx-im-avatar__content,.bx-im-component-avatar__content')) score += 180;
+			if (candidate.matches?.('.bx-im-avatar__container,.bx-im-component-avatar__container')) score += 75;
+			if (candidate.matches?.('.bx-im-list-recent-item__avatar_container') && ratio < .82) score -= 180;
+			return { candidate, score, ratio, usableSize };
+		}).filter(entry => entry.usableSize && entry.ratio >= .82).sort((a, b) => b.score - a.score);
+		return scored[0]?.candidate || avatar.parentElement || null;
+	}
+
 	function _ensureDialogControlNativeColorLabel(row, color = '') {
 		if (!row) return null;
 		const next = _normalizeDialogControlColor(color);
@@ -14556,6 +18347,7 @@ if (_presetChannel) {
 		const existing = Array.from(row.querySelectorAll?.('.pena-native-avatar-ring') || []);
 		if (!next) {
 			existing.forEach(el => el.remove());
+			_clearDialogControlNativeAvatarLayers(row);
 			row.querySelectorAll?.('.pena-native-avatar-ring-host').forEach(el => {
 				el.classList.remove('pena-native-avatar-ring-host');
 				el.style.removeProperty('--pena-native-color');
@@ -14567,9 +18359,7 @@ if (_presetChannel) {
 		}
 		const avatar = _getDialogControlNativeAvatarElement(row);
 		if (!avatar) return null;
-		const host = avatar.matches?.('img')
-			? avatar.closest?.('.bx-im-avatar__container,.bx-im-component-avatar__container,.bx-im-list-recent-item__avatar_container,.bx-im-list-item__avatar') || avatar.parentElement
-			: avatar;
+		const host = _resolveDialogControlNativeAvatarRingHost(row, avatar);
 		if (!host) return null;
 		host.classList.add('pena-native-avatar-ring-host');
 		host.style.setProperty('--pena-native-color', next);
@@ -14578,6 +18368,7 @@ if (_presetChannel) {
 		ring.className = 'pena-native-avatar-ring';
 		ring.setAttribute('aria-hidden', 'true');
 		if (ring.parentElement !== host) host.appendChild(ring);
+		_syncDialogControlNativeAvatarLayers(row, host);
 		return ring;
 	}
 
@@ -14634,8 +18425,9 @@ if (_presetChannel) {
 				_dialogControlNativeSuppressClickUntil = Date.now() + 700;
 				_dialogControlNativeSuppressClickRow = row;
 				_dialogControlNativeSuppressClickId = normId(currentItem.id);
+				const itemIndex = _buildDialogControlNativeItemIndex(items);
 				_getDialogControlNativeRows().forEach(candidate => {
-					const candidateItem = _getDialogControlItemForNativeRow(candidate, items);
+					const candidateItem = _getDialogControlItemForNativeRow(candidate, items, itemIndex);
 					candidate.classList.toggle('--native-dragging', !!candidateItem && _dialogControlNativeDraggingIds.includes(String(candidateItem.id)));
 				});
 				if (event.dataTransfer) {
@@ -14672,6 +18464,10 @@ if (_presetChannel) {
 	}
 
 	function _applyDialogControlNativeView(container = findContainer(), options = {}) {
+		if (window.__PENA_TEST_PERF_METRICS__) {
+			window.__PENA_TEST_PERF_METRICS__.nativeViewApplies =
+				(Number(window.__PENA_TEST_PERF_METRICS__.nativeViewApplies) || 0) + 1;
+		}
 		if (IS_OL_FRAME || !container) return;
 		if (!_isDialogControlNativeMode()) {
 			_clearDialogControlNativeView(container, {
@@ -14729,7 +18525,11 @@ if (_presetChannel) {
 			viewPrefs.sortMode,
 			viewPrefs.sortDirection,
 			viewPrefs.unreadOnly ? 1 : 0,
-			rowInfos.map(info => `${info.uid}:${info.id}:${info.titleKey}:${viewPrefs.sortMode === 'date' ? (Number(_getDialogRecentMeta(info.id)?.lastMessageTs) || 0) : ''}`).join('|'),
+			rowInfos.map(info => {
+				const meta = viewPrefs.sortMode === 'date' ? _getDialogRecentMeta(info.id) : null;
+				const displayedDate = viewPrefs.sortMode === 'date' ? _getDialogControlNativeDisplayedDate(info.row) : 0;
+				return `${info.uid}:${info.id}:${info.titleKey}:${displayedDate}:${meta ? `${Number(meta.lastMessageTs) || 0},${Number(meta.nativeRecentRank) || 0},${meta.lastMessageTsSource || ''}` : ''}`;
+			}).join('|'),
 			renderItems.map(item => [
 				_isDialogControlFolder(item) ? 'F' : 'D',
 				item.id || '',
@@ -15024,7 +18824,11 @@ if (_presetChannel) {
 	function _setDialogControlNativeMode(enabled) {
 		const active = !IS_OL_FRAME;
 		try {
-			if (active) localStorage.setItem(_dialogControlNativeModeKey(), '1');
+			if (active) {
+				const key = _dialogControlNativeModeKey();
+				localStorage.setItem(key, '1');
+				_dialogControlNativeModeMigrated.add(key);
+			}
 		} catch {}
 		_syncDialogControlNativeButton();
 		if (active) {
@@ -15153,7 +18957,8 @@ if (_presetChannel) {
 				const raw = event.newValue || '[]';
 				const parsed = JSON.parse(raw);
 				if (!Array.isArray(parsed)) return;
-				const migrated = _migrateDialogControlItemIds(parsed) || _enforceDialogControlFolderColorRule(parsed);
+				const migratedIds = _migrateDialogControlItemIds(parsed);
+				const migrated = _enforceDialogControlFolderColorRule(parsed) || migratedIds;
 				const normalizedRaw = migrated ? JSON.stringify(parsed) : raw;
 				if (!_dialogControlItems || Array.isArray(_dialogControlItems)) _dialogControlItems = {};
 				_dialogControlItems[mode] = parsed;
@@ -15562,6 +19367,43 @@ if (_presetChannel) {
 			addWrap.className = 'dialog-control-swatch-wrap';
 			addWrap.appendChild(addColor);
 			swatches.appendChild(addWrap);
+			const tools = document.createElement('div');
+			tools.className = 'dialog-control-palette-tools';
+			const randomColor = document.createElement('button');
+			randomColor.type = 'button';
+			randomColor.className = 'dialog-control-palette-tool --random';
+			randomColor.title = 'Выбрать случайный свободный цвет';
+			randomColor.setAttribute('aria-label', randomColor.title);
+			randomColor.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h3.2c4.8 0 4.8 10 9.6 10H20M17 4l3 3-3 3M4 17h3.2c1.9 0 3-1.5 4-3.2M14 7.3c.8-.3 1.7-.3 2.8-.3H20M17 14l3 3-3 3"/></svg><span>Случайный</span>';
+			randomColor.addEventListener('click', (ev) => {
+				ev.preventDefault();
+				ev.stopPropagation();
+				const color = _makeUnusedDialogControlColor();
+				setDraftFromColor(color);
+				commitColor(color);
+			});
+			const eyedropper = document.createElement('button');
+			eyedropper.type = 'button';
+			eyedropper.className = 'dialog-control-palette-tool --eyedropper';
+			eyedropper.title = 'Скопировать цвет с другого диалога';
+			eyedropper.setAttribute('aria-label', eyedropper.title);
+			eyedropper.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5.5 4 4M12.8 7.2l4 4M6 18l1.2-4.2L15.8 5a2.1 2.1 0 0 1 3 3l-8.7 8.7L6 18Zm0 0-1 1"/></svg><span>Пипетка</span>';
+			eyedropper.addEventListener('click', (ev) => {
+				ev.preventDefault();
+				ev.stopPropagation();
+				_closeDialogControlPalettes(true);
+				requestAnimationFrame(() => {
+					_startDialogControlColorEyedropper([], options.host || filtersHost, {
+						identity: paletteId || 'palette',
+						onPickColor: color => {
+							const normalized = _normalizeDialogControlColor(color);
+							if (!normalized) return;
+							options.onCommit(normalized);
+						}
+					});
+				});
+			});
+			tools.append(randomColor, eyedropper);
 			const pickFromPointer = (ev, commit = false) => {
 				const rect = miniPicker.getBoundingClientRect();
 				const x = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
@@ -15635,12 +19477,12 @@ if (_presetChannel) {
 				document.removeEventListener('pointerdown', closeOnOutside, true);
 				_closeDialogControlPalettes(true);
 			};
-			palette.append(preview, miniPicker, hueStrip, closePalette, swatches, notice);
+			palette.append(preview, miniPicker, hueStrip, closePalette, tools, swatches, notice);
 			setDraftFromColor(draftColor);
 			const paletteW = 246;
 			const gap = 8;
 			const margin = 12;
-			const paletteH = Math.min(250, window.innerHeight - margin * 2);
+			const paletteH = Math.min(288, window.innerHeight - margin * 2);
 			const liveAnchorRect = anchorBtn.isConnected ? anchorBtn.getBoundingClientRect() : null;
 			const btnRect = liveAnchorRect && liveAnchorRect.width > 0 && liveAnchorRect.height > 0
 				? liveAnchorRect
@@ -16096,6 +19938,10 @@ if (_presetChannel) {
 					unreadCount: status.unreadCount
 				}, `${status.childCount} ${_ruPlural(status.childCount, 'диалог', 'диалога', 'диалогов')}`);
 			}
+		}
+		if (!IS_OL_FRAME && _isDialogControlNativeMode() && _dialogControlNativeSwitcherNode?.isConnected) {
+			const context = _dialogControlNativeSwitcherNode._penaNativeRenderContext;
+			_renderDialogControlNativeSwitcher(context?.container?.isConnected ? context.container : findContainer(), context?.source || items);
 		}
 		_dialogControlLastSig = _getDialogControlStatusSig();
 		if (h && document.body.contains(h)) _scheduleDialogControlSelectionOutlines();
@@ -20315,7 +24161,36 @@ if (_presetChannel) {
 				}
 				commitColor(draftColor);
 			});
-			palette.append(preview, miniPicker, hueStrip, closePalette, swatches, notice);
+			const tools = document.createElement('div');
+			tools.className = 'dialog-control-palette-tools';
+			const randomColor = document.createElement('button');
+			randomColor.type = 'button';
+			randomColor.className = 'dialog-control-palette-tool --random';
+			randomColor.title = 'Выбрать случайный свободный цвет';
+			randomColor.setAttribute('aria-label', randomColor.title);
+			randomColor.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h3.2c4.8 0 4.8 10 9.6 10H20M17 4l3 3-3 3M4 17h3.2c1.9 0 3-1.5 4-3.2M14 7.3c.8-.3 1.7-.3 2.8-.3H20M17 14l3 3-3 3"/></svg><span>Случайный</span>';
+			randomColor.addEventListener('click', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				const color = _makeUnusedDialogControlColor();
+				applyDraft(color);
+				commitColor(color);
+			});
+			const eyedropper = document.createElement('button');
+			eyedropper.type = 'button';
+			eyedropper.className = 'dialog-control-palette-tool --eyedropper';
+			eyedropper.title = 'Скопировать цвет с другого диалога';
+			eyedropper.setAttribute('aria-label', eyedropper.title);
+			eyedropper.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5.5 4 4M12.8 7.2l4 4M6 18l1.2-4.2L15.8 5a2.1 2.1 0 0 1 3 3l-8.7 8.7L6 18Zm0 0-1 1"/></svg><span>Пипетка</span>';
+			eyedropper.addEventListener('click', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				const targetIds = _getDialogControlColorTargetIds(item);
+				_closeDialogControlPalettes(true);
+				requestAnimationFrame(() => _startDialogControlColorEyedropper(targetIds, h));
+			});
+			tools.append(randomColor, eyedropper);
+			palette.append(preview, miniPicker, hueStrip, closePalette, tools, swatches, notice);
 			applyDraft(draftColor);
 			colorBtn.addEventListener('click', (e) => {
 				e.preventDefault();
@@ -20332,7 +24207,7 @@ if (_presetChannel) {
 				const paletteW = 246;
 				const gap = 8;
 				const margin = 12;
-				const paletteH = Math.min(250, window.innerHeight - margin * 2);
+				const paletteH = Math.min(288, window.innerHeight - margin * 2);
 				const btnRect = colorBtn.getBoundingClientRect();
 				const left = Math.max(margin, Math.min(btnRect.right - paletteW, window.innerWidth - paletteW - margin));
 				const placeBelow = btnRect.bottom + gap + paletteH <= window.innerHeight - margin;
@@ -20467,7 +24342,7 @@ if (_presetChannel) {
 		}
 		const restDialogId = _getDialogControlRestDialogId(id, el);
 		const title = getChatTitleFromElement(el);
-		const taskMeta = isTasksChatsModeNow() ? _extractTaskMetaFromElement(el, title) : null;
+		const taskMeta = _currentPanelMode === 'tasks' ? _extractTaskMetaFromElement(el, title) : null;
 		const items = _getDialogControlItems();
 		const existing = items.find(x => !_isDialogControlFolder(x) && normId(x.id) === normId(id));
 		if (existing) {
@@ -20522,7 +24397,7 @@ if (_presetChannel) {
 		}
 		const restDialogId = _getDialogControlRestDialogId(id, el);
 		const title = getChatTitleFromElement(el);
-		const taskMeta = isTasksChatsModeNow() ? _extractTaskMetaFromElement(el, title) : null;
+		const taskMeta = _currentPanelMode === 'tasks' ? _extractTaskMetaFromElement(el, title) : null;
 		const items = _getDialogControlItems();
 		const existingIdx = items.findIndex(x => normId(x.id) === normId(id));
 		if (existingIdx >= 0) {
@@ -20740,6 +24615,8 @@ if (_presetChannel) {
 	// === PENA: Category management ===
 	const CAT_VIS_LS_KEY = 'pena.cat.visibility';
 	const CUSTOM_CATS_LS_KEY = 'pena.cat.custom';
+	let _customCatsCacheRaw = null;
+	let _customCatsCache = [];
 
 	// All built-in categories (type, label, cssPattern)
 	const BUILTIN_CATS = [
@@ -20776,11 +24653,37 @@ if (_presetChannel) {
 		saveCatVisibility(vis);
 	}
 	function loadCustomCats() {
-		try { return JSON.parse(localStorage.getItem(CUSTOM_CATS_LS_KEY) || '[]'); } catch { return []; }
+		try {
+			const raw = localStorage.getItem(CUSTOM_CATS_LS_KEY) || '[]';
+			if (raw === _customCatsCacheRaw) return _customCatsCache;
+			const parsed = JSON.parse(raw);
+			_customCatsCache = (Array.isArray(parsed) ? parsed : []).map(category => {
+				const next = { ...category };
+				try {
+					Object.defineProperty(next, '_penaRx', {
+						value: next.rxPattern ? new RegExp(next.rxPattern, 'i') : null,
+						enumerable: false
+					});
+				} catch {}
+				return next;
+			});
+			_customCatsCacheRaw = raw;
+			return _customCatsCache;
+		} catch {
+			_customCatsCacheRaw = '[]';
+			_customCatsCache = [];
+			return _customCatsCache;
+		}
 	}
 	function saveCustomCats(arr) {
-		try { localStorage.setItem(CUSTOM_CATS_LS_KEY, JSON.stringify(arr)); } catch {}
+		try {
+			_customCatsCacheRaw = null;
+			localStorage.setItem(CUSTOM_CATS_LS_KEY, JSON.stringify(arr));
+		} catch {}
 	}
+	window.addEventListener('storage', event => {
+		if (event.key === CUSTOM_CATS_LS_KEY) _customCatsCacheRaw = null;
+	});
 	function getAllVisibleCats() {
 		const result = BUILTIN_CATS.filter(c => isCatVisible(c.type));
 		const custom = loadCustomCats().filter(c => isCatVisible(c.type));
@@ -21449,7 +25352,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .pena-extension-toolbar-controls.--disabled .pena-extension-toolbar-version{color:#89929d}
 .pena-extension-toolbar-controls.--disabled .pena-extension-toolbar-toggle{background:#eceff2;color:#7b8794}
 .pena-extension-toolbar-controls.--disabled .pena-extension-toolbar-toggle:hover{background:#e2e6ea;color:#4d5966}
-.pena-native-folder-switcher{position:relative!important;top:auto!important;z-index:24;display:block;visibility:hidden!important;flex:0 0 auto!important;align-self:stretch;width:var(--pena-native-panel-width,100%);min-width:0;margin:0 0 6px;padding:6px 8px 5px;border:0;border-bottom:1px solid rgba(15,23,42,.08);border-radius:0;background:#fff!important;background-color:#fff!important;background-image:none!important;opacity:1!important;mix-blend-mode:normal!important;box-shadow:0 5px 9px rgba(15,23,42,.08);box-sizing:border-box;pointer-events:none!important;contain:layout style;color:#263241;font:400 12px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial;letter-spacing:0;text-align:left;text-transform:none;overflow:visible;overflow-anchor:none;animation:none!important;transform:none!important;isolation:isolate}
+.pena-native-folder-switcher{position:relative!important;top:auto!important;z-index:24;display:block;visibility:hidden!important;flex:0 0 auto!important;align-self:stretch;width:var(--pena-native-panel-width,100%);min-width:0;margin:0;padding:6px 8px 5px;border:0;border-bottom:1px solid rgba(15,23,42,.08);border-radius:0;background:#fff!important;background-color:#fff!important;background-image:none!important;opacity:1!important;mix-blend-mode:normal!important;box-shadow:0 5px 9px rgba(15,23,42,.08);box-sizing:border-box;pointer-events:none!important;contain:layout style;color:#263241;font:400 12px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial;letter-spacing:0;text-align:left;text-transform:none;overflow:visible;overflow-anchor:none;animation:none!important;transform:none!important;isolation:isolate}
 .pena-dialog-native-mode .pena-native-folder-switcher-ready>.pena-native-folder-switcher:not(.--mounting){visibility:visible!important;pointer-events:auto!important}
 .pena-native-folder-switcher.--mounting{display:none!important;visibility:hidden!important;opacity:0!important;pointer-events:none!important}
 .pena-native-folder-switcher *{box-sizing:border-box;letter-spacing:0}
@@ -21528,8 +25431,10 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .pena-native-chat-row.--pena-native-static-row{position:relative}
 .pena-native-chat-row-paint.--native-colored,.pena-native-chat-row-paint.--native-folder-colored{background:transparent!important}
 .pena-native-chat-row-paint{border-radius:inherit!important;background-clip:padding-box}
-.pena-native-avatar-ring-host{position:relative!important;overflow:visible!important}
-.pena-native-avatar-ring{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;transform:none!important;display:block!important;border:4px solid var(--pena-native-color,#3b82f6)!important;border-radius:999px!important;background:transparent!important;box-shadow:0 0 0 1px rgba(255,255,255,.96),inset 0 0 0 1px rgba(15,23,42,.42)!important;box-sizing:border-box!important;pointer-events:none!important;z-index:5!important}
+.pena-native-avatar-ring-host{position:relative!important;overflow:visible!important;isolation:isolate!important}
+.pena-native-avatar-ring{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;transform:none!important;display:block!important;border:4px solid var(--pena-native-color,#3b82f6)!important;border-radius:999px!important;background:transparent!important;box-shadow:0 0 0 1px rgba(255,255,255,.96),inset 0 0 0 1px rgba(15,23,42,.42)!important;box-sizing:border-box!important;pointer-events:none!important;z-index:1!important}
+.pena-native-avatar-stack-host{isolation:isolate!important}
+.pena-native-avatar-native-overlay,.pena-native-avatar-stack-host [class*="typing" i],.pena-native-avatar-stack-host [class*="writing" i],.pena-native-avatar-stack-host [aria-label*="печатает" i]{z-index:7!important}
 .pena-native-chat-row.--native-multi-selected{background:transparent!important;background-color:transparent!important;box-shadow:0 0 0 2px #20aee5 inset!important}
 .pena-native-chat-row[draggable="true"]{cursor:pointer}
 .pena-native-chat-row.--native-dragging{opacity:.48;cursor:grabbing;filter:saturate(.72)}
@@ -21727,6 +25632,11 @@ html.pena-dialog-color-eyedropper,html.pena-dialog-color-eyedropper *{cursor:cro
 .dialog-control-hue-strip{grid-column:2;grid-row:2;position:relative;height:14px;min-height:14px;border:1px solid rgba(255,255,255,.18);border-radius:999px;background:rgba(8,12,18,.82);box-shadow:0 0 0 1px rgba(0,0,0,.38) inset;cursor:crosshair;touch-action:none;box-sizing:border-box}
 .dialog-control-hue-strip::before{content:"";position:absolute;inset:2px;border-radius:999px;background:linear-gradient(90deg,#f04444,#f59e0b 16%,#f5e642 32%,#3bd671 48%,#20c5c7 64%,#4d9dff 78%,#a855f7 90%,#f04444);pointer-events:none}
 .dialog-control-hue-knob{position:absolute;left:0;top:50%;z-index:1;width:10px;height:18px;border:2px solid #fff;border-radius:999px;background:transparent;box-shadow:0 2px 8px rgba(0,0,0,.5);transform:translate(-50%,-50%);pointer-events:none;box-sizing:border-box}
+.dialog-control-palette-tools{grid-column:1 / -1;display:grid;grid-template-columns:1fr 1fr;gap:6px;min-width:0}
+.dialog-control-palette-tool{min-width:0;height:27px;border:1px solid rgba(255,255,255,.14);border-radius:7px;background:rgba(255,255,255,.065);color:#dce8f8;padding:0 7px;display:inline-flex;align-items:center;justify-content:center;gap:5px;font:700 10px/1 system-ui,-apple-system,Segoe UI,Roboto,Arial;cursor:pointer;box-sizing:border-box}
+.dialog-control-palette-tool:hover{border-color:rgba(77,157,255,.55);background:rgba(77,157,255,.16);color:#fff}
+.dialog-control-palette-tool svg{width:13px;height:13px;flex:0 0 auto;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.dialog-control-palette-tool span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dialog-control-palette-close{position:absolute;right:8px;top:8px;width:16px;height:16px;min-height:16px;border:0;border-radius:0;background:transparent;color:#ff8f8f;padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
 .dialog-control-palette-close:hover{background:transparent;color:#ffd0d0;transform:none}
 .dialog-control-palette-close svg{width:10px;height:10px;fill:currentColor}
@@ -23414,7 +27324,8 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 		button.textContent = 'Обновление...';
 		try {
 			const result = await _refreshDialogRecentCatalog({ force: true, full: true, reason: 'manual' });
-			_showDialogDockToast(`Обновлено: ${result.count || 0}`, 'ok');
+			if (result?.incomplete) _showDialogDockToast('Проверка не завершена — повторяем автоматически', 'danger');
+			else _showDialogDockToast(`Обновлено: ${result.count || 0}`, 'ok');
 		} catch {
 			_showDialogDockToast('Не удалось обновить чаты', 'danger');
 		} finally {
@@ -23665,6 +27576,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 			_modeFiltersCache[_currentPanelMode] = JSON.parse(JSON.stringify(filters));
 			pane.remove();
 			filtersHost = null;
+			_finishDialogTimePendingActivity();
 			_currentPanelMode = needMode; // фиксируем режим ДО loadFilters/saveFilters
 			filters = _modeFiltersCache[needMode] ? JSON.parse(JSON.stringify(_modeFiltersCache[needMode])) : loadFilters();
 			_invalidateDialogControlDomReadCache();
@@ -23673,7 +27585,6 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 			_scheduleDialogControlNativeView(container, { restoreDisplay: false, forceShow: true });
 			await buildFiltersPanel().catch(() => {});
 			_setPanelModeSwitching(false);
-			_scheduleDialogNativeModeLoad('mode-switch', 60);
 			if (filtersHost) {
 				_renderDialogControlPanel(filtersHost);
 				_updateDialogControlUI(filtersHost);
@@ -23754,19 +27665,25 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 			if (_dialogNativePassThroughCaptureViewport && _dialogNativePassThroughCaptureHandler) {
 				_dialogNativePassThroughCaptureViewport.removeEventListener('scroll', _dialogNativePassThroughCaptureHandler);
 			}
+			if (_dialogNativePassThroughCaptureRaf) {
+				cancelAnimationFrame(_dialogNativePassThroughCaptureRaf);
+				_dialogNativePassThroughCaptureRaf = null;
+			}
 			_dialogNativePassThroughCaptureViewport = passThroughViewport;
 			const passThroughMode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
 			_dialogNativePassThroughCaptureHandler = passThroughViewport
 				? () => {
-					if (!_dialogNativeOriginalScrollActive && !_dialogNativeOriginalScrollFinishing && !_dialogNativeHealthProbeActive &&
-						isVisibleElement(container) && window.__PENA_ACTIVE_LIST_CONTEXT__?.mode === passThroughMode) {
+					if (_dialogNativePassThroughCaptureRaf) return;
+					_dialogNativePassThroughCaptureRaf = requestAnimationFrame(() => {
+						_dialogNativePassThroughCaptureRaf = null;
+						if (_dialogNativeOriginalScrollActive || _dialogNativeOriginalScrollFinishing || _dialogNativeHealthProbeActive ||
+							!isVisibleElement(container) || window.__PENA_ACTIVE_LIST_CONTEXT__?.mode !== passThroughMode) return;
 						_dialogNativeScrollPositions.set(passThroughMode, {
 							top: Math.max(0, Number(passThroughViewport.scrollTop) || 0),
 							left: Math.max(0, Number(passThroughViewport.scrollLeft) || 0),
 							trusted: true
 						});
-					}
-					_scheduleDialogNativePassThroughRefresh(180);
+					});
 				}
 				: null;
 			if (passThroughViewport && _dialogNativePassThroughCaptureHandler) {
@@ -23779,32 +27696,77 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 		const itemSel = IS_OL_FRAME
 			? '.bx-messenger-cl-item, .bx-messenger-recent-group'
 			: `${_CHAT_LIST_ITEM_SELECTOR},${_CHAT_SEARCH_ITEM_SELECTOR}`;
-		const controlStatusSel = '.bx-im-list-recent-item__counter_number,.bx-messenger-cl-count-digit,[class*="mention" i],[title*="упом" i],[title*="mention" i],[aria-label*="упом" i],[aria-label*="mention" i],[data-id*="mention" i],[data-testid*="mention" i],[data-test-id*="mention" i]';
+		const controlStatusSel = '.bx-im-list-recent-item__counter_number,.bx-im-list-recent-item__counters,.bx-messenger-cl-count-digit,[class*="mention" i],[class*="unread" i],[title*="упом" i],[title*="mention" i],[aria-label*="упом" i],[aria-label*="mention" i],[aria-label*="непроч" i],[aria-label*="unread" i],[data-id*="mention" i],[data-testid*="mention" i],[data-test-id*="mention" i]';
 		const controlRowSel = '.bx-im-list-recent-item__wrap,.bx-im-list-item,.bx-messenger-cl-item';
-		const rowIdentityAttributes = new Set(['data-id', 'data-dialog-id', 'data-dialog-id-value', 'data-dialogid', 'title', 'aria-label']);
-		const mutationTouchesBitrixRowIdentity = mutation => {
+		const rowIdentityAttributes = new Set([
+			'data-id', 'data-dialog-id', 'data-dialog-id-value', 'data-dialogid',
+			'data-chat-id', 'data-user-id', 'data-entity-id', 'href'
+		]);
+		const getMutationOwnerRow = mutation => {
 			const mutationElement = mutation.target?.nodeType === 1 ? mutation.target : mutation.target?.parentElement || null;
-			const ownerRow = mutationElement?.matches?.(controlRowSel)
-				? mutationElement
-				: mutationElement?.closest?.(controlRowSel);
-			if (mutation.type === 'attributes') return !!ownerRow && rowIdentityAttributes.has(mutation.attributeName);
-			if (mutation.type === 'characterData') return !!ownerRow;
+			return mutationElement?.matches?.(controlRowSel) ? mutationElement : mutationElement?.closest?.(controlRowSel) || null;
+		};
+		const mutationTouchesBitrixCounterState = mutation => {
+			const mutationElement = mutation.target?.nodeType === 1 ? mutation.target : mutation.target?.parentElement || null;
+			const ownerRow = getMutationOwnerRow(mutation);
+			if (!ownerRow) return false;
+			if (mutation.type === 'attributes') {
+				return !!(mutationElement?.matches?.(controlStatusSel) || mutationElement?.closest?.(controlStatusSel));
+			}
+			if (mutation.type === 'characterData') return !!mutationElement?.closest?.(controlStatusSel);
 			if (mutation.type !== 'childList') return false;
-			if (ownerRow) return true;
+			if (mutationElement?.matches?.(controlStatusSel) || mutationElement?.closest?.(controlStatusSel)) return true;
+			return [...mutation.addedNodes, ...mutation.removedNodes].some(node =>
+				node.nodeType === 1 && (node.matches?.(controlStatusSel) || node.querySelector?.(controlStatusSel))
+			);
+		};
+		const mutationTouchesBitrixRowIdentity = mutation => {
+			const ownerRow = getMutationOwnerRow(mutation);
+			if (mutationTouchesBitrixCounterState(mutation)) return false;
+			if (mutation.type === 'attributes') return !!ownerRow && rowIdentityAttributes.has(mutation.attributeName);
+			if (mutation.type === 'characterData') return false;
+			if (mutation.type !== 'childList') return false;
+			// Replacing preview text, delivery state or a typing indicator inside an
+			// existing row does not change the dialog identity.
+			if (ownerRow) return false;
 			return [...mutation.addedNodes, ...mutation.removedNodes].some(node =>
 				node.nodeType === 1 && (node.matches?.(itemSel) || node.querySelector?.(itemSel))
 			);
 		};
+		const mutationTouchesBitrixRowContent = mutation => {
+			if (!getMutationOwnerRow(mutation) || mutationTouchesBitrixCounterState(mutation)) return false;
+			if (mutation.type === 'characterData' || mutation.type === 'childList') return true;
+			return mutation.type === 'attributes' && (mutation.attributeName === 'title' || mutation.attributeName === 'aria-label');
+		};
 
 		obs = new MutationObserver((mutations) => {
 		if (_dialogNativePrefetchActive || _dialogNativeOriginalScrollActive) {
+			if (_dialogNativeOriginalScrollActive && !IS_OL_FRAME && _isDialogControlNativePassThrough() &&
+				mutations.some(mutationTouchesBitrixRowIdentity)) {
+				// Bitrix can recycle the final row in the same frame in which traversal
+				// settles. Remember that mutation and repaint it after the fenced pass.
+				_dialogNativePassThroughRefreshPending = true;
+			}
 			return;
 		}
 		if (!IS_OL_FRAME && _isDialogControlNativeMode() && _isDialogControlNativePassThrough()) {
+			const counterIds = new Set(mutations.filter(mutationTouchesBitrixCounterState)
+				.map(mutation => normId(getChatIdFromElement(getMutationOwnerRow(mutation))))
+				.filter(Boolean));
+			if (counterIds.size) _scheduleDialogNativeStatusRefresh(container, counterIds, 55);
 			if (mutations.some(mutationTouchesBitrixRowIdentity)) {
 				// Newly virtualized rows must inherit an active PENA search before they
-				// can flash unfiltered in the native list.
+				// can flash unfiltered in the native list. Do not suppress this with the
+				// coarse native-mutation grace: Bitrix can recycle its pool inside the same
+				// 180 ms window as our sort, and those real rows would otherwise stay raw.
 				_scheduleDialogNativePassThroughRefresh(filters.query ? 24 : 120);
+			}
+			const contentRows = new Set(mutations
+				.filter(mutationTouchesBitrixRowContent)
+				.map(getMutationOwnerRow)
+				.filter(Boolean));
+			if (contentRows.size) {
+				_scheduleDialogNativePresentationRefresh(container, contentRows, 500);
 			}
 			return;
 		}
@@ -23898,7 +27860,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 }, 80);
 });
 
-	obs.observe(container, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class', 'style', 'title', 'aria-label', 'data-id', 'data-dialog-id', 'data-dialog-id-value', 'data-dialogid', 'data-testid', 'data-test-id'] });
+	obs.observe(container, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'aria-hidden', 'title', 'aria-label', 'href', 'data-id', 'data-dialog-id', 'data-dialog-id-value', 'data-dialogid', 'data-chat-id', 'data-user-id', 'data-entity-id', 'data-counter', 'data-count', 'data-value', 'data-testid', 'data-test-id'] });
 	log('observeContainer: подписан на DOM изменения');
 }
 
@@ -24052,7 +28014,9 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 					}
 					_syncDialogRecentSourceGateState();
 					if (!previous?.mode) {
-						_scheduleDialogNativeModeLoad('initial-mount', 90);
+						if (window.__PENA_TEST_SKIP_INITIAL_MOUNT__ !== true) {
+							_scheduleDialogNativeModeLoad('initial-mount', 90);
+						}
 					} else if (previous.mode !== next?.mode || previous.list !== next.list || previous.viewport !== next.viewport) {
 						_scheduleDialogNativeModeLoad(previous.mode !== next?.mode ? 'mode-switch' : 'source-remount', 90);
 					}
@@ -24094,9 +28058,11 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 			: (onChats ? getPanelModeKey() : _currentPanelMode);
 		const modeChanged = onChats && _currentPanelMode !== needMode;
 		if (modeChanged) {
+			_clearDialogControlCurrentGrace();
 			_forceCloseDialogControlPalettes();
 			_stopDialogControlColorEyedropper();
 			_modeFiltersCache[_currentPanelMode] = JSON.parse(JSON.stringify(filters));
+			_finishDialogTimePendingActivity();
 			_currentPanelMode = needMode;
 			filters = _modeFiltersCache[needMode] ? JSON.parse(JSON.stringify(_modeFiltersCache[needMode])) : loadFilters();
 			_bitrixSearchSourceInput = null;
@@ -24104,13 +28070,23 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 			_invalidateDialogControlDomReadCache();
 			_dialogControlNativeViewSig = '';
 			_dialogControlNativeSwitcherSig = '';
+			// Publish the new mode synchronously. Lifecycle reconciliation is
+			// intentionally deferred, but consumers must never observe progress
+			// from the previously visible chat source in the meantime.
+			_publishDialogRecentSyncState();
 		}
 		const currentContainer = onChats
 			? (lifecycleContext?.list?.isConnected ? lifecycleContext.list : findContainer())
 			: null;
+		_armDialogTimeVisitTracking();
 		if (currentContainer) _ensureDialogRecentRuntime();
-		if (currentContainer && modeChanged) _scheduleDialogNativeModeLoad('mode-switch', 60);
+		// Native lifecycle owns real list transitions. Keep this only as a fallback
+		// for old/test pages where the lifecycle controller is unavailable.
+		if (currentContainer && modeChanged && !_nativeLifecycleController) {
+			_scheduleDialogNativeModeLoad('mode-switch', 60);
+		}
 		if (currentContainer && currentContainer !== _observedDialogContainer) {
+			_clearDialogControlCurrentGrace(_pMode());
 			armObserver(currentContainer);
 			_invalidateDialogControlDomReadCache();
 			_dialogControlNativeViewSig = '';
@@ -24226,6 +28202,10 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 				root: document.body || document.documentElement,
 				resolveCandidates: _resolveNativeLifecycleCandidates,
 				resolvePreferredMode: () => getPanelModeKey() === 'tasks' ? 'tasks' : 'chats',
+				onRelevantMutation() {
+					const visibleMode = getPanelModeKey() === 'tasks' ? 'tasks' : 'chats';
+					if (visibleMode !== _pMode()) _publishDialogRecentModeBoundary(visibleMode);
+				},
 				isRelevantMutation(record) {
 					if (!record) return true;
 					const target = record.target?.nodeType === 1 ? record.target : record.target?.parentElement || null;
@@ -24273,6 +28253,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 	}
 
 	await waitForContainer(5000).catch(() => {});
+	if (!IS_OL_FRAME) _armDialogTimeVisitTracking();
 	_ensureDialogRecentRuntime();
 
 	if (IS_OL_FRAME) {

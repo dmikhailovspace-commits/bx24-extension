@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { collectPageErrors, startHarnessServer } from './lib/harness-server.mjs';
 
 const require = createRequire(import.meta.url);
@@ -102,6 +103,9 @@ const runScenario = async (name, test, query = '', expectedWindowCount = 401) =>
     console.log(`PASS recent sync: ${name}`);
   } catch (error) {
     failures.push(`${name}: ${error?.message || error}`);
+    const diagnostic = await page.evaluate(() => ({ before: window.__storageBeforeMigrationTest, after: window.__storageAfterMigrationTest, sync: window.__PENA_RECENT_SYNC__, items: window.__recentHarness?.managedItems?.(), storage: localStorage.getItem('pena.dialogControl.v1.chats'), rest: window.__PENA_REST_DIAGNOSTICS__?.snapshot() })).catch(() => null);
+    mkdirSync(new URL('./artifacts/', import.meta.url), { recursive: true });
+    writeFileSync(new URL(`./artifacts/recent-failure-${name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.json`, import.meta.url), JSON.stringify({ name, error: String(error), diagnostic, pageErrors }, null, 2));
     console.error(`FAIL recent sync: ${name}\n  ${error?.stack || error}`);
   } finally {
     await context.close();
@@ -183,7 +187,7 @@ const runCacheFallbackScenario = async () => {
     try {
       await page.waitForFunction(() => {
         const sync = window.__PENA_RECENT_SYNC__;
-        return sync && !sync.inFlight && sync.phase === 'error' && !!sync.error && sync.count === 401 && sync.ready;
+        return sync && !sync.inFlight && sync.phase === 'ready' && !sync.error && !!sync.backgroundError && sync.count === 401 && sync.ready;
       }, null, { timeout: 10000 });
     } catch (error) {
       const diagnostic = await page.evaluate(() => ({
@@ -286,7 +290,8 @@ const runLegacyCacheMigrationScenario = async () => {
   try {
     await page.goto(`${server.baseUrl}/tests/recent-sync-harness.html?legacycache=1&alwaysrecenterror=1&countererror=1`);
     await page.waitForFunction(() => window.__recentHarness.repositoryCache()?.records?.length === 2 && localStorage.getItem('pena.dialogRecentCache.v2') === null);
-    await page.waitForFunction(() => window.__PENA_RECENT_SYNC__?.ready && window.__PENA_RECENT_SYNC__?.error && !window.__PENA_RECENT_SYNC__?.inFlight);
+    await page.waitForFunction(() => window.__PENA_RECENT_SYNC__?.ready && !window.__PENA_RECENT_SYNC__?.error &&
+		!!window.__PENA_RECENT_SYNC__?.backgroundError && !window.__PENA_RECENT_SYNC__?.inFlight);
     const repository = await page.evaluate(() => window.__recentHarness.repositoryCache());
     assert.deepEqual(repository.records.map(record => record.id).sort(), ['chat1', 'chat2']);
     assert.equal(repository.manifest.count, 2);
@@ -315,6 +320,10 @@ const runMandatoryPageTailScenario = async () => {
 	const ids = await managedIds(page);
 	assert.equal(ids.length, 401);
 	assert.ok(ids.includes('chat150'), 'Controlled dialog was dropped after the legacy 100-dialog cap was removed');
+	await page.locator('.pena-native-folder-tab[title="Хвост страницы"]').click();
+	await page.waitForFunction(() => window.__recentHarness.calls().some(call =>
+		call.method === 'im.dialog.get' && call.dialogId === 'chat150'
+	), null, { timeout: 5000 });
 	const calls = await page.evaluate(() => window.__recentHarness.calls());
 	assert.deepEqual(calls.filter(call => call.method === 'im.recent.list').map(call => call.offset), [0, 200, 400]);
 	assert.equal(calls.filter(call => call.method === 'im.dialog.get' && call.dialogId === 'chat150').length, 1, 'Controlled dialog from im.recent.list was not validated through im.dialog.get');
@@ -408,10 +417,22 @@ const runRepositoryReconnectMergeScenario = async () => {
 	await page.locator('.pena-native-folder-switcher').waitFor({ state: 'visible', timeout: 5000 });
 	await waitForInitialSync(page);
 	assertExactIds(await managedIds(page), expectedIds(1, 401), 'Offline catalog was incomplete before repository reconnect');
-	await page.waitForFunction(() => {
-	  const cache = window.__recentHarness.repositoryCache();
-	  return cache?.manifest?.revision === 3 && cache.records?.length === 402;
-	}, null, { timeout: 10000 });
+	try {
+	  await page.waitForFunction(() => {
+		const cache = window.__recentHarness.repositoryCache();
+		return cache?.manifest?.revision === 3 && cache.records?.length === 402;
+	  }, null, { timeout: 10000 });
+	} catch (error) {
+	  const diagnostic = await page.evaluate(() => {
+		const repository = window.__recentHarness.repositoryCache();
+		return {
+		  repository: { manifest: repository?.manifest || null, recordCount: repository?.records?.length || 0 },
+		  events: window.__recentHarness.repositoryEvents(),
+		  lifecycle: window.__PENA_NATIVE_PREFETCH__.status()
+		};
+	  });
+	  throw new Error(`Repository reconnect did not settle: ${JSON.stringify(diagnostic)}; ${error.message}`);
+	}
 	const state = await page.evaluate(() => ({
 	  repository: window.__recentHarness.repositoryCache(),
 	  events: window.__recentHarness.repositoryEvents(),
@@ -461,10 +482,24 @@ const runRepositoryManifestMonotonicMergeScenario = async () => {
 	  return { result, status: window.__PENA_NATIVE_PREFETCH__.status() };
 	});
 	assert.equal(materialized.result.incomplete, undefined, `Baseline native materialization failed: ${JSON.stringify(materialized.result)}`);
-	assert.equal(materialized.status.modeStates.chats.materialization.state, 'ready', 'Baseline native materialization was not recorded');
+	assert.equal(materialized.status.modeStates.chats.materialization.state, 'confirming', 'First physical pass bypassed mandatory cold confirmation');
+	assert.equal(materialized.status.modeStates.chats.materialization.nativePassCount, 1, 'First physical pass was recorded with the wrong pass count');
+	assert.equal(materialized.status.modeStates.chats.materialization.needsColdConfirmation, true, 'First physical pass was certified before cold confirmation');
 	assert.equal(materialized.status.modeStates.chats.materialization.count, 401, 'Baseline native materialization has the wrong count');
 	assert.ok(Number(materialized.status.materializationRevisions.chats) > 0, 'Baseline native materialization has no revision');
+	await page.waitForFunction(firstRevision => {
+	  const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
+	  const materialization = status?.modeStates?.chats?.materialization;
+	  return materialization?.state === 'ready' &&
+		materialization?.nativePassCount === 2 &&
+		materialization?.needsColdConfirmation === false &&
+		Number(status?.materializationRevisions?.chats || 0) === Number(firstRevision) + 1 &&
+		status?.originalActive !== true && status?.modeLoadPending !== true;
+	}, materialized.status.materializationRevisions.chats, { timeout: 10000 });
 	const liveCatalog = await page.evaluate(() => window.__PENA_NATIVE_PREFETCH__.status());
+	assert.equal(liveCatalog.modeStates.chats.materialization.state, 'ready', 'Cold confirmation did not certify the baseline materialization');
+	assert.equal(liveCatalog.modeStates.chats.materialization.nativePassCount, 2, 'Cold confirmation did not record the second physical pass');
+	assert.equal(liveCatalog.modeStates.chats.materialization.needsColdConfirmation, false, 'Cold confirmation remained pending after the second pass');
 	assert.equal(liveCatalog.modeCounts.chats, 401, 'Live catalog did not reach 401 dialogs before reconnect');
 	assert.ok(Number(liveCatalog.modeLoadedAt.chats) > 0, 'Live catalog has no completion timestamp before reconnect');
 
@@ -488,10 +523,22 @@ const runRepositoryManifestMonotonicMergeScenario = async () => {
 	const failedAttempt = failed.status.modeStates.chats.attempt;
 
 	assert.equal(await page.evaluate(() => window.__recentHarness.connectRepository()), true, 'Repository bridge was already connected');
-	await page.waitForFunction(() => {
-	  const cache = window.__recentHarness.repositoryCache();
-	  return cache?.manifest?.revision === 3 && cache.records?.length === 402;
-	}, null, { timeout: 10000 });
+	try {
+	  await page.waitForFunction(() => {
+		const cache = window.__recentHarness.repositoryCache();
+		return cache?.manifest?.revision === 3 && cache.records?.length === 402;
+	  }, null, { timeout: 10000 });
+	} catch (error) {
+	  const diagnostic = await page.evaluate(() => {
+		const repository = window.__recentHarness.repositoryCache();
+		return {
+		  repository: { manifest: repository?.manifest || null, recordCount: repository?.records?.length || 0 },
+		  events: window.__recentHarness.repositoryEvents(),
+		  lifecycle: window.__PENA_NATIVE_PREFETCH__.status()
+		};
+	  });
+	  throw new Error(`Repository reconnect did not settle: ${JSON.stringify(diagnostic)}; ${error.message}`);
+	}
 	const state = await page.evaluate(() => ({
 	  repository: window.__recentHarness.repositoryCache(),
 	  events: window.__recentHarness.repositoryEvents(),
@@ -538,13 +585,17 @@ try {
 	await runRepositoryManifestMonotonicMergeScenario();
 	await runRepositoryReconnectMergeScenario();
 	await runScenario('inaccessible controlled page-tail dialog is quarantined', async page => {
+	  await page.locator('.pena-native-folder-tab[title="Хвост страницы"]').click();
 	  await page.waitForFunction(() => window.__PENA_RECENT_SYNC__?.unavailableCount === 1 && !window.__PENA_RECENT_SYNC__?.detailsInFlight);
 	  const calls = await page.evaluate(() => window.__recentHarness.calls());
 	  assert.equal(calls.filter(call => call.method === 'im.dialog.get' && call.dialogId === 'chat150').length, 1);
 	  assert.ok(!(await managedViewIds(page)).includes('chat150'), 'Inaccessible controlled chat remained clickable in the managed view');
 	}, '?limitmandatory=1&tailaccess=1', 401);
 	await runScenario('quarantined recent dialog stays disabled until revalidation succeeds', async page => {
+	  const pageTailFolder = page.locator('.pena-native-folder-tab[title="Хвост страницы"]');
+	  await pageTailFolder.click();
 	  await page.waitForFunction(() => window.__PENA_RECENT_SYNC__?.unavailableCount === 1 && !window.__PENA_RECENT_SYNC__?.detailsInFlight);
+	  await pageTailFolder.click();
 	  await page.evaluate(() => {
 		window.__recentHarness.setDialogDetailError('chat150', null);
 		const entries = window.__recentHarness.latestComplete();
@@ -728,6 +779,7 @@ try {
 		await activateAscending(page);
 		const row = page.locator('.pena-native-remote-row[data-id="chat9"]');
 		await row.waitFor({ state: 'visible' });
+		await page.waitForFunction(() => document.querySelector('.pena-native-remote-row[data-id="chat9"] img')?.getAttribute('src')?.includes('short-group-chat-9.png'), null, { timeout: 3000 });
 		const state = await avatarState(row.locator('.pena-native-remote-avatar'));
 		assert.match(state.src, /short-group-chat-9\.png/);
 		assert.doesNotMatch(state.src, /short-author-77\.png/);
@@ -803,6 +855,29 @@ try {
     assert.equal(await read.isHidden(), true, 'Read dialog was rendered as unread');
   }, '?custom=1&countercase=1');
 
+  await runScenario('partial counter response cannot erase unrelated statuses', async page => {
+	assert.equal(await page.locator('.pena-native-folder-tab[title="Сохранить"] .pena-native-tab-count').innerText(), '7');
+	await page.evaluate(() => {
+	  const entries = window.__recentHarness.latestComplete();
+	  const kept = entries.find(entry => entry.dialog_id === 'chat1');
+	  if (kept) kept.counter = 7;
+	  window.__recentHarness.resetPlans();
+	  window.__recentHarness.enqueuePlan({ name: 'partial-counter-refresh', pages: window.__recentHarness.splitThree(entries), delayMs: 4 });
+	  window.__recentHarness.setCounters({ CHAT: { 9: 3 } });
+	});
+	const before = await syncState(page);
+	await startRefresh(page);
+	await page.waitForFunction(previous => {
+	  const sync = window.__PENA_RECENT_SYNC__;
+	  return sync && !sync.inFlight && Number(sync.completedAt) > Number(previous.completedAt || 0);
+	}, before);
+	assert.equal(await page.locator('.pena-native-folder-tab[title="Сохранить"] .pena-native-tab-count').innerText(), '7',
+	  'A partial successful counter response zero-filled an unrelated dialog');
+	await activateAscending(page);
+	assert.equal(await page.locator('.pena-native-remote-row[data-id="chat9"] .pena-native-remote-counter').innerText(), '3',
+	  'The explicit counter inside a partial response was not applied');
+  }, '?custom=1&countercase=1');
+
   await runScenario('personal dialog avatar and counter normalization', async page => {
     await activateAscending(page);
     const row = page.locator('.pena-native-remote-row[data-id="user42"]');
@@ -876,6 +951,7 @@ try {
 		assert.equal(sync.gateReady, true);
 		assert.equal(sync.gateLocked, false);
 		await page.waitForFunction(() => window.__PENA_RECENT_SYNC__?.detailsInFlight && window.__PENA_RECENT_SYNC__?.detailsTotal > 0);
+		await page.waitForFunction(() => window.__recentHarness.calls().some(call => call.method === 'im.dialog.get' || call.method === 'im.user.get'));
 		const detailState = await syncState(page);
 		assert.ok(detailState.detailsTotal < 80, `Avatar hydration escaped the visible window: ${detailState.detailsTotal}`);
 		const detailCalls = await page.evaluate(() => window.__recentHarness.calls().filter(call => call.method === 'im.dialog.get' || call.method === 'im.user.get').length);
@@ -905,10 +981,12 @@ try {
 		await page.evaluate(() => {
 			const key = 'pena.dialogControl.v1.chats';
 			const items = JSON.parse(localStorage.getItem(key) || '[]');
+			window.__storageBeforeMigrationTest = items.filter(item => ['user42', 'chat42', 'folder:leaders'].includes(item.id));
 			const marina = items.find(item => item.id === 'user42');
 			marina.dialogId = 'chat42';
 			const next = JSON.stringify(items);
 			window.dispatchEvent(new StorageEvent('storage', { key, newValue: next }));
+			window.__storageAfterMigrationTest = JSON.parse(localStorage.getItem(key) || '[]').filter(item => ['user42', 'chat42', 'folder:leaders'].includes(item.id));
 		});
 		await page.waitForFunction(() => {
 			const marina = JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats') || '[]').find(item => item.id === 'user42');
@@ -1036,27 +1114,30 @@ try {
 		try {
 			await page.goto(`${server.baseUrl}/tests/recent-sync-harness.html?oldcontrol=1&detailgate=1`);
 			await page.locator('.pena-native-folder-switcher').waitFor({ state: 'visible', timeout: 5000 });
+			await page.locator('.pena-native-folder-tab[title="Старый контроль"]').click();
 			try {
 				await page.waitForFunction(() => window.__recentHarness.calls().some(call => call.method === 'im.dialog.get' && call.dialogId === 'chat9000'));
 			} catch (error) {
 				const diagnostic = await page.evaluate(() => ({ sync: window.__PENA_RECENT_SYNC__ || null, calls: window.__recentHarness.calls(), managed: window.__recentHarness.managedItems(), repository: window.__recentHarness.repositoryCache() }));
 				throw new Error(`Mandatory detail gate did not start: ${JSON.stringify(diagnostic)}; ${error.message}`);
 			}
+			// A dispatched detail request no longer implies the catalog completed:
+			// wait for the catalog while the detail response is deliberately held.
+			await waitForInitialSync(page);
 			const verifying = await syncState(page);
 			assert.equal(verifying.gateLocked, false);
 			assert.equal(verifying.controlledPendingCount, 1);
 			assert.equal(await page.locator('.pena-native-load-guard').isHidden(), true);
-			await page.locator('.pena-native-folder-tab[title="Старый контроль"]').click();
 			const pending = page.locator('.pena-native-remote-row[data-id="chat9000"]');
 			await pending.waitFor({ state: 'visible' });
 			assert.equal(await pending.getAttribute('aria-disabled'), 'true');
 			await page.evaluate(() => window.__recentHarness.releaseDetailGate());
 			await waitForInitialSync(page);
+			await page.waitForFunction(() => window.__PENA_RECENT_SYNC__?.controlledReadyCount === 1 && !window.__PENA_RECENT_SYNC__?.detailsInFlight);
 			const ready = await syncState(page);
 			assert.equal(ready.phase, 'ready');
 			assert.equal(ready.gateLocked, false);
 			assert.equal(ready.controlledReadyCount, 1);
-			await page.locator('.pena-native-folder-tab[title="Старый контроль"]').click();
 			await page.waitForFunction(() => document.querySelector('.pena-native-remote-row[data-id="chat9000"]'));
 			const avatar = page.locator('.pena-native-remote-row[data-id="chat9000"] .pena-native-remote-avatar');
 			const avatarSnapshot = await avatarState(avatar);
@@ -1082,12 +1163,15 @@ try {
 	}
 
   await runScenario('old controlled dialog stays cached and current outside limit', async page => {
-	await page.waitForFunction(() => !window.__PENA_RECENT_SYNC__?.detailsInFlight);
     const ids = await managedIds(page);
     assert.ok(ids.includes('chat9000'), 'Controlled dialog outside the recent window was dropped');
     const sync = await syncState(page);
     assert.equal(sync.windowCount, 401);
     assert.equal(sync.controlledOutsideCount, 1);
+	const folder = page.locator('.pena-native-folder-tab[title="Старый контроль"]');
+	await folder.click();
+	await page.waitForFunction(() => window.__recentHarness.calls().some(call => call.method === 'im.dialog.get' && call.dialogId === 'chat9000'));
+	await page.waitForFunction(() => !window.__PENA_RECENT_SYNC__?.detailsInFlight);
     assert.ok((await page.evaluate(() => window.__recentHarness.calls())).some(call => call.method === 'im.dialog.get' && call.dialogId === 'chat9000'));
     assert.equal(await page.locator('.pena-native-folder-tab[title="Старый контроль"] .pena-native-tab-count').innerText(), '4');
     await page.waitForTimeout(5100);
@@ -1096,7 +1180,6 @@ try {
       window.dispatchEvent(new Event('focus'));
     });
     await page.waitForFunction(() => document.querySelector('.pena-native-folder-tab[title="Старый контроль"] .pena-native-tab-count')?.textContent === '9', null, { timeout: 5000 });
-    await page.locator('.pena-native-folder-tab[title="Старый контроль"]').click();
     await page.waitForFunction(() => window.__PENA_MANAGED_DEBUG__?.status === 'ready');
     const avatar = page.locator('.pena-native-remote-row[data-id="chat9000"] .pena-native-remote-avatar');
     await avatar.waitFor({ state: 'visible' });
@@ -1104,6 +1187,7 @@ try {
   }, '?oldcontrol=1');
 
 	await runScenario('controlled dialog outside recent loads its actual last message once', async page => {
+		await page.locator('.pena-native-folder-tab[title="Старый контроль"]').click();
 		try {
 			await page.waitForFunction(() => window.__recentHarness.calls().some(call => call.method === 'im.dialog.messages.get' && call.dialogId === 'chat9000'));
 		} catch (error) {
@@ -1118,13 +1202,14 @@ try {
 		const messageCalls = await page.evaluate(() => window.__recentHarness.calls().filter(call => call.method === 'im.dialog.messages.get' && call.dialogId === 'chat9000'));
 		assert.equal(messageCalls.length, 1, `Controlled preview caused repeated history calls: ${JSON.stringify(messageCalls)}`);
 		assert.equal(messageCalls[0].limit, 1);
-		await page.locator('.pena-native-folder-tab[title="Старый контроль"]').click();
 		const row = page.locator('.pena-native-remote-row[data-id="chat9000"]');
 		await row.waitFor({ state: 'visible' });
 		assert.equal(await row.locator('.pena-native-remote-message-copy').innerText(), 'Последняя реплика контролируемого диалога');
 	}, '?oldcontrol=1&oldcontrolmessage=1&detailgenerationrace=1');
 
 	await runScenario('empty message response remains retryable', async page => {
+		await page.locator('.pena-native-folder-tab[title="Старый контроль"]').click();
+		await page.waitForFunction(() => window.__recentHarness.calls().some(call => call.method === 'im.dialog.messages.get' && call.dialogId === 'chat9000'));
 		await page.waitForFunction(() => !window.__PENA_RECENT_SYNC__?.detailsInFlight);
 		const before = await page.evaluate(() => window.__recentHarness.calls().filter(call => call.method === 'im.dialog.messages.get' && call.dialogId === 'chat9000').length);
 		assert.equal(before, 1);
@@ -1143,6 +1228,8 @@ try {
 	}, '?oldcontrol=1');
 
   await runScenario('controlled dialog without avatar respects detail TTL', async page => {
+	await page.locator('.pena-native-folder-tab[title="Старый контроль"]').click();
+	await page.waitForFunction(() => window.__recentHarness.calls().some(call => call.method === 'im.dialog.get' && call.dialogId === 'chat9000'));
 	await page.waitForFunction(() => !window.__PENA_RECENT_SYNC__?.detailsInFlight);
     assert.equal((await page.evaluate(() => window.__recentHarness.calls().filter(call => call.method === 'im.dialog.get' && call.dialogId === 'chat9000').length)), 1);
     await page.evaluate(() => {
@@ -1161,6 +1248,8 @@ try {
   }, '?oldcontrol=1&noavatar=1');
 
   await runScenario('inaccessible controlled dialog is quarantined and can recover', async page => {
+	const folder = page.locator('.pena-native-folder-tab[title="Старый контроль"]');
+	await folder.click();
 	await page.waitForFunction(() => window.__PENA_RECENT_SYNC__?.unavailableCount === 1 && !window.__PENA_RECENT_SYNC__?.detailsInFlight);
 	const failedSync = await syncState(page);
 	assert.equal(failedSync.detailsFailed, 1);
@@ -1168,9 +1257,7 @@ try {
 	assert.equal((await page.evaluate(() => window.__recentHarness.calls().filter(call => call.method === 'im.dialog.get' && call.dialogId === 'chat9000').length)), 1);
 	assert.ok((await managedIds(page)).includes('chat9000'), 'Folder configuration was destroyed after ACCESS_ERROR');
 	await page.waitForFunction(() => window.__recentHarness.repositoryCache()?.records?.some(record => record.id === 'chat9000' && record.state?.availability === 'unavailable'));
-	const folder = page.locator('.pena-native-folder-tab[title="Старый контроль"]');
 	assert.equal(await folder.locator('.pena-native-tab-count').innerText(), '0');
-	await folder.click();
 	await page.waitForFunction(() => document.querySelector('.pena-native-folder-tab[title="Старый контроль"]')?.classList.contains('--active'));
 	await page.waitForFunction(() => document.querySelector('.pena-native-managed-list')?._penaManagedState?.view?.length === 0);
 	assert.deepEqual(await managedViewIds(page), [], 'Inaccessible dialog remained in the active folder view');
@@ -1190,6 +1277,7 @@ try {
   }, '?oldcontrol=1&detailaccess=1');
 
   await runScenario('transient detail failure keeps an unverified controlled dialog disabled', async page => {
+	await page.locator('.pena-native-folder-tab[title="Старый контроль"]').click();
 	await page.waitForFunction(() => window.__PENA_RECENT_SYNC__?.detailsFailed === 1 && !window.__PENA_RECENT_SYNC__?.detailsInFlight && !window.__PENA_RECENT_SYNC__?.inFlight);
 	const pendingSync = await syncState(page);
 	assert.equal(pendingSync.unavailableCount, 0);
@@ -1202,7 +1290,6 @@ try {
 	assert.match(await syncChip.getAttribute('title'), /Старый контролируемый \[chat9000\]/);
 	assert.match(await syncChip.getAttribute('class'), /--(?:warning|error)/);
 	assert.doesNotMatch(await syncChip.getAttribute('class'), /--ready/);
-	await page.locator('.pena-native-folder-tab[title="Старый контроль"]').click();
 	await page.waitForFunction(() => document.querySelector('.pena-native-folder-tab[title="Старый контроль"]')?.classList.contains('--active'));
 	await page.waitForFunction(() => document.querySelector('.pena-native-managed-list')?._penaManagedState?.view?.some(item => item.id === 'chat9000'));
 	const pending = page.locator('.pena-native-remote-row[data-id="chat9000"]');
@@ -1216,11 +1303,11 @@ try {
   }, '?oldcontrol=1&detailtransient=1');
 
   await runScenario('empty successful detail response never creates a phantom dialog', async page => {
+	await page.locator('.pena-native-folder-tab[title="Старый контроль"]').click();
 	await page.waitForFunction(() => window.__PENA_RECENT_SYNC__?.detailsFailed === 1 && !window.__PENA_RECENT_SYNC__?.detailsInFlight);
 	const sync = await syncState(page);
 	assert.equal(sync.controlledPendingCount, 1);
 	assert.equal(sync.controlledReadyCount, 0);
-	await page.locator('.pena-native-folder-tab[title="Старый контроль"]').click();
 	await page.waitForFunction(() => document.querySelector('.pena-native-folder-tab[title="Старый контроль"]')?.classList.contains('--active'));
 	await page.waitForFunction(() => document.querySelector('.pena-native-managed-list')?._penaManagedState?.view?.some(item => item.id === 'chat9000'));
 	const pending = page.locator('.pena-native-remote-row[data-id="chat9000"]');
@@ -1267,10 +1354,19 @@ try {
 	await page.waitForFunction(() => document.querySelector('.pena-native-remote-row[data-id="chat9001"]'));
 	const ownership = await page.evaluate(() => ({
 	  tasks: window.__recentHarness.managedItems('tasks').map(item => String(item.id)),
-	  chats: window.__recentHarness.managedItems('chats').map(item => String(item.id))
+	  chats: window.__recentHarness.managedItems('chats').map(item => String(item.id)),
+	  taskItem: window.__recentHarness.managedItems('tasks').find(item => String(item.id) === 'chat9001') || null,
+	  taskMeta: window.__PENA_NATIVE_PREFETCH__?.inspectMeta?.('chat9001') || null
 	}));
 	assert.ok(ownership.tasks.includes('chat9001'), 'Official tasksTask payload was not classified as a task chat');
 	assert.ok(!ownership.tasks.includes('chat9002'), 'Ordinary chat was classified as a task only because its entity link contained a task URL');
+	assert.equal(String(ownership.taskItem?.taskId || ''), '7001', `Task item lost its taskId association: ${JSON.stringify(ownership.taskItem)}`);
+	assert.equal(String(ownership.taskItem?.taskUrl || ''), '/company/personal/user/101/tasks/task/view/7001/', `Task item lost its taskUrl association: ${JSON.stringify(ownership.taskItem)}`);
+	assert.deepEqual(ownership.taskMeta, {
+	  isTask: true,
+	  taskId: '7001',
+	  taskUrl: '/company/personal/user/101/tasks/task/view/7001/'
+	}, `Task metadata lost its task association: ${JSON.stringify(ownership.taskMeta)}`);
 	await page.locator('.pena-native-remote-row[data-id="chat9001"]').click();
 	await page.waitForFunction(() => window.__recentHarness.apiOpens().includes('chat9001'));
 	await page.waitForFunction(() => window.__recentHarness.nativeOpens().includes('chat9001'));
@@ -1294,7 +1390,8 @@ try {
     await page.evaluate(() => window.__recentHarness.enqueuePlan({ name: 'empty-catalog', pages: [[]], delayMs: 200 }));
     await startRefresh(page);
     try {
-      await page.waitForFunction(() => window.__PENA_RECENT_SYNC__?.ready && !!window.__PENA_RECENT_SYNC__?.error && !window.__PENA_RECENT_SYNC__?.inFlight, null, { timeout: 5000 });
+      await page.waitForFunction(() => window.__PENA_RECENT_SYNC__?.ready && !window.__PENA_RECENT_SYNC__?.error &&
+			!!window.__PENA_RECENT_SYNC__?.backgroundError && !window.__PENA_RECENT_SYNC__?.inFlight, null, { timeout: 5000 });
     } catch (error) {
       const diagnostic = await page.evaluate(() => ({
         sync: window.__PENA_RECENT_SYNC__ || null,
@@ -1306,7 +1403,7 @@ try {
     }
     const sync = await syncState(page);
     assert.equal(sync.count, 401);
-    assert.equal(sync.phase, 'error');
+    assert.equal(sync.phase, 'ready');
     assert.equal(sync.empty, false);
     assertExactIds(await managedIds(page), beforeIds, 'Transient empty response erased the catalog');
     await page.evaluate(() => window.__recentHarness.enqueuePlan({ name: 'confirmed-empty-catalog', pages: [[]], delayMs: 5 }));
@@ -1420,7 +1517,7 @@ try {
       await startRefresh(page);
       await page.waitForFunction(() => {
         const sync = window.__PENA_RECENT_SYNC__;
-        return sync && !sync.inFlight && !!sync.error;
+        return sync && !sync.inFlight && !sync.error && !!sync.backgroundError;
       }, null, { timeout: 5000 });
       const afterSync = await syncState(page);
       assert.equal(afterSync.count, beforeSync.count, 'A failed full refresh changed the published complete count');
@@ -1456,11 +1553,16 @@ try {
   await runScenario('background hydration preserves a newer folder assignment', async page => {
 	await page.evaluate(() => {
 	  const key = 'pena.dialogControl.v1.chats';
+	  const previousRaw = localStorage.getItem(key) || '[]';
 	  const remote = JSON.parse(localStorage.getItem(key) || '[]');
 	  remote.push({ id: 'folder:remote', type: 'folder', title: 'Из другой вкладки' });
 	  const dialog = remote.find(item => item.id === 'chat1');
 	  dialog.folderId = 'folder:remote';
-	  localStorage.setItem(key, JSON.stringify(remote));
+	  const nextRaw = JSON.stringify(remote);
+	  localStorage.setItem(key, nextRaw);
+	  // A same-page localStorage write does not emit `storage`; reproduce the
+	  // browser event that a real second Bitrix tab sends to the active tab.
+	  window.dispatchEvent(new StorageEvent('storage', { key, oldValue: previousRaw, newValue: nextRaw }));
 	  const entries = window.__recentHarness.makeDataset(1, 401, 'Обновлено в фоне');
 	  window.__recentHarness.enqueuePlan({ name: 'cross-tab-folder', pages: window.__recentHarness.splitThree(entries), delayMs: 5 });
 	});
@@ -1469,7 +1571,13 @@ try {
 	const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats') || '[]'));
 	const dialog = saved.find(item => item.id === 'chat1');
 	assert.equal(dialog?.folderId, 'folder:remote', 'Stale hydration overwrote the newer folder assignment');
-	assert.match(dialog?.title || '', /Обновлено в фоне/);
+	const hydrationDiagnostic = await page.evaluate(() => ({
+	  sync: window.__PENA_RECENT_SYNC__ || null,
+	  calls: window.__recentHarness.calls().filter(call => call.name === 'cross-tab-folder'),
+	  meta: window.__PENA_NATIVE_PREFETCH__?.inspectMeta?.('chat1') || null,
+	  repository: window.__recentHarness.repositoryCache()?.records?.find(record => record.id === 'chat1') || null
+	}));
+	assert.match(dialog?.title || '', /Обновлено в фоне/, JSON.stringify(hydrationDiagnostic));
 	assert.ok(saved.some(item => item.id === 'folder:remote'), 'Folder created in another tab was lost');
   }, '?custom=1');
 

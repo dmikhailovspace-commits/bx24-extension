@@ -1,4 +1,18 @@
 (function () {
+  const _pageHref = typeof location !== 'undefined' ? String(location.href || '') : '';
+  const _pagePath = typeof location !== 'undefined' ? String(location.pathname || '') : '';
+  const _pageSearch = typeof location !== 'undefined' ? String(location.search || '') : '';
+  const _isChildFrame = self !== top;
+  const _isSupportedOlFrame = _isChildFrame &&
+    /\/desktop_app(?:\/|$)/i.test(_pagePath || _pageHref) &&
+    /(?:^|[?&])IM_LINES=Y(?:&|$)/i.test(_pageSearch || _pageHref.replace(/^[^?]*/, ''));
+
+  // Bitrix opens task cards, CRM sliders and other auxiliary documents in
+  // child frames. Loading the 1.4 MB Messenger runtime in every such frame
+  // delays the native SidePanel and duplicates observers/listeners. The only
+  // supported child realm is the legacy Open Lines desktop frame.
+  if (_isChildFrame && !_isSupportedOlFrame) return;
+
   if (self === top && typeof location !== 'undefined' && /\/marketplace\//.test(location.pathname || '')) {
     return;
   }
@@ -8,13 +22,66 @@
   const _releaseVersion = chrome.runtime.getManifest().version;
   const _enabledKey = 'pena.extension.enabled';
   const _repositoryChannel = 'pena.dialog.repository.v2';
+	const _workerHealthChannel = 'pena.runtime.worker-health.v1';
+	const _expectedWorkerEntry = 'worker-v7_5_85.js';
+	const _expectedWorkerBuild = '7.5.85';
+	const _expectedWorkerProtocol = 'dialog-repository-v2';
   const _repositoryRequestEvent = 'pena-dialog-repository-request';
   const _repositoryResponseEvent = 'pena-dialog-repository-response';
   const _repositoryChangedEvent = 'pena-dialog-repository-changed';
   const _repositoryConnectionEvent = 'pena-dialog-repository-connection';
   const _repositoryManifestPattern = /^pena\.dialog\.catalog\.v1\.([^~]+)~([^.]*)\.manifest$/;
+  const _messengerListSelector = '.bx-im-list-container-recent__elements,.bx-im-list-container-task__elements,.bx-messenger-recent-wrap.bx-messenger-recent-lines-wrap';
+  const _runtimeStyleMarker = `pena-runtime-style-${_releaseVersion}`;
   let _rootPromise = null;
+  let _supportedSurfacePromise = null;
   let _pendingEnabled = true;
+
+  const _isExplicitTopMessengerLocation = () => !_isChildFrame && (
+    /\/(?:online|desktop_app)(?:\/|$)/i.test(String(location.pathname || '')) ||
+    /\/(?:online|desktop_app)(?:[/?#]|$)/i.test(String(location.href || ''))
+  );
+  const _hasMessengerSurface = node => {
+    if (!node) return false;
+    try {
+      if (node.nodeType === 1 && node.matches?.(_messengerListSelector)) return true;
+      return !!node.querySelector?.(_messengerListSelector);
+    } catch { return false; }
+  };
+  const _waitForSupportedSurface = () => {
+    if (_isSupportedOlFrame || _isExplicitTopMessengerLocation() || _hasMessengerSurface(document)) {
+      return Promise.resolve(true);
+    }
+    if (_supportedSurfacePromise) return _supportedSurfacePromise;
+    _supportedSurfacePromise = new Promise(resolve => {
+      let observer = null;
+      const finish = () => {
+        observer?.disconnect();
+        document.removeEventListener('readystatechange', probe);
+        window.removeEventListener?.('popstate', probe, true);
+        window.removeEventListener?.('hashchange', probe, true);
+        resolve(true);
+      };
+      const probe = records => {
+        if (_isExplicitTopMessengerLocation() || _hasMessengerSurface(document)) return finish();
+        if (!Array.isArray(records)) return;
+        for (const record of records) {
+          for (const node of record?.addedNodes || []) {
+            if (_hasMessengerSurface(node)) return finish();
+          }
+        }
+      };
+      if (typeof MutationObserver === 'function') {
+        observer = new MutationObserver(probe);
+        observer.observe(document, { childList: true, subtree: true });
+      }
+      document.addEventListener('readystatechange', probe);
+      window.addEventListener?.('popstate', probe, true);
+      window.addEventListener?.('hashchange', probe, true);
+      probe();
+    });
+    return _supportedSurfacePromise;
+  };
   const _waitForRoot = () => {
     const existing = _root();
     if (existing) return Promise.resolve(existing);
@@ -55,6 +122,34 @@
       detail: JSON.stringify({ connected: connected === true, at: Date.now() })
     }));
   };
+
+	const _pingRepositoryWorker = () => new Promise(resolve => {
+		if (typeof chrome.runtime?.sendMessage !== 'function') return resolve(null);
+		let settled = false;
+		const finish = value => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			resolve(value || null);
+		};
+		const timer = setTimeout(() => finish(null), 1500);
+		try {
+			chrome.runtime.sendMessage({ channel: _workerHealthChannel }, response => {
+				if (chrome.runtime.lastError) return finish(null);
+				finish(response);
+			});
+		} catch { finish(null); }
+	});
+
+	const _ensureRepositoryWorker = async () => {
+		if (self !== top) return { healthy: true, skipped: true };
+		const response = await _pingRepositoryWorker();
+		const healthy = response?.ok === true && response.version === _releaseVersion &&
+			response.entry === _expectedWorkerEntry && response.build === _expectedWorkerBuild &&
+			response.protocol === _expectedWorkerProtocol && Number(response.repositorySchema) === 2;
+		_publishRepositoryConnection(healthy);
+		return { healthy, response };
+	};
 
   const _publishRepositoryChange = (key, change) => {
     const match = String(key || '').match(_repositoryManifestPattern);
@@ -181,6 +276,24 @@
     root.appendChild(script);
   });
 
+  const injectStylesheet = async () => {
+    const root = await _waitForRoot();
+    const existing = document.querySelector?.(`link[data-pena-runtime-style="${_runtimeStyleMarker}"]`);
+    if (existing) return;
+    const link = document.createElement('link');
+    // The small VM harnesses used by repository/enable-state tests intentionally
+    // expose script-only nodes. Real DOM links always have tagName/rel.
+    if (!link || (!('rel' in link) && !link.tagName)) return;
+    link.rel = 'stylesheet';
+    link.href = `${chrome.runtime.getURL('injected.css')}?release=${encodeURIComponent(_releaseVersion)}`;
+    link.dataset.penaRuntimeStyle = _runtimeStyleMarker;
+    await new Promise((resolve, reject) => {
+      link.onload = () => resolve();
+      link.onerror = () => reject(new Error('Failed to load runtime stylesheet: injected.css'));
+      root.appendChild(link);
+    });
+  };
+
   const verifyRelease = async () => {
     const response = await fetch(
       `${chrome.runtime.getURL('manifest.json')}?release=${encodeURIComponent(_releaseVersion)}`,
@@ -197,7 +310,12 @@
 
   const launch = async () => {
     try {
+		// Repository health is diagnostic only. A cold or recovering MV3 worker must
+		// never hold the visible Bitrix runtime for the 1.5 s health timeout; the
+		// repository bridge already retries unavailable requests independently.
+		void _ensureRepositoryWorker();
       await verifyRelease();
+      await injectStylesheet();
       await inject('native-catalog.js');
       await inject('native-interaction-state.js');
 	  await inject('native-time-control.js');
@@ -212,6 +330,7 @@
   chrome.storage.local.get([_enabledKey], async values => {
     const enabled = values?.[_enabledKey] !== '0';
     await _setPageEnabled(enabled);
+    await _waitForSupportedSurface();
     await launch();
   });
 })();

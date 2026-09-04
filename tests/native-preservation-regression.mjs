@@ -126,6 +126,7 @@ try {
       assert.equal(before.panelImmediatelyBeforeManaged, true);
       assert.equal(before.panelInsideManaged, false);
       assert.ok(before.panelBottom <= before.managedTop + 0.5, 'panel overlaps the visible dialog viewport');
+	  assert.ok(Math.abs(before.panelBottom - before.managedTop) <= 0.5, 'panel leaves a visible gap above the dialog viewport');
       const atBottom = before.managedScrollTop >= before.managedScrollHeight - before.managedClientHeight - 1;
       await wheelManaged(page, atBottom ? -420 : 420);
       const after = await presentation(page);

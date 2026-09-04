@@ -13,18 +13,23 @@ const manifest = JSON.parse(read('extension/manifest.json'));
 const update = JSON.parse(read('update.json'));
 const setup = read('installers/windows/setup.iss');
 const content = read('extension/content.js');
+const workerEntry = manifest.background?.service_worker || '';
+const workerBootstrap = workerEntry ? read(`extension/${workerEntry}`) : '';
 const injected = read('extension/injected.js');
 const injectedCss = read('extension/injected.css');
 const distDir = join(root, 'dist');
 const windowsUpdater = join(root, 'installers/windows/updater.ps1');
+const windowsUpdaterSource = read('installers/windows/updater.ps1');
 const macInstaller = read('installers/macos/install-gui.sh');
 const macUpdater = read('installers/macos/updater.sh');
 const macBuilder = read('installers/macos/build.sh');
 const macLauncher = read('installers/macos/launcher/main.go');
 const macLauncherInfo = read('installers/macos/launcher-Info.plist');
 const releaseWorkflow = read('.github/workflows/build-macos.yml');
+const escapeRegExp = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const requiredRuntime = [
+  workerEntry,
   'background.js',
   'content.js',
   'native-catalog.js',
@@ -51,6 +56,28 @@ assert.equal(update.schema_version, 2);
 assert.equal(update.version, manifest.version);
 assert.equal(setupVersion, manifest.version);
 assert.equal(injectedVersion, manifest.version);
+assert.match(workerEntry, /^worker-v[^/]*\.js$/, 'manifest must register a release-specific MV3 worker');
+assert.match(workerBootstrap, new RegExp(`const\\s+PENA_WORKER_ENTRY\\s*=\\s*'${escapeRegExp(workerEntry)}'`));
+assert.match(workerBootstrap, new RegExp(`const\\s+PENA_WORKER_BUILD\\s*=\\s*'${escapeRegExp(manifest.version)}'`));
+assert.match(workerBootstrap, /const\s+PENA_WORKER_PROTOCOL\s*=\s*'dialog-repository-v2'/);
+assert.match(workerBootstrap, /globalThis\.__PENA_WORKER_ENTRY__\s*=\s*PENA_WORKER_ENTRY/);
+assert.match(workerBootstrap, /globalThis\.__PENA_WORKER_BUILD__\s*=\s*PENA_WORKER_BUILD/);
+assert.match(workerBootstrap, /globalThis\.__PENA_WORKER_PROTOCOL__\s*=\s*PENA_WORKER_PROTOCOL/);
+assert.match(workerBootstrap, /background\.js\?release=\$\{encodeURIComponent\(manifestVersion\)\}/);
+assert.match(workerBootstrap, /workerBuild=\$\{encodeURIComponent\(PENA_WORKER_BUILD\)\}/);
+assert.match(workerBootstrap, /protocol=\$\{encodeURIComponent\(PENA_WORKER_PROTOCOL\)\}/);
+assert.match(content, /response\.entry\s*===\s*_expectedWorkerEntry/);
+assert.match(content, /response\.build\s*===\s*_expectedWorkerBuild/);
+assert.match(content, /response\.protocol\s*===\s*_expectedWorkerProtocol/);
+assert.ok(!existsSync(join(root, 'extension', 'service-worker.js')), 'stale generic worker entry must stay removed');
+assert.deepEqual(
+  update.extension_files.filter(path => /(?:^|\/)(?:service-worker|worker-v[^/]*)\.js$/i.test(path)),
+  [workerEntry],
+  'update.json must declare only the worker registered by manifest.json'
+);
+assert.match(windowsUpdaterSource, /Manifest\.background\.service_worker/);
+assert.match(windowsUpdaterSource, /fonts\/Onest-Variable\.ttf/);
+assert.match(windowsUpdaterSource, /fonts\/Unbounded-Variable\.ttf/);
 
 const expectedReleaseArtifacts = [
   `PENA_Agency_Windows_v${manifest.version}.exe`,
@@ -107,6 +134,7 @@ assert.deepEqual(update.extension_files, requiredRuntime);
 for (const path of requiredRuntime) {
   assert.ok(existsSync(join(root, 'extension', path)), `missing runtime file: ${path}`);
 }
+assert.match(setup, new RegExp(escapeRegExp(workerEntry)), 'Windows installer omits manifest service worker');
 const listFiles = directory => readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
   const absolute = join(directory, entry.name);
   return entry.isDirectory()
@@ -330,6 +358,67 @@ function runWindowsInstall(localAppData, stageDir, scriptPath) {
   );
 }
 
+function relativeFiles(directory, base = directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+    const absolute = join(directory, entry.name);
+    return entry.isDirectory()
+      ? relativeFiles(absolute, base)
+      : [absolute.slice(base.length + 1).replaceAll('\\', '/')];
+  });
+}
+
+const expectedInstalledFiles = [
+  ...update.extension_files,
+  ...update.windows_files.map(path => path.split('/').at(-1))
+].sort();
+
+function assertExactInstalledRelease(installDir) {
+  assert.deepEqual(
+    relativeFiles(installDir).sort(),
+    expectedInstalledFiles,
+    'installed Extension differs from update.extension_files plus Windows updater files'
+  );
+}
+
+function runWindowsOnlineUpdate(localAppData, scriptPath) {
+  const librarySource = windowsUpdaterSource.split(/\r?\nif \(\$InstallFrom\) \{/)[0];
+  assert.notEqual(librarySource, windowsUpdaterSource, 'could not isolate updater functions for regression');
+  const quotePowerShell = value => String(value).replaceAll("'", "''");
+  const wrapper = `${librarySource}
+$TEST_FIXTURE_ROOT = '${quotePowerShell(root)}'
+$TEST_RAW_BASE = '${quotePowerShell(update.raw_base_url)}'
+function Invoke-WebRequest {
+    param(
+        [string]$Uri,
+        [string]$OutFile,
+        [switch]$UseBasicParsing,
+        [int]$TimeoutSec,
+        [object]$ErrorAction
+    )
+    if (-not $Uri.StartsWith("$TEST_RAW_BASE/", [System.StringComparison]::Ordinal)) {
+        throw "Unexpected test URI: $Uri"
+    }
+    $relativePath = $Uri.Substring($TEST_RAW_BASE.Length + 1).Replace('/', '\\')
+    $sourcePath = Join-Path $TEST_FIXTURE_ROOT $relativePath
+    Copy-Item -LiteralPath $sourcePath -Destination $OutFile -Force -ErrorAction Stop
+}
+$testUpdate = Get-Content -LiteralPath '${quotePowerShell(join(root, 'update.json'))}' -Raw | ConvertFrom-Json
+Invoke-WithUpdateLock { Invoke-AtomicExtensionUpdate $testUpdate } | Out-Null
+`;
+  writeFileSync(scriptPath, wrapper, 'utf8');
+  return spawnSync(
+    'powershell.exe',
+    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
+    {
+      cwd: root,
+      env: { ...process.env, LOCALAPPDATA: localAppData },
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 30_000
+    }
+  );
+}
+
 const tempRoot = mkdtempSync(join(tmpdir(), 'pena-release-test-'));
 try {
   const contextProject = join(tempRoot, 'context-lf');
@@ -387,6 +476,10 @@ try {
   const validStage = join(localAppData, 'PENA Agency', 'Extension.staged-valid');
   mkdirSync(installDir, { recursive: true });
   writeFileSync(join(installDir, 'old-release.marker'), 'must-be-replaced');
+  writeFileSync(join(installDir, 'service-worker.js'), 'stale generic worker');
+  writeFileSync(join(installDir, 'worker-v7_5_69.js'), 'stale versioned worker');
+  mkdirSync(join(installDir, 'legacy'), { recursive: true });
+  writeFileSync(join(installDir, 'legacy', 'runtime.js'), 'stale runtime');
   copyReleaseTo(validStage);
   const validInstall = runWindowsInstall(localAppData, validStage, join(validStage, 'updater.ps1'));
   assert.equal(validInstall.status, 0, validInstall.stderr || validInstall.stdout);
@@ -394,21 +487,72 @@ try {
     assert.ok(existsSync(join(installDir, path)), `atomic install omitted ${path}`);
   }
   assert.ok(!existsSync(validStage), 'published staging directory still exists');
-  assert.ok(!existsSync(join(installDir, 'old-release.marker')), 'previous release was not replaced');
+  assertExactInstalledRelease(installDir);
+
+  const dynamicLocalAppData = join(tempRoot, 'DynamicWorkerLocalAppData');
+  const dynamicInstallDir = join(dynamicLocalAppData, 'PENA Agency', 'Extension');
+  const dynamicStage = join(dynamicLocalAppData, 'PENA Agency', 'Extension.staged-dynamic-worker');
+  const dynamicWorkerEntry = 'worker-v-next-test.js';
+  copyReleaseTo(dynamicStage);
+  cpSync(join(dynamicStage, workerEntry), join(dynamicStage, dynamicWorkerEntry));
+  rmSync(join(dynamicStage, workerEntry));
+  const dynamicManifestPath = join(dynamicStage, 'manifest.json');
+  const dynamicManifest = JSON.parse(readFileSync(dynamicManifestPath, 'utf8'));
+  dynamicManifest.background.service_worker = dynamicWorkerEntry;
+  writeFileSync(dynamicManifestPath, `${JSON.stringify(dynamicManifest, null, 2)}\n`, 'utf8');
+  const dynamicInstall = runWindowsInstall(
+    dynamicLocalAppData,
+    dynamicStage,
+    join(dynamicStage, 'updater.ps1')
+  );
+  assert.equal(dynamicInstall.status, 0, dynamicInstall.stderr || dynamicInstall.stdout);
+  assert.ok(existsSync(join(dynamicInstallDir, dynamicWorkerEntry)), 'manifest worker was not installed dynamically');
+  assert.ok(!existsSync(join(dynamicInstallDir, workerEntry)), 'updater retained a worker absent from manifest');
 
   const replacementStage = join(localAppData, 'PENA Agency', 'Extension.staged-replacement');
   copyReleaseTo(replacementStage);
-  writeFileSync(join(replacementStage, 'replacement-release.marker'), 'installed-from-running-updater');
+  writeFileSync(join(replacementStage, 'popup.js'), '// installed-from-running-updater');
   const replacementInstall = runWindowsInstall(
     localAppData,
     replacementStage,
     join(installDir, 'updater.ps1')
   );
   assert.equal(replacementInstall.status, 0, replacementInstall.stderr || replacementInstall.stdout);
-  assert.ok(
-    existsSync(join(installDir, 'replacement-release.marker')),
-    'updater could not replace the directory it was running from'
+  assert.equal(readFileSync(join(installDir, 'popup.js'), 'utf8'), '// installed-from-running-updater');
+  assertExactInstalledRelease(installDir);
+
+  const fontlessStage = join(localAppData, 'PENA Agency', 'Extension.staged-fontless');
+  copyReleaseTo(fontlessStage);
+  rmSync(join(fontlessStage, 'fonts', 'Unbounded-Variable.ttf'));
+  const fontlessInstall = runWindowsInstall(
+    localAppData,
+    fontlessStage,
+    join(installDir, 'updater.ps1')
   );
+  assert.notEqual(fontlessInstall.status, 0, 'release without Unbounded font was accepted');
+  assertExactInstalledRelease(installDir);
+
+  const contaminatedStage = join(localAppData, 'PENA Agency', 'Extension.staged-contaminated');
+  copyReleaseTo(contaminatedStage);
+  writeFileSync(join(contaminatedStage, 'service-worker.js'), 'stale generic worker');
+  writeFileSync(join(contaminatedStage, 'worker-v7_5_69.js'), 'stale versioned worker');
+  const contaminatedInstall = runWindowsInstall(
+    localAppData,
+    contaminatedStage,
+    join(installDir, 'updater.ps1')
+  );
+  assert.notEqual(contaminatedInstall.status, 0, 'staging with undeclared workers was accepted');
+  assert.equal(readFileSync(join(installDir, 'popup.js'), 'utf8'), '// installed-from-running-updater');
+  assertExactInstalledRelease(installDir);
+
+  writeFileSync(join(installDir, 'service-worker.js'), 'stale generic worker from an old online release');
+  writeFileSync(join(installDir, 'worker-v7_5_68.js'), 'stale versioned worker from an old online release');
+  mkdirSync(join(installDir, 'obsolete-runtime'), { recursive: true });
+  writeFileSync(join(installDir, 'obsolete-runtime', 'module.js'), 'stale nested runtime');
+  const onlineWrapper = join(tempRoot, 'invoke-online-update.ps1');
+  const onlineInstall = runWindowsOnlineUpdate(localAppData, onlineWrapper);
+  assert.equal(onlineInstall.status, 0, onlineInstall.stderr || onlineInstall.stdout);
+  assertExactInstalledRelease(installDir);
 
   writeFileSync(join(installDir, 'previous-release.marker'), 'keep-on-failure');
   const invalidStage = join(localAppData, 'PENA Agency', 'Extension.staged-invalid');
@@ -422,4 +566,4 @@ try {
   rmSync(tempRoot, { recursive: true, force: true });
 }
 
-console.log('PASS release metadata, fail-closed loader, atomic Windows install and rollback');
+console.log('PASS release metadata, dynamic worker, exact Windows upgrade, stale-runtime cleanup and rollback');
