@@ -5,7 +5,7 @@
 <!-- AUTO:BEGIN -->
 ## Current release facts (generated)
 
-- Version: **7.5.88**
+- Version: **7.5.89**
 - Release date: **2026-09-05**
 - Runtime files: **19**
 - Regression suites: **27**
@@ -23,7 +23,7 @@
 - `extension/injected.js` управляет интерфейсом, загрузкой диалогов, сортировкой, папками, поиском и интеграцией с нативным DOM Bitrix24.
 - `extension/native-*.js` содержат изолированные модели каталога, состояния взаимодействия, времени и жизненного цикла.
 - `extension/dialog-repository.js` — клиентский мост к хранилищу.
-- `extension/worker-v7_5_88.js` — release-specific MV3 entry с явными build/protocol-маркерами; новое имя worker обязательно при каждом patch-релизе, потому что Chromium-оболочка Bitrix24 может сохранить регистрацию и ScriptCache старого unpacked worker после замены файлов.
+- `extension/worker-v7_5_89.js` — release-specific MV3 entry с явными build/protocol-маркерами; новое имя worker обязательно при каждом patch-релизе, потому что Chromium-оболочка Bitrix24 может сохранить регистрацию и ScriptCache старого unpacked worker после замены файлов.
 - `extension/background.js` — импортируемое ядро service worker с каталогом диалогов в `chrome.storage.local`.
 - Windows-updater всегда собирает пустой staging строго по `update.extension_files`, сверяет полный набор файлов и оба встроенных шрифта, а имя worker берёт из `manifest.background.service_worker`. Старые generic/versioned worker и любой лишний runtime не переносятся в новую установку; до атомарной замены сохраняется рабочий rollback.
 - `.github/workflows/build-macos.yml` — единственный удалённый путь выпуска macOS DMG: сборка и проверка выполняются на GitHub-hosted `macos-15`.

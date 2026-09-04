@@ -804,7 +804,10 @@ try {
 	await page.waitForTimeout(1100);
 	const callsBeforeFailedTimer = await page.evaluate(() => window.timeAddCalls.length);
 	await timePanel.locator('.pena-native-time-stop').click();
-	await page.waitForFunction(() => document.querySelector('.pena-native-time-stop')?.textContent === 'Повторить');
+	await page.waitForFunction(() => {
+		const stop = document.querySelector('.pena-native-time-stop');
+		return stop?.textContent === 'Повторить' && stop.disabled === false;
+	});
 	assert.equal(await page.evaluate(() => window.timeAddCalls.length), callsBeforeFailedTimer + 1, `Failed elapsed-item write was not attempted in ${mode}`);
 	assert.ok(await page.evaluate(() => !!Object.keys(localStorage).find(key => key.startsWith('pena.timeActiveTracker.v1.'))), `Failed timer was lost in ${mode}`);
 	const cancelTracker = timePanel.locator('.pena-native-time-cancel');
@@ -826,7 +829,10 @@ try {
 		window.timeAddFailures = 1;
 	});
 	await timePanel.locator('.pena-native-time-stop').click();
-	await page.waitForFunction(() => document.querySelector('.pena-native-time-stop')?.textContent === 'Повторить');
+	await page.waitForFunction(() => {
+		const stop = document.querySelector('.pena-native-time-stop');
+		return stop?.textContent === 'Повторить' && stop.disabled === false;
+	});
 	await timePanel.locator('.pena-native-time-stop').click();
 	await page.waitForFunction(() => !Object.keys(localStorage).some(key => key.startsWith('pena.timeActiveTracker.v1.')));
 	const addState = await page.evaluate(() => ({ calls: window.timeAddCalls.length, seconds: Number(window.timeAddCalls.at(-1)?.ARFIELDS?.SECONDS || 0) }));
