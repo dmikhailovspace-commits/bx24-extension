@@ -226,7 +226,9 @@ assert.equal((releaseWorkflow.match(/needs:\s*verify-source/g) || []).length, 2,
 assert.match(releaseWorkflow, /needs:\s*\[build-windows, build-macos\]/, 'publication must depend on both installer builds');
 assert.match(releaseWorkflow, /actions\/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e/);
 assert.match(releaseWorkflow, /go-version:\s*1\.26\.7/, 'macOS launcher toolchain is not pinned');
-assert.equal((releaseWorkflow.match(/actions\/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a/g) || []).length, 2, 'both installers must be uploaded with pinned upload-artifact v7.0.1');
+const installerBuildJobs = releaseWorkflow.slice(releaseWorkflow.indexOf('  build-windows:'), releaseWorkflow.indexOf('  publish-release:'));
+assert.equal((installerBuildJobs.match(/actions\/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a/g) || []).length, 2, 'both installers must be uploaded with pinned upload-artifact v7.0.1');
+assert.match(releaseWorkflow, /name: Upload regression diagnostics\s+if: always\(\)/, 'failed runs must preserve regression diagnostics');
 assert.match(releaseWorkflow, /hdiutil verify/);
 assert.match(releaseWorkflow, /hdiutil attach/);
 assert.match(releaseWorkflow, /plutil -lint "\$launcher_info"/);

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { collectPageErrors, startHarnessServer } from './lib/harness-server.mjs';
 
 const require = createRequire(import.meta.url);
@@ -760,6 +761,10 @@ try {
   await page.evaluate(() => window.__resumeHarness.setRecentDelay(18));
   await page.locator('.pena-native-filter-panel .pena-native-popover-close').click();
 
+  // Closing the panel restores the native viewport before its recycled row
+  // pool paints on the next animation frame. Assert the physical anchor too.
+  await page.waitForFunction(() => window.__resumeHarness.markerGeometry('chats').rowFound, null, { timeout: 2000 });
+  assertAnchor((await state()).modes.chats.anchor, chatAnchor, 'metadata refresh and panel close');
   const marker = await page.evaluate(() => window.__resumeHarness.markerGeometry('chats'));
   assert.equal(marker.rowFound, true, `Colored anchor row is missing: ${compact(marker)}`);
   assert.equal(marker.markerFound, true, `Color marker disappeared after recovery: ${compact(marker)}`);
@@ -814,6 +819,12 @@ try {
 
   assert.deepEqual(pageErrors, []);
   console.log('PASS native resume recovery: fixed 24-row pools, deduplicated lifecycle, tail probe, collapse/freeze/offline/source/mode recovery');
+} catch (error) {
+  await mkdir(new URL('./artifacts/', import.meta.url), { recursive: true });
+  await writeFile(new URL('./artifacts/resume-failure.json', import.meta.url), JSON.stringify({
+    error: String(error.stack || error), snapshot: await state(), pageErrors
+  }, null, 2));
+  throw error;
 } finally {
   await browser.close();
   await server.close();
