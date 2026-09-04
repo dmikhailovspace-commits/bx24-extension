@@ -304,6 +304,13 @@
       const render = () => {
         source.renderScheduled = false;
         if (!source.viewport.isConnected) return;
+        // A hidden mode has zero layout metrics. Do not recycle its pool to
+        // index zero from a trailing scroll/RAF while the real offset survives.
+        if (modeHost(mode).hidden) {
+          source.renderPendingWhileHidden = true;
+          return;
+        }
+        source.renderPendingWhileHidden = false;
         if (lifecycleFrozen) {
           source.renderPendingWhileFrozen = true;
           return;
@@ -996,6 +1003,7 @@
           source.viewport.dispatchEvent(new Event('scroll'));
           source.renderNow();
         }
+        if (source?.renderPendingWhileHidden) source.renderNow();
         return next;
       },
       setSearch(mode, value) {

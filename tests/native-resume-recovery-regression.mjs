@@ -579,6 +579,14 @@ try {
   }, `Generic dialog detail erased the confirmed task association: ${compact(taskAssociation)}`);
   assertStableNativeSource(snapshot, 'tasks', 'task materialization');
   assertNoForeignIds(snapshot, 'task materialization');
+  const hiddenChatPool = await page.evaluate(async () => {
+    const before = window.__resumeHarness.state().modes.chats.renderedStart;
+    document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container').dispatchEvent(new Event('scroll'));
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return { before, after: window.__resumeHarness.state().modes.chats.renderedStart };
+  });
+  assert.equal(hiddenChatPool.after, hiddenChatPool.before,
+    'Harness recycled the hidden chat pool from zero layout metrics');
 
   mark = await page.evaluate(() => window.__resumeHarness.mark('chats'));
   await page.evaluate(() => window.__resumeHarness.switchMode('chats'));

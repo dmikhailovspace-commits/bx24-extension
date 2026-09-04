@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "7.5.89",
+  "version": "7.5.90",
   "release_date": "2026-09-05",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.89",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.89",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.90",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.90",
   "extension_files": [
-    "worker-v7_5_89.js",
+    "worker-v7_5_90.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,6 +33,6 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.89/extension/injected.js",
-  "changelog": "v7.5.89: fixes time-panel layering and date/icon alignment, qualifies task contacts accurately, refreshes all eligible tasks, and bounds REST traffic with functional performance diagnostics"
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.90/extension/injected.js",
+  "changelog": "v7.5.90: fixes time-panel layering and date/icon alignment, qualifies task contacts accurately, refreshes all eligible tasks, and bounds REST traffic with functional performance diagnostics"
 }
