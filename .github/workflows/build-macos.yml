@@ -238,9 +238,9 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' \
-            'Fixes time-panel layering, date alignment and action icons.' \
-            'Improves contact qualification, task discovery and tracking updates.' \
-            'Bounds background REST traffic and includes functional performance diagnostics.' \
+            'Automatically loads complete native dialog lists on first Bitrix startup.' \
+            'Optimizes native sort-key merging and metadata comparisons.' \
+            'Coalesces time catalog refreshes and verifies delayed first-open recovery.' \
             'Includes Windows EXE and Universal macOS DMG for Intel and Apple Silicon.' \
             > release-notes.md
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then

@@ -49,6 +49,7 @@
     const POOL_SIZE = 24;
     const LONG_PAUSE_MS = 16 * 60 * 1000;
     const params = new URLSearchParams(location.search);
+    const autoBootstrap = params.get('autoBootstrap') === '1';
     const chatCount = Math.max(72, Number(params.get('chatCount')) || 108);
     const taskCount = Math.max(72, Number(params.get('taskCount')) || 92);
     const coldStallMs = Math.max(0, Number(params.get('coldStallMs')) || 0);
@@ -88,9 +89,9 @@
     window.__PENA_TEST_API_CATALOG__ = false;
     window.__PENA_TEST_MANAGED_CATALOG__ = false;
     window.__PENA_TEST_NATIVE_SCROLL__ = false;
-	window.__PENA_TEST_EAGER_MATERIALIZATION__ = true;
-	window.__PENA_TEST_NATIVE_EXPECTED_AUDIT__ = true;
-	window.__PENA_TEST_NATIVE_TASK_AUDIT__ = true;
+	if (!autoBootstrap) window.__PENA_TEST_EAGER_MATERIALIZATION__ = true;
+	if (!autoBootstrap) window.__PENA_TEST_NATIVE_EXPECTED_AUDIT__ = true;
+	if (!autoBootstrap) window.__PENA_TEST_NATIVE_TASK_AUDIT__ = true;
     window.__PENA_TEST_NATIVE_SCROLL_MAX_MS__ = 10000;
     window.__PENA_TEST_RECONCILE_DEBOUNCE_MS__ = 35;
     window.__PENA_TEST_RECOVERY_RETRY_MS__ = [1000, 2000, 5000, 15000, 30000, 60000];
@@ -444,6 +445,7 @@
     };
 
     const seedMode = mode => {
+      if (autoBootstrap) return;
       const records = recordsByMode[mode];
       const folderId = folderIdByMode[mode];
       const anchor = records[anchorIndexByMode[mode]];

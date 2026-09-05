@@ -114,6 +114,9 @@ try {
 		body: instrumentedInjected
 	}));
 	await page.addInitScript(() => {
+		// Isolate the click/send hot path from the separately tested automatic
+		// startup traversal (native-first-open-regression, fresh production settings).
+		window.__PENA_TEST_SKIP_INITIAL_MOUNT__ = true;
 		const NativeMutationObserver = window.MutationObserver;
 		const nativeStorageGetItem = Storage.prototype.getItem;
 		const nativeStorageSetItem = Storage.prototype.setItem;

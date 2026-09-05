@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.90';
+	window.__ANITREC_RUNNING__ = '7.5.91';
 
-	const VER = '7.5.90';
+	const VER = '7.5.91';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -4623,17 +4623,22 @@
 				const newIds = rows.map(row => String(row.ID ?? row.id)).filter(id => !seen.has(id));
 				if (rows.length && !newIds.length) throw new Error('Task pagination repeated a page');
 				newIds.forEach(id => seen.add(id));
-				_publishDialogTimeTaskIndexRows(rows.filter(row => {
+				const changed = _publishDialogTimeTaskIndexRows(rows.filter(row => {
 					const id = String(row.ID ?? row.id);
 					return (revisions.get(id) || 0) === (_dialogTimeTaskRevisions.get(id) || 0);
 				}));
-				const range = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
-				_loadDialogTimeRange(range).catch(() => {});
-				if (_dialogTimeManualSearchQuery && !_dialogTimeManualSelectedTask) {
+				const atTail = !(page.next != null && page.next > start) && rows.length < 50;
+				// First page paints useful totals; the tail reconciles the final working
+				// set. Intermediate title pages must not fan out into elapsed-time reads.
+				if (start === 0 || atTail) {
+					const range = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
+					_loadDialogTimeRange(range).catch(() => {});
+				}
+				if (changed && _dialogTimeManualSearchQuery && !_dialogTimeManualSelectedTask) {
 					_dialogTimeManualSearchResults = _getDialogTimeLocalTaskSearchResults(_dialogTimeManualSearchQuery);
 					_renderDialogTimeManualSearch();
 				}
-				if (!(page.next != null && page.next > start) && rows.length < 50) {
+				if (atTail) {
 					_dialogTimeCatalogCursor = startedAt;
 					return;
 				}
@@ -8246,7 +8251,11 @@
 				const container = findContainer();
 				if (!container || !isInternalChatsDOM()) return;
 				const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
-				const completeViewRequested = explicitFullIntent || _dialogControlNeedsCompleteNativeMaterialization(mode);
+				// A fresh installation has no physical lower bound. Hydrate the first
+				// visible source automatically; metadata/cache age never proves DOM-ready.
+				const nativeMaterializationFresh = _isDialogNativeMaterializationCurrent(mode, container);
+				const firstSourceLoad = window.__PENA_TEST_SKIP_INITIAL_MOUNT__ !== true && !nativeMaterializationFresh;
+				const completeViewRequested = firstSourceLoad || explicitFullIntent || _dialogControlNeedsCompleteNativeMaterialization(mode);
 				if (!completeViewRequested) {
 					_refreshDialogNativeVisibleWindow();
 					_setDialogNativeAttemptState(mode, {
@@ -8260,9 +8269,7 @@
 				if (_isDialogNativeRecoveryDeferred(mode) && !_canBypassDialogNativeRecoveryDelay(reason)) return;
 				_dialogNativeTraversalFailedModes.delete(mode);
 				_dialogNativeTraversalFailedAt.delete(mode);
-				const catalogFresh = _isDialogModeCatalogFresh(mode);
-				const nativeMaterializationFresh = catalogFresh && _isDialogNativeMaterializationCurrent(mode, container);
-				if (catalogFresh && nativeMaterializationFresh) {
+				if (nativeMaterializationFresh) {
 					if (mode === 'tasks') _scheduleDialogTaskCatalogRefresh('mode-task-metadata');
 					if (reason === 'mode-switch' || _dialogNativeMetadataRetryStates.has(mode)) {
 						_scheduleDialogWakeReconcile(`${reason}-metadata`, { metadataOnly: true });
@@ -8324,6 +8331,7 @@
 				_refreshDialogRecentCatalog({
 					full: true,
 					force: true,
+					verifyExpectedCatalog: firstSourceLoad,
 					reason,
 					...(savedPosition ? { restoreTop: savedPosition.top, restoreLeft: savedPosition.left } : {})
 				}).then(result => {
@@ -15040,6 +15048,7 @@ if (_presetChannel) {
 	}
 
 	const _dialogTimeForcedRefreshes = new Map();
+	const _dialogTimeRangeRechecks = new Map();
 	async function _loadDialogTimeRange(range = _dialogTimeRange, { force = false } = {}) {
 		if (!_PENA_TIME_CONTROL) throw new Error('Модуль учета времени недоступен');
 		const normalized = _PENA_TIME_CONTROL.normalizeRange(range?.from, range?.to);
@@ -15064,7 +15073,21 @@ if (_presetChannel) {
 		if (!force && cached?.error && Date.now() - (cached.failedAt || 0) < 15000) return cached.data || null;
 		if (_dialogTimeInFlight.has(key)) {
 			const running = _dialogTimeInFlight.get(key);
-			if (!force) return running;
+			if (!force) {
+				if (cached?.taskIdsKey === taskIdsKey) return running;
+				if (_dialogTimeRangeRechecks.has(key)) return _dialogTimeRangeRechecks.get(key);
+				// The task catalog can finish before the first elapsed read. Recheck
+				// once after it settles so newly eligible tasks aren't lost until a poll.
+				const recheck = running.catch(() => null).then(() => {
+					_dialogTimeRangeRechecks.delete(key);
+					if (key !== _getDialogTimeCacheKey(normalized)) return null;
+					return _loadDialogTimeRange(normalized);
+				}).finally(() => {
+					if (_dialogTimeRangeRechecks.get(key) === recheck) _dialogTimeRangeRechecks.delete(key);
+				});
+				_dialogTimeRangeRechecks.set(key, recheck);
+				return recheck;
+			}
 			if (_dialogTimeForcedRefreshes.has(key)) return _dialogTimeForcedRefreshes.get(key);
 			// A read started before add/update/delete is not a refresh of that write.
 			// Coalesce all forced callers into one successor after the old read settles.
@@ -17504,6 +17527,40 @@ if (_presetChannel) {
 	function _mergeDialogControlNativeSortKeys(savedKeys, currentKeys) {
 		const merged = Array.isArray(savedKeys) ? savedKeys.slice() : [];
 		const known = new Set(merged);
+		if (currentKeys.every(key => known.has(key))) return merged;
+		if (known.size === merged.length && new Set(currentKeys).size === currentKeys.length) {
+			// Link new window keys to their nearest known neighbour in linear time.
+			// Repeated indexOf/splice was quadratic on a large recycled native pool.
+			const head = { next: null }, nodes = new Map();
+			let tail = head;
+			for (const key of merged) {
+				const node = { key, previous: tail, next: null };
+				tail.next = node; tail = node; nodes.set(key, node);
+			}
+			const nextKnown = new Array(currentKeys.length);
+			let next = null;
+			for (let i = currentKeys.length - 1; i >= 0; i -= 1) {
+				nextKnown[i] = next;
+				if (nodes.has(currentKeys[i])) next = nodes.get(currentKeys[i]);
+			}
+			let previous = null;
+			currentKeys.forEach((key, index) => {
+				let node = nodes.get(key);
+				if (!node) {
+					const before = nextKnown[index];
+					const after = before ? before.previous : (previous || tail);
+					node = { key, previous: after, next: after.next };
+					if (after.next) after.next.previous = node;
+					else tail = node;
+					after.next = node; nodes.set(key, node);
+				}
+				previous = node;
+			});
+			const result = [];
+			for (let node = head.next; node; node = node.next) result.push(node.key);
+			return result;
+		}
+		// Ambiguous duplicate row identities retain the established merge rules.
 		currentKeys.forEach((key, index) => {
 			if (known.has(key)) return;
 			let insertAt = merged.length;
@@ -17548,19 +17605,26 @@ if (_presetChannel) {
 		if (restoreNativeOrder && !_dialogControlNativeCustomSortModes.has(mode)) return false;
 		const dateRank = new Map(state.keys.map((key, index) => [key, index]));
 		const fallbackRank = new Map(currentKeys.map((key, index) => [key, index]));
-		const getItem = info => (Array.isArray(info.ids) ? info.ids.map(id => itemMap.get(id)).find(Boolean) : null) || (info.id ? itemMap.get(info.id) : null) || (info.titleKey ? itemTitleMap.get(info.titleKey) : null) || null;
+		const itemCache = new Map(), colorCache = new Map(), metaCache = new Map();
+		const getItem = info => {
+			if (!itemCache.has(info)) itemCache.set(info, (Array.isArray(info.ids) ? info.ids.map(id => itemMap.get(id)).find(Boolean) : null) || (info.id ? itemMap.get(info.id) : null) || (info.titleKey ? itemTitleMap.get(info.titleKey) : null) || null);
+			return itemCache.get(info);
+		};
 		const colorRank = info => {
-			const item = getItem(info);
-			return _getDialogControlAssignedColor(item, items);
+			if (!colorCache.has(info)) colorCache.set(info, _getDialogControlAssignedColor(getItem(info), items));
+			return colorCache.get(info);
 		};
 		const rank = info => {
 			const key = _getDialogControlNativeSortKey(info);
 			return dateRank.get(key) ?? (1000000 + (fallbackRank.get(key) || 0));
 		};
 		const dateMeta = info => {
+			if (metaCache.has(info)) return metaCache.get(info);
 			const ids = Array.from(new Set([info.id, ...(Array.isArray(info.ids) ? info.ids : [])].map(normId).filter(Boolean)));
 			const metas = ids.map(id => _getDialogRecentMeta(id)).filter(Boolean);
-			return metas.find(meta => Number(meta.lastMessageTs) > 0) || metas[0] || null;
+			const meta = metas.find(meta => Number(meta.lastMessageTs) > 0) || metas[0] || null;
+			metaCache.set(info, meta);
+			return meta;
 		};
 		const displayedDates = new WeakMap();
 		const displayedDate = info => {

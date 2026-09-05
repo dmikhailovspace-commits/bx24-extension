@@ -51,6 +51,7 @@ const suites = [
 	'native-progress-performance-regression.mjs',
 	'native-message-performance-regression.mjs',
 	'native-cold-task-interaction-performance-regression.mjs',
+	'native-first-open-regression.mjs',
 	'native-dual-catalog-regression.mjs',
   'native-loading-race-regression.mjs',
 	'native-folder-dnd-regression.mjs',

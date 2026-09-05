@@ -464,3 +464,34 @@ assert.deepEqual(physicalTail({}), ['chat1103', 'chat1104', 'chat1105', 'chat110
 tailRows.reverse();
 assert.deepEqual(physicalTail({}), ['chat1103', 'chat1104', 'chat1105', 'chat1106', 'chat1107']);
 console.log('ok - physical tail anchors survive DOM presentation reordering');
+
+const mergeKeys = Function(`${extractInjectedFunction(accessSource, '_mergeDialogControlNativeSortKeys', '_applyDialogControlNativeSort')}; return _mergeDialogControlNativeSortKeys;`)();
+// Independent specification: insert each new key before the next known key,
+// or after the previous one; never reorder the saved native sequence.
+const referenceMerge = (saved, current) => {
+  const output = saved.slice();
+  current.forEach((key, index) => {
+    if (output.includes(key)) return;
+    const next = current.slice(index + 1).find(candidate => output.includes(candidate));
+    const previous = current.slice(0, index).reverse().find(candidate => output.includes(candidate));
+    output.splice(next !== undefined ? output.indexOf(next) : previous !== undefined ? output.indexOf(previous) + 1 : output.length, 0, key);
+  });
+  return output;
+};
+let seed = 7391;
+const random = () => ((seed = Math.imul(seed, 1664525) + 1013904223 >>> 0) / 4294967296);
+for (let run = 0; run < 1000; run += 1) {
+  const saved = Array.from({length: 30}, (_, i) => `chat${i}`).filter(() => random() > .4);
+  const current = Array.from({length: 45}, (_, i) => `chat${i}`).filter(() => random() > .3);
+  for (let i = current.length - 1; i > 0; i -= 1) { const j = Math.floor(random() * (i + 1)); [current[i], current[j]] = [current[j], current[i]]; }
+  if (run % 10 === 0) current.push(current[0]);
+  assert.deepEqual(mergeKeys(saved, current), referenceMerge(saved, current));
+}
+const savedKeys = Array.from({length: 5000}, (_, i) => `chat${i}`);
+const recycledKeys = Array.from({length: 5024}, (_, i) => `chat${4976 + i}`);
+const mergeAt = performance.now();
+const fullKeys = mergeKeys(savedKeys, recycledKeys);
+const keyMergeMs = performance.now() - mergeAt;
+assert.deepEqual(fullKeys, Array.from({length: 10000}, (_, i) => `chat${i}`));
+assert.ok(keyMergeMs < 100, `Native key merge took ${keyMergeMs.toFixed(1)} ms`);
+console.log(`ok - native key merge: 1000 randomized windows and 10000 keys in ${keyMergeMs.toFixed(1)} ms`);
