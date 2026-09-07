@@ -375,7 +375,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .pena-native-sync-chip{display:inline-flex;align-items:center;gap:5px;min-width:0;max-width:116px;height:24px;margin-left:auto;padding:0 7px;border:1px solid rgba(15,23,42,.1);border-radius:6px;background:#f8fafc;color:#64748b;font:700 10px/22px system-ui,-apple-system,Segoe UI,Roboto,Arial;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-sizing:border-box;appearance:none;cursor:default}
 .pena-native-sync-chip[hidden]{display:none!important}
 .pena-native-sync-chip::before{content:"";width:7px;height:7px;flex:0 0 7px;border-radius:50%;background:#94a3b8}.pena-native-sync-chip.--loading::before{width:9px;height:9px;flex-basis:9px;border:2px solid #bfdbfe;border-top-color:#2563eb;background:transparent;box-sizing:border-box;animation:pena-native-sync-spin .7s linear infinite}.pena-native-sync-chip.--ready{color:#17633c;background:#effaf4;border-color:rgba(22,163,74,.18)}.pena-native-sync-chip.--ready::before{background:#22a660}.pena-native-sync-chip.--warning{color:#8a4b08;background:#fff8e6;border-color:rgba(217,119,6,.28);cursor:pointer}.pena-native-sync-chip.--warning:hover{background:#ffefc2}.pena-native-sync-chip.--warning::before{background:#d97706}.pena-native-sync-chip.--error{color:#9f1239;background:#fff1f2;border-color:rgba(190,24,93,.18);cursor:pointer}.pena-native-sync-chip.--error:hover{background:#ffe4e6}.pena-native-sync-chip.--error::before{background:#e11d48}
-.pena-native-time-button{max-width:145px}.pena-native-time-button-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pena-native-time-button.--loading>svg:first-child{animation:pena-native-sync-spin .8s linear infinite}.pena-native-time-button.--error{color:#a13b3b;border-color:rgba(185,28,28,.28)}.pena-native-time-button.--tracking{color:#0f7a46;border-color:rgba(22,163,74,.3);background:#effaf4}
+.pena-native-time-button{max-width:145px}.pena-native-time-button-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pena-native-time-button.--error{color:#a13b3b;border-color:rgba(185,28,28,.28)}.pena-native-time-button.--tracking{color:#0f7a46;border-color:rgba(22,163,74,.3);background:#effaf4}
 .pena-native-filter-group{display:flex;align-items:center;gap:8px;min-width:0}
 .pena-native-filter-label{color:#64748b;font:700 10px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial;text-transform:uppercase}
 .pena-native-sort-options{display:inline-flex;align-items:center;border:1px solid rgba(15,23,42,.12);border-radius:6px;overflow:hidden;background:#fff}
@@ -844,7 +844,18 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 .pena-native-time-refresh:active{transform:translateY(0)}
 .pena-native-time-refresh:disabled{cursor:default;opacity:.65}
 .pena-native-time-refresh svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:2.15;stroke-linecap:round;stroke-linejoin:round}
-.pena-native-time-refresh.--loading svg{animation:pena-native-sync-spin .7s linear infinite}
+.pena-native-time-summary-group{display:grid;gap:8px;min-width:0}
+.pena-native-time-read-status{position:relative;display:flex;align-items:center;gap:8px;height:24px;min-height:24px;padding:0 2px 5px;color:#66758b;font:500 11px/16px var(--pena-time-ui);box-sizing:border-box}
+.pena-native-time-read-label{flex:0 0 auto}
+.pena-native-time-read-detail{min-width:0;margin-left:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
+.pena-native-time-read-progress{position:absolute;inset:auto 0 0;height:2px;overflow:hidden;border-radius:2px;background:#e3e9f1}
+.pena-native-time-read-progress::after{content:"";display:block;width:var(--pena-time-read-progress,0%);height:100%;background:#6888d9;transition:width .15s ease}
+.pena-native-time-read-status[data-indeterminate="true"] .pena-native-time-read-progress::after{width:28%;animation:pena-time-read-pending 1.25s ease-in-out infinite;transition:none}
+@keyframes pena-time-read-pending{from{transform:translateX(-100%)}to{transform:translateX(360%)}}
+@media(prefers-reduced-motion:reduce){.pena-native-time-read-status[data-indeterminate="true"] .pena-native-time-read-progress::after{animation:none;transform:none}}
+.pena-native-time-read-status[data-state="ready"] .pena-native-time-read-progress::after{background:#b1c2d7}
+.pena-native-time-read-status[data-state="error"],.pena-native-time-read-status[data-state="partial"]{color:#8b641d}
+.pena-native-time-read-status[data-state="error"] .pena-native-time-read-progress::after,.pena-native-time-read-status[data-state="partial"] .pena-native-time-read-progress::after{background:#c8a35e}
 .pena-native-time-body{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:16px;min-height:0}
 .pena-native-time-body[hidden],.pena-native-time-manual-block[hidden],.pena-native-time-tracker[hidden],.pena-native-time-stats[hidden]{display:none!important}
 .pena-native-time-column{display:grid;align-content:start;gap:16px;min-width:0}

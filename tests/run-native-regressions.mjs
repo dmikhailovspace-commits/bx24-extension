@@ -455,6 +455,8 @@ try {
 		scrollbarGutter: getComputedStyle(scroll).scrollbarGutter,
 		edgesAligned: !!summary && !!bodyRect && Math.abs(summary.left - bodyRect.left) <= 1 && Math.abs(summary.right - bodyRect.right) <= 1,
 		refreshPaths: panel.querySelectorAll('.pena-native-time-refresh svg path').length,
+		refreshAnimation: getComputedStyle(panel.querySelector('.pena-native-time-refresh svg')).animationName,
+		refreshLabel: panel.querySelector('.pena-native-time-refresh').getAttribute('aria-label'),
 		refreshBorder: getComputedStyle(panel.querySelector('.pena-native-time-refresh')).borderTopWidth
 	})});
 	assert.ok(timeWindow.width >= 400, `Time workspace did not open as a wide window in ${mode}: ${JSON.stringify(timeWindow)}`);
@@ -463,7 +465,9 @@ try {
 	assert.equal(timeWindow.overflowY, 'auto');
 	assert.match(timeWindow.scrollbarGutter, /stable/);
 	assert.equal(timeWindow.edgesAligned, true, `Time summary and cards have different edges in ${mode}: ${JSON.stringify(timeWindow)}`);
-	assert.equal(timeWindow.refreshPaths, 1, `Refresh icon was not replaced in ${mode}`);
+	assert.ok(timeWindow.refreshPaths > 0, `Refresh icon is missing in ${mode}`);
+	assert.equal(timeWindow.refreshAnimation, 'none', `Background time loading rotates the manual refresh icon in ${mode}`);
+	assert.ok(timeWindow.refreshLabel?.trim(), `Manual refresh needs an accessible action label in ${mode}`);
 	assert.equal(timeWindow.refreshBorder, '0px', `Refresh control kept the old boxed appearance in ${mode}`);
 	activePhase = `time timeout preserves cache and manual retry observes cooldown (${mode})`;
 	await verifyTimeTimeoutRecovery(page, timePanel, mode);

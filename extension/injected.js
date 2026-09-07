@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.96';
+	window.__ANITREC_RUNNING__ = '7.5.97';
 
-	const VER = '7.5.96';
+	const VER = '7.5.97';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -9556,6 +9556,9 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogTimeTrackerTick = null;
 	let _dialogTimeActivityTick = null;
 	let _dialogTimeActionInFlight = false;
+	let _dialogTimeActiveManualWriteIntent = null;
+	let _dialogTimeManualRefreshToken = null;
+	let _dialogTimeManualRefreshError = null;
 	let _dialogTimeEditingEntryId = '';
 	let _dialogTimeDeleteConfirmEntryId = '';
 	let _dialogTimeTrackerCancelConfirmTaskId = '';
@@ -13111,13 +13114,13 @@ if (_presetChannel) {
 		} catch { return dateKey || ''; }
 	}
 
-	function _getDialogTimeFriendlyError(error) {
+	function _getDialogTimeFriendlyError(error, fallback = 'Не удалось получить затраченное время') {
 		const message = String(error?.message || error || '');
 		if (/access|denied|not allowed|0x100002|0x000004/i.test(message)) return 'Нет доступа к данным о затраченном времени';
 		if (/BX\.rest|BX24|недоступен/i.test(message)) return 'REST Bitrix24 пока не готов';
 		if (/время ожидания|timeout/i.test(message)) return 'Bitrix24 не ответил вовремя';
 		if (/период|диапазон|дней/i.test(message)) return message;
-		return 'Не удалось получить затраченное время';
+		return fallback;
 	}
 
 	function _getDialogTimeTodayKey() {
@@ -13135,7 +13138,8 @@ if (_presetChannel) {
 	}
 
 	function _invalidateDialogTimeCachesForDates(...dateKeys) {
-		const taskId = String(dateKeys.at(-1)?.taskId || '');
+		const options = dateKeys.at(-1);
+		const taskId = String(options?.taskId || '');
 		const dates = dateKeys.map(value => String(value || '')).filter(value => _PENA_TIME_CONTROL?.parseDateKey?.(value));
 		if (!dates.length) return;
 		for (const [key, record] of Array.from(_dialogTimeCache)) {
@@ -13145,7 +13149,12 @@ if (_presetChannel) {
 			// Invalidation revokes freshness, not the last confirmed entries. Keeping
 			// them also lets a successful write update the visible total immediately.
 			const taskFreshness = { ...(record.taskFreshness || {}) };
-			if (taskId) delete taskFreshness[taskId];
+			const existing = taskFreshness[taskId];
+			const ttl = (record.data?.tasks || []).some(task => String(task.taskId) === taskId) ? _DIALOG_TIME_LOGGED_TTL_MS : _DIALOG_TIME_EMPTY_TTL_MS;
+			// An acknowledged ADD patches a complete snapshot without extending its read TTL.
+			const preserve = options?.preserveTaskFreshness === true && record.data && existing && !existing.unavailable &&
+				existing.revision === (_dialogTimeTaskRevisions.get(taskId) || 0) && Date.now() >= existing.at && Date.now() - existing.at < ttl;
+			if (taskId && !preserve) delete taskFreshness[taskId];
 			_setDialogTimeCacheRecord(key, { ...record, taskFreshness: taskId ? taskFreshness : {}, updatedAt: 0, failedAt: 0, error: '' });
 		}
 	}
@@ -13760,6 +13769,19 @@ if (_presetChannel) {
 		return Math.max(0, Math.floor((Date.now() - tracker.startedAt) / 1000));
 	}
 
+	function _syncDialogTimeTrackerClock(tracker) {
+		if (!_PENA_TIME_CONTROL || !tracker || document.visibilityState === 'hidden') return;
+		const switcher = _dialogControlNativeSwitcherNode;
+		if (!switcher?.isConnected) return;
+		const compact = _PENA_TIME_CONTROL.formatDurationCompact(_getDialogTimeTrackerSeconds(tracker));
+		const label = switcher.querySelector('.pena-native-time-button-label');
+		const labelText = `Сейчас ${compact}`;
+		if (label && label.textContent !== labelText) label.textContent = labelText;
+		if (_dialogControlNativeWorkspaceTab !== 'time') return;
+		const duration = switcher.querySelector('.pena-native-time-tracker-duration');
+		if (duration && duration.textContent !== compact) duration.textContent = compact;
+	}
+
 	function _ensureDialogTimeTrackerTick() {
 		const tracker = _readDialogTimeTracker();
 		if (!tracker || tracker.stoppedAt || tracker.pendingSeconds > 0) {
@@ -13768,13 +13790,29 @@ if (_presetChannel) {
 			return;
 		}
 		if (_dialogTimeTrackerTick) return;
+		let dayKey = _getDialogTimeTodayKey();
+		let scopeKey = _getDialogNativeSharedAuditScopeKey();
+		let trackerKey = `${tracker.taskId}:${tracker.startedAt}`;
 		_dialogTimeTrackerTick = setInterval(() => {
-			if (!_readDialogTimeTracker()) {
+			const currentTracker = _readDialogTimeTracker();
+			if (!currentTracker || currentTracker.stoppedAt || currentTracker.pendingSeconds > 0) {
 				clearInterval(_dialogTimeTrackerTick);
 				_dialogTimeTrackerTick = null;
+				_queueDialogTimeUiSync();
 				return;
 			}
-			_queueDialogTimeUiSync();
+			if (document.visibilityState === 'hidden') return;
+			const nextDay = _getDialogTimeTodayKey();
+			const nextScope = _getDialogNativeSharedAuditScopeKey();
+			const nextTracker = `${currentTracker.taskId}:${currentTracker.startedAt}`;
+			if (dayKey !== nextDay || scopeKey !== nextScope || trackerKey !== nextTracker) {
+				dayKey = nextDay;
+				scopeKey = nextScope;
+				trackerKey = nextTracker;
+				_queueDialogTimeUiSync();
+				return;
+			}
+			_syncDialogTimeTrackerClock(currentTracker);
 		}, 1000);
 	}
 
@@ -13949,7 +13987,9 @@ if (_presetChannel) {
 				hours:String(value.hours || ''), minutes:String(value.minutes || ''),
 				dateKey:_PENA_TIME_CONTROL?.parseDateKey?.(value.dateKey) ? String(value.dateKey) : '',
 				pendingWrite:pending && /^\d+$/.test(String(pending.taskId || '')) && Number(pending.seconds) > 0 && _PENA_TIME_CONTROL?.parseDateKey?.(pending.dateKey)
-					? { ...pending, status:'unknown' } : null
+					? { ...pending, status:pending.status === 'sending' && _dialogTimeActionInFlight &&
+						_dialogTimeActiveManualWriteIntent?.storageKey === key &&
+						_dialogTimeActiveManualWriteIntent.operationId === pending.operationId ? 'sending' : 'unknown' } : null
 			};
 		} catch { return {}; }
 	}
@@ -14328,9 +14368,11 @@ if (_presetChannel) {
 			]);
 			next.range = range;
 			next.pages = previous?.pages || 0;
+			if (previous?.coverage) next.coverage = { ...previous.coverage };
 			next.totalAvailable = next.entryCount;
 			_setDialogTimeCacheRecord(cacheKey, { ...record, range, status: 'ready', data: next, error: '', updatedAt: 0 });
 		}
+		_queueDialogTimeUiSync();
 	}
 
 	function _removeDialogTimeCachedEntry(taskId, entryId) {
@@ -14397,6 +14439,8 @@ if (_presetChannel) {
 				return;
 			}
 			if (!_writeDialogTimeManualDraft(draft, { storageKey, resolvePendingKey:_getDialogTimeWriteIntentKey(uncertain), writeIntent:true })) throw Object.assign(new Error('Не удалось сохранить черновик. Запрос не отправлен.'), {code:'TIME_WRITE_STORAGE'});
+			_dialogTimeActiveManualWriteIntent = { operationId:intent.operationId, storageKey };
+			_queueDialogTimeUiSync();
 			requestStarted = true;
 			const result = await _callBxRestMethod('task.elapseditem.add', { TASKID:Number(taskId), ARFIELDS:_buildDialogTimeWriteFields(duration.seconds, dateKey) });
 			if (result === false) throw Object.assign(new Error('Сервер отклонил запись времени'), {code:'TIME_WRITE_REJECTED'});
@@ -14405,25 +14449,35 @@ if (_presetChannel) {
 			saved = true;
 			_writeDialogTimeManualDraft(null, { storageKey, resolvePendingKey:_getDialogTimeWriteIntentKey(intent), writeIntent:true });
 			if (scope !== _getDialogNativeSharedAuditScopeKey()) return;
-			_invalidateDialogTimeCachesForDates(dateKey, { taskId });
+			_invalidateDialogTimeCachesForDates(dateKey, { taskId, preserveTaskFreshness:true });
 			_applyDialogTimeOptimisticEntry(taskId, duration.seconds, dateKey, savedItemId);
 			_dialogTimeManualSelectedTask = null;
 			_dialogTimeManualSearchQuery = '';
 			_dialogTimeManualSearchResults = [];
-			if (await _markDialogTimeTaskAccounted(taskId, Date.now(), dateKey) === false) warn('CONTACT_LEDGER_WRITE_FAILED');
 			const panel = _dialogControlNativeSwitcherNode?.querySelector('.pena-native-time-panel');
 			const hoursInput = panel?.querySelector('.pena-native-time-manual-hours'), minutesInput = panel?.querySelector('.pena-native-time-manual-minutes');
 			if (hoursInput) hoursInput.value = '';
 			if (minutesInput) minutesInput.value = '';
 			_showDialogDockToast(`Добавлено: ${_PENA_TIME_CONTROL.formatDuration(duration.seconds)}`, 'ok');
+			// Bookkeeping has its own storage lock; it cannot delay or undo an acknowledged ADD.
+			Promise.resolve().then(() => scope === _getDialogNativeSharedAuditScopeKey() ? _markDialogTimeTaskAccounted(taskId, Date.now(), dateKey) : true).then(ok => {
+				if (ok === false) throw new Error('CONTACT_LEDGER_WRITE_FAILED');
+			}).catch(error => {
+				warn('CONTACT_LEDGER_WRITE_FAILED', error);
+				if (scope === _getDialogNativeSharedAuditScopeKey()) _showDialogDockToast('Время сохранено. Не удалось отметить контакт.', 'warning');
+			});
 		} catch (error) {
 			const unknown = requestStarted && !saved && !_isDialogTimeDefiniteWriteFailure(error);
 			if (!saved) _writeDialogTimeManualDraft({ ...draft, pendingWrite: unknown ? { ...intent, status:'unknown' } : null }, { storageKey, resolvePendingKey:_getDialogTimeWriteIntentKey(intent), writeIntent:true });
 			if (scope === _getDialogNativeSharedAuditScopeKey()) {
-				_dialogTimeManualError = unknown ? 'Ответ сервера не получен. Проверьте журнал задачи перед повторной записью.' : _getDialogTimeFriendlyError(error);
+				_dialogTimeManualError = unknown ? 'Ответ сервера не получен. Проверьте журнал задачи перед повторной записью.' :
+					(error?.code === 'TIME_WRITE_REJECTED' || error?.code === 'TIME_WRITE_STORAGE' ? error.message : _getDialogTimeFriendlyError(error, 'Не удалось сохранить время'));
 				_showDialogDockToast(_dialogTimeManualError, 'danger');
 			}
-		} finally { _dialogTimeActionInFlight = false; _queueDialogTimeUiSync(); }
+		} finally {
+			if (_dialogTimeActiveManualWriteIntent?.operationId === intent.operationId) _dialogTimeActiveManualWriteIntent = null;
+			_dialogTimeActionInFlight = false; _queueDialogTimeUiSync();
+		}
 		if (saved && scope === _getDialogNativeSharedAuditScopeKey()) {
 			const visibleRange = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
 			_loadDialogTimeRange(visibleRange).catch(() => {});
@@ -15157,6 +15211,8 @@ if (_presetChannel) {
 		const record = _getDialogTimeRecord(visibleRange);
 		const rawData = record?.data || null;
 		const data = _filterDialogTimeDataByEligibility(rawData);
+		const initializing = panel._penaTimeInitialization?.pending === true;
+		const initializationError = panel._penaTimeInitialization?.error || '';
 		panel.classList.toggle('--loading', record?.status === 'loading');
 		panel.classList.toggle('--stats', _dialogTimeView === 'stats');
 		panel.querySelectorAll('.pena-native-time-view-tab').forEach(tab => {
@@ -15187,20 +15243,51 @@ if (_presetChannel) {
 		if (meta) {
 			meta.textContent = data
 				? `${data.taskCount} ${plural(data.taskCount, 'задача', 'задачи', 'задач')} · ${data.entryCount} ${plural(data.entryCount, 'запись', 'записи', 'записей')}`
-				: (record?.status === 'loading' ? 'Собираем данные…' : (record?.error ? 'Не удалось обновить данные' : 'Записей пока нет'));
+				: (initializing || record?.status === 'loading' ? 'Собираем данные…' : (record?.error || initializationError ? 'Не удалось обновить данные' : 'Записей пока нет'));
 			const coverage = data?.coverage;
 			meta.title = catalogIncomplete ? 'Список задач ещё загружается. Итог будет дополнен.' : coverage && (!coverage.complete || record?.status === 'loading')
 				? `Проверено задач: ${coverage.checkedTasks} из ${coverage.totalTasks}. Данные обновляются.`
 				: (record?.error || (record?.updatedAt ? `Обновлено: ${new Date(record.updatedAt).toLocaleTimeString('ru')}` : ''));
 		}
 		const refresh = panel.querySelector('.pena-native-time-refresh');
+		const refreshScope = _getDialogNativeSharedAuditScopeKey();
+		const manualRefreshing = _dialogTimeManualRefreshToken?.scope === refreshScope;
 		if (refresh) {
-			refresh.disabled = record?.status === 'loading';
-			refresh.classList.toggle('--loading', record?.status === 'loading');
-			refresh.title = record?.error || (catalogIncomplete ? 'Список задач ещё загружается. Итог будет дополнен.' : record?.status === 'loading' && data?.coverage
-				? `Проверено задач: ${data.coverage.checkedTasks} из ${data.coverage.totalTasks}`
-				: (_dialogTimeView === 'stats' ? 'Обновить статистику за 7 дней' : 'Обновить выбранную дату'));
+			refresh.disabled = manualRefreshing;
+			refresh.classList.remove('--loading');
+			refresh.title = _dialogTimeView === 'stats' ? 'Обновить статистику за 7 дней' : 'Обновить выбранную дату';
 			refresh.setAttribute('aria-label', refresh.title);
+		}
+		const status = panel.querySelector('.pena-native-time-read-status');
+		if (status) {
+			const rangeKey = `${visibleRange.from}:${visibleRange.to}`;
+			const manualError = _dialogTimeManualRefreshError?.scope === refreshScope && _dialogTimeManualRefreshError.rangeKey === rangeKey &&
+				!(record?.updatedAt > _dialogTimeManualRefreshError.failedAt)
+				? _dialogTimeManualRefreshError.message : '';
+			const error = initializationError || record?.error || manualError;
+			const catalogBusy = !!_dialogTimeCatalogPromise && _dialogTimeCatalogScope === refreshScope;
+			const busy = initializing || record?.status === 'loading' || catalogBusy || (manualRefreshing && _dialogTimeManualRefreshToken.rangeKey === rangeKey);
+			const coverage = data?.coverage;
+			const readProgress = record?.status === 'loading' ? record?.readProgress : null;
+			const incomplete = catalogIncomplete || coverage?.complete === false;
+			const state = error ? 'error' : busy ? 'loading' : incomplete ? 'partial' : 'ready';
+			const label = error ? 'Не удалось обновить данные' : initializing ? 'Подключаемся к Битрикс24' : busy ? (data ? 'Проверяем актуальность' : 'Загружаем данные')
+				: incomplete ? 'Данные проверены не полностью' : 'Данные обновлены';
+			const detail = error ? error : busy && readProgress?.totalTasks > 0
+				? `${readProgress.completedTasks} из ${readProgress.totalTasks} задач`
+				: record?.updatedAt ? new Date(record.updatedAt).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' }) : '';
+			const labelNode = status.querySelector('.pena-native-time-read-label');
+			const detailNode = status.querySelector('.pena-native-time-read-detail');
+			if (labelNode.textContent !== label) labelNode.textContent = label;
+			if (detailNode.textContent !== detail) detailNode.textContent = detail;
+			status.dataset.state = state;
+			status.dataset.indeterminate = state === 'loading' && !readProgress?.totalTasks ? 'true' : 'false';
+			status.title = error ? `${error}${data ? '. Показаны сохранённые данные.' : ''}` : label;
+			status.setAttribute('aria-busy', busy && !error ? 'true' : 'false');
+			status.setAttribute('aria-live', initializing || manualRefreshing || error ? 'polite' : 'off');
+			const progress = status.querySelector('.pena-native-time-read-progress');
+			const percent = busy ? (readProgress?.totalTasks > 0 ? Math.max(0, Math.min(100, Math.round(readProgress.completedTasks / readProgress.totalTasks * 100))) : 0) : (state === 'ready' ? 100 : 0);
+			progress.style.setProperty('--pena-time-read-progress', `${percent}%`);
 		}
 		const body = panel.querySelector('.pena-native-time-body');
 		if (body) body.hidden = _dialogTimeView === 'stats';
@@ -15217,8 +15304,8 @@ if (_presetChannel) {
 				row.className = 'pena-native-time-stats-row';
 				row.innerHTML = '<span class="pena-native-time-stats-date"></span><strong class="pena-native-time-stats-duration"></strong><span class="pena-native-time-stats-entries"></span>';
 				row.querySelector('.pena-native-time-stats-date').textContent = _formatDialogTimeDate(dateKey);
-				row.querySelector('.pena-native-time-stats-duration').textContent = _PENA_TIME_CONTROL.formatDuration(day.seconds || 0);
-				row.querySelector('.pena-native-time-stats-entries').textContent = `${day.entries || 0} ${plural(day.entries || 0, 'запись', 'записи', 'записей')}`;
+				row.querySelector('.pena-native-time-stats-duration').textContent = data ? _PENA_TIME_CONTROL.formatDuration(day.seconds || 0) : '—';
+				row.querySelector('.pena-native-time-stats-entries').textContent = data ? `${day.entries || 0} ${plural(day.entries || 0, 'запись', 'записи', 'записей')}` : '…';
 				row.addEventListener('click', event => {
 					event.preventDefault();
 					event.stopPropagation();
@@ -15320,10 +15407,11 @@ if (_presetChannel) {
 		const manualSubmit = panel.querySelector('.pena-native-time-manual-submit');
 		const manualError = panel.querySelector('.pena-native-time-manual-error');
 		const manualPending = _readDialogTimeManualDraft().pendingWrite;
+		const manualSending = manualPending?.status === 'sending';
 		const manualRetryConfirmed = manualPending && _dialogTimeManualRetryConfirmKey === `${manualPending.taskId}:${manualPending.dateKey}:${manualPending.seconds}:${manualPending.attemptedAt}`;
 		const manualRecovery = panel.querySelector('.pena-native-time-manual-recovery');
 		if (manualRecovery) {
-			manualRecovery.hidden = !manualPending;
+			manualRecovery.hidden = !manualPending || manualSending;
 			manualRecovery.querySelectorAll('button').forEach(button => { button.disabled = _dialogTimeActionInFlight; });
 		}
 		if (manualSearch) manualSearch.disabled = _dialogTimeActionInFlight || !!manualPending;
@@ -15343,7 +15431,7 @@ if (_presetChannel) {
 		if (manualToggle) manualToggle.setAttribute('aria-expanded', _dialogTimeManualExpanded ? 'true' : 'false');
 		if (manualToggle) manualToggle.closest('.pena-native-time-manual-block').hidden = _dialogTimeView === 'stats';
 		if (manualError) {
-			const formError = manualPending ? (_dialogTimeManualError || 'Ответ сервера не получен. Проверьте журнал задачи перед повторной записью.') : (_dialogTimeManualSelectedTask ? _dialogTimeManualError : '');
+			const formError = manualSending ? '' : manualPending ? (_dialogTimeManualError || 'Ответ сервера не получен. Проверьте журнал задачи перед повторной записью.') : (_dialogTimeManualSelectedTask ? _dialogTimeManualError : '');
 			manualError.hidden = !formError;
 			manualError.textContent = formError;
 		}
@@ -15528,16 +15616,17 @@ if (_presetChannel) {
 		const trackedList = panel.querySelector('.pena-native-time-tracked-list');
 		if (trackedToggle) {
 			trackedToggle.setAttribute('aria-expanded', _dialogTimeTrackedExpanded ? 'true' : 'false');
-			trackedToggle.querySelector('.pena-native-time-tracked-label').textContent = `Записи · ${tracked.length}`;
-			trackedToggle.querySelector('.pena-native-time-tracked-total').textContent = _PENA_TIME_CONTROL.formatDuration(data?.totalSeconds || 0);
+			trackedToggle.querySelector('.pena-native-time-tracked-label').textContent = data ? `Записи · ${tracked.length}` : 'Записи · …';
+			trackedToggle.querySelector('.pena-native-time-tracked-total').textContent = data ? _PENA_TIME_CONTROL.formatDuration(data.totalSeconds || 0) : '—';
 		}
 		if (trackedList) {
 			trackedList.hidden = !_dialogTimeTrackedExpanded;
-			const trackedKey = `${_dialogTimeActionInFlight ? 'busy' : 'ready'}:${_dialogTimeEditingEntryId}:${_dialogTimeDeleteConfirmEntryId}:${tracked.map(entry => `${entry.id}:${entry.taskId}:${entry.seconds}:${entry.dateKey}`).join('|')}`;
+			const emptyLabel = !data && (initializing || record?.status === 'loading') ? 'Загружаем записи…' : !data && (record?.error || initializationError) ? 'Не удалось загрузить записи' : 'За выбранную дату записей нет';
+			const trackedKey = `${_dialogTimeActionInFlight ? 'busy' : 'ready'}:${emptyLabel}:${_dialogTimeEditingEntryId}:${_dialogTimeDeleteConfirmEntryId}:${tracked.map(entry => `${entry.id}:${entry.taskId}:${entry.seconds}:${entry.dateKey}`).join('|')}`;
 			if (trackedList.dataset.penaRenderKey !== trackedKey) {
 				trackedList.replaceChildren(...(tracked.length
 					? tracked.map(createEntryRow)
-					: [Object.assign(document.createElement('div'), { className: 'pena-native-time-empty', textContent: 'За выбранную дату записей нет' })]));
+					: [Object.assign(document.createElement('div'), { className: 'pena-native-time-empty', textContent: emptyLabel })]));
 				trackedList.dataset.penaRenderKey = trackedKey;
 			}
 		}
@@ -15636,7 +15725,7 @@ if (_presetChannel) {
 		}
 		if (!force && cached?.error && now - (cached.failedAt || 0) < 15000) return cached.data || null;
 		if (!pendingIds.length && cached?.data) return cached.data;
-		const base = { ...cached, range: normalized, status: 'loading', data: cached?.data || null, error: '', taskIdsKey, taskFreshness: freshness, readRevision: revision };
+		const base = { ...cached, range: normalized, status: 'loading', data: cached?.data || null, error: '', taskIdsKey, taskFreshness: freshness, readRevision: revision, readProgress: { completedTasks:0, totalTasks:pendingIds.length } };
 		_setDialogTimeCacheRecord(key, base);
 		_queueDialogTimeUiSync();
 		const request = (async () => {
@@ -15683,7 +15772,7 @@ if (_presetChannel) {
 				const checkedTasks = taskIds.filter(id => freshness[id] && !freshness[id].unavailable && freshness[id].revision === (_dialogTimeTaskRevisions.get(id) || 0)).length;
 				data = { ..._PENA_TIME_CONTROL.aggregateElapsedItems(merged), range: normalized, pages, totalAvailable: merged.length,
 					coverage: { checkedTasks, totalTasks: taskIds.length, complete: checkedTasks === taskIds.length } };
-				_setDialogTimeCacheRecord(key, { ...base, status: offset < pendingIds.length ? 'loading' : 'ready', data, taskFreshness: { ...freshness }, updatedAt: Date.now() });
+				_setDialogTimeCacheRecord(key, { ...base, status: offset < pendingIds.length ? 'loading' : 'ready', readProgress: { completedTasks:offset, totalTasks:pendingIds.length }, data, taskFreshness: { ...freshness }, updatedAt: Date.now() });
 				_queueDialogTimeUiSync();
 				if (offset < pendingIds.length) await _sleepDialogControl(0);
 			}
@@ -15761,6 +15850,8 @@ if (_presetChannel) {
 		_captureActiveDialogTimeActivity({ passive: true });
 		const panel = document.createElement('div');
 		panel.className = 'pena-native-time-panel pena-native-command-popover';
+		const initialLoadState = { pending: true, error: '' };
+		panel._penaTimeInitialization = initialLoadState;
 		panel.setAttribute('role', 'dialog');
 		panel.setAttribute('aria-modal', 'true');
 		panel.setAttribute('aria-labelledby', 'pena-time-panel-title');
@@ -15900,13 +15991,40 @@ if (_presetChannel) {
 		refresh.className = 'pena-native-time-refresh';
 		refresh.title = 'Обновить данные за сегодня';
 		refresh.setAttribute('aria-label', 'Обновить данные за сегодня');
-		refresh.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 7a7 7 0 0 1 11.5-.7L20 9M4 15l2.4 2.7A7 7 0 0 0 17.9 17"/></svg>';
+		// Two identical half-turn paths, drawn here without an external icon asset.
+		refresh.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8a8 8 0 0 1 14-1l1 2m0-5v5h-5"/><path d="M5 8a8 8 0 0 1 14-1l1 2m0-5v5h-5" transform="rotate(180 12 12)"/></svg>';
 		refresh.addEventListener('click', event => {
 			event.preventDefault();
 			event.stopPropagation();
-			const range = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
-			_refreshDialogTimePanel(range).then(data => {
-				const visits = _readDialogTimeVisits(_getDialogTimeSelectedRange().from);
+			const refreshView = _dialogTimeView;
+			let range = refreshView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
+			const correctInitialToday = !Number.isFinite(_dialogTimePortalUtcOffsetMinutes) && range.to === _getDialogTimeRange('today').to;
+			const scope = _getDialogNativeSharedAuditScopeKey();
+			if (_dialogTimeManualRefreshToken?.scope === scope) return;
+			const token = { scope, rangeKey: `${range.from}:${range.to}` };
+			const ownsVisibleOutcome = () => {
+				const visibleRange = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
+				return scope === _getDialogNativeSharedAuditScopeKey() && panel.isConnected && _dialogControlNativeWorkspaceTab === 'time' &&
+					`${visibleRange.from}:${visibleRange.to}` === token.rangeKey;
+			};
+			_dialogTimeManualRefreshToken = token;
+			_dialogTimeManualRefreshError = null;
+			const retryInitialization = panel._penaTimeInitialization?.error ? { pending: true, error: '' } : null;
+			if (retryInitialization) panel._penaTimeInitialization = retryInitialization;
+			_syncDialogTimeUi(_dialogControlNativeSwitcherNode || panel.closest('.pena-native-folder-switcher'));
+			Promise.all([_ensureDialogTimePortalDate(), _ensureCurrentBitrixUserId()]).then(([portalDate, userId]) => {
+				if (!portalDate) throw Object.assign(new Error('Не удалось определить дату Битрикс24'), { code: 'PENA_TIME_INITIALIZATION' });
+				if (!userId) throw Object.assign(new Error('Не удалось определить текущего пользователя'), { code: 'PENA_TIME_INITIALIZATION' });
+				if (retryInitialization) retryInitialization.pending = false;
+				if (scope !== _getDialogNativeSharedAuditScopeKey()) return null;
+				if (correctInitialToday) {
+					range = { from: refreshView === 'stats' ? _PENA_TIME_CONTROL.addDays(portalDate, -6) : portalDate, to: portalDate };
+					token.rangeKey = `${range.from}:${range.to}`;
+				}
+				return _refreshDialogTimePanel(range);
+			}).then(data => {
+				if (scope !== _getDialogNativeSharedAuditScopeKey() || !data) return;
+				const visits = _readDialogTimeVisits(range.from);
 				visits.forEach(visit => {
 					const taskId = String(visit.taskId || '');
 					if (_isDialogTimePlaceholderTaskTitle(taskId, _getDialogTimeTaskTitle(taskId, visit.title))) {
@@ -15917,15 +16035,31 @@ if (_presetChannel) {
 				const visible = _filterDialogTimeDataByEligibility(data);
 				const duration = _PENA_TIME_CONTROL?.formatDuration?.(visible?.totalSeconds || 0) || '0 мин';
 				const taskCount = visible?.taskCount || 0;
-				_showDialogDockToast(`Обновлено · ${duration} · ${taskCount} ${_ruPlural(taskCount, 'задача', 'задачи', 'задач')}`, 'ok');
+				if (ownsVisibleOutcome()) _showDialogDockToast(`Обновлено · ${duration} · ${taskCount} ${_ruPlural(taskCount, 'задача', 'задачи', 'задач')}`, 'ok');
 			}).catch(error => {
-				_showDialogDockToast(_getDialogTimeFriendlyError(error), 'danger');
+				if (scope !== _getDialogNativeSharedAuditScopeKey()) return;
+				const message = error?.code === 'PENA_TIME_INITIALIZATION' ? error.message : _getDialogTimeFriendlyError(error);
+				if (retryInitialization?.pending) retryInitialization.error = message;
+				_dialogTimeManualRefreshError = { ...token, message, failedAt: Date.now() };
+				if (ownsVisibleOutcome()) _showDialogDockToast(message, 'danger');
+			}).finally(() => {
+				if (retryInitialization) retryInitialization.pending = false;
+				if (_dialogTimeManualRefreshToken === token) _dialogTimeManualRefreshToken = null;
+				_queueDialogTimeUiSync();
 			});
 		});
 		const summaryActions = document.createElement('div');
 		summaryActions.className = 'pena-native-time-summary-actions';
 		summaryActions.append(refresh);
 		summary.append(summaryText, dateControls, summaryActions);
+		const readStatus = document.createElement('div');
+		readStatus.className = 'pena-native-time-read-status';
+		readStatus.setAttribute('role', 'status');
+		readStatus.setAttribute('aria-live', 'polite');
+		readStatus.innerHTML = '<span class="pena-native-time-read-label"></span><span class="pena-native-time-read-detail"></span><span class="pena-native-time-read-progress" aria-hidden="true"></span>';
+		const summaryGroup = document.createElement('div');
+		summaryGroup.className = 'pena-native-time-summary-group';
+		summaryGroup.append(summary, readStatus);
 
 		const tracker = document.createElement('section');
 		tracker.className = 'pena-native-time-tracker';
@@ -16219,19 +16353,28 @@ if (_presetChannel) {
 		stats.append(statsHeader, statsList);
 		const scroll = document.createElement('div');
 		scroll.className = 'pena-native-time-scroll';
-		scroll.append(summary, stats, body);
+		scroll.append(summaryGroup, stats, body);
 		panel.append(panelHeader, scroll);
 		Promise.all([
 			_ensureDialogTimePortalDate(),
 			_ensureCurrentBitrixUserId()
-		]).then(() => {
+		]).then(([portalDate, userId]) => {
+			if (panel._penaTimeInitialization !== initialLoadState) return;
+			if (!portalDate) throw Object.assign(new Error('Не удалось определить дату Битрикс24'), { code: 'PENA_TIME_INITIALIZATION' });
+			if (!userId) throw Object.assign(new Error('Не удалось определить текущего пользователя'), { code: 'PENA_TIME_INITIALIZATION' });
+			initialLoadState.pending = false;
 			if (_dialogControlNativeWorkspaceTab !== 'time') return;
 			_armDialogTimeVisitTracking();
 			const range = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
 			_loadDialogTimeRange(range).catch(() => {});
 			_refreshDialogTimeTaskCatalog().catch(() => {});
 			_queueDialogTimeUiSync();
-		}).catch(() => {});
+		}).catch(error => {
+			initialLoadState.error = error?.code === 'PENA_TIME_INITIALIZATION' ? error.message : _getDialogTimeFriendlyError(error);
+		}).finally(() => {
+			initialLoadState.pending = false;
+			_queueDialogTimeUiSync();
+		});
 		return panel;
 	}
 

@@ -25,7 +25,7 @@ function fixture(count = 2) {
   _dialogTimeRangeRevisions:new Map(), _dialogTimeTaskRevisions:new Map(), _dialogTimeTaskChangedAt:new Map(), _dialogTimePanelRefreshes:new Map(),
   _dialogTimeTaskTitles:new Map(), _dialogTimeTaskEligibility:new Map(), _readDialogTaskTimeTrackingFlag:row=>row.ALLOW_TIME_TRACKING==='Y', _rememberDialogTimeTaskChat:()=>{},
   _setDialogTimeTaskEligibility:(id,enabled)=>sandbox._dialogTimeTaskEligibility.set(id,enabled), _parseDialogRecentDate:value=>Date.parse(value)||0,
-  _dialogTimeActionInFlight:false, _dialogTimeManualError:'', _dialogTimeManualSelectedTask:null, _dialogTimeManualSearchQuery:'', _dialogTimeManualSearchResults:[],
+  _dialogTimeActionInFlight:false, _dialogTimeActiveManualWriteIntent:null, _dialogTimeManualError:'', _dialogTimeManualSelectedTask:null, _dialogTimeManualSearchQuery:'', _dialogTimeManualSearchResults:[],
   _dialogTimeManualRetryConfirmKey:'', _dialogTimeTrackerRetryConfirmKey:'', _PENA_TIME_MANUAL_DRAFT_KEY:'manual', _PENA_TIME_TRACKER_KEY:'tracker', _dialogTimePortalUtcOffsetMinutes:0,
   _dialogTimeDeleteConfirmEntryId:'', _dialogTimeEditingEntryId:'',
   _getCurrentBitrixUserId:()=> '7', _ensureCurrentBitrixUserId:async()=> '7', _getDialogNativeSharedAuditScopeKey:()=>state.scope,
@@ -99,7 +99,7 @@ try {
   state.eligibility=deferred();const a=api._addDialogTimeManualEntry({taskId:'1'},0,10,range.from);const b=api._addDialogTimeManualEntry({taskId:'1'},0,10,range.from);
   assert.equal(api._dialogTimeActionInFlight,true);state.eligibility.resolve(true);await Promise.all([a,b]);
   await api._loadDialogTimeRange(range);assert.equal(state.writes.length,1);assert.equal(state.record().data.totalSeconds,6000);
-  assert.deepEqual(state.calls.flat(),['1']);return {writes:state.writes.length,reconciledTasks:state.calls.flat().length};
+  assert.deepEqual(state.calls.flat(),[]);return {writes:state.writes.length,reconciledTasks:0};
  });
  await phase('two edits while eligibility is delayed preserve one mutation and target one task',async()=>{
   const {state,api}=fixture();state.seed([entry(1,1,3600),entry(2,2,1800)]);state.eligibility=deferred();
@@ -252,6 +252,52 @@ try {
   await api._loadDialogTimeTaskTitles(data,visits);assert.equal(state.batches.length,1);assert.equal(state.batches[0].length,50);assert.equal(state.commits.length,49);
   state.partial=false;state.clock+=61000;await api._loadDialogTimeTaskTitles(data,visits);assert.equal(state.batches.length,2);assert.deepEqual(Array.from(state.batches[1]),['1']);
   return{firstBatchTasks:50,preservedSuccessfulTitles:49,retryTaskCount:1};
+ });
+
+ await phase('live manual intent is sending, recovered intent remains unknown',async()=>{
+  const {state,api}=fixture(); const storage=new Map();api.localStorage={getItem:key=>storage.get(key)||null};
+  vm.runInContext(extract('_readDialogTimeManualDraft'),api);
+  const intent={taskId:'1',seconds:600,dateKey:range.from,operationId:'live',status:'sending'};
+  storage.set('manual:7:write-intent',JSON.stringify(intent));
+  api._dialogTimeActionInFlight=true;api._dialogTimeActiveManualWriteIntent={operationId:'live',storageKey:'manual:7'};
+  assert.equal(api._readDialogTimeManualDraft().pendingWrite.status,'sending');
+  api._dialogTimeActiveManualWriteIntent=null;assert.equal(api._readDialogTimeManualDraft().pendingWrite.status,'unknown');
+  api._dialogTimeActiveManualWriteIntent={operationId:'other',storageKey:'manual:7'};assert.equal(api._readDialogTimeManualDraft().pendingWrite.status,'unknown');
+  api._dialogTimeActiveManualWriteIntent={operationId:'live',storageKey:'manual:8'};assert.equal(api._readDialogTimeManualDraft().pendingWrite.status,'unknown');
+  return {live:'sending',reload:'unknown',foreignOperation:'unknown',foreignScope:'unknown'};
+ });
+ await phase('confirmed add paints and unlocks before local ledger settles without a false write error',async()=>{
+  const {state,api}=fixture();state.seed([entry(1,1,3600),entry(2,2,1800)]);
+  const ledger=deferred(),toasts=[];api._markDialogTimeTaskAccounted=()=>ledger.promise;api._showDialogDockToast=(message,kind)=>toasts.push({message,kind});
+  await api._addDialogTimeManualEntry({taskId:'1'},0,10,range.from);
+  assert.ok(state.paints.includes(6000));assert.equal(api._dialogTimeActionInFlight,false);assert.equal(state.calls.length,0);
+  assert.equal(api._dialogTimeManualError,'');assert.equal(toasts.filter(t=>t.kind==='ok').length,1);
+  ledger.reject(new Error('Storage write failed'));for(let i=0;i<8;i++)await Promise.resolve();
+  assert.equal(api._dialogTimeManualError,'');assert.equal(toasts.filter(t=>t.kind==='danger').length,0);assert.equal(toasts.filter(t=>t.kind==='warning').length,1);
+  assert.equal(state.writes.length,1);assert.equal(state.record().data.totalSeconds,6000);
+  return {paintBeforeLedgerSeconds:6000,readsAfterAck:0,writeErrors:0,bookkeepingWarnings:1};
+ });
+ await phase('ADD preserves original freshness only while task snapshot is valid',async()=>{
+  for(const mode of ['fresh','expired','missing','event']){
+   const {state,api}=fixture();state.seed([entry(1,1,3600),entry(2,2,1800)]);const at=state.clock;
+   if(mode==='expired')state.clock+=10001;
+   if(mode==='missing')delete state.record().taskFreshness['1'];
+   if(mode==='event')api._dialogTimeTaskRevisions.set('1',1);
+   await api._addDialogTimeManualEntry({taskId:'1'},0,10,range.from);await api._loadDialogTimeRange(range);
+   assert.equal(state.record().data.totalSeconds,6000);
+   if(mode==='fresh'){
+    assert.equal(state.calls.length,0);assert.equal(state.record().taskFreshness['1'].at,at);
+    state.clock+=10001;await api._loadDialogTimeRange(range);assert.deepEqual(state.calls.flat(),['1','2']);
+   }else assert.ok(state.calls.flat().includes('1'),mode+' must reconcile');
+  }
+  return {freshAckReads:0,expiredMissingOrInvalidated:'reconciled',ttlExtended:false};
+ });
+ await phase('warm validation reports this wave progress independently of existing full coverage',async()=>{
+  const {state,api}=fixture(17);state.seed([entry(1,1,600)]);state.record().data.coverage={complete:true,checkedTasks:17,totalTasks:17};
+  const gate=deferred();state.hold=gate;const read=api._loadDialogTimeRange(range,{force:true});await Promise.resolve();
+  assert.equal(state.record().readProgress.completedTasks,0);assert.equal(state.record().readProgress.totalTasks,17);assert.equal(state.record().data.totalSeconds,600);
+  gate.resolve();await read;assert.equal(state.record().readProgress.completedTasks,17);assert.equal(state.record().data.coverage.complete,true);
+  return {initialCompleted:0,finalCompleted:17,retainedSeconds:600};
  });
  console.log(`PASS time refresh: ${phases.length} phases`);
 } finally {
