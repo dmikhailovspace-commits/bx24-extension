@@ -19,12 +19,13 @@
 
   const _root    = () => document.documentElement || document.head || document.body;
   const _logoUrl = chrome.runtime.getURL('icons/logo.png');
-  const _releaseVersion = chrome.runtime.getManifest().version;
+  const _runtimeManifest = chrome.runtime.getManifest();
+  const _releaseVersion = _runtimeManifest.version;
   const _enabledKey = 'pena.extension.enabled';
   const _repositoryChannel = 'pena.dialog.repository.v2';
 	const _workerHealthChannel = 'pena.runtime.worker-health.v1';
-	const _expectedWorkerEntry = 'worker-v7_5_90.js';
-	const _expectedWorkerBuild = '7.5.90';
+	const _expectedWorkerEntry = _runtimeManifest.background?.service_worker || '';
+	const _expectedWorkerBuild = _releaseVersion;
 	const _expectedWorkerProtocol = 'dialog-repository-v2';
   const _repositoryRequestEvent = 'pena-dialog-repository-request';
   const _repositoryResponseEvent = 'pena-dialog-repository-response';
@@ -63,10 +64,20 @@
         resolve(true);
       };
       const probe = records => {
-        if (_isExplicitTopMessengerLocation() || _hasMessengerSurface(document)) return finish();
-        if (!Array.isArray(records)) return;
+        if (_isExplicitTopMessengerLocation()) return finish();
+        // Mutation batches describe the changed subtrees. Searching the entire
+        // task/CRM document for every batch delays unrelated Bitrix navigation.
+        // Full scans belong only to readiness/route checkpoints.
+        if (!Array.isArray(records)) {
+          if (_hasMessengerSurface(document)) finish();
+          return;
+        }
+        const seen = new Set();
         for (const record of records) {
+          if (record.target?.matches?.(_messengerListSelector)) return finish();
           for (const node of record?.addedNodes || []) {
+            if (node.nodeType !== 1 || seen.has(node)) continue;
+            seen.add(node);
             if (_hasMessengerSurface(node)) return finish();
           }
         }

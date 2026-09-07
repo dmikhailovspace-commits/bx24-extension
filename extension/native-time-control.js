@@ -529,7 +529,7 @@
 				sample.durationMs = Date.now() - sample.startedAt;
 				sample.status = error ? 'error' : 'ok';
 				if (error) sample.code = String(error.code || 'REST_ERROR');
-				if (error && /TIMEOUT|QUERY_LIMIT|TOO_MANY|429|время ожидания/i.test(String(error.code || '') + ' ' + error.message)) blockedUntil = Date.now() + cooldownMs;
+				if (error && /TIMEOUT|QUERY_LIMIT|OPERATION_TIME_LIMIT|TOO_MANY|429|время ожидания/i.test(String(error.code || '') + ' ' + error.message)) blockedUntil = Date.now() + cooldownMs;
 				active--; pending.delete(job.key);
 				if (error) job.reject(error); else job.resolve(value);
 				pump();

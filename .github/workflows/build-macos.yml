@@ -238,9 +238,10 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' \
-            'Automatically loads complete native dialog lists on first Bitrix startup.' \
-            'Optimizes native sort-key merging and metadata comparisons.' \
-            'Coalesces time catalog refreshes and verifies delayed first-open recovery.' \
+            'Removes idle task detail requests and redundant DOM work during normal Bitrix use.' \
+            'Shares complete task audits using stable ID pagination and prevents batch retry amplification.' \
+            'Adds functional request, DOM and HTTP interaction diagnostics; 33 regression suites gate this release.' \
+            'Controlled tests do not establish a 3–10x whole-app speedup or reproduce the reported live-client five-second delay.' \
             'Includes Windows EXE and Universal macOS DMG for Intel and Apple Silicon.' \
             > release-notes.md
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then

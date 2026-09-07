@@ -117,7 +117,7 @@ try {
     if(method==='tasks.task.list' && params.order?.ID==='asc'){
      window.catalogProbeCalls.push(params);
      const start=params.start||0, delta=!!params.filter?.['>=CHANGED_DATE'];
-     const data=delta?[]:rows.slice(start,start+50);
+     const data=delta?[]:rows.filter(row=>Number(row.ID)>Number(params.filter?.['>ID']||0)).slice(start,start+50);
      return cb({error:()=>null,data:()=>({tasks:data}),next:()=>null});
     }
     return original.apply(this,arguments);
@@ -126,7 +126,8 @@ try {
   const loadStarts = await page.evaluate(()=>window.timeRangeLoadStarts || 0);
   await page.evaluate(()=>window.timeProbe.refresh());
   await page.waitForFunction(()=>[...document.querySelectorAll('.pena-native-time-task-select option')].some(o=>o.value==='92124'));
-  assert.deepEqual(await page.evaluate(()=>window.catalogProbeCalls.map(c=>c.start)),[0,50,100]);
+  assert.deepEqual(await page.evaluate(()=>window.catalogProbeCalls.map(c=>c.start)),[0,0,0]);
+  assert.deepEqual(await page.evaluate(()=>window.catalogProbeCalls.map(c=>c.filter['>ID'])),[0,92049,92099]);
   assert.equal((await page.evaluate(()=>window.timeRangeLoadStarts))-loadStarts,2,'catalog pages must refresh elapsed only on first page and tail');
   await page.evaluate(()=>window.timeProbe.refresh(false));
   assert.ok(await page.evaluate(()=>window.catalogProbeCalls.at(-1).filter['>=CHANGED_DATE']));

@@ -22,4 +22,18 @@ assert.ok(afterFailure.samples.some(row => row.code === 'TIMEOUT'));
 // Writes deliberately have no deduplication key.
 await Promise.all([queue.run('add', '', run), queue.run('add', '', run)]);
 assert.equal(calls, 23);
+// OPERATION_TIME_LIMIT is server resource pressure as well as HTTP quota.
+// Already queued work must observe the cooldown rather than immediately dispatch.
+const operationQueue = createRequestQueue({ concurrency: 1, spacingMs: 0, cooldownMs: 40 });
+let operationFailedAt = 0, resumedAt = 0;
+const limited = operationQueue.run('tasks.task.list', 'limited', async () => {
+ await sleep(5); operationFailedAt = Date.now();
+ throw Object.assign(new Error('Resource execution quota'), { code: 'OPERATION_TIME_LIMIT' });
+});
+const queuedAfterLimit = operationQueue.run('tasks.task.list', 'queued-page', async () => { resumedAt = Date.now(); return true; });
+await assert.rejects(limited, error => error.code === 'OPERATION_TIME_LIMIT');
+await queuedAfterLimit;
+assert.ok(resumedAt - operationFailedAt >= 40, 'Queued work ignored OPERATION_TIME_LIMIT cooldown');
+assert.equal(operationQueue.snapshot().active, 0);
+assert.equal(operationQueue.snapshot().queued, 0);
 console.log('PASS REST queue: concurrency, deduplication, cancellation, timeout cooldown, write isolation', JSON.stringify(queue.snapshot()));

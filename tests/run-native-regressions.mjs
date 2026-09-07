@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { verifyTimeTimeoutRecovery } from './lib/native-time-timeout-recovery.mjs';
 import { createReadStream, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
@@ -65,6 +66,7 @@ const pageErrors = [];
 page.on('pageerror', error => pageErrors.push(String(error)));
 const scenarioTimings = [];
 let activeScenario = null;
+let activePhase = 'navigation';
 const finishScenario = async (error = null) => {
 	if (!activeScenario) return;
 	const rest = await page.evaluate(() => window.__PENA_REST_DIAGNOSTICS__?.snapshot()).catch(() => null);
@@ -79,6 +81,7 @@ const navigate = page.goto.bind(page);
 page.goto = async (url, options) => {
 	await finishScenario();
 	activeScenario = { url: String(url).replace(base, ''), startedAt: Date.now() };
+	activePhase = 'page scenario';
 	return navigate(url, options);
 };
 
@@ -462,15 +465,9 @@ try {
 	assert.equal(timeWindow.edgesAligned, true, `Time summary and cards have different edges in ${mode}: ${JSON.stringify(timeWindow)}`);
 	assert.equal(timeWindow.refreshPaths, 1, `Refresh icon was not replaced in ${mode}`);
 	assert.equal(timeWindow.refreshBorder, '0px', `Refresh control kept the old boxed appearance in ${mode}`);
-	const callsBeforeTimeoutRetry = await page.evaluate(() => window.timeRestCalls.length);
-	await page.evaluate(() => {
-		window.timeListTimeoutFailures = 1;
-		document.querySelector('.pena-native-time-refresh')?.click();
-	});
-	await page.waitForFunction(previous => window.timeRestCalls.length >= previous + 2 && !document.querySelector('.pena-native-time-panel')?.classList.contains('--loading'), callsBeforeTimeoutRetry);
-	assert.equal(await timePanel.locator('.pena-native-time-error').isHidden(), true, `A recovered Bitrix timeout remained visible in ${mode}`);
-	assert.equal(await timePanel.locator('.pena-native-time-total-value').textContent(), '1 ч 30 мин', `A recovered Bitrix timeout broke the time summary in ${mode}`);
-	await page.waitForFunction(() => document.querySelector('.pena-native-toast.--show')?.textContent?.includes('Обновлено · 1 ч 30 мин · 2 задачи'));
+	activePhase = `time timeout preserves cache and manual retry observes cooldown (${mode})`;
+	await verifyTimeTimeoutRecovery(page, timePanel, mode);
+	activePhase = `time panel controls and task search (${mode})`;
 	const timeFonts = await timePanel.evaluate(panel => ({
 		ui: getComputedStyle(panel).fontFamily,
 		accent: getComputedStyle(panel.querySelector('.pena-native-time-total-value')).fontFamily,
@@ -1127,25 +1124,53 @@ try {
 	assert.equal(migratedSelfStorage.draft?.taskId, '303', `Legacy draft was not migrated: ${JSON.stringify(migratedSelfStorage)}`);
 	assert.notEqual(migratedSelfStorage.lease?.frameId, 'dead-frame', `A dead self lease was migrated: ${JSON.stringify(migratedSelfStorage)}`);
 
-	// Opening the panel during a delayed two-page task index must await the full
-	// catalog before snapshotting eligible IDs. Otherwise page 2 is cached away.
+	// A progressive first page is useful immediately; completeness belongs to
+	// the later keyset tail and its coalesced elapsed-range reconciliation.
 	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=tasks&taskCatalogRows=4&taskPageCap=5&taskDelay=350`);
+	activePhase = 'progressive time catalog: first page while tail response is held';
 	await page.locator('.task-host .pena-native-time-button').waitFor({ state: 'visible' });
+	await page.evaluate(() => {
+		const original = window.BX.rest.callMethod;
+		window.delayedTimeCatalogTail = [];
+		window.releaseTimeCatalogTail = false;
+		window.BX.rest.callMethod = function (method, params, callback) {
+			if (method === 'tasks.task.list' && params?.order?.ID === 'asc' && Number(params?.filter?.['>ID']) > 0 && !window.releaseTimeCatalogTail) {
+				window.delayedTimeCatalogTail.push(() => original.call(this, method, params, callback));
+				return;
+			}
+			return original.apply(this, arguments);
+		};
+	});
 	await page.locator('.task-host .pena-native-time-button').click();
-	await page.waitForTimeout(180);
-	assert.equal(await page.evaluate(() => window.timeRestCalls.length), 0,
-		'Elapsed time loaded before the delayed task catalog completed');
-	await page.waitForFunction(() => !document.querySelector('.pena-native-time-panel')?.classList.contains('--loading') &&
+	await page.waitForFunction(() => window.delayedTimeCatalogTail.length > 0 &&
+		!document.querySelector('.pena-native-time-panel')?.classList.contains('--loading') &&
 		document.querySelector('.pena-native-time-total-value')?.textContent === '1 ч 30 мин', null, { timeout: 10000 });
+	const firstPageTimeTasks = await page.evaluate(() => [...new Set(window.timeRestCalls.map(params => String(params?.[0] || '')))]);
+	assert.ok(firstPageTimeTasks.includes('101') && firstPageTimeTasks.includes('102'),
+		`The first task page did not paint usable cached totals: ${JSON.stringify(firstPageTimeTasks)}`);
+	assert.equal(firstPageTimeTasks.includes('50000'), false, 'A held tail task appeared before its catalog response');
+	activePhase = 'progressive time catalog: released tail adds missing elapsed tasks';
+	await page.evaluate(() => {
+		window.releaseTimeCatalogTail = true;
+		window.delayedTimeCatalogTail.splice(0).forEach(deliver => deliver());
+	});
+	await page.waitForFunction(() => {
+		const sawTail = window.nativeRestCalls.some(call => call.method === 'tasks.task.list' && Number(call.params?.filter?.['>ID']) === 405);
+		const timeIds = new Set(window.timeRestCalls.map(params => String(params?.[0] || '')));
+		return sawTail && timeIds.has('50000') && timeIds.has('102') &&
+			!document.querySelector('.pena-native-time-panel')?.classList.contains('--loading') &&
+			document.querySelector('.pena-native-time-total-value')?.textContent === '1 ч 30 мин';
+	}, null, { timeout: 10000 });
 	const delayedCatalogLoad = await page.evaluate(() => ({
 		starts: window.nativeRestCalls.filter(call => call.method === 'tasks.task.list' && !call.params?.filter?.TITLE).map(call => Number(call.params?.start) || 0),
+		afterIds: window.nativeRestCalls.filter(call => call.method === 'tasks.task.list' && call.params?.order?.ID === 'asc').map(call => Number(call.params?.filter?.['>ID']) || 0),
 		taskIds: [...new Set(window.timeRestCalls.map(params => String(params?.[0] || '')))]
 	}));
-	assert.ok(delayedCatalogLoad.starts.includes(0) && delayedCatalogLoad.starts.includes(5),
+	assert.ok(delayedCatalogLoad.afterIds.includes(0) && delayedCatalogLoad.afterIds.includes(405),
 		`Delayed task catalog did not load both pages: ${JSON.stringify(delayedCatalogLoad)}`);
 	assert.ok(delayedCatalogLoad.taskIds.includes('50000') && delayedCatalogLoad.taskIds.includes('102'),
-		`Elapsed batch was created from a partial task catalog: ${JSON.stringify(delayedCatalogLoad)}`);
+		`Elapsed totals did not reconcile after the catalog tail: ${JSON.stringify(delayedCatalogLoad)}`);
 	await page.locator('.pena-native-time-panel').press('Escape');
 
 	// A cached Y/N flag expires. Stale N must be rechecked instead of permanently
@@ -2847,8 +2872,8 @@ try {
 		return status?.loadedModes?.includes('chats') && !status.originalActive && status.taskCatalogComplete === true;
 	}, null, { timeout: 10000 });
 	const explicitTaskPages = await page.evaluate(() => window.nativeRestCalls
-		.filter(call => call.method === 'tasks.task.list').map(call => call.start));
-	assert.deepEqual(explicitTaskPages, [0, 50],
+		.filter(call => call.method === 'tasks.task.list').map(call => call.params?.filter?.['>ID']));
+	assert.deepEqual(explicitTaskPages, [0, 50043],
 		`Task audit trusted bogus total or skipped an explicit next page: ${JSON.stringify(explicitTaskPages)}`);
 
 	await page.evaluate(() => localStorage.clear());
@@ -2858,9 +2883,9 @@ try {
 		return status?.loadedModes?.includes('chats') && !status.originalActive && status.taskCatalogComplete === true;
 	}, null, { timeout: 10000 });
 	const metadataFreeTaskPages = await page.evaluate(() => window.nativeRestCalls
-		.filter(call => call.method === 'tasks.task.list').map(call => call.start));
-	assert.deepEqual(metadataFreeTaskPages, [0, 50],
-		`Metadata-free task pagination did not use 50-row START windows and the documented short tail: ${JSON.stringify(metadataFreeTaskPages)}`);
+		.filter(call => call.method === 'tasks.task.list').map(call => call.params?.filter?.['>ID']));
+	assert.deepEqual(metadataFreeTaskPages, [0, 50043],
+		`Metadata-free task pagination did not use a monotonic ID keyset and the documented short tail: ${JSON.stringify(metadataFreeTaskPages)}`);
 
 	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&catalogRows=80&restTransientEmptyMs=180&startupBudget=10000`);
@@ -2901,11 +2926,11 @@ try {
 		return status?.loadedModes?.includes('tasks') && !status.originalActive && status.taskCatalogComplete === true;
 	}, null, { timeout: 10000 });
 	const transientTaskCatalog = await page.evaluate(() => ({
-		starts: window.nativeRestCalls.filter(call => call.method === 'tasks.task.list').map(call => call.start),
+		starts: window.nativeRestCalls.filter(call => call.method === 'tasks.task.list').map(call => call.params?.filter?.['>ID']),
 		proof: window.__PENA_NATIVE_PREFETCH__?.status?.().expectedCatalogs?.tasks || null,
 		ids: Array.from(document.querySelectorAll('.task-host .bx-im-list-container-task__elements > [data-id]'), row => row.dataset.id).sort()
 	}));
-	assert.deepEqual(transientTaskCatalog.starts, [0, 0, 50],
+	assert.deepEqual(transientTaskCatalog.starts, [0, 0, 50043],
 		`Task catalog accepted its first transient empty page: ${JSON.stringify(transientTaskCatalog)}`);
 	assert.ok(transientTaskCatalog.proof?.complete && transientTaskCatalog.proof?.count === 33,
 		`Task first-empty recovery did not produce a complete fenced proof: ${JSON.stringify(transientTaskCatalog)}`);
@@ -3808,7 +3833,8 @@ try {
 			ids: tasks.map(item => item.id).sort(),
 			oldTask: tasks.find(item => item.id === 'chat404') || null,
 			taskListCalls: window.nativeRestCalls.filter(call => call.method === 'tasks.task.list').length,
-			taskStarts: window.nativeRestCalls.filter(call => call.method === 'tasks.task.list').map(call => call.start)
+			taskStarts: window.nativeRestCalls.filter(call => call.method === 'tasks.task.list' && !call.params?.order?.ID).map(call => call.start),
+			taskCursors: window.nativeRestCalls.filter(call => call.method === 'tasks.task.list' && call.params?.order?.ID === 'asc').map(call => call.params?.filter?.['>ID'])
 		};
 	});
 	const exactDeepTaskIds = [
@@ -3821,8 +3847,8 @@ try {
 		`Multi-page task catalog stopped before all available tasks: ${JSON.stringify(deepTaskCatalog)}`);
 	assert.deepEqual(deepTaskCatalog.taskStarts.slice(0, 4), [0, 50, 100, 150],
 		`Background task-head refresh did not stay inside its bounded START window: ${JSON.stringify(deepTaskCatalog)}`);
-	assert.deepEqual(deepTaskCatalog.taskStarts.slice(-6), [0, 50, 100, 150, 200, 250],
-		`Manual task catalog refresh did not follow canonical 50-row START windows: ${JSON.stringify(deepTaskCatalog)}`);
+	assert.deepEqual(deepTaskCatalog.taskCursors.slice(-6), [0, 50043, 50093, 50143, 50193, 50243],
+		`Manual task catalog refresh did not follow monotonic ID keyset pages: ${JSON.stringify(deepTaskCatalog)}`);
 	assert.deepEqual(deepTaskCatalog.ids, exactDeepTaskIds,
 		`Multi-page task catalog lost or invented task identities: ${JSON.stringify(deepTaskCatalog)}`);
 	assert.equal(deepTaskCatalog.oldTask?.addedAt, Date.parse('2024-01-15T09:00:00.000Z'),
@@ -3867,7 +3893,27 @@ try {
   assert.deepEqual(pageErrors, []);
 	console.log('PASS native regressions: complete native traversal, atomic timeout recovery, sorting, search, folders, markers and time tracking');
 	}
-} catch (error) {
+ } catch (error) {
+	const diagnostic = await page.evaluate(() => ({
+		nativeState: window.__PENA_NATIVE_PREFETCH__?.status?.() || null,
+		rest: window.__PENA_REST_DIAGNOSTICS__?.snapshot?.() || null,
+		timeRestCallCount: window.timeRestCalls?.length || 0,
+		nativeMethodCounts: (window.nativeRestCalls || []).reduce((counts, call) => {
+			counts[call.method] = (counts[call.method] || 0) + 1; return counts;
+		}, {}),
+		timePanel: {
+			loading: document.querySelector('.pena-native-time-panel')?.classList.contains('--loading') || false,
+			errorToastVisible: !!document.querySelector('.pena-native-toast.--danger.--show'),
+			errorOnTimeControl: document.querySelector('.pena-native-time-button')?.title === 'Bitrix24 не ответил вовремя',
+			refreshDisabled: document.querySelector('.pena-native-time-refresh')?.disabled || false
+		}
+	})).catch(() => null);
+	mkdirSync(join(root, 'tests/artifacts'), { recursive: true });
+	writeFileSync(join(root, 'tests/artifacts/native-failure.json'), JSON.stringify({
+		url: activeScenario?.url || page.url().replace(base, ''), phase: activePhase,
+		error: String(error), stack: error?.stack || '', pageErrors, diagnostic
+	}, null, 2));
+	await page.screenshot({ path: join(root, 'tests/artifacts/native-failure.png'), timeout: 5000 }).catch(() => {});
 	await finishScenario(error);
 	throw error;
 } finally {

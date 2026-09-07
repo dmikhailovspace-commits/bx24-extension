@@ -26,11 +26,16 @@ const browser = await chromium.launch({ headless: true });
 try {
 	const page = await browser.newPage();
 	const chromeMock = `<script>
+		window.workerConnections = [];
+		document.addEventListener('pena-dialog-repository-connection', event => window.workerConnections.push(JSON.parse(event.detail).connected));
 		window.chrome = {
 			runtime: {
 				getURL(path) { return location.origin + '/extension/' + path; },
 				getManifest() { return ${JSON.stringify(manifest)}; },
-				sendMessage(_payload, callback) { queueMicrotask(() => callback?.({ ok: true })); },
+				sendMessage(payload, callback) { queueMicrotask(() => callback?.(payload.channel === 'pena.runtime.worker-health.v1' ? {
+					ok: true, version: ${JSON.stringify(manifest.version)}, entry: location.search.includes('stale-worker') ? 'worker-stale.js' : ${JSON.stringify(manifest.background.service_worker)},
+					build: ${JSON.stringify(manifest.version)}, protocol: 'dialog-repository-v2', repositorySchema: 2
+				} : { ok: true })); },
 				lastError: null
 			},
 			storage: {
@@ -61,6 +66,7 @@ try {
 
 	await page.goto(`${server.baseUrl}/online/?IM_DIALOG=chat5000`);
 	await page.waitForFunction(version => window.__ANITREC_RUNNING__ === version, manifest.version, { timeout: 10000 });
+	assert.equal(await page.evaluate(() => window.workerConnections[0]), true, 'Matching release worker must be healthy after every version bump');
 	const taskFrame = page.frames().find(frame => /\/tasks\/task\/view\/90000\/$/.test(frame.url()));
 	assert.ok(taskFrame, 'Task SidePanel iframe did not load');
 	const olFrame = page.frames().find(frame => /\/desktop_app\/\?IM_LINES=Y$/.test(frame.url()));
@@ -107,6 +113,22 @@ try {
 		stylesheets: document.querySelectorAll('link[data-pena-runtime-style]').length
 	}));
 	assert.deepEqual(beforeMessengerMount, { runtime: '', stylesheets: 0 }, 'Non-Messenger top page eagerly loaded full runtime');
+	const unrelatedScans = await page.evaluate(async () => {
+		const original = document.querySelector;
+		let fullScans = 0;
+		document.querySelector = function(selector) {
+			if (selector.includes('bx-im-list-container-recent__elements')) fullScans += 1;
+			return original.call(this, selector);
+		};
+		try {
+			for (let pass = 0; pass < 20; pass += 1) {
+				document.getElementById('stream').innerHTML = '<div><span>Task content update</span></div>'.repeat(100);
+				await new Promise(resolve => requestAnimationFrame(resolve));
+			}
+			return fullScans;
+		} finally { document.querySelector = original; }
+	});
+	assert.equal(unrelatedScans, 0, 'Waiting for Messenger must not scan the entire task/CRM document on each mutation batch');
 	await page.evaluate(() => {
 		const list = document.createElement('div');
 		list.className = 'bx-im-list-container-recent__elements';
@@ -114,6 +136,9 @@ try {
 	});
 	await page.waitForFunction(version => window.__ANITREC_RUNNING__ === version, manifest.version, { timeout: 10000 });
 	assert.equal(await page.locator('link[data-pena-runtime-style]').count(), 1, 'SPA Messenger mount did not load stylesheet once');
+	await page.goto(`${server.baseUrl}/online/?stale-worker=1`);
+	await page.waitForFunction(() => window.workerConnections.length > 0);
+	assert.equal(await page.evaluate(() => window.workerConnections[0]), false, 'An old registered worker must not be accepted just because its manifest version matches');
 	console.log('PASS content frame scope: task SidePanel skipped; top Messenger, OL and SPA mount preserved');
 } finally {
 	await browser.close();

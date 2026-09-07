@@ -524,8 +524,11 @@
       if (method === 'im.counters.get') return success({ CHAT: {}, DIALOG: {}, CHAT_UNREAD: [], DIALOG_UNREAD: [] });
       if (method === 'tasks.task.list') {
         const start = Math.max(0, Number(callParams.start) || 0);
-        const page = taskEntries.slice(start, start + 50);
-        return success({ tasks: page }, { next: start + page.length < taskEntries.length ? start + page.length : null, total: taskEntries.length });
+        const entries = callParams.order?.ID === 'asc'
+          ? taskEntries.filter(task => Number(task.ID ?? task.id) > Number(callParams.filter?.['>ID'] || 0)).slice().sort((a, b) => Number(a.ID ?? a.id) - Number(b.ID ?? b.id))
+          : taskEntries;
+        const page = entries.slice(start, start + 50);
+        return success({ tasks: page }, { next: start + page.length < entries.length ? start + page.length : null, total: entries.length });
       }
       if (method === 'tasks.task.get') {
         const task = taskEntries.find(item => String(item.id) === String(callParams.taskId)) || null;

@@ -672,7 +672,7 @@
 		next: () => restUnknownTotal || restNoNext ? false : next
 	  };
 	};
-	const taskCatalogPageResult = startValue => {
+	const taskCatalogPageResult = (startValue, params = {}) => {
 	  const start = Math.max(0, Number(startValue) || 0);
 	  if (start === 0 && taskFirstEmptyRemaining > 0) {
 		taskFirstEmptyRemaining -= 1;
@@ -684,8 +684,11 @@
 		};
 	  }
 	  const limit = taskPageCap > 0 ? taskPageCap : 50;
-	  const page = taskCatalogEntries.slice(start, start + limit);
-	  const hasMore = start + page.length < taskCatalogEntries.length;
+	  const entries = params.order?.ID === 'asc'
+		? taskCatalogEntries.filter(task => Number(task.ID ?? task.id) > Number(params.filter?.['>ID'] || 0)).slice().sort((a, b) => Number(a.ID ?? a.id) - Number(b.ID ?? b.id))
+		: taskCatalogEntries;
+	  const page = entries.slice(start, start + limit);
+	  const hasMore = start + page.length < entries.length;
 	  return {
 		error: () => null,
 		data: () => ({ tasks: page, ...(taskNoEndMarker ? {} : { hasMore, hasMorePages: hasMore }) }),
@@ -900,7 +903,7 @@
 			(!trackingOnly || String(task.allowTimeTracking || task.ALLOW_TIME_TRACKING || '').toUpperCase() === 'Y')
 		  );
 		  if (!titleQuery && !trackingOnly) {
-			callback(taskCatalogPageResult(start));
+			callback(taskCatalogPageResult(start, params));
 			return;
 		  }
 		  const searchLimit = taskPageCap > 0 ? taskPageCap : 50;
@@ -936,7 +939,7 @@
 			: call?.method === 'tasks.task.get'
 			  ? { error: () => null, data: () => ({ task: { id: String(call.params?.taskId || ''), title: `Задача ${call.params?.taskId || ''}`, chatId: String(call.params?.taskId || ''), allowTimeTracking: String(call.params?.taskId || '') === '405' ? 'N' : 'Y' } }) }
 			  : call?.method === 'tasks.task.list'
-				? taskCatalogPageResult(call.params?.start)
+				? taskCatalogPageResult(call.params?.start, call.params)
 				: call?.method === 'task.elapseditem.getlist'
 				  ? (() => {
 					  const params = call.params || [];

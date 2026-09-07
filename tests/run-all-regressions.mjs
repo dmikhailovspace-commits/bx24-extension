@@ -43,6 +43,9 @@ const suites = [
   'native-interaction-state.mjs',
   'native-time-control.mjs',
   'native-rest-queue.mjs',
+  'native-batch-backpressure.mjs',
+  'network-idle-regression.mjs',
+  'task-keyset-regression.mjs',
   'time-functional-regression.mjs',
   'time-panel-layout-regression.mjs',
   'native-lifecycle-controller.mjs',
@@ -50,6 +53,8 @@ const suites = [
   'native-status-isolation-regression.mjs',
 	'native-progress-performance-regression.mjs',
 	'native-message-performance-regression.mjs',
+  'native-dom-mutation-regression.mjs',
+  'interaction-contention-regression.mjs',
 	'native-cold-task-interaction-performance-regression.mjs',
 	'native-first-open-regression.mjs',
 	'native-dual-catalog-regression.mjs',
@@ -76,7 +81,8 @@ if (!selected.length) {
 const startedAt = Date.now();
 const failed = [];
 const measurements = [];
-const sourceSha256 = Object.fromEntries(['injected.js','injected.css','native-time-control.js','manifest.json'].map(file => [file,createHash('sha256').update(readFileSync(join(testsRoot,'../extension',file))).digest('hex')]));
+const runtimeFiles = JSON.parse(readFileSync(join(testsRoot, '../update.json'), 'utf8')).extension_files;
+const sourceSha256 = Object.fromEntries(runtimeFiles.map(file => [file,createHash('sha256').update(readFileSync(join(testsRoot,'../extension',file))).digest('hex')]));
 const artifacts = join(testsRoot, 'artifacts');
 mkdirSync(artifacts, { recursive: true });
 const saveReport = state => writeFileSync(join(artifacts, 'regression-summary.json'), JSON.stringify({ state, startedAt: new Date(startedAt).toISOString(), node: process.versions.node, sourceSha256, durationMs: Date.now() - startedAt, suites: measurements, slowest: measurements.toSorted((a,b) => b.durationMs-a.durationMs).slice(0, 5) }, null, 2));

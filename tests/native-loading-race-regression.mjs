@@ -146,7 +146,7 @@ const installRaceHooks = async page => {
 
 						const deliver = () => {
 							const stripRecentClassification = method === 'im.recent.list' && search.get('raceUnclassified') === '1';
-							const injectTask225 = method === 'tasks.task.list' && Number(params?.start || 0) === 0 && (
+							const injectTask225 = method === 'tasks.task.list' && Number(params?.start || 0) === 0 && Number(params?.filter?.['>ID'] || 0) === 0 && (
 								window.__raceInjectTask225 === true ||
 								(search.get('raceOldTask225') === '1' && requestUser === '7')
 							);
@@ -163,6 +163,7 @@ const installRaceHooks = async page => {
 									CHAT_ID: '225', ALLOW_TIME_TRACKING: 'Y', ACTIVITY_DATE: new Date().toISOString()
 								});
 							}
+							if (tasks && params?.order?.ID === 'asc') tasks.sort((a, b) => Number(a.ID ?? a.id) - Number(b.ID ?? b.id));
 							const items = stripRecentClassification && Array.isArray(payload.items)
 								? payload.items.map(item => {
 									const next = { ...item };

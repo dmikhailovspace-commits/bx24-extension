@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.91';
+	window.__ANITREC_RUNNING__ = '7.5.92';
 
-	const VER = '7.5.91';
+	const VER = '7.5.92';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -1562,13 +1562,25 @@
 		throw lastError || new Error(`${method}: не удалось получить данные`);
 	}
 
+	function _isBxRestBatchPressureError(error) {
+		return /TIMEOUT|QUERY_LIMIT|OPERATION_TIME_LIMIT|TOO_MANY|NETWORK|CONNECTION|429|время ожидания/i.test(
+			String(error?.code || '') + ' ' + String(error?.message || '')
+		);
+	}
+
 	async function _callBxRestPagesFast(requests, timeoutMs = 12000) {
 		const jobs = Array.isArray(requests) ? requests.filter(job => job?.method) : [];
 		if (!jobs.length) return [];
+		// This helper is exclusively for read pagination. A transport fallback must
+		// never accidentally replay a mutation added by a future caller.
+		if (jobs.some(job => !['im.recent.list', 'task.elapseditem.getlist'].includes(job.method))) {
+			throw Object.assign(new Error('Batch pagination requires an approved read method'), { code: 'BATCH_READ_ONLY' });
+		}
 		if (jobs.length > 50) {
 			const pages = [];
 			for (let index = 0; index < jobs.length; index += 50) {
-				pages.push(...await _callBxRestPagesFast(jobs.slice(index, index + 50), timeoutMs));
+				try { pages.push(...await _callBxRestPagesFast(jobs.slice(index, index + 50), timeoutMs)); }
+				catch (error) { error.partialPages = [...pages, ...(error.partialPages || [])]; throw error; }
 			}
 			return pages;
 		}
@@ -1578,37 +1590,56 @@
 			try {
 				return await _scheduleBxRest('batch:' + [...new Set(jobs.map(job => job.method))].join('+'), jobs, () => new Promise((resolve, reject) => {
 					let settled = false;
-					const timer = setTimeout(() => {
+					const finish = (error, pages) => {
 						if (settled) return;
-						settled = true;
-						reject(new Error('Bitrix batch: превышено время ожидания'));
-					}, Math.max(1000, Number(timeoutMs) || 12000));
+						settled = true; clearTimeout(timer);
+						if (error) reject(error); else resolve(pages);
+					};
+					const timer = setTimeout(() => finish(Object.assign(new Error('Bitrix batch: превышено время ожидания'), { code: 'TIMEOUT' })), Math.max(1000, Number(timeoutMs) || 12000));
 					const calls = Object.fromEntries(jobs.map((job, index) => [
-						`page_${index}`,
-						{ method: job.method, params: job.params || {} }
+						`page_${index}`, { method: job.method, params: job.params || {} }
 					]));
-					BX24NS.callBatch(calls, result => {
-						if (settled) return;
-						try {
-							const pages = jobs.map((_, index) => _normalizeBxRestPageResult(result?.[`page_${index}`]));
-							settled = true;
-							clearTimeout(timer);
-							resolve(pages);
-						} catch (error) {
-							settled = true;
-							clearTimeout(timer);
-							reject(error);
-						}
-					}, false);
+					try {
+						BX24NS.callBatch(calls, result => {
+							if (settled) return;
+							const pages = new Array(jobs.length);
+							try {
+								const rootError = _createBxRestError(result);
+								if (rootError) {
+									rootError.batchTransportUnavailable = /^(?:ERROR_)?METHOD_NOT_FOUND$|^BATCH_NOT_SUPPORTED$/.test(rootError.code);
+									throw rootError;
+								}
+								let failure = null;
+								jobs.forEach((_, index) => {
+									try {
+										if (!result?.[`page_${index}`]) throw Object.assign(new Error('Bitrix batch omitted a page'), { code: 'BATCH_PARTIAL_RESPONSE' });
+										pages[index] = _normalizeBxRestPageResult(result[`page_${index}`]);
+									} catch (error) {
+										if (!failure || _isBxRestBatchPressureError(error)) failure = error;
+									}
+								});
+								if (failure) { failure.partialPages = pages; throw failure; }
+								finish(null, pages);
+							} catch (error) { finish(error); }
+						}, false);
+					} catch (error) { finish(error); }
 				}), { timeoutMs });
 			} catch (error) {
-				warn('Bitrix batch недоступен, страницы загружаются ограниченным пулом', error?.message || error);
+				// A timeout may still be running on the server; a quota error already
+				// asks us to stop. Neither authorizes another copy of all nested reads.
+				if (error.batchTransportUnavailable !== true) throw error;
+				warn('Bitrix batch не поддерживается, используется ограниченный пул чтения', error?.message || error);
 			}
 		}
 		const pages = new Array(jobs.length);
+		let failure = null;
 		await _runDialogRecentJobs(jobs.map((job, index) => ({ job, index })), async ({ job, index }) => {
-			pages[index] = await _callBxRestPageWithTimeout(job.method, job.params || {}, timeoutMs);
-		}, 3);
+			if (failure) return;
+			try { pages[index] = await _callBxRestPageWithTimeout(job.method, job.params || {}, timeoutMs); }
+			catch (error) { if (!failure || _isBxRestBatchPressureError(error)) failure = error; }
+		}, 2);
+		// Both active reads have settled before exposing partial pages to a retry.
+		if (failure) { failure.partialPages = pages; throw failure; }
 		return pages;
 	}
 
@@ -4596,6 +4627,18 @@
 		return Array.from(ids).sort((left, right) => Number(left) - Number(right));
 	}
 
+	function _getDialogTaskKeysetCursor(rows, afterId = 0) {
+		let cursor = Number(afterId) || 0;
+		for (const row of rows) {
+			const id = Number(row?.ID ?? row?.id);
+			if (!Number.isSafeInteger(id) || id <= cursor) {
+				throw Object.assign(new Error('Task catalog ignored its monotonic ID cursor'), { code: 'TASK_CATALOG_CURSOR_INVALID' });
+			}
+			cursor = id;
+		}
+		return cursor;
+	}
+
 	let _dialogTimeCatalogPromise = null;
 	let _dialogTimeCatalogCursor = 0;
 	let _dialogTimeCatalogScope = '';
@@ -4606,20 +4649,30 @@
 		const current = () => scope === _getDialogNativeSharedAuditScopeKey() && _dialogControlNativeWorkspaceTab === 'time' && document.visibilityState !== 'hidden';
 		if (!scope || !current()) return;
 		if (scope !== _dialogTimeCatalogScope) { _dialogTimeCatalogCursor = 0; _dialogTimeCatalogScope = scope; }
-		const since = force ? 0 : _dialogTimeCatalogCursor;
-		const startedAt = Date.now();
 		_dialogTimeCatalogPromise = (async () => {
-			let start = 0;
+			// The native catalog already publishes every task page into this index.
+			// Reuse its complete, scoped request-start watermark instead of starting
+			// a second portal-wide crawl while the first one is still running.
+			if (!force && _dialogTaskCatalogSyncPromise && _dialogTaskCatalogSyncScopeKey === `${scope}:full`) {
+				await _dialogTaskCatalogSyncPromise.catch(() => null);
+				if (!current()) return;
+			}
+			const since = force ? 0 : _dialogTimeCatalogCursor;
+			const startedAt = Date.now();
+			let afterId = 0;
+			let pages = 0;
 			const seen = new Set();
 			while (current()) {
-				const filter = since ? { '>=CHANGED_DATE': new Date(since - 60000).toISOString() } : {};
+				const filter = { '>ID': afterId, ...(since ? { '>=CHANGED_DATE': new Date(since - 60000).toISOString() } : {}) };
 				const revisions = new Map(_dialogTimeTaskRevisions);
 				const page = await _callBxRestPage('tasks.task.list', {
 					filter, select: ['ID', 'TITLE', 'CHAT_ID', 'ALLOW_TIME_TRACKING', 'CHANGED_DATE'],
-					order: { ID: 'asc' }, start
+					order: { ID: 'asc' }, start: 0
 				}, { isCurrent: current });
 				if (!current()) return;
 				const rows = _extractDialogTaskCatalogRows(page.data);
+				const nextId = _getDialogTaskKeysetCursor(rows, afterId);
+				pages += 1;
 				const newIds = rows.map(row => String(row.ID ?? row.id)).filter(id => !seen.has(id));
 				if (rows.length && !newIds.length) throw new Error('Task pagination repeated a page');
 				newIds.forEach(id => seen.add(id));
@@ -4627,10 +4680,12 @@
 					const id = String(row.ID ?? row.id);
 					return (revisions.get(id) || 0) === (_dialogTimeTaskRevisions.get(id) || 0);
 				}));
-				const atTail = !(page.next != null && page.next > start) && rows.length < 50;
+				const root = page.data?.result || page.data || {};
+				const atTail = root.hasMore === false || root.hasMorePages === false || !rows.length ||
+					(!(page.next != null && page.next > 0) && root.hasMore !== true && root.hasMorePages !== true && rows.length < 50);
 				// First page paints useful totals; the tail reconciles the final working
 				// set. Intermediate title pages must not fan out into elapsed-time reads.
-				if (start === 0 || atTail) {
+				if (pages === 1 || atTail) {
 					const range = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
 					_loadDialogTimeRange(range).catch(() => {});
 				}
@@ -4642,7 +4697,7 @@
 					_dialogTimeCatalogCursor = startedAt;
 					return;
 				}
-				start = page.next != null && page.next > start ? page.next : start + 50;
+				afterId = nextId;
 				await _sleepDialogControl(200);
 			}
 		})().finally(() => {
@@ -4729,6 +4784,7 @@
 				? { ..._dialogTaskCatalogLastResult, cached: true }
 				: { count: _getDialogRecentUniqueMeta().filter(meta => meta.isTask === true).length, complete: true, cached: true, rows: [] };
 		}
+		const syncStartedAt = Date.now();
 		const syncPromise = (async () => {
 			const select = ['ID', 'TITLE', 'CHAT_ID', 'ALLOW_TIME_TRACKING', 'ACTIVITY_DATE', 'CHANGED_DATE'];
 			const maxPages = headOnly
@@ -4738,17 +4794,24 @@
 			let pages = 0;
 			let complete = false;
 			let start = 0;
+			let afterId = 0;
 			let total = null;
 			let paginationChainValid = true;
 			let emptyConfirmationStart = null;
 			let emptyQuorumConfirmed = false;
 			let emptyNativeContradiction = false;
 			while (pages < maxPages) {
-				const page = await _callBxRestPageWithTimeout('tasks.task.list', { select, order: { ACTIVITY_DATE: 'desc' }, start }, 12000);
+				const params = headOnly
+					? { select, order: { ACTIVITY_DATE: 'desc' }, start }
+					: { select, order: { ID: 'asc' }, filter: { '>ID': afterId }, start: 0 };
+				const page = await _callBxRestPageWithTimeout('tasks.task.list', params, 12000);
 				if (!scopeKey || scopeKey !== _getDialogNativeSharedAuditScopeKey()) {
 					return { count: 0, tasks: 0, pages, complete: false, discarded: true, reason: 'task-catalog-fenced', rows: [] };
 				}
 				const batch = _extractDialogTaskCatalogRows(page?.data);
+				const nextId = headOnly ? afterId : _getDialogTaskKeysetCursor(batch, afterId);
+				const firstWindow = headOnly ? start === 0 : afterId === 0;
+				const windowCursor = headOnly ? start : afterId;
 				rows.push(...batch);
 				// Time tracking has its own lightweight index. Publish every successful
 				// page immediately instead of waiting for the unrelated recent-dialog
@@ -4761,22 +4824,23 @@
 				const root = page?.data?.result || page?.data || {};
 				const hasMore = root.hasMore === true || root.hasMorePages === true;
 				const noMore = root.hasMore === false || root.hasMorePages === false;
-				const invalidExplicitNext = page?.next != null && Number(page.next) <= start;
-				const explicitNext = page?.next != null && Number(page.next) > start ? Number(page.next) : null;
+				const invalidExplicitNext = page?.next != null && Number(page.next) <= (headOnly ? start : 0);
+				const explicitNext = page?.next != null && Number(page.next) > (headOnly ? start : 0) ? Number(page.next) : null;
 				if (invalidExplicitNext && !noMore) paginationChainValid = false;
-				const emptyNeedsQuorum = batch.length === 0 && (start === 0 || !noMore);
-				if (emptyNeedsQuorum && emptyConfirmationStart !== start) {
-					emptyConfirmationStart = start;
+				const emptyNeedsQuorum = batch.length === 0 && (firstWindow || !noMore);
+				if (emptyNeedsQuorum && emptyConfirmationStart !== windowCursor) {
+					emptyConfirmationStart = windowCursor;
 					await new Promise(resolve => setTimeout(resolve, _DIALOG_RECENT_PAGE_DELAY_MS));
 					continue;
 				}
-				if (batch.length === 0 && emptyConfirmationStart === start) emptyQuorumConfirmed = true;
+				if (batch.length === 0 && emptyConfirmationStart === windowCursor) emptyQuorumConfirmed = true;
 				if (batch.length > 0) emptyConfirmationStart = null;
-				// `total` is progress metadata only. tasks.task.list uses 50-row START
-				// windows; without an explicit `next`, a short page is its documented tail.
+				// Full scans use an immutable ID keyset: deletion/activity reordering
+				// behind the cursor cannot shift an unseen task past an offset. Head
+				// refresh alone retains activity ordering and offset pagination.
 				if (noMore || batch.length === 0) {
 					const activeNativeContainer = findContainer();
-					emptyNativeContradiction = batch.length === 0 && start === 0 &&
+					emptyNativeContradiction = batch.length === 0 && firstWindow &&
 						activeNativeContainer?.matches?.('.bx-im-list-container-task__elements') === true &&
 						_getDialogNativeSourceRows(activeNativeContainer).length > 0;
 					complete = paginationChainValid && !emptyNativeContradiction;
@@ -4788,7 +4852,8 @@
 					complete = paginationChainValid;
 					break;
 				}
-				start = explicitNext ?? (start + _DIALOG_TASK_CATALOG_PAGE_SIZE);
+				if (headOnly) start = explicitNext ?? (start + _DIALOG_TASK_CATALOG_PAGE_SIZE);
+				else afterId = nextId;
 				await new Promise(resolve => setTimeout(resolve, _DIALOG_RECENT_PAGE_DELAY_MS));
 			}
 			const unique = new Map();
@@ -4807,6 +4872,11 @@
 			if (!headOnly || complete) _dialogTaskCatalogComplete = complete;
 			_dialogTaskCatalogFetchedAt = Date.now();
 			_dialogTaskCatalogScopeKey = scopeKey;
+			if (complete && !headOnly) {
+				if (_dialogTimeCatalogScope !== scopeKey) _dialogTimeCatalogCursor = 0;
+				_dialogTimeCatalogScope = scopeKey;
+				_dialogTimeCatalogCursor = Math.max(_dialogTimeCatalogCursor, syncStartedAt);
+			}
 			const result = { count: merged, tasks: unique.size, pages, expectedTotal: total, complete, headOnly, paginationChainValid, emptyQuorumConfirmed, emptyNativeContradiction, rows: uniqueRows };
 			if (!headOnly || complete || !_dialogTaskCatalogLastResult) _dialogTaskCatalogLastResult = result;
 			return result;
@@ -9810,16 +9880,28 @@ if (_presetChannel) {
 		};
 		queueRefresh();
 		const toolbarSelector = '.bx-im-list-container-task__header_container,.bx-im-list-container-recent__header_container';
+		const searchSelector = 'input[placeholder],input[type="search"]';
+		const isSearchCandidate = node => node?.matches?.(searchSelector) &&
+			/найти.{0,48}(?:задач|чат|диалог|сотрудник)|поиск.{0,32}(?:чат|задач|диалог|сотрудник)/i.test(String(node.placeholder || node.getAttribute?.('aria-label') || ''));
+		const containsToolbarCandidate = node => {
+			if (node?.nodeType !== 1) return false;
+			if (node.matches?.(toolbarSelector) || isSearchCandidate(node) || node.querySelector?.(toolbarSelector)) return true;
+			return Array.from(node.querySelectorAll?.(searchSelector) || []).some(isSearchCandidate);
+		};
 		const observer = new MutationObserver(mutations => {
-			if (mountedControls?.isConnected) {
-				const relevant = mutations.some(mutation => Array.from(mutation.addedNodes || []).some(node =>
-					node.nodeType === 1 && (node.matches?.(toolbarSelector) || node.querySelector?.(toolbarSelector))
-				));
-				if (!relevant) return;
-			}
-			queueRefresh();
+			// A page without the Messenger header may mutate continuously (messages,
+			// task side panels). Retry discovery only when a candidate actually arrives
+			// or the mounted header is replaced, never on every unrelated render.
+			const relevant = mutations.some(mutation => {
+				if (mutation.type === 'attributes') return isSearchCandidate(mutation.target);
+				if (mutation.target === mountedControls && !mountedControls.querySelector(':scope > .pena-extension-toolbar-controls')) return true;
+				if (mountedControls && !mountedControls.isConnected && Array.from(mutation.removedNodes || []).some(node =>
+					node === mountedControls || node.contains?.(mountedControls))) return true;
+				return Array.from(mutation.addedNodes || []).some(containsToolbarCandidate);
+			});
+			if (relevant) queueRefresh();
 		});
-		observer.observe(document.documentElement, { childList: true, subtree: true });
+		observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['placeholder', 'aria-label', 'type'] });
 	}
 
 	function _setInputValueNative(input, value, dispatch = false) {
@@ -12712,8 +12794,8 @@ if (_presetChannel) {
 		const previousHost = switcher.parentElement;
 		_dialogControlNativeSwitcherNode = switcher;
 		_dedupeDialogControlNativeSwitchers(switcher);
-		viewport.classList.add('pena-native-list-scroll-viewport');
-		host.classList.add('pena-native-folder-switcher-host');
+		_addDialogControlNativeClasses(viewport, 'pena-native-list-scroll-viewport');
+		_addDialogControlNativeClasses(host, 'pena-native-folder-switcher-host');
 		if (switcherCreated) host.classList.remove('pena-native-folder-switcher-ready');
 		const needsRelocation = switcherCreated || switcher.parentElement !== host || switcher.nextElementSibling !== viewport;
 		if (needsRelocation) {
@@ -12741,7 +12823,7 @@ if (_presetChannel) {
 			previousHost.style.removeProperty('--pena-native-panel-height');
 			previousHost.querySelectorAll?.('.pena-native-list-scroll-viewport').forEach(previousViewport => previousViewport.classList.remove('pena-native-list-scroll-viewport'));
 		}
-		if (!needsRelocation) switcher.classList.remove('--mounting');
+		if (!needsRelocation) _removeDialogControlNativeClasses(switcher, '--mounting');
 		if (!switcher._penaNativeWheelForwardAttached) {
 			switcher._penaNativeWheelForwardAttached = true;
 			switcher.addEventListener('wheel', (e) => {
@@ -14484,13 +14566,20 @@ if (_presetChannel) {
 					if (_dialogControlNativeWorkspaceTab !== 'time' && !_dialogTimePendingActivities.has('task:' + id) && !_dialogTimeTaskEligibility.has(id)) return;
 					_dialogTimeTaskRevisions.set(id, (_dialogTimeTaskRevisions.get(id) || 0) + 1);
 					_dialogTimeTaskEligibilityCheckedAt.delete(id);
+					// Every cached task receives portal-wide Pull updates, including changes
+					// made by other users. A closed panel only needs invalidation: contact
+					// qualification always makes its own fresh eligibility request.
+					if (_dialogControlNativeWorkspaceTab !== 'time' || document.visibilityState === 'hidden') return;
 					if (_dialogTimeChangedTaskTimers.has(id)) return;
 					const scope = _getDialogNativeSharedAuditScopeKey();
 					_dialogTimeChangedTaskTimers.set(id, setTimeout(async () => {
 						try {
-							if (scope !== _getDialogNativeSharedAuditScopeKey()) return;
+							const isCurrent = () => scope === _getDialogNativeSharedAuditScopeKey() &&
+								_dialogControlNativeWorkspaceTab === 'time' && document.visibilityState !== 'hidden';
+							if (!isCurrent()) return;
 							await _dialogTimeTaskEligibilityInFlight.get(id);
-							await _ensureDialogTimeTaskEligibility(id);
+							if (!isCurrent()) return;
+							await _ensureDialogTimeTaskEligibility(id, { isCurrent });
 							if (scope !== _getDialogNativeSharedAuditScopeKey()) return;
 							if (_dialogTimeManualSearchQuery && !_dialogTimeManualSelectedTask) {
 								_dialogTimeManualSearchResults = _getDialogTimeLocalTaskSearchResults(_dialogTimeManualSearchQuery);
@@ -14643,8 +14732,10 @@ if (_presetChannel) {
 				: (visibleTodayData
 					? _PENA_TIME_CONTROL.formatDurationCompact(visibleTodayData.totalSeconds)
 					: (todayRecord?.status === 'loading' ? '…' : '--:--'));
-			timeButtonLabel.textContent = tracker ? `Сейчас ${compact}` : `Сегодня ${compact}`;
-			timeButton.title = todayRecord?.error || 'Затраченное время за сегодня';
+			const label = tracker ? `Сейчас ${compact}` : `Сегодня ${compact}`;
+			const title = todayRecord?.error || 'Затраченное время за сегодня';
+			if (timeButtonLabel.textContent !== label) timeButtonLabel.textContent = label;
+			if (timeButton.title !== title) timeButton.title = title;
 			timeButton.classList.toggle('--loading', todayRecord?.status === 'loading');
 			timeButton.classList.toggle('--error', todayRecord?.status === 'error' && !todayRecord?.data);
 			timeButton.classList.toggle('--tracking', !!tracker);
@@ -15031,20 +15122,26 @@ if (_presetChannel) {
 
 	async function _callDialogTimeElapsedPages(paramsList) {
 		const jobs = (Array.isArray(paramsList) ? paramsList : []).map(params => ({
-			method: 'task.elapseditem.getlist',
-			params
+			method: 'task.elapseditem.getlist', params
 		}));
-		let lastError = null;
+		const pages = new Array(jobs.length);
+		let pending = jobs.map((job, index) => ({ job, index }));
 		for (let attempt = 0; attempt < 2; attempt += 1) {
 			try {
-				return await _callBxRestPagesFast(jobs, 12000 + attempt * 8000);
+				const results = await _callBxRestPagesFast(pending.map(item => item.job), 12000 + attempt * 8000);
+				pending.forEach((item, index) => { pages[item.index] = results[index]; });
+				return pages;
 			} catch (error) {
-				lastError = error;
-				if (attempt > 0 || !_isBxRestReadRetryable(error)) throw error;
+				const partial = error.partialPages || [];
+				pending.forEach((item, index) => { if (partial[index]) pages[item.index] = partial[index]; });
+				pending = pending.filter(item => !pages[item.index]);
+				// Only explicitly failed, retryable subcalls may be retried. Preserve
+				// completed pages; never amplify a transport failure or server overload.
+				if (attempt > 0 || _isBxRestBatchPressureError(error) || !error.partialPages || !_isBxRestReadRetryable(error)) throw error;
 				await _sleepDialogControl(250);
 			}
 		}
-		throw lastError || new Error('Не удалось получить записи времени');
+		throw new Error('Не удалось получить записи времени');
 	}
 
 	const _dialogTimeForcedRefreshes = new Map();
@@ -15890,9 +15987,9 @@ if (_presetChannel) {
 		if (_dialogControlNativeSwitcherSig === switcherSig && switcher.dataset.penaNativeSig === switcherSig) {
 			// Relocation can temporarily mark an already complete panel as mounting.
 			// An unchanged render signature must still reveal that existing content.
-			if (switcher.childElementCount) switcher.classList.remove('--mounting');
+			if (switcher.childElementCount) _removeDialogControlNativeClasses(switcher, '--mounting');
 			_syncDialogControlNativePanelGeometry(switcher);
-			switcher.parentElement?.classList?.add('pena-native-folder-switcher-ready');
+			_addDialogControlNativeClasses(switcher.parentElement, 'pena-native-folder-switcher-ready');
 			return;
 		}
 		_dialogControlNativeSwitcherSig = switcherSig;
@@ -17778,6 +17875,7 @@ if (_presetChannel) {
 		if (!el) return null;
 		if (el.closest?.('#anit-filters,#anit-dialog-control-dock,.dialog-control-palette,[data-dialog-control-context-menu="1"],.pena-native-folder-switcher')) return null;
 		const container = findContainer();
+		if (!container?.contains?.(el) && !_dialogControlManagedRoot?.contains?.(el)) return null;
 		const selector = '.bx-im-list-recent-item__wrap,.bx-im-list-item,.bx-messenger-cl-item,[data-dialog-id],[data-dialog-id-value],[data-dialogid]';
 		const row = getChatItemElement(el) ||
 			el.closest?.(selector) ||
@@ -17961,9 +18059,9 @@ if (_presetChannel) {
 		const handleNativeMultiSelectPress = (e) => {
 			if (!_isDialogControlNativeMode() || _dialogControlActive) return false;
 			if (e.button != null && e.button !== 0) return false;
+			if (!(e.ctrlKey || e.metaKey || e.shiftKey)) return false;
 			const row = _getDialogControlNativeEventRow(e.target);
 			if (!row) return false;
-			if (!(e.ctrlKey || e.metaKey || e.shiftKey)) return false;
 			const item = _ensureDialogControlItemFromElement(row, { silent: true, mark: false });
 			if (!item) return false;
 			e.preventDefault();
@@ -18186,6 +18284,13 @@ if (_presetChannel) {
 
 	function _clearDialogControlNativeRowState(row, options = {}) {
 		if (!row) return;
+		// An unmapped native row already has its neutral layout. Repeated window
+		// captures must not remove/re-add every PENA class on hundreds of rows.
+		if (options.preserveLayout && !row.dataset.penaNativeDialogId &&
+			!row.dataset.penaNativeFolderId && !row.dataset.penaNativeColor &&
+			row.dataset.penaNativeOriginalDisplay === undefined &&
+			row.dataset.penaNativePrevDraggable === undefined &&
+			!row.classList.contains('--native-colored') && !row.classList.contains('--native-folder-child')) return;
 		const restoreDisplay = options.restoreDisplay !== false;
 		if (restoreDisplay && row.dataset.penaNativeOriginalDisplay !== undefined) {
 			row.style.display = row.dataset.penaNativeOriginalDisplay;
@@ -18326,6 +18431,16 @@ if (_presetChannel) {
 			.forEach(el => el.remove());
 	}
 
+	function _addDialogControlNativeClasses(element, ...tokens) {
+		const missing = tokens.filter(token => !element?.classList?.contains(token));
+		if (missing.length) element?.classList?.add(...missing);
+	}
+
+	function _removeDialogControlNativeClasses(element, ...tokens) {
+		const present = tokens.filter(token => element?.classList?.contains(token));
+		if (present.length) element.classList.remove(...present);
+	}
+
 	function _clearDialogControlNativeAvatarLayers(row) {
 		if (!row) return;
 		row.querySelectorAll?.('.pena-native-avatar-native-overlay').forEach(el => {
@@ -18337,7 +18452,6 @@ if (_presetChannel) {
 	}
 
 	function _syncDialogControlNativeAvatarLayers(row, host) {
-		_clearDialogControlNativeAvatarLayers(row);
 		if (!row || !host) return;
 		const knownStackRoot = host.closest?.([
 			'.bx-im-list-recent-item__avatar',
@@ -18355,7 +18469,10 @@ if (_presetChannel) {
 			stackRoot = cursor;
 		}
 		if (!stackRoot || !row.contains(stackRoot)) return;
-		stackRoot.classList.add('pena-native-avatar-stack-host');
+		row.querySelectorAll?.('.pena-native-avatar-stack-host').forEach(candidate => {
+			if (candidate !== stackRoot) _removeDialogControlNativeClasses(candidate, 'pena-native-avatar-stack-host');
+		});
+		_addDialogControlNativeClasses(stackRoot, 'pena-native-avatar-stack-host');
 		const overlays = new Set();
 		if (stackRoot !== host) {
 			Array.from(stackRoot.children || []).forEach(candidate => {
@@ -18380,9 +18497,12 @@ if (_presetChannel) {
 		].join(',')).forEach(candidate => {
 			if (candidate !== host && !candidate.contains?.(host)) overlays.add(candidate);
 		});
+		row.querySelectorAll?.('.pena-native-avatar-native-overlay').forEach(candidate => {
+			if (!overlays.has(candidate)) _removeDialogControlNativeClasses(candidate, 'pena-native-avatar-native-overlay');
+		});
 		overlays.forEach(candidate => {
 			if (!candidate.classList?.contains('pena-native-avatar-ring')) {
-				candidate.classList?.add('pena-native-avatar-native-overlay');
+				_addDialogControlNativeClasses(candidate, 'pena-native-avatar-native-overlay');
 			}
 		});
 	}
@@ -18454,12 +18574,12 @@ if (_presetChannel) {
 		if (!avatar) return null;
 		const host = _resolveDialogControlNativeAvatarRingHost(row, avatar);
 		if (!host) return null;
-		host.classList.add('pena-native-avatar-ring-host');
+		_addDialogControlNativeClasses(host, 'pena-native-avatar-ring-host');
 		host.style.setProperty('--pena-native-color', next);
 		let ring = existing.find(el => el.parentElement === host) || document.createElement('span');
 		existing.filter(el => el !== ring).forEach(el => el.remove());
-		ring.className = 'pena-native-avatar-ring';
-		ring.setAttribute('aria-hidden', 'true');
+		if (ring.className !== 'pena-native-avatar-ring') ring.className = 'pena-native-avatar-ring';
+		if (ring.getAttribute('aria-hidden') !== 'true') ring.setAttribute('aria-hidden', 'true');
 		if (ring.parentElement !== host) host.appendChild(ring);
 		_syncDialogControlNativeAvatarLayers(row, host);
 		return ring;
@@ -18468,12 +18588,12 @@ if (_presetChannel) {
 	function _applyDialogControlNativeRowLayout(row) {
 		if (!row) return;
 		if (row.dataset.penaNativeNeedsPosition === undefined) {
-			row.classList.remove('--pena-native-static-row');
+			_removeDialogControlNativeClasses(row, '--pena-native-static-row');
 			row.dataset.penaNativeNeedsPosition = getComputedStyle(row).position === 'static' ? '1' : '0';
 		}
-		row.classList.add('pena-native-chat-row');
+		_addDialogControlNativeClasses(row, 'pena-native-chat-row');
 		row.classList.toggle('--pena-native-static-row', row.dataset.penaNativeNeedsPosition === '1');
-		row.classList.remove('--pena-native-direct-content');
+		_removeDialogControlNativeClasses(row, '--pena-native-direct-content');
 	}
 
 	function _applyDialogControlNativeRowState(row, item, parentFolder = null) {
@@ -18497,7 +18617,7 @@ if (_presetChannel) {
 				? (row.getAttribute('draggable') || '')
 				: '__pena_none__';
 		}
-		row.setAttribute('draggable', 'true');
+		if (row.getAttribute('draggable') !== 'true') row.setAttribute('draggable', 'true');
 		row.dataset.penaNativeDialogId = nextDialogId;
 		if (effectiveColor) row.dataset.penaNativeColor = effectiveColor;
 		else delete row.dataset.penaNativeColor;
@@ -18547,10 +18667,10 @@ if (_presetChannel) {
 		if (parentFolder) row.dataset.penaNativeFolderId = String(parentFolder.id || '');
 		else delete row.dataset.penaNativeFolderId;
 		_getDialogControlNativePaintTargets(row).forEach(target => {
-			target.classList.add('pena-native-chat-row-paint');
-			target.classList.remove('--native-colored');
+			_addDialogControlNativeClasses(target, 'pena-native-chat-row-paint');
+			_removeDialogControlNativeClasses(target, '--native-colored');
 			target.classList.toggle('--native-folder-child', !!parentFolder);
-			target.classList.remove('--native-folder-colored', '--native-light-bg');
+			_removeDialogControlNativeClasses(target, '--native-folder-colored', '--native-light-bg');
 			_applyDialogControlNativeColorVars(target, '');
 		});
 		_applyDialogControlNativeColorVars(row, effectiveColor);
@@ -18582,7 +18702,7 @@ if (_presetChannel) {
 
 		if (!Array.isArray(allItems) || !allItems.length) {
 			rows.forEach(row => {
-				_clearDialogControlNativeRowState(row, options);
+				_clearDialogControlNativeRowState(row, { ...options, preserveLayout: true });
 				_applyDialogControlNativeRowLayout(row);
 			});
 			_renderDialogControlNativeSwitcher(container, []);
@@ -18660,7 +18780,7 @@ if (_presetChannel) {
 					_applyDialogControlNativeRowLayout(row);
 					return;
 				}
-				_clearDialogControlNativeRowState(row, options);
+				_clearDialogControlNativeRowState(row, { ...options, preserveLayout: true });
 				_applyDialogControlNativeRowLayout(row);
 				return;
 			}
@@ -28306,6 +28426,10 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 						return [...record.addedNodes, ...record.removedNodes].some(containsRouteList);
 					}
 					if (record.type !== 'attributes' || !target) return false;
+					// Toolbar state is PENA presentation, not a Bitrix route change.
+					// Child insertion/removal still repairs a moved/replaced switcher;
+					// native host/viewport and ancestor visibility remain observed.
+					if (target.closest?.('.pena-native-folder-switcher')) return false;
 					if (containsRouteList(target)) return true;
 					const active = window.__PENA_ACTIVE_LIST_CONTEXT__;
 					return !!(active?.host && (target === active.host || target.contains?.(active.host)));
