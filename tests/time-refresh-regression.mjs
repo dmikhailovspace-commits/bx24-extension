@@ -18,14 +18,15 @@ function fixture(count = 2) {
  class TestDate extends Date { static now() { return state.clock; } }
  const sandbox = {
   Date:TestDate, setTimeout:()=>0, clearTimeout:()=>{}, document:{visibilityState:'visible'}, navigator:{onLine:true},
-  _PENA_TIME_CONTROL:model, _PENA_TIME_CACHE_TTL_MS:120000, _DIALOG_TIME_LOGGED_TTL_MS:10000, _DIALOG_TIME_EMPTY_TTL_MS:120000,
+  _PENA_TIME_CONTROL:model, _PENA_TIME_CACHE_TTL_MS:120000, _DIALOG_TIME_CATALOG_REFRESH_MS:10000,
   _DIALOG_TIME_FIRST_WAVE_SIZE:16, _DIALOG_TIME_WAVE_SIZE:50,
-  _dialogTimeCatalogCursor:0, _dialogTimeCatalogScope:'portal:7', _dialogTimeRange:range, _dialogTimeView:'day', _dialogControlNativeWorkspaceTab:'time', _dialogControlNativeSwitcherNode:null,
+  _dialogTimeElapsedEventTimer:null, _dialogTimeElapsedEventScope:'', _dialogTimeCatalogCursor:0, _dialogTimeCatalogScope:'portal:7', _dialogTimeRange:range, _dialogTimeView:'day', _dialogControlNativeWorkspaceTab:'time', _dialogControlNativeSwitcherNode:null,
   _dialogTimeCache:new Map(), _dialogTimeInFlight:new Map(), _dialogTimeForcedRefreshes:new Map(), _dialogTimeRangeRechecks:new Map(),
   _dialogTimeRangeRevisions:new Map(), _dialogTimeTaskRevisions:new Map(), _dialogTimeTaskChangedAt:new Map(), _dialogTimePanelRefreshes:new Map(),
   _dialogTimeTaskTitles:new Map(), _dialogTimeTaskEligibility:new Map(), _readDialogTaskTimeTrackingFlag:row=>row.ALLOW_TIME_TRACKING==='Y', _rememberDialogTimeTaskChat:()=>{},
   _setDialogTimeTaskEligibility:(id,enabled)=>sandbox._dialogTimeTaskEligibility.set(id,enabled), _parseDialogRecentDate:value=>Date.parse(value)||0,
   _dialogTimeActionInFlight:false, _dialogTimeActiveManualWriteIntent:null, _dialogTimeManualError:'', _dialogTimeManualSelectedTask:null, _dialogTimeManualSearchQuery:'', _dialogTimeManualSearchResults:[],
+  _dialogTimeAcknowledgedManualMemory:null, _dialogTimeAccountingRecoveryTimer:null, _dialogTimeAccountingRecoveryAttempt:0, _dialogTimeAccountingRecoveryPromise:null,
   _dialogTimeManualRetryConfirmKey:'', _dialogTimeTrackerRetryConfirmKey:'', _PENA_TIME_MANUAL_DRAFT_KEY:'manual', _PENA_TIME_TRACKER_KEY:'tracker', _dialogTimePortalUtcOffsetMinutes:0,
   _dialogTimeDeleteConfirmEntryId:'', _dialogTimeEditingEntryId:'',
   _getCurrentBitrixUserId:()=> '7', _ensureCurrentBitrixUserId:async()=> '7', _getDialogNativeSharedAuditScopeKey:()=>state.scope,
@@ -64,12 +65,13 @@ function fixture(count = 2) {
    return pages;
   }
  };
- const names=['_hasDialogTimeVerifiedData','_publishDialogTimeTaskIndexRows','_withDialogTimeTrackerLock','_buildDialogTimeWriteFields','_getDialogTimeTrackerSeconds','_getDialogTimeCacheKey','_setDialogTimeCacheRecord','_invalidateDialogTimeCachesForDates','_applyDialogTimeOptimisticEntry','_removeDialogTimeCachedEntry','_loadDialogTimeRange','_refreshDialogTimePanel','_getDialogTimeSavedItemId','_isDialogTimeDefiniteWriteFailure','_getDialogTimeWriteIntentKey','_withDialogTimeManualWriteLock','_commitDialogTimeManualEntry','_addDialogTimeManualEntry','_deleteDialogTimeEntry','_updateDialogTimeEntry','_stopDialogTimeTracker'];
+ const names=['_invalidateDialogTimeTaskSnapshot','_scheduleDialogTimeElapsedRefresh','_hasDialogTimeVerifiedData','_publishDialogTimeTaskIndexRows','_withDialogTimeTrackerLock','_buildDialogTimeWriteFields','_getDialogTimeTrackerSeconds','_getDialogTimeCacheKey','_setDialogTimeCacheRecord','_invalidateDialogTimeCachesForDates','_applyDialogTimeOptimisticEntry','_removeDialogTimeCachedEntry','_loadDialogTimeRange','_refreshDialogTimePanel','_getDialogTimeSavedItemId','_isDialogTimeDefiniteWriteFailure','_getDialogTimeWriteIntentKey','_withDialogTimeManualWriteLock','_commitDialogTimeManualEntry','_addDialogTimeManualEntry','_deleteDialogTimeEntry','_updateDialogTimeEntry','_stopDialogTimeTracker'];
+ names.push('_finishDialogTimeAcknowledgedManualWrite','_scheduleDialogTimeAccountingRecovery','_recoverDialogTimeContactAccounting');
  vm.createContext(sandbox); vm.runInContext(names.map(extract).join('\n'),sandbox);
  state.seed=(entries=[])=>{
   state.entries=structuredClone(entries);
   const data={...model.aggregateElapsedItems(entries),range,pages:1,totalAvailable:entries.length};
-  sandbox._dialogTimeCache.set('7:2026-09-07:2026-09-07',{status:'ready',range,data,hasVerifiedData:true,updatedAt:state.clock,taskIdsKey:state.taskIds.join(','),taskFreshness:Object.fromEntries(state.taskIds.map(id=>[id,{at:state.clock,revision:0}]))});
+  sandbox._dialogTimeCache.set('7:2026-09-07:2026-09-07',{status:'ready',range,data,hasVerifiedData:true,hasCompleteSnapshot:true,updatedAt:state.clock,taskIdsKey:state.taskIds.join(','),taskFreshness:Object.fromEntries(state.taskIds.map(id=>[id,{at:state.clock,revision:0}]))});
  };
  state.record=()=>sandbox._dialogTimeCache.get('7:2026-09-07:2026-09-07');
  return {state,api:sandbox};
@@ -112,9 +114,9 @@ try {
   const {state,api}=fixture(117);state.entries=[entry(1,117,1800)];await api._loadDialogTimeRange(range);
   assert.equal(state.record().data.totalSeconds,1800);assert.equal(state.record().data.coverage.checkedTasks,117);
   assert.deepEqual(state.calls.map(x=>x.length),[16,50,50,1]);
-  const cold=state.calls.length;state.clock+=10001;await api._loadDialogTimeRange(range);assert.equal(state.calls.length,cold+1);assert.deepEqual(state.calls.at(-1),['117']);
-  state.clock+=120000;await api._loadDialogTimeRange(range);assert.equal(state.calls.slice(cold+1).flat().length,117);
-  return {coldTasks:117,coldBatches:cold,loggedRefreshTasks:1,emptyExpiryTasks:117};
+  const cold=state.calls.length;state.clock+=86400000;await api._loadDialogTimeRange(range);assert.equal(state.calls.length,cold);
+  api._dialogTimeTaskRevisions.set('117',1);await api._loadDialogTimeRange(range);assert.deepEqual(state.calls.slice(cold).flat(),['117']);
+  return {coldTasks:117,coldBatches:cold,unchangedAfterDayReads:0,dirtyTaskReads:1};
  });
  await phase('manual refresh coalesces and uses task catalog delta',async()=>{
   const {state,api}=fixture(30);state.seed([entry(1,30,600)]);const gate=deferred();state.hold=gate;
@@ -161,7 +163,7 @@ try {
   assert.equal(state.draft.pendingWrite.status,'unknown');assert.equal(state.writes.length,1);
   const restored=fixture();restored.state.draft=structuredClone(state.draft);
   await restored.api._addDialogTimeManualEntry({taskId:'1'},0,10,range.from);assert.equal(restored.state.writes.length,0);
-  await restored.api._addDialogTimeManualEntry({taskId:'1'},0,10,range.from);assert.equal(restored.state.writes.length,1);assert.equal(restored.state.draft,null);
+  await restored.api._addDialogTimeManualEntry({taskId:'1'},0,10,range.from);await restored.api._recoverDialogTimeContactAccounting();assert.equal(restored.state.writes.length,1);assert.equal(restored.state.draft.pendingWrite,null);
   return {initialWrites:1,firstReloadClickWrites:0,explicitConfirmedRetries:1};
  });
  await phase('timer does not send before its recovery state is persisted',async()=>{
@@ -213,14 +215,14 @@ try {
   state.clock+=60000;api._dialogTimePortalUtcOffsetMinutes=0;await api._stopDialogTimeTracker();assert.equal(state.writes.length,1);assert.equal(state.entries[0].SECONDS,10);
   return {unknownTimezoneWrites:0,confirmedSecondsAfterRetry:10};
  });
- await phase('freshness starts at transport dispatch but still expires a slow server response',async()=>{
+ await phase('dispatch metadata survives queue and slow responses without a perpetual age-expiry reread',async()=>{
   for (const queued of [true,false]) {
    const {state,api}=fixture(30);state.entries=[entry(1,1,600)];const gate=deferred();state.hold=gate;
    state.dispatchAt=state.clock+(queued?15000:0);const read=api._loadDialogTimeRange(range);await Promise.resolve();state.clock+=15000;gate.resolve();await read;
    const before=state.calls.flat().length;state.dispatchAt=state.clock;await api._loadDialogTimeRange(range);
-   assert.equal(state.calls.flat().length-before,queued?0:1);
+   assert.equal(state.calls.flat().length-before,0);assert.ok(state.record().taskFreshness['1'].at>0);
   }
-  return {afterQueueExtraReads:0,slowServerLoggedTaskRechecks:1};
+  return {afterQueueExtraReads:0,slowServerLoggedTaskRechecks:0};
  });
  const titleFixture = (known = false) => {
   const state={scope:'portal:7',batches:[],commits:[],nativeFinds:0,gate:null,partial:false,clock:1000000};
@@ -272,25 +274,25 @@ try {
   await api._addDialogTimeManualEntry({taskId:'1'},0,10,range.from);
   assert.ok(state.paints.includes(6000));assert.equal(api._dialogTimeActionInFlight,false);assert.equal(state.calls.length,0);
   assert.equal(api._dialogTimeManualError,'');assert.equal(toasts.filter(t=>t.kind==='ok').length,1);
-  ledger.reject(new Error('Storage write failed'));for(let i=0;i<8;i++)await Promise.resolve();
+  ledger.reject(new Error('Storage write failed'));await api._recoverDialogTimeContactAccounting();for(let i=0;i<4;i++)await Promise.resolve();
   assert.equal(api._dialogTimeManualError,'');assert.equal(toasts.filter(t=>t.kind==='danger').length,0);assert.equal(toasts.filter(t=>t.kind==='warning').length,1);
   assert.equal(state.writes.length,1);assert.equal(state.record().data.totalSeconds,6000);
   return {paintBeforeLedgerSeconds:6000,readsAfterAck:0,writeErrors:0,bookkeepingWarnings:1};
  });
  await phase('ADD preserves original freshness only while task snapshot is valid',async()=>{
-  for(const mode of ['fresh','expired','missing','event']){
+  for(const mode of ['fresh','old','missing','event']){
    const {state,api}=fixture();state.seed([entry(1,1,3600),entry(2,2,1800)]);const at=state.clock;
-   if(mode==='expired')state.clock+=10001;
+   if(mode==='old')state.clock+=86400000;
    if(mode==='missing')delete state.record().taskFreshness['1'];
    if(mode==='event')api._dialogTimeTaskRevisions.set('1',1);
    await api._addDialogTimeManualEntry({taskId:'1'},0,10,range.from);await api._loadDialogTimeRange(range);
    assert.equal(state.record().data.totalSeconds,6000);
-   if(mode==='fresh'){
+   if(mode==='fresh'||mode==='old'){
     assert.equal(state.calls.length,0);assert.equal(state.record().taskFreshness['1'].at,at);
-    state.clock+=10001;await api._loadDialogTimeRange(range);assert.deepEqual(state.calls.flat(),['1','2']);
+    state.clock+=10001;await api._loadDialogTimeRange(range);assert.deepEqual(state.calls.flat(),[]);
    }else assert.ok(state.calls.flat().includes('1'),mode+' must reconcile');
   }
-  return {freshAckReads:0,expiredMissingOrInvalidated:'reconciled',ttlExtended:false};
+  return {freshAckReads:0,missingOrInvalidated:'reconciled',ageAloneCausesReads:false};
  });
  await phase('warm validation reports this wave progress independently of existing full coverage',async()=>{
   const {state,api}=fixture(17);state.seed([entry(1,1,600)]);state.record().data.coverage={complete:true,checkedTasks:17,totalTasks:17};
@@ -328,6 +330,163 @@ try {
   api._invalidateDialogTimeCachesForDates(range.from,{taskId:'1'});api._applyDialogTimeOptimisticEntry('1',600,range.from,'101');
   assert.equal(api._hasDialogTimeVerifiedData(state.record()),true);assert.equal(state.record().data.totalSeconds,600);
   return {foreignCatalogVerified:false,failedReadVerified:false,confirmedAddSeconds:600};
+ });
+
+ await phase('dirty task arriving during a held wave is rechecked once without restarting accepted tasks',async()=>{
+  const {state,api}=fixture(117);state.entries=[entry(1,1,600)];const gate=deferred();state.hold=gate;
+  const first=api._loadDialogTimeRange(range);await Promise.resolve();api._dialogTimeTaskRevisions.set('1',1);
+  state.entries[0].SECONDS=900;gate.resolve();await first;
+  assert.equal(state.record().data.coverage.checkedTasks,116);assert.equal(state.record().data.coverage.complete,false);
+  const before=state.calls.flat().length;await api._loadDialogTimeRange(range);
+  assert.deepEqual(state.calls.flat().slice(before),['1']);assert.equal(state.record().data.totalSeconds,900);
+  assert.equal(state.record().data.coverage.complete,true);return {initialTasks:117,dirtyDuringReadRechecks:1,finalSeconds:900};
+ });
+ await phase('cancelled cold sweep resumes remaining task IDs and never ages out completed waves',async()=>{
+  const {state,api}=fixture(117);state.entries=[entry(1,1,600)];
+  api._sleepDialogControl=async()=>{api._dialogControlNativeWorkspaceTab='';};await api._loadDialogTimeRange(range);
+  assert.equal(state.record().data.coverage.checkedTasks,16);assert.equal(state.calls.flat().length,16);
+  state.clock+=86400000;api._dialogControlNativeWorkspaceTab='time';api._sleepDialogControl=async()=>{};
+  await api._loadDialogTimeRange(range);assert.equal(state.calls.flat().length,117);assert.equal(new Set(state.calls.flat()).size,117);
+  assert.equal(state.record().data.coverage.complete,true);return {completedBeforeClose:16,remainingAfterReopen:101,repeatedTaskReads:0};
+ });
+
+ await phase('complete snapshot provenance waits for catalog tail and survives targeted invalidation',async()=>{
+  const {state,api}=fixture(16);await api._loadDialogTimeRange(range);
+  assert.equal(state.record().data.coverage.complete,true);assert.equal(state.record().hasCompleteSnapshot,false);
+  state.taskIds=Array.from({length:117},(_,i)=>String(i+1));api._dialogTimeCatalogCursor=state.clock;
+  const gate=deferred();state.hold=gate;const tail=api._loadDialogTimeRange(range);await Promise.resolve();
+  assert.equal(state.record().hasCompleteSnapshot,false);gate.resolve();await tail;
+  assert.equal(state.calls.flat().length,117);assert.equal(state.record().hasCompleteSnapshot,true);
+  api._dialogTimeTaskRevisions.set('1',1);const dirty=deferred();state.hold=dirty;const refresh=api._loadDialogTimeRange(range);
+  await Promise.resolve();assert.equal(state.record().hasCompleteSnapshot,true);dirty.resolve();await refresh;
+  assert.equal(state.record().hasCompleteSnapshot,true);return {first16Complete:false,full117Complete:true,dirtyRetainsCompleteProvenance:true};
+ });
+ await phase('late completed empty catalog confirms a full snapshot without extra requests',async()=>{
+  const {state,api}=fixture(0);await api._loadDialogTimeRange(range);assert.equal(state.record().hasCompleteSnapshot,false);
+  api._dialogTimeCatalogCursor=state.clock;await api._loadDialogTimeRange(range);assert.equal(state.record().hasCompleteSnapshot,true);assert.equal(state.record().data.coverage.checkedTasks,0);assert.equal(state.record().data.coverage.totalTasks,0);assert.equal(state.record().data.coverage.complete,true);
+  state.taskIds=['1'];const hold=deferred();state.hold=hold;const read=api._loadDialogTimeRange(range);await Promise.resolve();
+  assert.equal(state.record().hasCompleteSnapshot,true);hold.resolve();await read;assert.equal(state.calls.flat().length,1);
+  return {emptyFullSnapshot:true,newTaskRetainsProvenance:true};
+ });
+ await phase('manual refresh joins a cold pass and concurrent forced calls share one warm audit',async()=>{
+  const {state,api}=fixture(117);api._dialogTimeCatalogCursor=state.clock;const hold=deferred();state.hold=hold;
+  const cold=api._loadDialogTimeRange(range);await Promise.resolve();const manual=api._refreshDialogTimePanel(range);hold.resolve();await Promise.all([cold,manual]);
+  assert.equal(state.calls.flat().length,117);assert.equal(state.record().hasCompleteSnapshot,true);
+  const next=deferred();state.hold=next;const a=api._loadDialogTimeRange(range,{force:true});await Promise.resolve();const b=api._loadDialogTimeRange(range,{force:true});
+  next.resolve();await Promise.all([a,b]);assert.equal(state.calls.flat().length,234);
+  return {coldPlusManualTasks:117,twoForcedCallersTasks:117};
+ });
+
+ await phase('event wake during an accepted or held page drains one dirty task automatically',async()=>{
+  for(const accepted of [false,true]){
+   const {state,api}=fixture(117);state.entries=[entry(1,1,600)];api._dialogTimeCatalogCursor=state.clock;
+   const gate=deferred();if(!accepted)state.hold=gate;else api._sleepDialogControl=async()=>{if(state.calls.length===1)state.hold=gate;};
+   const first=api._loadDialogTimeRange(range);
+   for(let i=0;i<40&&!state.held;i++)await Promise.resolve();assert.ok(state.held);
+   state.entries[0].SECONDS=900;api._dialogTimeTaskRevisions.set('1',1);
+   const wakeA=api._loadDialogTimeRange(range),wakeB=api._loadDialogTimeRange(range);
+   gate.resolve();await Promise.all([first,wakeA,wakeB]);
+   assert.equal(state.calls.flat().length,118);assert.equal(state.calls.flat().filter(id=>id==='1').length,2);
+   assert.equal(state.record().data.totalSeconds,900);assert.equal(state.record().data.coverage.complete,true);
+  }
+  return {initialTasks:117,dirtyRechecks:1,repeatedWakeExtraReads:0};
+ });
+
+ await phase('qualified task invalidation is closed-panel silent, visible debounced and scope fenced',async()=>{
+  const {state,api}=fixture(117);state.seed([entry(1,1,600)]);const timers=new Map();let nextTimer=0;
+  api.setTimeout=fn=>{timers.set(++nextTimer,fn);return nextTimer;};api.clearTimeout=id=>timers.delete(id);
+  api._dialogControlNativeWorkspaceTab='';assert.equal(api._invalidateDialogTimeTaskSnapshot('1'),true);
+  assert.equal(timers.size,0);assert.equal(state.calls.length,0);
+  state.entries[0].SECONDS=900;api._dialogControlNativeWorkspaceTab='time';await api._loadDialogTimeRange(range);
+  assert.deepEqual(state.calls.flat(),['1']);assert.equal(state.record().data.totalSeconds,900);
+  api._invalidateDialogTimeTaskSnapshot('1');api._invalidateDialogTimeTaskSnapshot('1');assert.equal(timers.size,1);
+  const callback=timers.values().next().value;timers.clear();callback();await api._dialogTimeInFlight.get('7:2026-09-07:2026-09-07');
+  assert.deepEqual(state.calls.flat(),['1','1']);
+  api._invalidateDialogTimeTaskSnapshot('1');const old=timers.values().next().value;timers.clear();state.scope='portal:8';old();
+  assert.equal(state.calls.flat().length,2);assert.equal(api._invalidateDialogTimeTaskSnapshot('not-a-task'),false);
+  return {closedReads:0,closedTimers:0,reopenTaskReads:1,twoVisibleEventsTaskReads:1,foreignScopeReads:0};
+ });
+ await phase('inaccessible task keeps last data and retries only on manual refresh or new task evidence',async()=>{
+  const {state,api}=fixture(2);state.seed([entry(1,1,600),entry(2,2,900)]);state.denied=new Set(['1']);
+  await assert.rejects(api._loadDialogTimeRange(range,{force:true}));assert.equal(state.record().data.totalSeconds,1500);
+  const before=state.calls.flat().length;state.clock+=86400000;await api._loadDialogTimeRange(range);assert.equal(state.calls.flat().length,before);
+  assert.equal(state.record().status,'error');assert.equal(state.record().data.coverage.complete,false);
+  state.denied.clear();await api._loadDialogTimeRange(range,{force:true});assert.equal(state.record().data.coverage.complete,true);
+  state.denied.add('1');await assert.rejects(api._loadDialogTimeRange(range,{force:true}));state.denied.clear();state.clock+=15001;
+  api._dialogTimeTaskRevisions.set('1',(api._dialogTimeTaskRevisions.get('1')||0)+1);const dirtyBefore=state.calls.flat().length;await api._loadDialogTimeRange(range);
+  assert.deepEqual(state.calls.flat().slice(dirtyBefore),['1']);assert.equal(state.record().status,'ready');
+  return {unchangedDeniedRetryReads:0,preservedSeconds:1500,manualRecovery:true,newEvidenceRecoveryTasks:1};
+ });
+
+ await phase('new task evidence bypasses a failed revision once while repeated failures keep backoff',async()=>{
+  const {state,api}=fixture(2);state.seed([entry(1,1,600),entry(2,2,900)]);state.denied=new Set(['1']);
+  await assert.rejects(api._loadDialogTimeRange(range,{force:true}));const before=state.calls.flat().length;
+  api._dialogTimeTaskRevisions.set('1',1);await assert.rejects(api._loadDialogTimeRange(range));assert.deepEqual(state.calls.flat().slice(before),['1']);
+  const failedAgain=state.calls.flat().length;await api._loadDialogTimeRange(range);await api._loadDialogTimeRange(range);
+  assert.equal(state.calls.flat().length,failedAgain);assert.equal(state.record().failedTaskRevisions['1'],1);
+  state.denied.clear();api._dialogTimeTaskRevisions.set('1',2);state.entries[0].SECONDS=1200;await api._loadDialogTimeRange(range);
+  assert.deepEqual(state.calls.flat().slice(failedAgain),['1']);assert.equal(state.record().data.totalSeconds,2100);assert.equal(state.record().status,'ready');
+  return {firstNewRevisionImmediateReads:1,repeatedFailedRevisionReads:0,recoveredNewRevisionReads:1,seconds:2100};
+ });
+ await phase('revision arriving during a failed request is retained as a new immediate recheck',async()=>{
+  const {state,api}=fixture(2);state.seed([entry(1,1,600),entry(2,2,900)]);const gate=deferred();state.hold=gate;
+  const failing=api._loadDialogTimeRange(range,{force:true});await Promise.resolve();api._dialogTimeTaskRevisions.set('1',1);state.entries[0].SECONDS=1200;
+  gate.reject(Object.assign(new Error('TIMEOUT'),{code:'TIMEOUT'}));await assert.rejects(failing);
+  assert.equal(state.record().failedTaskRevisions['1'],0);const before=state.calls.flat().length;await api._loadDialogTimeRange(range);
+  assert.deepEqual(state.calls.flat().slice(before),['1']);assert.equal(state.record().data.totalSeconds,2100);
+  return {failureCapturedRevision:0,newRevision:1,immediateTaskReads:1,globalTransportPolicy:'unchanged'};
+ });
+ await phase('catalog expansion during first read cannot promote incomplete range through a fast path',async()=>{
+  const {state,api}=fixture(16),gate=deferred();state.hold=gate;const pending=api._loadDialogTimeRange(range);await Promise.resolve();
+  state.taskIds.push('17');api._dialogTimeCatalogCursor=state.clock;gate.resolve();await pending;
+  assert.equal(state.record().hasCompleteSnapshot,false);const before=state.calls.flat().length;await api._loadDialogTimeRange(range);
+  assert.deepEqual(state.calls.flat().slice(before),['17']);assert.equal(state.record().hasCompleteSnapshot,true);
+  return {beforeLateTaskAcceptedComplete:false,lateTaskReads:1,afterLateTaskAcceptedComplete:true};
+ });
+ await phase('manual ACK receipt survives failed bookkeeping and reload without another ADD or consuming during-write contact',async()=>{
+  const {state,api}=fixture(1);state.clock=Date.parse('2026-09-07T10:00:00Z');state.seed([]);
+  let rows=model.applyQualifiedContact([],{taskId:'1',eventId:'before',qualifiedAt:state.clock-20000,reason:'message'});
+  const gate=deferred();state.writeHold=gate;api._markDialogTimeTaskAccounted=async()=>false;
+  const add=api._addDialogTimeManualEntry({taskId:'1'},0,10,range.from);for(let i=0;i<8;i++)await Promise.resolve();
+  const cutoff=state.clock;state.clock+=20000;rows=model.applyQualifiedContact(rows,{taskId:'1',eventId:'during',qualifiedAt:state.clock,reason:'message'});
+  gate.resolve();await add;await api._recoverDialogTimeContactAccounting();
+  assert.equal(state.draft.pendingWrite.status,'acknowledged');assert.equal(state.draft.pendingWrite.contactCutoffAt,cutoff);assert.equal(state.draft.pendingWrite.itemId,'101');
+  const reload=fixture(1);reload.state.draft=structuredClone(state.draft);reload.state.entries=structuredClone(state.entries);
+  reload.api._markDialogTimeTaskAccounted=async(id,at,day,options)=>{assert.equal(day,range.from);rows=model.markActivityAccounted(rows,`task:${id}`,at,options);return true;};
+  await reload.api._recoverDialogTimeContactAccounting();assert.equal(reload.state.draft.pendingWrite,null);assert.equal(reload.state.writes.length,0);
+  const tracked=model.aggregateElapsedItems([{...state.entries[0],DATE_START:new Date(state.clock+1000).toISOString()}]).tasks;
+  assert.equal(model.selectUntrackedVisits(rows,tracked)[0].pendingContacts,1);
+  return{serverAdds:state.writes.length,reloadAdds:0,immutableCutoff:cutoff,pendingContacts:1};
+ });
+ await phase('timer saved segments retain immutable contact cutoff and metadata recovery never repeats ADD',async()=>{
+  const {state,api}=fixture(1);state.clock=Date.parse('2026-09-07T10:00:10Z');state.seed([]);
+  const stoppedAt=state.clock;state.tracker={taskId:'1',startedAt:state.clock-10000,dateKey:range.from,pendingSeconds:0};
+  api._markDialogTimeTaskAccounted=async()=>false;await api._stopDialogTimeTracker();
+  assert.equal(state.tracker.saveSegments[0].status,'saved');assert.equal(state.tracker.saveSegments[0].contactsCutoffAt,stoppedAt);assert.equal(state.tracker.saveSegments[0].contactsAccounted,false);
+  const reload=fixture(1);reload.state.tracker=structuredClone(state.tracker);const marks=[];
+  reload.api._markDialogTimeTaskAccounted=async(...args)=>{marks.push(args);return true;};
+  await reload.api._recoverDialogTimeContactAccounting();assert.equal(reload.state.tracker,null);assert.equal(reload.state.writes.length,0);
+  assert.equal(marks[0][1],stoppedAt);assert.equal(marks[0][3].itemId,'101');
+  return{savedSeconds:10,originalAdds:1,reloadAdds:0,receiptCutoff:stoppedAt};
+ });
+ await phase('acknowledged intent parsing survives ordinary form reset and stale foreign ACK cannot clear it',async()=>{
+  const {api}=fixture();const storage=new Map();api.localStorage={getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)};
+  vm.runInContext(extract('_readDialogTimeManualDraft')+'\n'+extract('_writeDialogTimeManualDraft'),api);
+  const intent={operationId:'ack1',taskId:'1',seconds:600,dateKey:range.from,status:'acknowledged',itemId:'101',attemptedAt:1000,contactCutoffAt:1000};
+  storage.set('manual:7:write-intent',JSON.stringify(intent));
+  api._writeDialogTimeManualDraft(null);assert.equal(api._readDialogTimeManualDraft().pendingWrite.status,'acknowledged');
+  assert.equal(api._writeDialogTimeManualDraft({pendingWrite:null},{writeIntent:true,resolvePendingKey:'old-operation'}),false);
+  assert.equal(api._readDialogTimeManualDraft().pendingWrite.itemId,'101');return{formResetPreserved:true,staleAckRejected:true};
+ });
+ await phase('acknowledged timer clear failure stays neutral and retries bookkeeping without another ADD',async()=>{
+  const {state,api}=fixture(1);state.clock=Date.parse('2026-09-07T10:00:10Z');state.seed([]);
+  state.tracker={taskId:'1',startedAt:state.clock-10000,dateKey:range.from,pendingSeconds:0};
+  let failClear=true;const toasts=[];api._showDialogDockToast=(message,kind)=>toasts.push({message,kind});
+  api._writeDialogTimeTracker=value=>{if(value===null&&failClear)return false;state.tracker=structuredClone(value);return true;};
+  await api._stopDialogTimeTracker();assert.equal(state.tracker.saveSegments[0].status,'saved');assert.equal(state.tracker.saveSegments[0].contactsAccounted,true);
+  assert.equal(toasts.some(toast=>toast.kind==='danger'),false);assert.equal(state.writes.length,1);
+  failClear=false;await api._recoverDialogTimeContactAccounting();assert.equal(state.tracker,null);assert.equal(state.writes.length,1);
+  return{positiveAckAdds:1,metadataRetryAdds:0,falseWriteErrors:0};
  });
  console.log(`PASS time refresh: ${phases.length} phases`);
 } finally {

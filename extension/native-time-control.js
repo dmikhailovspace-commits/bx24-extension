@@ -107,6 +107,8 @@
 			? directSeconds
 			: (rawMinutes !== '' && rawMinutes != null && Number.isFinite(minutes) && minutes >= 0 ? minutes * 60 : 0);
 		const createdAt = String(item.CREATED_DATE ?? item.createdDate ?? item.createdAt ?? item.DATE_START ?? item.dateStart ?? '');
+		const dateStart = String(item.DATE_START ?? item.dateStart ?? '');
+		const recordedAt = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(dateStart) ? Date.parse(dateStart) : NaN;
 		return {
 			id: String(item.ID ?? item.id ?? ''),
 			taskId: String(item.TASK_ID ?? item.taskId ?? ''),
@@ -114,7 +116,9 @@
 			seconds: Math.max(0, Math.round(seconds)),
 			createdAt,
 			dateKey: extractDateKey(createdAt),
-			dateStart: String(item.DATE_START ?? item.dateStart ?? ''),
+			dateStart,
+			recordedAt: Number.isFinite(recordedAt) && recordedAt > 0 ? recordedAt : 0,
+			contactCutoffAt: Math.max(0, Number(item.contactCutoffAt) || 0),
 			dateStop: String(item.DATE_STOP ?? item.dateStop ?? ''),
 			commentText: String(item.COMMENT_TEXT ?? item.commentText ?? ''),
 			source: String(item.SOURCE ?? item.source ?? '')
@@ -134,10 +138,11 @@
 			day.entries += 1;
 			days.set(dayKey, day);
 			const taskKey = item.taskId || 'unknown';
-			const task = tasks.get(taskKey) || { taskId: taskKey, seconds: 0, entries: 0, entryIds: [], lastTrackedAt: '' };
+			const task = tasks.get(taskKey) || { taskId: taskKey, seconds: 0, entries: 0, entryIds: [], lastTrackedAt: '', recordedEntries: [] };
 			task.seconds += item.seconds;
 			task.entries += 1;
 			if (item.id) task.entryIds.push(item.id);
+			if (item.id) task.recordedEntries.push({ id: item.id, recordedAt: item.recordedAt, contactCutoffAt: item.contactCutoffAt });
 			if (item.createdAt && item.createdAt > task.lastTrackedAt) task.lastTrackedAt = item.createdAt;
 			tasks.set(taskKey, task);
 		}
@@ -182,6 +187,8 @@
 			lastQualifiedAt: Math.max(0, Number(task.lastQualifiedAt) || legacyQualifiedAt),
 			lastQualificationReason: String(task.lastQualificationReason || ''),
 			accountedAt: Math.max(0, Number(task.accountedAt) || 0),
+			accountedVisits: Math.max(0, Number(task.accountedVisits) || 0),
+			accountedEntries: Array.isArray(task.accountedEntries) ? task.accountedEntries.filter(entry => /^[1-9]\d*$/.test(String(entry?.id || '')) && Number(entry.cutoffAt) > 0).map(entry => ({ id: String(entry.id), cutoffAt: Number(entry.cutoffAt) })) : [],
 			contactEvents: Array.isArray(task.contactEvents) ? task.contactEvents.filter(event => event && typeof event.id === 'string' && Number.isFinite(Number(event.at))).map(event => ({ id: event.id, at: Number(event.at), reason: String(event.reason || '') })) : [],
 			contactBaseVisits: Math.max(0, Number(task.contactBaseVisits) || 0),
 			contactBaseQualifiedAt: Math.max(0, Number(task.contactBaseQualifiedAt) || 0),
@@ -210,6 +217,8 @@
 				accountedActiveSeconds: Math.max(previous.accountedActiveSeconds || 0, task.accountedActiveSeconds || 0),
 				sessionActive: newest.sessionActive === true,
 				accountedAt: Math.max(previous.accountedAt || 0, task.accountedAt || 0),
+				accountedVisits: Math.max(previous.accountedVisits, task.accountedVisits),
+				accountedEntries: Array.from(new Map([...previous.accountedEntries, ...task.accountedEntries].map(entry => [entry.id, entry])).values()),
 				contactEvents: Array.from(new Map([...previous.contactEvents, ...task.contactEvents].map(event => [event.id, event])).values()),
 				contactBaseVisits: Math.max(previous.contactBaseVisits, task.contactBaseVisits),
 				contactBaseQualifiedAt: Math.max(previous.contactBaseQualifiedAt, task.contactBaseQualifiedAt),
@@ -371,29 +380,61 @@
 		return merged.sort((a, b) => b.visitedAt - a.visitedAt || a.activityId.localeCompare(b.activityId));
 	}
 
-	function markActivityAccounted(items = [], activityId = '', accountedAt = Date.now()) {
-		const id = String(activityId || '');
-		const at = Math.max(0, Number(accountedAt) || Date.now());
-		return mergeVisitedTasks(items).map(item => item.activityId === id ? {
-			...item,
-			accountedAt: Math.max(item.accountedAt || 0, at),
-			accountedActiveSeconds: Math.max(item.accountedActiveSeconds || 0, item.activeSeconds || 0)
-		} : item);
+	function countPendingContacts(task, cutoffAt = task.accountedAt || 0) {
+		if (!task.contactEvents.length) {
+			if (!task.lastQualifiedAt || task.lastQualifiedAt <= cutoffAt) return 0;
+			return Math.max(0, task.visits - task.accountedVisits);
+		}
+		const baseAt = task.contactBaseQualifiedAt;
+		let pending = baseAt > cutoffAt ? Math.max(0, task.contactBaseVisits - task.accountedVisits) : 0;
+		let lastAt = 0;
+		for (const event of [...task.contactEvents].sort((a, b) => a.at - b.at || a.id.localeCompare(b.id))) {
+			if (baseAt && Math.abs(event.at - baseAt) < DEFAULT_TOUCH_DEDUPE_MS) continue;
+			if (lastAt && event.at - lastAt < DEFAULT_TOUCH_DEDUPE_MS) continue;
+			lastAt = event.at;
+			if (event.at > cutoffAt) pending++;
+		}
+		return pending;
 	}
 
-	function selectUntrackedVisits(visits = [], trackedTasks = []) {
+	function markActivityAccounted(items = [], activityId = '', accountedAt = Date.now(), options = {}) {
+		const id = String(activityId || '');
+		const at = Math.max(0, Number(accountedAt) || Date.now());
+		const merged = mergeVisitedTasks(items);
+		if (!merged.some(item => item.activityId === id) && /^task:\d+$/.test(id)) {
+			// The qualified contact may still be in the durable outbox at ACK time.
+			// Keep its cutoff even when there is no visible visit row yet.
+			merged.push(normalizeVisitedTask({ taskId: id.slice(5), visitedAt: at, visits: 0 }));
+		}
+		const itemId = /^[1-9]\d*$/.test(String(options.itemId || '')) ? String(options.itemId) : '';
+		return merged.map(item => {
+			if (item.activityId !== id) return item;
+			const cutoffAt = itemId ? item.accountedEntries.find(entry => entry.id === itemId)?.cutoffAt || at : at;
+			return {
+			...item,
+			accountedAt: Math.max(item.accountedAt || 0, cutoffAt),
+			accountedVisits: Math.max(item.accountedVisits, item.visits - countPendingContacts(item, cutoffAt)),
+			accountedEntries: itemId && !item.accountedEntries.some(entry => entry.id === itemId)
+				? [...item.accountedEntries, { id: itemId, cutoffAt }] : item.accountedEntries,
+			accountedActiveSeconds: Math.max(item.accountedActiveSeconds || 0, item.activeSeconds || 0)
+			};
+		});
+	}
+
+	function selectUntrackedVisits(visits = [], trackedTasks = [], { localReceipts = [] } = {}) {
 		const trackedById = new Map((Array.isArray(trackedTasks) ? trackedTasks : [])
 			.map(task => [String(task?.taskId || ''), task])
 			.filter(([taskId]) => taskId));
-		return mergeVisitedTasks(visits).filter(task => {
-			if (!task.lastQualifiedAt || task.visits <= 0 || task.lastQualifiedAt <= (task.accountedAt || 0)) return false;
-			if ((task.accountedAt || 0) >= task.visitedAt) return false;
-			if (!task.taskId) return true;
+		return mergeVisitedTasks(visits).map(task => {
 			const tracked = trackedById.get(task.taskId);
-			if (!tracked) return true;
-			const trackedAt = Date.parse(String(tracked.lastTrackedAt || ''));
-			return Number.isFinite(trackedAt) ? task.visitedAt > trackedAt : false;
-		});
+			const localEntries = new Map(task.accountedEntries.map(entry => [entry.id, entry.cutoffAt]));
+			for (const entry of localReceipts) if (String(entry.taskId) === task.taskId && !localEntries.has(String(entry.id))) localEntries.set(String(entry.id), Number(entry.cutoffAt) || 0);
+			let cutoffAt = task.accountedAt;
+			for (const entry of tracked?.recordedEntries || []) {
+				cutoffAt = Math.max(cutoffAt, localEntries.get(String(entry.id)) || Number(entry.contactCutoffAt) || Number(entry.recordedAt) || 0);
+			}
+			return { ...task, pendingContacts: countPendingContacts(task, cutoffAt), trackedSeconds: Math.max(0, Number(tracked?.seconds) || 0), contactCutoffAt: cutoffAt };
+		}).filter(task => task.pendingContacts > 0);
 	}
 
 	function formatDurationCompact(seconds) {

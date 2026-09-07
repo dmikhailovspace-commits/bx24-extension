@@ -238,9 +238,9 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' \
-            'Separates live time writes from uncertain outcomes and shows confirmed totals immediately without redundant reads of fresh task snapshots.' \
-            'Adds a dedicated loading and validation status with retained values; manual refresh and clock icons stay static.' \
-            'Keeps active timer ticks limited to numeric labels and fences manual refresh feedback by user, date and visible panel.' \
+            'Loads each time period once per in-memory snapshot, rereads changed tasks only, and coalesces manual full refreshes.' \
+            'Shows loading status for first reads, manual audits, substantial changes and errors; small background updates retain values quietly.' \
+            'Contact cards show logged day time and contacts since the last entry. Confirmed writes recover contact bookkeeping without duplicate ADD requests.' \
             'All registered functional, concurrency, layout and performance suites gate this release.' \
             'Controlled tests are not a live Bitrix latency measurement. The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \
             'Includes Windows EXE and Universal macOS DMG for Intel and Apple Silicon.' \

@@ -98,7 +98,7 @@ function testDailyTaskVisits() {
 		['10', 3, 'Первая задача — обновлено'],
 		['11', 1, 'Вторая задача']
 	]);
-	assert.deepEqual(time.selectUntrackedVisits(merged, [{ taskId: '10' }]).map(task => task.taskId), ['11']);
+	assert.deepEqual(time.selectUntrackedVisits(merged, [{ taskId: '10' }]).map(task => task.taskId), ['10', '11'], 'having logged time alone cannot hide new task contacts');
 	assert.equal(time.normalizeVisitedTask({ taskId: 'not-a-task' }), null);
 	const withDialog = time.mergeVisitedTasks(merged, { dialogId: 'chat77', title: 'Клиентский диалог', visitedAt: 4000 });
 	assert.deepEqual(withDialog.map(item => item.activityId), ['task:10', 'task:11']);
@@ -151,7 +151,8 @@ function testActivityEstimation() {
 	const visitAt = Date.parse('2026-08-27T12:00:00+03:00');
 	const visit = [{ taskId: '30', visitedAt: visitAt, lastQualifiedAt: visitAt, visits: 1 }];
 	assert.equal(time.selectUntrackedVisits(visit, [{ taskId: '30', lastTrackedAt: '2026-08-27T11:00:00+03:00' }]).length, 1);
-	assert.equal(time.selectUntrackedVisits(visit, [{ taskId: '30', lastTrackedAt: '2026-08-27T13:00:00+03:00' }]).length, 0);
+	assert.equal(time.selectUntrackedVisits(visit, [{ taskId: '30', lastTrackedAt: '2026-08-27T13:00:00+03:00' }]).length, 1, 'CREATED_DATE/workday is not a contact accounting timestamp');
+	assert.equal(time.selectUntrackedVisits(visit, [{ taskId: '30', recordedEntries: [{id:'1',recordedAt:Date.parse('2026-08-27T13:00:00+03:00')}] }]).length, 0);
 }
 
 function testManualDuration() {

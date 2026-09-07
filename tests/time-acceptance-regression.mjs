@@ -129,14 +129,17 @@ if (!baseline) {
     assert.equal(f.state.calls.length, calls, 'Fresh reopening must not repeat empty-task reads');
     return { expectedSeconds: 1800, actualSeconds: data.totalSeconds, tasksRead: 41, coldBatches: calls, freshReopenRequests: 0 };
   });
-  await run('external edits refresh logged tasks at 10 seconds and discover new empty-task entries at 120 seconds', async () => {
+  await run('idle age does not reread confirmed tasks; events and explicit refresh reconcile external changes', async () => {
     const f = loadFixture(); await f.context._loadDialogTimeRange(f.range);
     f.state.rows[0].SECONDS = 900; f.state.rows.push(raw(3, '30', 300));
-    f.state.now += 10000; const hot = await f.context._loadDialogTimeRange(f.range);
-    assert.equal(hot.totalSeconds, 2100); assert.deepEqual(new Set(f.state.calls.at(-1)), new Set(['40','41']));
-    f.state.now += 110000; const cold = await f.context._loadDialogTimeRange(f.range);
-    assert.equal(cold.totalSeconds, 2400); assert.equal(cold.entryCount, 3);
-    return { loggedFreshnessSeconds: 10, previouslyEmptyFreshnessSeconds: 120, expectedFinalSeconds: 2400, actualFinalSeconds: cold.totalSeconds };
+    const before=f.state.calls.length;f.state.now += 600000;
+    const retained=await f.context._loadDialogTimeRange(f.range);
+    assert.equal(retained.totalSeconds,1800);assert.equal(f.state.calls.length,before);
+    f.context._dialogTimeTaskRevisions.set('40',1);
+    const changed=await f.context._loadDialogTimeRange(f.range);
+    assert.equal(changed.totalSeconds,2100);assert.deepEqual([...f.state.calls.at(-1)],['40']);
+    const manual=await f.context._loadDialogTimeRange(f.range,{force:true});assert.equal(manual.totalSeconds,2400);assert.equal(manual.entryCount,3);
+    return { idleSeconds:600,idleRequests:0,eventRequests:1,manualDiscoveredUnsignaledSeconds:300,expectedFinalSeconds:2400,actualFinalSeconds:manual.totalSeconds };
   });
   await run('access-denied task does not erase other available records or claim complete coverage', async () => {
     const f = loadFixture(); f.state.denied.add('1');

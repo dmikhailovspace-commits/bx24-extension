@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.99';
+	window.__ANITREC_RUNNING__ = '7.5.100';
 
-	const VER = '7.5.99';
+	const VER = '7.5.100';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -4649,6 +4649,9 @@
 				const root = page.data?.result || page.data || {};
 				const atTail = root.hasMore === false || root.hasMorePages === false || !rows.length ||
 					(!(page.next != null && page.next > 0) && root.hasMore !== true && root.hasMorePages !== true && rows.length < 50);
+				// Publish completed catalog evidence before the range fast path checks
+				// whether its already loaded entries form the complete first snapshot.
+				if (atTail) _dialogTimeCatalogCursor = startedAt;
 				// First page paints useful totals; the tail reconciles the final working
 				// set. Intermediate title pages must not fan out into elapsed-time reads.
 				if (pages === 1 || atTail) {
@@ -4659,17 +4662,14 @@
 					_dialogTimeManualSearchResults = _getDialogTimeLocalTaskSearchResults(_dialogTimeManualSearchQuery);
 					_renderDialogTimeManualSearch();
 				}
-				if (atTail) {
-					_dialogTimeCatalogCursor = startedAt;
-					return;
-				}
+				if (atTail) return;
 				afterId = nextId;
 				await _sleepDialogControl(200);
 			}
 		})().finally(() => {
 			_dialogTimeCatalogPromise = null;
 			clearTimeout(_dialogTimeCatalogTimer);
-			if (current()) _dialogTimeCatalogTimer = setTimeout(() => _refreshDialogTimeTaskCatalog().catch(() => {}), _DIALOG_TIME_LOGGED_TTL_MS);
+			if (current()) _dialogTimeCatalogTimer = setTimeout(() => _refreshDialogTimeTaskCatalog().catch(() => {}), _DIALOG_TIME_CATALOG_REFRESH_MS);
 		});
 		return _dialogTimeCatalogPromise;
 	}
@@ -9564,6 +9564,10 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogTimeTrackerCancelConfirmTaskId = '';
 	let _dialogTimeManualError = '';
 	let _dialogTimeManualRetryConfirmKey = '';
+	let _dialogTimeAcknowledgedManualMemory = null;
+	let _dialogTimeAccountingRecoveryTimer = null;
+	let _dialogTimeAccountingRecoveryAttempt = 0;
+	let _dialogTimeAccountingRecoveryPromise = null;
 	let _dialogTimeManualExpanded = false;
 	let _dialogTimeManualSearchQuery = '';
 	let _dialogTimeManualSearchResults = [];
@@ -13154,10 +13158,10 @@ if (_presetChannel) {
 			// them also lets a successful write update the visible total immediately.
 			const taskFreshness = { ...(record.taskFreshness || {}) };
 			const existing = taskFreshness[taskId];
-			const ttl = (record.data?.tasks || []).some(task => String(task.taskId) === taskId) ? _DIALOG_TIME_LOGGED_TTL_MS : _DIALOG_TIME_EMPTY_TTL_MS;
-			// An acknowledged ADD patches a complete snapshot without extending its read TTL.
+			// An acknowledged ADD patches a complete snapshot. Only explicit task
+			// invalidation, not elapsed wall-clock time, makes that snapshot dirty.
 			const preserve = options?.preserveTaskFreshness === true && record.data && existing && !existing.unavailable &&
-				existing.revision === (_dialogTimeTaskRevisions.get(taskId) || 0) && Date.now() >= existing.at && Date.now() - existing.at < ttl;
+				existing.revision === (_dialogTimeTaskRevisions.get(taskId) || 0);
 			if (taskId && !preserve) delete taskFreshness[taskId];
 			_setDialogTimeCacheRecord(key, { ...record, taskFreshness: taskId ? taskFreshness : {}, updatedAt: 0, failedAt: 0, error: '' });
 		}
@@ -13476,6 +13480,9 @@ if (_presetChannel) {
 					// Event IDs and contact count are one atomic storage value. Ack is
 					// separate; replay after a crash cannot increment the count twice.
 					localStorage.setItem(dayKey, JSON.stringify(next));
+					if ((next.find(row => row.taskId === event.taskId)?.visits || 0) > (current.find(row => row.taskId === event.taskId)?.visits || 0)) {
+						_invalidateDialogTimeTaskSnapshot(event.taskId);
+					}
 					_queueDialogTimeUiSync();
 				}
 				localStorage.removeItem(eventKey);
@@ -13665,15 +13672,15 @@ if (_presetChannel) {
 		return true;
 	}
 
-	async function _markDialogTimeActivityAccounted(activityId, accountedAt = Date.now(), dateKey = _getDialogTimeTodayKey()) {
+	async function _markDialogTimeActivityAccounted(activityId, accountedAt = Date.now(), dateKey = _getDialogTimeTodayKey(), options = {}) {
 		if (!_PENA_TIME_CONTROL?.markActivityAccounted || !activityId) return false;
-		return _writeDialogTimeVisits(current => _PENA_TIME_CONTROL.markActivityAccounted(current, activityId, accountedAt), dateKey);
+		return _writeDialogTimeVisits(current => _PENA_TIME_CONTROL.markActivityAccounted(current, activityId, accountedAt, options), dateKey);
 	}
 
-	async function _markDialogTimeTaskAccounted(taskId, accountedAt = Date.now(), dateKey = _getDialogTimeTodayKey()) {
+	async function _markDialogTimeTaskAccounted(taskId, accountedAt = Date.now(), dateKey = _getDialogTimeTodayKey(), options = {}) {
 		const id = String(taskId || '');
 		if (!/^\d+$/.test(id)) return false;
-		return _markDialogTimeActivityAccounted(`task:${id}`, accountedAt, dateKey);
+		return _markDialogTimeActivityAccounted(`task:${id}`, accountedAt, dateKey, options);
 	}
 
 	function _rememberDialogTimeTaskVisit(taskId, title = '', dialogId = '', options = {}) {
@@ -13725,7 +13732,8 @@ if (_presetChannel) {
 				).map(segment => ({
 					dateKey: segment.dateKey, seconds: Math.floor(Number(segment.seconds)),
 					status: segment.status === 'sending' ? 'unknown' : (['saved','unknown','pending'].includes(segment.status) ? segment.status : 'pending'),
-					itemId: String(segment.itemId || '')
+					itemId: String(segment.itemId || ''),
+					contactsCutoffAt: Math.max(0, Number(segment.contactsCutoffAt) || Number(tracker.stoppedAt) || 0), contactsAccounted: segment.contactsAccounted === true
 				})),
 				error: String(tracker.error || '')
 			};
@@ -13985,13 +13993,16 @@ if (_presetChannel) {
 			const key = _getDialogTimeScopedStorageKey(_PENA_TIME_MANUAL_DRAFT_KEY);
 			if (!key) return {};
 			const value = JSON.parse(localStorage.getItem(key) || 'null') || {};
-			const pending = JSON.parse(localStorage.getItem(`${key}:write-intent`) || 'null');
+			let pending = JSON.parse(localStorage.getItem(`${key}:write-intent`) || 'null');
+			const memory = _dialogTimeAcknowledgedManualMemory;
+			if (memory?.storageKey === key && memory.scope === _getDialogNativeSharedAuditScopeKey() &&
+				_getDialogTimeWriteIntentKey(pending) === _getDialogTimeWriteIntentKey(memory.intent)) pending = memory.intent;
 			return {
 				taskId: String(value.taskId || ''), title:String(value.title || ''), query:String(value.query || value.title || ''),
 				hours:String(value.hours || ''), minutes:String(value.minutes || ''),
 				dateKey:_PENA_TIME_CONTROL?.parseDateKey?.(value.dateKey) ? String(value.dateKey) : '',
 				pendingWrite:pending && /^\d+$/.test(String(pending.taskId || '')) && Number(pending.seconds) > 0 && _PENA_TIME_CONTROL?.parseDateKey?.(pending.dateKey)
-					? { ...pending, status:pending.status === 'sending' && _dialogTimeActionInFlight &&
+					? { ...pending, status:pending.status === 'acknowledged' && /^[1-9]\d*$/.test(String(pending.itemId || '')) ? 'acknowledged' : pending.status === 'sending' && _dialogTimeActionInFlight &&
 						_dialogTimeActiveManualWriteIntent?.storageKey === key &&
 						_dialogTimeActiveManualWriteIntent.operationId === pending.operationId ? 'sending' : 'unknown' } : null
 			};
@@ -14025,6 +14036,68 @@ if (_presetChannel) {
 		const run = () => scope === _getDialogNativeSharedAuditScopeKey() ? action() : undefined;
 		if (navigator.locks?.request) return navigator.locks.request(`pena-time-manual:${scope}`, { ifAvailable:true }, lock => lock ? run() : undefined);
 		return run();
+	}
+
+	async function _finishDialogTimeAcknowledgedManualWrite() {
+		const scope = _getDialogNativeSharedAuditScopeKey();
+		const storageKey = _getDialogTimeScopedStorageKey(_PENA_TIME_MANUAL_DRAFT_KEY);
+		const draft = _readDialogTimeManualDraft(), intent = draft.pendingWrite;
+		if (intent?.status !== 'acknowledged') return true;
+		const pendingKey = _getDialogTimeWriteIntentKey(intent);
+		// Save the server ID before deleting the intent. Recovery can only write
+		// bookkeeping; an acknowledged operation can never become another ADD.
+		if (!_writeDialogTimeManualDraft({ ...draft, pendingWrite: intent }, { storageKey, resolvePendingKey: pendingKey, writeIntent: true })) return false;
+		if (scope !== _getDialogNativeSharedAuditScopeKey()) return false;
+		if (!await _markDialogTimeTaskAccounted(intent.taskId, intent.contactCutoffAt || intent.attemptedAt, intent.dateKey, { itemId: intent.itemId })) return false;
+		if (scope !== _getDialogNativeSharedAuditScopeKey()) return false;
+		if (!_writeDialogTimeManualDraft({ ..._readDialogTimeManualDraft(), pendingWrite: null }, { storageKey, resolvePendingKey: pendingKey, writeIntent: true })) return false;
+		if (_dialogTimeAcknowledgedManualMemory?.storageKey === storageKey && _getDialogTimeWriteIntentKey(_dialogTimeAcknowledgedManualMemory.intent) === pendingKey) _dialogTimeAcknowledgedManualMemory = null;
+		_queueDialogTimeUiSync();
+		return true;
+	}
+
+	function _scheduleDialogTimeAccountingRecovery({ reset = false } = {}) {
+		if (reset) _dialogTimeAccountingRecoveryAttempt = 0;
+		if (_dialogTimeAccountingRecoveryTimer || _dialogTimeAccountingRecoveryAttempt >= 3) return;
+		_dialogTimeAccountingRecoveryTimer = setTimeout(() => {
+			_dialogTimeAccountingRecoveryTimer = null;
+			_dialogTimeAccountingRecoveryAttempt++;
+			_recoverDialogTimeContactAccounting().then(ok => { if (!ok) _scheduleDialogTimeAccountingRecovery(); });
+		}, [500, 1500, 5000][_dialogTimeAccountingRecoveryAttempt]);
+	}
+
+	function _recoverDialogTimeContactAccounting() {
+		if (_dialogTimeAccountingRecoveryPromise) return _dialogTimeAccountingRecoveryPromise;
+		const scope = _getDialogNativeSharedAuditScopeKey();
+		_dialogTimeAccountingRecoveryPromise = (async () => {
+			let complete = true;
+			if (_readDialogTimeManualDraft().pendingWrite?.status === 'acknowledged') {
+				const result = await _withDialogTimeManualWriteLock(_finishDialogTimeAcknowledgedManualWrite);
+				if (result !== true) complete = false;
+			}
+			if (scope !== _getDialogNativeSharedAuditScopeKey()) return false;
+			const tracker = _readDialogTimeTracker();
+			if (tracker?.saveSegments?.some(segment => segment.status === 'saved' && !segment.contactsAccounted) || (tracker?.saveSegments?.length && tracker.saveSegments.every(segment => segment.status === 'saved'))) {
+				let entered = false;
+				await _withDialogTimeTrackerLock(async current => {
+					entered = true;
+					if (!current || scope !== _getDialogNativeSharedAuditScopeKey()) return;
+					for (const segment of current.saveSegments || []) {
+						if (segment.status !== 'saved' || segment.contactsAccounted) continue;
+						segment.contactsAccounted = await _markDialogTimeTaskAccounted(current.taskId, segment.contactsCutoffAt || current.stoppedAt, segment.dateKey, { itemId: segment.itemId }) === true;
+						if (!segment.contactsAccounted) complete = false;
+					}
+					if (scope !== _getDialogNativeSharedAuditScopeKey()) { complete = false; return; }
+					const settled = current.saveSegments.every(segment => segment.status === 'saved' && segment.contactsAccounted);
+					if (!_writeDialogTimeTracker(settled ? null : current)) complete = false;
+				});
+				if (!entered) complete = false;
+			}
+			if (complete) _dialogTimeAccountingRecoveryAttempt = 0;
+			_queueDialogTimeUiSync();
+			return complete;
+		})().catch(error => { warn('CONTACT_LEDGER_WRITE_FAILED', error); return false; }).finally(() => { _dialogTimeAccountingRecoveryPromise = null; });
+		return _dialogTimeAccountingRecoveryPromise;
 	}
 
 	function _selectDialogTimeManualTask(task, panel) {
@@ -14355,7 +14428,7 @@ if (_presetChannel) {
 		_renderDialogTimeManualSearch();
 	}
 
-	function _applyDialogTimeOptimisticEntry(taskId, seconds, dateKey, itemId = '') {
+	function _applyDialogTimeOptimisticEntry(taskId, seconds, dateKey, itemId = '', options = {}) {
 		if (!_PENA_TIME_CONTROL?.aggregateElapsedItems) return;
 		const day = _PENA_TIME_CONTROL.normalizeRange(dateKey, dateKey);
 		const createdAt = _buildDialogTimeWriteFields(seconds, dateKey, '', { allowSubMinute: true }).CREATED_DATE;
@@ -14368,7 +14441,8 @@ if (_presetChannel) {
 			const previous = record?.data;
 			const next = _PENA_TIME_CONTROL.aggregateElapsedItems([
 				...(previous?.items || []).filter(entry => String(entry.taskId) !== String(taskId) || String(entry.id) !== id),
-				{ id, taskId: String(taskId), userId: _getCurrentBitrixUserId(), seconds, createdAt }
+				{ ...(previous?.items || []).find(entry => String(entry.taskId) === String(taskId) && String(entry.id) === id),
+					...(options.contactCutoffAt > 0 ? { contactCutoffAt: options.contactCutoffAt } : {}), id, taskId: String(taskId), userId: _getCurrentBitrixUserId(), seconds, createdAt }
 			]);
 			next.range = range;
 			next.pages = previous?.pages || 0;
@@ -14402,7 +14476,15 @@ if (_presetChannel) {
 
 	async function _addDialogTimeManualEntry(task, hours, minutes, dateKey = _getDialogTimeSelectedRange()?.from) {
 		if (_dialogTimeActionInFlight) return;
-		return _withDialogTimeManualWriteLock(() => _commitDialogTimeManualEntry(task, hours, minutes, dateKey));
+		const scope = _getDialogNativeSharedAuditScopeKey();
+		await _withDialogTimeManualWriteLock(() => _commitDialogTimeManualEntry(task, hours, minutes, dateKey));
+		if (scope === _getDialogNativeSharedAuditScopeKey() && _readDialogTimeManualDraft().pendingWrite?.status === 'acknowledged') {
+			_recoverDialogTimeContactAccounting().then(ok => {
+				if (ok || scope !== _getDialogNativeSharedAuditScopeKey()) return;
+				_showDialogDockToast('Время сохранено. Контакты ещё не отмечены.', 'warning');
+				_scheduleDialogTimeAccountingRecovery({ reset:true });
+			});
+		}
 	}
 
 	async function _commitDialogTimeManualEntry(task, hours, minutes, dateKey = _getDialogTimeSelectedRange()?.from) {
@@ -14411,6 +14493,10 @@ if (_presetChannel) {
 		const storageKey = _getDialogTimeScopedStorageKey(_PENA_TIME_MANUAL_DRAFT_KEY);
 		const initialDraft = _readDialogTimeManualDraft();
 		const uncertain = initialDraft.pendingWrite;
+		if (uncertain?.status === 'acknowledged') {
+			if (!await _finishDialogTimeAcknowledgedManualWrite()) _scheduleDialogTimeAccountingRecovery({ reset: true });
+			_queueDialogTimeUiSync(); return;
+		}
 		if (uncertain) {
 			const retryKey = `${uncertain.taskId}:${uncertain.dateKey}:${uncertain.seconds}:${uncertain.attemptedAt}`;
 			if (_dialogTimeManualRetryConfirmKey !== retryKey) {
@@ -14433,7 +14519,7 @@ if (_presetChannel) {
 		_dialogTimeManualError = '';
 		_queueDialogTimeUiSync();
 		let saved = false, requestStarted = false, savedItemId = '';
-		const intent = { operationId: globalThis.crypto?.randomUUID?.() || `${Date.now()}:${Math.random()}`, status:'sending', taskId, title:String(task?.title || initialDraft.title || ''), seconds:duration.seconds, dateKey, scope, attemptedAt:Date.now() };
+		const intent = { operationId: globalThis.crypto?.randomUUID?.() || `${Date.now()}:${Math.random()}`, status:'sending', taskId, title:String(task?.title || initialDraft.title || ''), seconds:duration.seconds, dateKey, scope, attemptedAt:Date.now(), contactCutoffAt: uncertain?.contactCutoffAt || uncertain?.attemptedAt || Date.now() };
 		const draft = { ...initialDraft, taskId, title:intent.title, query:intent.title, hours:String(hours), minutes:String(minutes), dateKey, pendingWrite:intent };
 		try {
 			const eligibility = await _ensureDialogTimeTaskEligibility(taskId);
@@ -14451,10 +14537,12 @@ if (_presetChannel) {
 			savedItemId = _getDialogTimeSavedItemId(result);
 			if (!savedItemId) throw Object.assign(new Error('Ответ сервера не содержит ID записи'), {code:'TIME_WRITE_UNKNOWN'});
 			saved = true;
-			_writeDialogTimeManualDraft(null, { storageKey, resolvePendingKey:_getDialogTimeWriteIntentKey(intent), writeIntent:true });
+			const acknowledged = { ...intent, status:'acknowledged', itemId:savedItemId };
+			_dialogTimeAcknowledgedManualMemory = { scope, storageKey, intent:acknowledged };
+			_writeDialogTimeManualDraft({ taskId:'', title:'', query:'', hours:'', minutes:'', pendingWrite:acknowledged }, { storageKey, resolvePendingKey:_getDialogTimeWriteIntentKey(intent), writeIntent:true });
 			if (scope !== _getDialogNativeSharedAuditScopeKey()) return;
 			_invalidateDialogTimeCachesForDates(dateKey, { taskId, preserveTaskFreshness:true });
-			_applyDialogTimeOptimisticEntry(taskId, duration.seconds, dateKey, savedItemId);
+			_applyDialogTimeOptimisticEntry(taskId, duration.seconds, dateKey, savedItemId, { contactCutoffAt:intent.contactCutoffAt });
 			_dialogTimeManualSelectedTask = null;
 			_dialogTimeManualSearchQuery = '';
 			_dialogTimeManualSearchResults = [];
@@ -14463,17 +14551,16 @@ if (_presetChannel) {
 			if (hoursInput) hoursInput.value = '';
 			if (minutesInput) minutesInput.value = '';
 			_showDialogDockToast(`Добавлено: ${_PENA_TIME_CONTROL.formatDuration(duration.seconds)}`, 'ok');
-			// Bookkeeping has its own storage lock; it cannot delay or undo an acknowledged ADD.
-			Promise.resolve().then(() => scope === _getDialogNativeSharedAuditScopeKey() ? _markDialogTimeTaskAccounted(taskId, Date.now(), dateKey) : true).then(ok => {
-				if (ok === false) throw new Error('CONTACT_LEDGER_WRITE_FAILED');
-			}).catch(error => {
-				warn('CONTACT_LEDGER_WRITE_FAILED', error);
-				if (scope === _getDialogNativeSharedAuditScopeKey()) _showDialogDockToast('Время сохранено. Не удалось отметить контакт.', 'warning');
-			});
+			_dialogTimeActionInFlight = false;
+			_queueDialogTimeUiSync();
+			// Bookkeeping retains the ACK intent; if storage is unavailable, its
+			// in-memory witness retries persistence. Recovery never repeats ADD.
+			_scheduleDialogTimeAccountingRecovery({ reset:true });
 		} catch (error) {
 			const unknown = requestStarted && !saved && !_isDialogTimeDefiniteWriteFailure(error);
 			if (!saved) _writeDialogTimeManualDraft({ ...draft, pendingWrite: unknown ? { ...intent, status:'unknown' } : null }, { storageKey, resolvePendingKey:_getDialogTimeWriteIntentKey(intent), writeIntent:true });
 			if (scope === _getDialogNativeSharedAuditScopeKey()) {
+				if (saved) { _scheduleDialogTimeAccountingRecovery({ reset:true }); return; }
 				_dialogTimeManualError = unknown ? 'Ответ сервера не получен. Проверьте журнал задачи перед повторной записью.' :
 					(error?.code === 'TIME_WRITE_REJECTED' || error?.code === 'TIME_WRITE_STORAGE' ? error.message : _getDialogTimeFriendlyError(error, 'Не удалось сохранить время'));
 				_showDialogDockToast(_dialogTimeManualError, 'danger');
@@ -14654,7 +14741,7 @@ if (_presetChannel) {
 				}
 			}
 			const segments = tracker.saveSegments?.length ? tracker.saveSegments.map(segment => ({ ...segment })) :
-				_PENA_TIME_CONTROL.segmentTimerByPortalDay({ startedAt: tracker.startedAt, stoppedAt, seconds, utcOffsetMinutes: _dialogTimePortalUtcOffsetMinutes }).map(segment => ({ ...segment, status: 'pending', itemId: '' }));
+				_PENA_TIME_CONTROL.segmentTimerByPortalDay({ startedAt: tracker.startedAt, stoppedAt, seconds, utcOffsetMinutes: _dialogTimePortalUtcOffsetMinutes }).map(segment => ({ ...segment, status: 'pending', itemId: '', contactsCutoffAt:stoppedAt, contactsAccounted:false }));
 			if (!segments.length) {
 				if (!persist(null)) throw new Error('Не удалось сохранить состояние таймера');
 				_ensureDialogTimeTrackerTick();
@@ -14664,7 +14751,11 @@ if (_presetChannel) {
 			let activeSegment = null;
 			try {
 				for (const segment of segments) {
-					if (segment.status === 'saved') continue;
+					if (segment.status === 'saved') {
+						if (!segment.contactsAccounted) segment.contactsAccounted = await _markDialogTimeTaskAccounted(pending.taskId, segment.contactsCutoffAt || stoppedAt, segment.dateKey, { itemId:segment.itemId }) === true;
+						persist(pending);
+						continue;
+					}
 					activeSegment = segment;
 					if ((segment.status === 'unknown' || segment.status === 'sending') && !retryUnknown) {
 						throw Object.assign(new Error('Ответ сервера не получен. Проверьте журнал задачи перед повторной записью.'), { code: 'TIME_WRITE_UNKNOWN' });
@@ -14688,15 +14779,22 @@ if (_presetChannel) {
 					const persisted = persist(pending);
 					if (scope !== _getDialogNativeSharedAuditScopeKey()) return;
 					_invalidateDialogTimeCachesForDates(segment.dateKey, { taskId: pending.taskId });
-					_applyDialogTimeOptimisticEntry(pending.taskId, segment.seconds, segment.dateKey, itemId);
-					if (await _markDialogTimeTaskAccounted(pending.taskId, Date.now(), segment.dateKey) === false) {
-						warn('CONTACT_LEDGER_WRITE_FAILED');
-					}
+					_applyDialogTimeOptimisticEntry(pending.taskId, segment.seconds, segment.dateKey, itemId, { contactCutoffAt:segment.contactsCutoffAt || stoppedAt });
+					segment.contactsAccounted = await _markDialogTimeTaskAccounted(pending.taskId, segment.contactsCutoffAt || stoppedAt, segment.dateKey, { itemId }) === true;
+					persist(pending);
 					if (!persisted) throw Object.assign(new Error('Запись сохранена, но не удалось сохранить состояние таймера'), { code: 'TIME_TRACKER_STORAGE' });
 				}
-				if (!persist(null)) throw Object.assign(new Error('Записи сохранены, но не удалось очистить таймер'), { code: 'TIME_TRACKER_STORAGE' });
+				if (segments.some(segment => !segment.contactsAccounted)) {
+					pending.error = 'Время сохранено. Контакты ещё не отмечены.';
+					persist(pending); _scheduleDialogTimeAccountingRecovery({ reset:true });
+				} else if (!persist(null)) throw Object.assign(new Error('Записи сохранены, но не удалось очистить таймер'), { code: 'TIME_TRACKER_STORAGE' });
 				_showDialogDockToast('Время сохранено в задачу', 'ok');
 			} catch (error) {
+				if (segments.every(segment => segment.status === 'saved')) {
+					pending.error = 'Время сохранено. Контакты ещё не отмечены.';
+					persist(pending); _scheduleDialogTimeAccountingRecovery({ reset:true });
+					_showDialogDockToast(pending.error, 'warning'); return;
+				}
 				if (activeSegment?.status === 'sending') {
 					const rejected = _isDialogTimeDefiniteWriteFailure(error);
 					activeSegment.status = rejected ? 'pending' : 'unknown';
@@ -14725,6 +14823,9 @@ if (_presetChannel) {
 		const tracker = _readDialogTimeTracker();
 		const taskId = String(tracker?.taskId || '');
 		if (!tracker || _dialogTimeActionInFlight) return;
+		if (tracker.saveSegments?.some(segment => segment.status === 'saved' && !segment.contactsAccounted)) {
+			_scheduleDialogTimeAccountingRecovery({ reset:true }); return;
+		}
 		if (_dialogTimeTrackerCancelConfirmTaskId !== taskId) {
 			_dialogTimeTrackerCancelConfirmTaskId = taskId;
 			_queueDialogTimeUiSync();
@@ -14986,6 +15087,11 @@ if (_presetChannel) {
 			if (event.newValue && event.key.startsWith(`${_PENA_TIME_CONTACT_OUTBOX_KEY}.${_getCurrentBitrixUserId()}.`)) _scheduleDialogTimeDeferredFlush(1200);
 			if (event.key === _getDialogTimeScopedStorageKey(_PENA_TIME_TRACKER_KEY)) {
 				_dialogTimeTrackerMemoryLoadedAt = 0;
+				_scheduleDialogTimeAccountingRecovery();
+				_queueDialogTimeUiSync();
+			}
+			if (event.key === `${_getDialogTimeScopedStorageKey(_PENA_TIME_MANUAL_DRAFT_KEY)}:write-intent`) {
+				_scheduleDialogTimeAccountingRecovery(); _queueDialogTimeUiSync();
 			}
 			if (event.key === _getDialogTimeActivityLeaseKey() || event.key.startsWith(`${_PENA_TIME_VISITS_KEY}.`)) {
 				_queueDialogTimeUiSync();
@@ -15274,21 +15380,27 @@ if (_presetChannel) {
 			const coverage = data?.coverage;
 			const readProgress = record?.status === 'loading' ? record?.readProgress : null;
 			const incomplete = catalogIncomplete || coverage?.complete === false;
+			const manualForRange = manualRefreshing && _dialogTimeManualRefreshToken.rangeKey === rangeKey;
+			const bulkUpdate = readProgress?.totalTasks > _DIALOG_TIME_WAVE_SIZE;
+			// A known complete snapshot remains usable during a targeted background
+			// check. Only initial coverage, an explicit refresh or an error needs UI.
+			const needsAttention = !!error || initializing || !data || record?.hasCompleteSnapshot !== true || manualForRange || bulkUpdate;
 			const state = error ? 'error' : busy ? 'loading' : incomplete ? 'partial' : 'ready';
-			const label = error ? 'Не удалось обновить данные' : initializing ? 'Подключаемся к Битрикс24' : busy ? (data ? 'Проверяем актуальность' : 'Загружаем данные')
+			const label = error ? 'Не удалось обновить данные' : initializing ? 'Подключаемся к Битрикс24' : busy ? (bulkUpdate && record?.hasCompleteSnapshot && !manualForRange ? 'Обновляем изменённые задачи' : data ? 'Проверяем актуальность' : 'Загружаем данные')
 				: incomplete ? 'Данные проверены не полностью' : 'Данные обновлены';
 			const detail = error ? error : busy && readProgress?.totalTasks > 0
-				? `${readProgress.completedTasks} из ${readProgress.totalTasks} задач`
+				? `${readProgress.completedTasks} из ${readProgress.totalTasks} ${readProgress.totalTasks % 10 === 1 && readProgress.totalTasks % 100 !== 11 ? 'задачи' : 'задач'}`
 				: record?.updatedAt ? new Date(record.updatedAt).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' }) : '';
 			const labelNode = status.querySelector('.pena-native-time-read-label');
 			const detailNode = status.querySelector('.pena-native-time-read-detail');
 			if (labelNode.textContent !== label) labelNode.textContent = label;
 			if (detailNode.textContent !== detail) detailNode.textContent = detail;
+			status.hidden = !needsAttention;
 			status.dataset.state = state;
 			status.dataset.indeterminate = state === 'loading' && !readProgress?.totalTasks ? 'true' : 'false';
 			status.title = error ? `${error}${data ? '. Показаны сохранённые данные.' : ''}` : label;
 			status.setAttribute('aria-busy', busy && !error ? 'true' : 'false');
-			status.setAttribute('aria-live', initializing || manualRefreshing || error ? 'polite' : 'off');
+			status.setAttribute('aria-live', needsAttention && (initializing || manualForRange || error) ? 'polite' : 'off');
 			const progress = status.querySelector('.pena-native-time-read-progress');
 			const percent = busy ? (readProgress?.totalTasks > 0 ? Math.max(0, Math.min(100, Math.round(readProgress.completedTasks / readProgress.totalTasks * 100))) : 0) : (state === 'ready' ? 100 : 0);
 			progress.style.setProperty('--pena-time-read-progress', `${percent}%`);
@@ -15336,6 +15448,7 @@ if (_presetChannel) {
 		const stop = panel.querySelector('.pena-native-time-stop');
 		const cancelTracker = panel.querySelector('.pena-native-time-cancel');
 		const trackerUnknown = tracker?.saveSegments?.some(segment => segment.status === 'unknown' || segment.status === 'sending');
+		const trackerAccounting = tracker?.saveSegments?.length && tracker.saveSegments.every(segment => segment.status === 'saved');
 		const retryConfirmed = tracker && _dialogTimeTrackerRetryConfirmKey === `${tracker.taskId}:${tracker.startedAt}`;
 		const trackerJournal = panel.querySelector('.pena-native-time-tracker-journal');
 		if (trackerJournal) { trackerJournal.hidden = !trackerUnknown; trackerJournal.disabled = _dialogTimeActionInFlight; }
@@ -15398,10 +15511,10 @@ if (_presetChannel) {
 		if (stop) {
 			stop.hidden = !tracker;
 			stop.disabled = _dialogTimeActionInFlight;
-			stop.textContent = trackerUnknown ? (retryConfirmed ? 'Записи нет — повторить' : 'Проверить запись') : (tracker?.pendingSeconds > 0 ? 'Повторить' : 'Остановить');
+			stop.textContent = trackerAccounting ? 'Повторить отметку' : trackerUnknown ? (retryConfirmed ? 'Записи нет — повторить' : 'Проверить запись') : (tracker?.pendingSeconds > 0 ? 'Повторить' : 'Остановить');
 		}
 		if (cancelTracker) {
-			cancelTracker.hidden = !tracker;
+			cancelTracker.hidden = !tracker || !!trackerAccounting;
 			cancelTracker.disabled = _dialogTimeActionInFlight;
 			cancelTracker.textContent = _dialogTimeTrackerCancelConfirmTaskId === String(tracker?.taskId || '') ? 'Сбросить?' : 'Отменить';
 		}
@@ -15412,22 +15525,23 @@ if (_presetChannel) {
 		const manualError = panel.querySelector('.pena-native-time-manual-error');
 		const manualPending = _readDialogTimeManualDraft().pendingWrite;
 		const manualSending = manualPending?.status === 'sending';
+		const manualAcknowledged = manualPending?.status === 'acknowledged';
 		const manualRetryConfirmed = manualPending && _dialogTimeManualRetryConfirmKey === `${manualPending.taskId}:${manualPending.dateKey}:${manualPending.seconds}:${manualPending.attemptedAt}`;
 		const manualRecovery = panel.querySelector('.pena-native-time-manual-recovery');
 		if (manualRecovery) {
-			manualRecovery.hidden = !manualPending || manualSending;
+			manualRecovery.hidden = !manualPending || manualSending || manualAcknowledged;
 			manualRecovery.querySelectorAll('button').forEach(button => { button.disabled = _dialogTimeActionInFlight; });
 		}
-		if (manualSearch) manualSearch.disabled = _dialogTimeActionInFlight || !!manualPending;
+		if (manualSearch) manualSearch.disabled = _dialogTimeActionInFlight || (!!manualPending && !manualAcknowledged);
 		_renderDialogTimeManualSearch(panel);
-		if (manualHours) manualHours.disabled = _dialogTimeActionInFlight || !!manualPending;
-		if (manualMinutes) manualMinutes.disabled = _dialogTimeActionInFlight || !!manualPending;
+		if (manualHours) manualHours.disabled = _dialogTimeActionInFlight || (!!manualPending && !manualAcknowledged);
+		if (manualMinutes) manualMinutes.disabled = _dialogTimeActionInFlight || (!!manualPending && !manualAcknowledged);
 		if (manualSubmit) {
 			const hours = Math.max(0, Number(manualHours?.value) || 0);
 			const minutes = Math.max(0, Number(manualMinutes?.value) || 0);
 			const validDuration = hours * 60 + minutes >= 1 && hours * 60 + minutes <= 1440 && minutes <= 59;
 			manualSubmit.disabled = _dialogTimeActionInFlight || (!manualPending && (!_dialogTimeManualSelectedTask?.taskId || !validDuration));
-			manualSubmit.textContent = _dialogTimeActionInFlight ? 'Сохраняем…' : (manualPending ? (manualRetryConfirmed ? 'Записи нет — повторить' : 'Проверить запись') : 'Добавить');
+			manualSubmit.textContent = _dialogTimeActionInFlight ? 'Сохраняем…' : manualAcknowledged ? 'Повторить отметку' : (manualPending ? (manualRetryConfirmed ? 'Записи нет — повторить' : 'Проверить запись') : 'Добавить');
 		}
 		const manual = panel.querySelector('.pena-native-time-manual');
 		const manualToggle = panel.querySelector('.pena-native-time-manual-toggle');
@@ -15435,7 +15549,8 @@ if (_presetChannel) {
 		if (manualToggle) manualToggle.setAttribute('aria-expanded', _dialogTimeManualExpanded ? 'true' : 'false');
 		if (manualToggle) manualToggle.closest('.pena-native-time-manual-block').hidden = _dialogTimeView === 'stats';
 		if (manualError) {
-			const formError = manualSending ? '' : manualPending ? (_dialogTimeManualError || 'Ответ сервера не получен. Проверьте журнал задачи перед повторной записью.') : (_dialogTimeManualSelectedTask ? _dialogTimeManualError : '');
+			const formError = manualAcknowledged ? 'Время сохранено. Контакты ещё не отмечены.' : manualSending ? '' : manualPending ? (_dialogTimeManualError || 'Ответ сервера не получен. Проверьте журнал задачи перед повторной записью.') : (_dialogTimeManualSelectedTask ? _dialogTimeManualError : '');
+			manualError.classList.toggle('--notice', manualAcknowledged);
 			manualError.hidden = !formError;
 			manualError.textContent = formError;
 		}
@@ -15479,21 +15594,27 @@ if (_presetChannel) {
 			return row;
 		};
 
-		const suggestions = _PENA_TIME_CONTROL.selectUntrackedVisits(visits, data?.tasks || [])
-			.filter(task => _getDialogTimeTaskEligibilityForDisplay(String(task.taskId || '')));
-		const contactCount = suggestions.reduce((sum, task) => sum + Math.max(0, Number(task.visits) || 0), 0);
+		const localReceipts = [];
+		if (manualAcknowledged && manualPending.dateKey === selectedDay.from) localReceipts.push({ taskId:manualPending.taskId, id:manualPending.itemId, cutoffAt:manualPending.contactCutoffAt || manualPending.attemptedAt });
+		for (const segment of tracker?.saveSegments || []) if (segment.status === 'saved' && segment.dateKey === selectedDay.from) localReceipts.push({ taskId:tracker.taskId, id:segment.itemId, cutoffAt:segment.contactsCutoffAt || tracker.stoppedAt });
+		const suggestions = _PENA_TIME_CONTROL.selectUntrackedVisits(visits, data?.tasks || [], { localReceipts })
+			.filter(task => _getDialogTimeTaskEligibilityForDisplay(String(task.taskId || '')))
+			.map(task => ({ ...task, trackedKnown: !!data && (task.trackedSeconds > 0 || !!record?.taskFreshness?.[task.taskId] || record?.hasCompleteSnapshot === true) }));
+		const contactCount = suggestions.reduce((sum, task) => sum + Math.max(0, Number(task.pendingContacts) || 0), 0);
 		const suggestionsHeading = panel.querySelector('.pena-native-time-suggestions .pena-native-time-section-copy strong');
 		if (suggestionsHeading) suggestionsHeading.textContent = `Контакты · ${contactCount}`;
 		const suggestionsList = panel.querySelector('.pena-native-time-suggestions-list');
 		const suggestionsSection = panel.querySelector('.pena-native-time-suggestions');
 		if (suggestionsSection) suggestionsSection.hidden = _dialogTimeView === 'stats';
 		if (suggestionsList) {
-			const suggestionsKey = `${_dialogTimeActionInFlight ? 'busy' : 'ready'}:${suggestions.map(task => `${task.activityId || task.taskId}:${task.taskId ? _getDialogTimeTaskTitle(task.taskId, task.title) : task.title}:${task.visits}:${task.accountedAt}`).join('|')}`;
+			const suggestionsKey = `${_dialogTimeActionInFlight ? 'busy' : 'ready'}:${suggestions.map(task => `${task.activityId || task.taskId}:${task.taskId ? _getDialogTimeTaskTitle(task.taskId, task.title) : task.title}:${task.pendingContacts}:${task.trackedSeconds}:${task.trackedKnown}:${task.contactCutoffAt}`).join('|')}`;
 			if (suggestionsList.dataset.penaRenderKey !== suggestionsKey) {
 				suggestionsList.replaceChildren(...(suggestions.length
 					? suggestions.map(task => createTaskRow(task, {
 						activityAction: true,
-						detail: `${task.visits} ${plural(task.visits, 'контакт', 'контакта', 'контактов')}`
+						detail: task.trackedSeconds > 0 || task.contactCutoffAt > 0
+							? `Учтено ${task.trackedKnown ? _PENA_TIME_CONTROL.formatDuration(task.trackedSeconds) : '—'}\n+${task.pendingContacts} ${plural(task.pendingContacts, 'контакт', 'контакта', 'контактов')} после записи`
+							: `${task.pendingContacts} ${plural(task.pendingContacts, 'контакт', 'контакта', 'контактов')}`
 					}))
 					: [Object.assign(document.createElement('div'), {
 						className: 'pena-native-time-empty',
@@ -15672,15 +15793,27 @@ if (_presetChannel) {
 	const _dialogTimeRangeRevisions = new Map();
 	const _dialogTimePanelRefreshes = new Map();
 	let _dialogTimeElapsedEventTimer = null;
-	const _DIALOG_TIME_LOGGED_TTL_MS = 10000;
-	const _DIALOG_TIME_EMPTY_TTL_MS = 120000;
+	let _dialogTimeElapsedEventScope = '';
+	const _DIALOG_TIME_CATALOG_REFRESH_MS = 10000;
 	const _DIALOG_TIME_FIRST_WAVE_SIZE = 16;
 	const _DIALOG_TIME_WAVE_SIZE = 50;
+	function _invalidateDialogTimeTaskSnapshot(taskId) {
+		const id = String(taskId || '');
+		if (!/^\d+$/.test(id)) return false;
+		_dialogTimeTaskRevisions.set(id, (_dialogTimeTaskRevisions.get(id) || 0) + 1);
+		// Qualification dirties this task across cached ranges, without opening
+		// the panel or doing REST while the user is elsewhere in Bitrix.
+		if (_dialogControlNativeWorkspaceTab === 'time' && document.visibilityState !== 'hidden' && navigator.onLine !== false) _scheduleDialogTimeElapsedRefresh();
+		return true;
+	}
 	function _scheduleDialogTimeElapsedRefresh() {
-		if (_dialogTimeElapsedEventTimer) return;
+		const scope = _getDialogNativeSharedAuditScopeKey();
+		if (_dialogTimeElapsedEventTimer && _dialogTimeElapsedEventScope === scope) return;
+		if (_dialogTimeElapsedEventTimer) clearTimeout(_dialogTimeElapsedEventTimer);
+		_dialogTimeElapsedEventScope = scope;
 		_dialogTimeElapsedEventTimer = setTimeout(() => {
 			_dialogTimeElapsedEventTimer = null;
-			if (_dialogControlNativeWorkspaceTab !== 'time' || document.visibilityState === 'hidden') return;
+			if (scope !== _getDialogNativeSharedAuditScopeKey() || _dialogControlNativeWorkspaceTab !== 'time' || document.visibilityState === 'hidden') return;
 			const range = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
 			_loadDialogTimeRange(range).catch(() => {});
 		}, 100);
@@ -15708,13 +15841,18 @@ if (_presetChannel) {
 		const taskIdsKey = taskIds.slice().sort((a, b) => Number(a) - Number(b)).join(',');
 		const now = Date.now();
 		const freshness = { ...(cached?.taskFreshness || {}) };
-		const logged = new Set((cached?.data?.tasks || []).map(task => String(task.taskId)));
 		const needsRead = id => {
 			const entry = freshness[id];
-			const ttl = logged.has(id) ? _DIALOG_TIME_LOGGED_TTL_MS : _DIALOG_TIME_EMPTY_TTL_MS;
-			return force || !entry || entry.revision !== (_dialogTimeTaskRevisions.get(id) || 0) || now - entry.at < 0 || now - entry.at >= ttl;
+			// A portal-wide pass can itself exceed any short TTL. Expiring its first
+			// pages while reading its tail causes endless full sweeps on large portals.
+			// Pull/CHANGED_DATE revisions, new tasks, local writes and manual refresh
+			// are the authoritative reasons to revisit an already checked task.
+			return force || !entry || entry.revision !== (_dialogTimeTaskRevisions.get(id) || 0);
 		};
 		const pendingIds = taskIds.filter(needsRead);
+		const hasCompleteCoverage = () => _dialogTimeCatalogCursor > 0 && _dialogTimeCatalogScope === scope &&
+			_getDialogTimeWorkingTaskIds(normalized).every(id => freshness[id] && !freshness[id].unavailable &&
+				freshness[id].revision === (_dialogTimeTaskRevisions.get(id) || 0));
 		const verifiedEmptyCatalog = !taskIds.length && _dialogTimeCatalogCursor > 0 && _dialogTimeCatalogScope === scope;
 		// No task IDs during bootstrap is not an observed empty time journal.
 		// A completed catalog can confirm that same cached zero without a new GET.
@@ -15722,9 +15860,20 @@ if (_presetChannel) {
 			cached.hasVerifiedData = true;
 			_queueDialogTimeUiSync();
 		}
+		if (cached?.data && !cached.hasCompleteSnapshot && hasCompleteCoverage()) {
+			cached.hasCompleteSnapshot = true;
+			cached.data = { ...cached.data, coverage: { checkedTasks:taskIds.length, totalTasks:taskIds.length, complete:true } };
+			_queueDialogTimeUiSync();
+		}
 		if (_dialogTimeInFlight.has(key)) {
 			const running = _dialogTimeInFlight.get(key);
-			if (!force && cached?.taskIdsKey === taskIdsKey && cached.readRevision === revision) return running;
+			const sameRead = cached?.readRevision === revision && cached.readScope === scope;
+			// Refresh during first loading joins that audit instead of starting the
+			// same portal-wide pass twice. A second caller also joins a forced audit.
+			if (sameRead && force && (!cached.hasCompleteSnapshot || cached.readForce === true)) return running;
+			// A task event can arrive after that task's page was accepted, or while
+			// its page is in flight. One coalesced follow-up drains that dirty state;
+			// unchanged tasks take the cache fast path and create no REST requests.
 			const rechecks = force ? _dialogTimeForcedRefreshes : _dialogTimeRangeRechecks;
 			if (rechecks.has(key)) return rechecks.get(key);
 			const recheck = running.catch(() => null).then(() => {
@@ -15734,13 +15883,21 @@ if (_presetChannel) {
 			rechecks.set(key, recheck);
 			return recheck;
 		}
-		if (!force && cached?.error && now - (cached.failedAt || 0) < 15000) return cached.data || null;
+		const newEvidenceAfterFailure = cached?.failedTaskRevisions && pendingIds.some(id =>
+			cached.failedTaskRevisions[id] !== (_dialogTimeTaskRevisions.get(id) || 0));
+		if (!force && cached?.error && !newEvidenceAfterFailure && now - (cached.failedAt || 0) < 15000) return cached.data || null;
 		if (!pendingIds.length && cached?.data) return cached.data;
-		const base = { ...cached, range: normalized, status: 'loading', data: cached?.data || null, hasVerifiedData:_hasDialogTimeVerifiedData(cached) || verifiedEmptyCatalog, error: '', taskIdsKey, taskFreshness: freshness, readRevision: revision, readProgress: { completedTasks:0, totalTasks:pendingIds.length } };
+		// Capture before dispatch: a task event arriving during a failed request
+		// is new evidence, but repeated reads of the same failed revision back off.
+		const attemptTaskRevisions = Object.fromEntries(pendingIds.map(id => [id, _dialogTimeTaskRevisions.get(id) || 0]));
+		const base = { ...cached, range: normalized, status: 'loading', data: cached?.data || null, hasVerifiedData:_hasDialogTimeVerifiedData(cached) || verifiedEmptyCatalog,
+			hasCompleteSnapshot:cached?.hasCompleteSnapshot === true || hasCompleteCoverage(), error: '', taskIdsKey, taskFreshness: freshness,
+			readRevision: revision, readScope:scope, readForce:force, readProgress: { completedTasks:0, totalTasks:pendingIds.length } };
 		_setDialogTimeCacheRecord(key, base);
 		_queueDialogTimeUiSync();
 		const request = (async () => {
-			let data = cached?.data || { ..._PENA_TIME_CONTROL.aggregateElapsedItems([]), range: normalized, pages: 0, totalAvailable: 0 };
+			let data = cached?.data || { ..._PENA_TIME_CONTROL.aggregateElapsedItems([]), range: normalized, pages: 0, totalAvailable: 0,
+				coverage: { checkedTasks:0, totalTasks:taskIds.length, complete:verifiedEmptyCatalog } };
 			let offset = 0;
 			let pages = 0;
 			while (offset < pendingIds.length && current()) {
@@ -15779,6 +15936,7 @@ if (_presetChannel) {
 				];
 				accepted.forEach(id => { freshness[id] = { at: dispatchedAt.get(id) || waveStartedAt, revision: taskRevisions.get(id) }; });
 				unavailable.forEach((error, id) => { freshness[id] = { at: dispatchedAt.get(id) || waveStartedAt, revision: taskRevisions.get(id), unavailable: error }; });
+				if (hasCompleteCoverage()) base.hasCompleteSnapshot = true;
 				offset += wave.length;
 				pages += batch.pages;
 				const checkedTasks = taskIds.filter(id => freshness[id] && !freshness[id].unavailable && freshness[id].revision === (_dialogTimeTaskRevisions.get(id) || 0)).length;
@@ -15797,7 +15955,7 @@ if (_presetChannel) {
 		})().catch(error => {
 			if (!current()) return _dialogTimeCache.get(key)?.data || null;
 			const latest = _dialogTimeCache.get(key) || base;
-			_setDialogTimeCacheRecord(key, { ...latest, status: 'error', error: _getDialogTimeFriendlyError(error), failedAt: Date.now() });
+			_setDialogTimeCacheRecord(key, { ...latest, status: 'error', error: _getDialogTimeFriendlyError(error), failedAt: Date.now(), failedTaskRevisions:attemptTaskRevisions });
 			throw error;
 		}).finally(() => {
 			_dialogTimeInFlight.delete(key);
@@ -16376,6 +16534,7 @@ if (_presetChannel) {
 			if (!userId) throw Object.assign(new Error('Не удалось определить текущего пользователя'), { code: 'PENA_TIME_INITIALIZATION' });
 			initialLoadState.pending = false;
 			if (_dialogControlNativeWorkspaceTab !== 'time') return;
+			_scheduleDialogTimeAccountingRecovery({ reset:true });
 			_armDialogTimeVisitTracking();
 			const range = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
 			_loadDialogTimeRange(range).catch(() => {});

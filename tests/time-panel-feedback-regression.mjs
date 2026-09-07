@@ -16,6 +16,7 @@ const source=raw.replace(anchor,anchor+`
  window.feedbackProbe={
   prepare:(...args)=>_prepareDialogTimeManualEntry(...args),
   load:(force=false)=>_loadDialogTimeRange(_getDialogTimeSelectedRange(),{force}),
+  dirty:taskId=>_dialogTimeTaskRevisions.set(String(taskId),(_dialogTimeTaskRevisions.get(String(taskId))||0)+1),
   range:()=>_getDialogTimeSelectedRange(),
   select:range=>_setDialogTimeRange(range),
   record:()=>_getDialogTimeRecord(_getDialogTimeSelectedRange()),
@@ -91,16 +92,23 @@ try {
   // that this user's selected range has no entries before any response.
   assert.equal(first.total,'—');assert.match(first.statusText,/Загружаем данные/);
  });
+ await page.evaluate(()=>window.feedback.heldReads.shift()());
+ await page.waitForFunction(()=>window.feedback.heldReads.length>0&&window.feedbackProbe.record()?.data?.coverage?.checkedTasks>0);
+ const partial=await snapshot('first-open-partial-response');
+ await phase('initial partial responses retain a visible loading status until the catalog is checked',()=>{
+  assert(partial.coverage.checkedTasks<partial.coverage.totalTasks);assert.equal(partial.statusHidden,false);assert.equal(partial.cacheStatus,'loading');
+ });
  await page.evaluate(()=>window.feedback.releaseReads('pass'));
  await page.waitForFunction(()=>window.feedbackProbe.record()?.status==='ready'&&window.feedbackProbe.record()?.data?.totalSeconds===5400);
- await snapshot('first-open-ready');
+ const ready=await snapshot('first-open-ready');
+ await phase('a complete ready snapshot does not reserve a loading status row',()=>assert.equal(ready.statusHidden,true));
 
  await phase('background timeout and a queued manual successor retain distinct outcomes',async()=>{
   await page.waitForFunction(()=>{
    const queue=window.__PENA_REST_DIAGNOSTICS__?.snapshot();
    return document.querySelector('.pena-native-time-read-status')?.dataset.state==='ready'&&queue?.active===0&&queue?.queued===0;
   });
-  await page.evaluate(()=>{window.feedback.readMode='hold';window.feedbackProbe.load(true).catch(()=>{});});
+  await page.evaluate(()=>{window.feedback.readMode='hold';window.feedbackProbe.dirty('101');window.feedbackProbe.load().catch(()=>{});});
   await page.waitForFunction(()=>window.feedback.heldReads.length>0);
   const held=await snapshot('background-timeout-held');
   await page.locator('.pena-native-time-refresh').click();
@@ -180,12 +188,12 @@ try {
   assert(rejected.toasts.some(toast=>toast.className.includes('--danger')&&/отклонил|сохран|запис|добав/i.test(toast.text)));
  });
 
- await page.evaluate(()=>{window.feedback.readMode='hold';window.feedbackProbe.load(true).catch(()=>{});});
+ await page.evaluate(()=>{window.feedback.readMode='hold';window.feedbackProbe.dirty('101');window.feedbackProbe.load().catch(()=>{});});
  await page.waitForFunction(()=>window.feedback.heldReads.length>0);
  const background=await snapshot('cached-background-refresh');
  await phase('background refresh preserves cache and keeps refresh icon static',()=>{
   assert.equal(background.seconds,6000);assert.equal(background.refreshAnimation,'none');assert.equal(background.refreshDisabled,false);
-  assert.equal(background.statusHidden,false);assert.match(background.statusText,/загруз|провер|обнов|собир/i);
+  assert.equal(background.statusHidden,true);assert.match(background.statusText,/загруз|провер|обнов|собир/i);
  });
  await page.evaluate(()=>window.feedback.releaseReads('pass'));
  await page.waitForFunction(()=>window.feedbackProbe.record()?.status==='ready');
@@ -193,7 +201,7 @@ try {
  await page.locator('.pena-native-time-refresh').click();
  await page.waitForFunction(()=>window.feedback.heldReads.length>0);
  const manualRefresh=await snapshot('manual-refresh-pending');
- await phase('manual refresh shares the same stable cached total',()=>{assert.equal(manualRefresh.seconds,6000);assert.equal(manualRefresh.refreshAnimation,'none');assert.equal(manualRefresh.refreshDisabled,true);});
+ await phase('manual refresh shares the same stable cached total',()=>{assert.equal(manualRefresh.seconds,6000);assert.equal(manualRefresh.refreshAnimation,'none');assert.equal(manualRefresh.refreshDisabled,true);assert.equal(manualRefresh.statusHidden,false);});
 
  const today=await page.evaluate(()=>window.feedbackProbe.range().from);
  await page.locator('.pena-native-time-date-prev').count().then(async count=>{

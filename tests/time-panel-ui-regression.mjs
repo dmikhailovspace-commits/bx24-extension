@@ -11,6 +11,15 @@ const instrumented = source.replace(anchor, `${anchor}
  window.timeUiProbe = {
   record: () => _getDialogTimeRecord(_getDialogTimeSelectedRange()),
   idle: () => !_dialogTimeCatalogPromise && !_dialogTimeInFlight.size,
+  async contactSnapshot(checked) {
+   _dialogTimeView='day';
+   const range=_getDialogTimeSelectedRange(),now=Date.now();
+   let rows=_PENA_TIME_CONTROL.applyQualifiedContact([],{taskId:'101',eventId:'older-contact',qualifiedAt:now-60000,reason:'message'});
+   rows=_PENA_TIME_CONTROL.markActivityAccounted(rows,'task:101',now-40000,{itemId:'900001'});
+   rows=_PENA_TIME_CONTROL.applyQualifiedContact(rows,{taskId:'101',eventId:'newer-contact',qualifiedAt:now-20000,reason:'message'});
+   await _writeDialogTimeVisits(rows,range.from);_setDialogTimeTaskEligibility('101',true);
+   this.state({status:'loading',range,data:{..._PENA_TIME_CONTROL.aggregateElapsedItems([]),range,coverage:{checkedTasks:16,totalTasks:117,complete:false}},hasVerifiedData:true,hasCompleteSnapshot:false,taskFreshness:checked?{'101':{at:now,revision:0}}:{},readProgress:{completedTasks:16,totalTasks:117}});
+  },
   state(patch) {
    const range = _getDialogTimeSelectedRange();
    _setDialogTimeCacheRecord(_getDialogTimeCacheKey(range), {..._getDialogTimeRecord(range), ...patch});
@@ -20,7 +29,7 @@ const instrumented = source.replace(anchor, `${anchor}
    _dialogTimeView=view;
    const range=view==='stats'?_getDialogTimeStatsRange():_getDialogTimeSelectedRange();
    _setDialogTimeCacheRecord(_getDialogTimeCacheKey(range), {
-    status, range, data:{..._PENA_TIME_CONTROL.aggregateElapsedItems([]), range}, hasVerifiedData,
+    status, range, data:{..._PENA_TIME_CONTROL.aggregateElapsedItems([]), range, coverage:{checkedTasks:hasVerifiedData?30:0,totalTasks:30,complete:hasVerifiedData}}, hasVerifiedData, hasCompleteSnapshot:hasVerifiedData,
     readProgress:{completedTasks:hasVerifiedData?30:0,totalTasks:30},
     error:status==='error'?'Сеть недоступна':'',updatedAt:hasVerifiedData?Date.now():0
    });
@@ -66,7 +75,7 @@ const snapshot = () => page.evaluate(() => {
   entries: panel.querySelectorAll('.pena-native-time-entry-row').length,
   disabled: refresh.disabled, animation: getComputedStyle(icon).animationName,
   clockAnimation: getComputedStyle(document.querySelector('.pena-native-time-button > svg')).animationName,
-  state: status.dataset.state, label: status.textContent, statusHeight: status.getBoundingClientRect().height,
+  state: status.dataset.state, label: status.textContent, statusHidden:status.hidden, statusHeight: status.getBoundingClientRect().height,
   progressAnimation: getComputedStyle(status.querySelector('.pena-native-time-read-progress'),'::after').animationName,
   bodyTop: body.top, iconCenterX: iconBox.x+iconBox.width/2-buttonBox.x-buttonBox.width/2,
   iconCenterY: iconBox.y+iconBox.height/2-buttonBox.y-buttonBox.height/2,
@@ -78,7 +87,7 @@ try {
  await page.goto(server.baseUrl+'/tests/native-consistency-harness.html?mode=tasks');
  await page.locator('.pena-native-time-button').click();
  await page.waitForFunction(() => document.querySelector('.pena-native-time-total-value')?.textContent === '1 ч 30 мин');
- await page.waitForFunction(() => timeUiProbe.idle());
+ await page.waitForFunction(() => timeUiProbe.idle() && timeUiProbe.record()?.hasCompleteSnapshot === true);
  await page.evaluate(() => { window.timeUiOriginalData=timeUiProbe.record().data; timeUiProbe.state({status:'ready',error:'',updatedAt:Date.now()}); });
  const ready = await snapshot();
  await phase('unverified bootstrap aggregate is unknown in every view, confirmed zero stays visible', async () => {
@@ -92,12 +101,12 @@ try {
   const unknownDays = await page.locator('.pena-native-time-stats-duration').allTextContents();
   assert.equal(unknownDays.length,7); assert.ok(unknownDays.every(value=>value==='—'),'unverified stats days must not fabricate zeroes');
   await page.evaluate(() => timeUiProbe.emptyState(true,'ready'));
-  const zero = await snapshot(); assert.equal(zero.total,'0 мин'); assert.equal(zero.historyLabel,'Записи · 0'); assert.match(zero.compactTotal,/Сегодня 0:00/);
+  const zero = await snapshot(); assert.equal(zero.total,'0 мин'); assert.equal(zero.historyLabel,'Записи · 0'); assert.match(zero.compactTotal,/Сегодня 0:00/); assert.equal(zero.statusHidden,true);
   await page.evaluate(() => timeUiProbe.emptyState(true,'loading'));
-  const warm = await snapshot(); assert.equal(warm.total,'0 мин'); assert.equal(warm.compactTotal,zero.compactTotal); assert.match(warm.label,/Проверяем актуальность/);
+  const warm = await snapshot(); assert.equal(warm.total,'0 мин'); assert.equal(warm.compactTotal,zero.compactTotal); assert.equal(warm.statusHidden,true);
   await page.evaluate(() => timeUiProbe.emptyState(true,'error'));
-  const failed = await snapshot(); assert.equal(failed.total,'0 мин'); assert.equal(failed.state,'error');
-  await page.evaluate(() => timeUiProbe.state({status:'ready',data:window.timeUiOriginalData,hasVerifiedData:true,error:'',updatedAt:Date.now()}));
+  const failed = await snapshot(); assert.equal(failed.total,'0 мин'); assert.equal(failed.state,'error'); assert.equal(failed.statusHidden,false);
+  await page.evaluate(() => timeUiProbe.state({status:'ready',data:window.timeUiOriginalData,hasVerifiedData:true,hasCompleteSnapshot:true,error:'',updatedAt:Date.now()}));
   return {cold,unknownDays,zero,warm,failed};
  });
  await phase('background validation preserves known figures and keeps both icons static', async () => {
@@ -106,7 +115,7 @@ try {
   assert.equal(state.total,ready.total); assert.equal(state.entries,ready.entries);
   assert.equal(state.disabled,false); assert.equal(state.animation,'none'); assert.equal(state.clockAnimation,'none');
   assert.equal(state.state,'loading'); assert.match(state.label,/Проверяем актуальность/);
-  assert.equal(state.bodyTop,ready.bodyTop); assert.equal(state.statusHeight,24);
+  assert.equal(state.bodyTop,ready.bodyTop); assert.equal(state.statusHeight,0); assert.equal(state.statusHidden,true);
   assert.ok(Math.abs(state.iconCenterX)<0.5 && Math.abs(state.iconCenterY)<0.5);
   assert.equal(state.rotation,'rotate(180 12 12)');
   assert.equal(state.progressAnimation,'none');
@@ -114,18 +123,31 @@ try {
   await page.locator('.pena-native-time-panel').screenshot({path:'tests/artifacts/time-panel-background.png'});
   return state;
  });
- await phase('cold load and failed validation use the same reserved status row', async () => {
-  await page.evaluate(() => timeUiProbe.state({status:'loading',data:null,error:''}));
-  const cold = await snapshot(); assert.equal(cold.total,'—'); assert.match(cold.label,/Загружаем данные/); assert.equal(cold.bodyTop,ready.bodyTop);
-  await page.evaluate(() => timeUiProbe.state({status:'error',data:window.timeUiOriginalData,error:'Сеть недоступна'}));
+ await phase('a real bulk change reveals progress while single-batch updates remain quiet', async () => {
+  await page.evaluate(() => timeUiProbe.state({status:'loading',hasCompleteSnapshot:true,readProgress:{completedTasks:0,totalTasks:50}}));
+  assert.equal((await snapshot()).statusHidden,true);
+  await page.evaluate(() => timeUiProbe.state({readProgress:{completedTasks:16,totalTasks:51}}));
+  const bulk = await snapshot(); assert.equal(bulk.statusHidden,false); assert.equal(bulk.statusHeight,24);
+  assert.match(bulk.label,/Обновляем изменённые задачи/); assert.match(bulk.label,/16 из 51 задачи/); assert.equal(bulk.total,ready.total);
+  await page.evaluate(() => timeUiProbe.state({status:'ready',readProgress:{completedTasks:51,totalTasks:51}}));
+  assert.equal((await snapshot()).statusHidden,true);
+  return bulk;
+ });
+ await phase('cold coverage and errors reveal status; completed idle view releases its space', async () => {
+  assert.equal(ready.statusHidden,true); assert.equal(ready.statusHeight,0);
+  await page.evaluate(() => timeUiProbe.state({status:'loading',data:null,hasCompleteSnapshot:false,error:''}));
+  const cold = await snapshot(); assert.equal(cold.total,'—'); assert.match(cold.label,/Загружаем данные/); assert.equal(cold.statusHeight,24); assert.ok(cold.bodyTop>ready.bodyTop);
+  await page.evaluate(() => timeUiProbe.state({status:'loading',data:{...window.timeUiOriginalData,coverage:{checkedTasks:366,totalTasks:4149,complete:false}},hasCompleteSnapshot:false,readProgress:{completedTasks:366,totalTasks:4149}}));
+  const partial = await snapshot(); assert.equal(partial.statusHidden,false); assert.match(partial.label,/366 из 4149 задач/); assert.equal(partial.total,ready.total);
+  await page.evaluate(() => timeUiProbe.state({status:'error',data:window.timeUiOriginalData,hasCompleteSnapshot:true,error:'Сеть недоступна'}));
   const failed = await snapshot(); assert.equal(failed.total,ready.total); assert.equal(failed.entries,ready.entries);
-  assert.equal(failed.state,'error'); assert.match(failed.label,/Сеть недоступна/); assert.equal(failed.bodyTop,ready.bodyTop); assert.equal(failed.disabled,false);
-  return {cold,failed};
+  assert.equal(failed.state,'error'); assert.match(failed.label,/Сеть недоступна/); assert.equal(failed.bodyTop,cold.bodyTop); assert.equal(failed.disabled,false);
+  return {cold,partial,failed};
  });
  await phase('manual refresh owns its disabled state and reports a real failure separately', async () => {
   await page.evaluate(() => { timeUiProbe.state({status:'ready',error:''}); timeUiProbe.holdManual(); });
   await page.locator('.pena-native-time-refresh').click();
-  const pending = await snapshot(); assert.equal(pending.disabled,true); assert.equal(pending.animation,'none'); assert.equal(pending.total,ready.total);
+  const pending = await snapshot(); assert.equal(pending.disabled,true); assert.equal(pending.animation,'none'); assert.equal(pending.total,ready.total); assert.equal(pending.statusHidden,false);
   assert.equal(pending.progressAnimation,'pena-time-read-pending');
   await page.emulateMedia({reducedMotion:'reduce'});assert.equal((await snapshot()).progressAnimation,'none');await page.emulateMedia({reducedMotion:'no-preference'});
   await page.evaluate(() => document.querySelector('.pena-native-time-refresh').dispatchEvent(new MouseEvent('click',{bubbles:true})));
@@ -135,7 +157,7 @@ try {
   const failed = await snapshot(); assert.equal(failed.state,'error'); assert.match(failed.label,/Не удалось получить затраченное время/); assert.equal(failed.total,ready.total);
   await page.locator('.pena-native-time-refresh').click(); await page.evaluate(() => resolveManual());
   await page.waitForFunction(() => !document.querySelector('.pena-native-time-refresh').disabled);
-  const recovered = await snapshot(); assert.notEqual(recovered.state,'error');
+  const recovered = await snapshot(); assert.notEqual(recovered.state,'error'); assert.equal(recovered.statusHidden,true);
   return {pending,failed,recovered};
  });
  await phase('a live sending intent is neutral while an uncertain intent remains actionable', async () => {
@@ -149,7 +171,7 @@ try {
  });
  await phase('narrow layout keeps the compact status and refresh icon inside the panel', async () => {
   await page.setViewportSize({width:360,height:800});
-  await page.evaluate(() => timeUiProbe.state({status:'loading',error:'',readProgress:{completedTasks:7,totalTasks:20}}));
+  await page.evaluate(() => timeUiProbe.state({status:'loading',hasCompleteSnapshot:false,error:'',readProgress:{completedTasks:7,totalTasks:20}}));
   const result = await page.evaluate(() => {
    const panel=document.querySelector('.pena-native-time-panel'), status=panel.querySelector('.pena-native-time-read-status'), refresh=panel.querySelector('.pena-native-time-refresh');
    const p=panel.getBoundingClientRect(),s=status.getBoundingClientRect(),r=refresh.getBoundingClientRect();
@@ -159,6 +181,14 @@ try {
   await page.waitForTimeout(180);
   await page.locator('.pena-native-time-panel').screenshot({path:'tests/artifacts/time-panel-background-360.png'});
   return result;
+ });
+ await phase('a contact card cannot invent zero before its own task has been checked in a partial read',async()=>{
+  await page.evaluate(()=>timeUiProbe.contactSnapshot(false));
+  const detail=page.locator('.pena-native-time-suggestions .pena-native-time-task-detail');
+  const unknown=await detail.textContent();assert.match(unknown,/Учтено —/);assert.match(unknown,/\+1 контакт после записи/);
+  await page.evaluate(()=>timeUiProbe.contactSnapshot(true));
+  const checked=await detail.textContent();assert.match(checked,/Учтено 0 мин/);assert.match(checked,/\+1 контакт после записи/);
+  return{unknown,checked};
  });
  assert.deepEqual(errors,[]);
 } finally {

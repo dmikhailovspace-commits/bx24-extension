@@ -28,7 +28,7 @@ function setup({count=100,deleteAfterFirst=false,ignoreCursor=false,reverse=fals
   _isDialogTaskCatalogMetadataFresh:()=>false,
   _dialogTaskCatalogSyncPromise:null,_dialogTaskCatalogSyncScopeKey:'',_dialogTaskCatalogLastResult:null,
   _DIALOG_TASK_CATALOG_MAX_PAGES:100,_DIALOG_TASK_CATALOG_PAGE_SIZE:50,_DIALOG_RECENT_PAGE_DELAY_MS:0,
-  _DIALOG_TIME_LOGGED_TTL_MS:10000,
+  _DIALOG_TIME_CATALOG_REFRESH_MS:10000,
   _dialogTaskCatalogComplete:false,_dialogTaskCatalogFetchedAt:0,_dialogTaskCatalogScopeKey:'',
   _dialogTimeCatalogScope:'',_dialogTimeCatalogCursor:0,_dialogTimeCatalogPromise:null,_dialogTimeCatalogTimer:null,
   _callBxRestPageWithTimeout:fetch,_callBxRestPage:fetch,

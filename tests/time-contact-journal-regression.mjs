@@ -15,7 +15,8 @@ const names = ['_getDialogTimePendingQualificationMs','_syncDialogTimePendingLea
 function createLocks(){let tail=Promise.resolve();return{request(_name,callback){const next=tail.then(callback);tail=next.catch(()=>{});return next;}};}
 function frame({ storage = new Map(), locks = createLocks(), id = 'frame1' } = {}) {
  let now = Date.parse('2026-09-06T20:59:00Z'), user = '7', resolver, delay = false, failWrite = false, failAck = false, eligibility = true, portalOffset = 180, portalFail = false, portalCalls = 0;
- const writes = [], warnings = [];
+ const writes = [], warnings = [], invalidations = [];
+ writes.invalidations = invalidations;
  const localStorage = { get length(){ return storage.size; }, key(i){ return [...storage.keys()][i] ?? null; }, getItem:k=>storage.get(k)??null,
  setItem(k,v){ if(failWrite) throw Error('quota'); storage.set(k,String(v)); }, removeItem(k){ if(failAck) throw Error('ack failure');storage.delete(k); } };
  const ctx = vm.createContext({ window:{}, navigator:{locks}, console:{warn:(...x)=>warnings.push(x)}, Date:class extends Date { static now(){ return now; } }, Map, Set, Promise, JSON, Number, String, Math, Array,
@@ -31,6 +32,7 @@ function frame({ storage = new Map(), locks = createLocks(), id = 'frame1' } = {
  _ensureDialogTimeTaskEligibility:()=>delay?new Promise(r=>{resolver=r;}):Promise.resolve(eligibility),
  _ensureDialogTimePortalDate:async()=>{portalCalls++;if(portalFail)throw Error('offline');ctx._dialogTimePortalUtcOffsetMinutes=portalOffset;return '';},
  _scheduleDialogTimeDeferredFlush:()=>{}, _queueDialogTimeUiSync:()=>{},
+ _invalidateDialogTimeTaskSnapshot:id=>invalidations.push(id),
  _getDialogTimeTaskTitle:(id,title)=>title, _isDialogTimePlaceholderTaskTitle:()=>false,
  _claimDialogTimeActivityLease:(activityId)=>{storage.set('lease',JSON.stringify({frameId:id,activityId}));return true;},
  _readDialogTimeActivityLease:()=>JSON.parse(storage.get('lease')||'null'),
@@ -42,6 +44,8 @@ function frame({ storage = new Map(), locks = createLocks(), id = 'frame1' } = {
  return { ...ctx.probe, storage,writes,warnings,titles:ctx._dialogTimeTaskTitles, tick:ms=>{now+=ms;}, setUser:id=>{user=id;}, eligibility:value=>{eligibility=value;}, delay:()=>{delay=true;}, resolve:()=>{delay=false;resolver?.(eligibility);}, failWrite:value=>{failWrite=value;},failAck:value=>{failAck=value;}, unknownPortal:(offset,fail=false)=>{ctx._dialogTimePortalUtcOffsetMinutes=null;portalOffset=offset;portalFail=fail;},portalCalls:()=>portalCalls, total:()=>[...storage].filter(([k])=>k.startsWith('pena.timeVisitedTasks.v1.')).flatMap(([,v])=>JSON.parse(v)).reduce((n,x)=>n+x.visits,0) };
 }
 const scenarios = [];
+await check('new qualified contact invalidates once; durable replay and 15s dedupe do not',async()=>{const f=frame();f.stage({taskId:'101'},{qualify:true});f.failAck(true);await f.flush();assert.deepEqual(f.writes.invalidations,['101']);await f.flush();assert.deepEqual(f.writes.invalidations,['101']);f.failAck(false);f.tick(1000);f.stage({taskId:'101'},{qualify:true});await f.flush();assert.deepEqual(f.writes.invalidations,['101']);f.tick(20000);f.stage({taskId:'101'},{qualify:true});await f.flush();assert.deepEqual(f.writes.invalidations,['101','101']);return{qualifiedContacts:2,invalidations:2,replayAndDedupInvalidations:0};});
+await check('two frame accounting receipts and later contact preserve immutable pending watermark',async()=>{const storage=new Map(),locks=createLocks(),a=frame({storage,locks,id:'A'}),b=frame({storage,locks,id:'B'});const day='2026-09-06',at=Date.parse('2026-09-06T20:59:00Z');a.stage({taskId:'101'},{qualify:true});await a.flush();a.tick(40000);a.stage({taskId:'101'},{qualify:true});await Promise.all([a.flush(),b.write(rows=>model.markActivityAccounted(rows,'task:101',at+10000,{itemId:'501'}),day)]);await a.write(rows=>model.markActivityAccounted(rows,'task:101',at+60000,{itemId:'501'}),day);const rows=JSON.parse(storage.get('pena.timeVisitedTasks.v1.7.'+day));assert.equal(rows[0].visits,2);assert.equal(rows[0].accountedEntries[0].cutoffAt,at+10000);assert.equal(model.selectUntrackedVisits(rows)[0].pendingContacts,1);return{frames:2,contacts:2,pendingContacts:1,duplicateAckAdvanced:false};});
 async function check(name, run){ try{const detail=await run();scenarios.push({name,status:'PASS',detail});}catch(e){scenarios.push({name,status:'FAIL',error:e.message});} }
 await check('qualified A→B→A survives replacement',async()=>{const f=frame();f.stage({taskId:'101'},{qualify:true});f.stage({taskId:'102'});f.stage({taskId:'101'});await f.flush();assert.equal(f.total() || f.writes.filter(x=>x.qualify).length,1);return {contacts:f.total()};});
 await check('message while eligibility awaits is a separate immutable event',async()=>{const f=frame();f.stage({taskId:'101'},{qualify:true});f.delay();const pending=f.flush();await Promise.resolve();f.tick(20000);f.stage({taskId:'101'},{qualify:true});f.resolve();await pending;await f.flush();assert.equal(f.total()||f.writes.filter(x=>x.qualify).length,2);return {contacts:f.total()};});
@@ -80,7 +84,7 @@ if(!process.env.PENA_CONTACT_SKIP_BROWSER) await check('Chromium two pages: real
    let _dialogTimeContactEventSequence=0,_dialogTimeContactJournalTimer=null,_dialogTimeContactRetryAttempt=0,_dialogTimeContactLastError='',_dialogTimeContactRecoveryScope='',_dialogTimeLeaseHeartbeatTimer=null,_dialogTimePendingActiveId='',_dialogTimeQualificationTimer=null,_dialogTimeDeferredFlushPromise=null,_dialogControlNativeWorkspaceTab='time',_dialogTimeOwnedActivityId='';
    function _getCurrentBitrixUserId(){return '7'} function _isDialogTimeLocalCoordinator(){return true} function _isDialogTimeFrameActive(){return true}
    function _getActiveDialogTimeActivity(){return null} function normId(x){return String(x||'')} function _ensureDialogTimeTaskEligibility(){return Promise.resolve(true)}
-   function _scheduleDialogTimeDeferredFlush(){} function _queueDialogTimeUiSync(){}
+   function _scheduleDialogTimeDeferredFlush(){} function _queueDialogTimeUiSync(){} function _invalidateDialogTimeTaskSnapshot(){}
    ${[...names,...extra].map(extract).join('\n')}
    window.probe={stage:_stageDialogTimeActivity,flush:_flushDialogTimePendingActivities,journal:_journalDialogTimeContactEvents,diagnostics:_getDialogTimeContactDiagnostics,heartbeat:_syncDialogTimePendingLease,qualify:()=>_qualifyPendingDialogTimeDuration(_dialogTimePendingActivities.get(_dialogTimePendingActiveId)),rows:()=>{let rows=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k.startsWith('pena.timeVisitedTasks.v1.7.'))rows.push(...JSON.parse(localStorage.getItem(k)));}return rows;}};`});
  };

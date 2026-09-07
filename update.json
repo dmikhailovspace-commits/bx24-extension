@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "7.5.99",
+  "version": "7.5.100",
   "release_date": "2026-09-07",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.99",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.99",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.100",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.100",
   "extension_files": [
-    "worker-v7_5_99.js",
+    "worker-v7_5_100.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,6 +33,6 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.99/extension/injected.js",
-  "changelog": "v7.5.99: separates live time writes from uncertain outcomes; shows confirmed totals immediately, avoids redundant reads, adds a dedicated loading status and static manual refresh icon, and keeps timer ticks lightweight"
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.100/extension/injected.js",
+  "changelog": "v7.5.100: reuses completed time snapshots, refreshes changed tasks only, coalesces manual audits, hides quiet background status, and shows logged day time with contacts since the last entry; acknowledged writes recover contact bookkeeping without duplicate ADD"
 }

@@ -846,6 +846,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 .pena-native-time-refresh svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:2.15;stroke-linecap:round;stroke-linejoin:round}
 .pena-native-time-summary-group{display:grid;gap:8px;min-width:0}
 .pena-native-time-read-status{position:relative;display:flex;align-items:center;gap:8px;height:24px;min-height:24px;padding:0 2px 5px;color:#66758b;font:500 11px/16px var(--pena-time-ui);box-sizing:border-box}
+.pena-native-time-read-status[hidden]{display:none}
 .pena-native-time-read-label{flex:0 0 auto}
 .pena-native-time-read-detail{min-width:0;margin-left:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
 .pena-native-time-read-progress{position:absolute;inset:auto 0 0;height:2px;overflow:hidden;border-radius:2px;background:#e3e9f1}
@@ -925,12 +926,14 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 .pena-native-time-duration-field span{flex:0 0 auto;color:#6f7d91;font:600 11px/15px var(--pena-time-ui)}
 .pena-native-time-manual-error{color:#a13b3b;font:600 11px/15px var(--pena-time-ui)}
 .pena-native-time-manual-error[hidden]{display:none!important}
+.pena-native-time-manual-error.--notice{color:#778599}
 .pena-native-time-task-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;min-height:48px;padding:8px;border:1px solid #dfe5ed;border-radius:8px;background:#fff;box-sizing:border-box}
 .pena-native-time-task-row:hover{border-color:#b9c9e5}
 .pena-native-time-task-row.--single{grid-template-columns:minmax(0,1fr)}
 .pena-native-time-task-main{display:grid;gap:4px;min-width:0;padding:0;border:0;background:transparent;text-align:left;cursor:pointer}
 .pena-native-time-task-title{display:-webkit-box;overflow:hidden;overflow-wrap:anywhere;color:#202d43;font:650 12px/16px var(--pena-time-ui);-webkit-box-orient:vertical;-webkit-line-clamp:2}
 .pena-native-time-task-detail{color:#778599;font:500 11px/15px var(--pena-time-ui)}
+.pena-native-time-suggestions .pena-native-time-task-detail{white-space:pre-line}
 .pena-native-time-row-edit,.pena-native-time-row-delete{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;flex:0 0 32px;padding:0;border:1px solid #d7dfeb;border-radius:8px;background:#fff;color:#6c7a8e;cursor:pointer}
 .pena-native-time-row-edit:hover{border-color:#9bb1e9;background:#edf3ff;color:#2854d7}
 .pena-native-time-row-delete:hover{border-color:#e5a7a7;background:#fff1f1;color:#b23b3b}
