@@ -601,7 +601,7 @@ try {
 	});
 	await page.waitForTimeout(5400);
 	assert.equal(await page.evaluate(() => {
-		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
+		const key = 'pena.timeVisitedTasks.v1.7.' + document.querySelector('.pena-native-time-date-input').value;
 		return JSON.parse(localStorage.getItem(key) || '[]').some(item => item.taskId === '404');
 	}), false, `A covered/stale task frame was counted as active work in ${mode}`);
 	await page.evaluate(() => document.querySelector('#covered-task-frame')?.remove());
@@ -609,25 +609,30 @@ try {
 	await page.evaluate(() => window.dispatchNativeSidePanelTask('404'));
 	await page.waitForTimeout(250);
 	const sidePanelTouch = await page.evaluate(() => {
-		return Object.keys(localStorage)
-			.filter(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'))
-			.flatMap(key => JSON.parse(localStorage.getItem(key) || '[]'))
-			.find(item => item.taskId === '404') || null;
+		const key = 'pena.timeVisitedTasks.v1.7.' + document.querySelector('.pena-native-time-date-input').value;
+		return JSON.parse(localStorage.getItem(key) || '[]').find(item => item.taskId === '404') || null;
 	});
 	assert.equal(sidePanelTouch?.visits || 0, 0, `Opening a SidePanel task counted as work in ${mode}: ${JSON.stringify(sidePanelTouch)}`);
 	assert.equal(await timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Задача 404' }).count(), 0, 'A quick task open entered suggestions');
 	const foreignCloseState = await page.evaluate(() => {
-		const dateKey = document.querySelector('.pena-native-time-date-input')?.value || new Date().toISOString().slice(0, 10);
-		const leaseKey = Object.keys(localStorage).find(key => key.startsWith('pena.timeActivityOwner.v1.')) || 'pena.timeActivityOwner.v1.7';
-		const visitsKey = Object.keys(localStorage).find(key => key.startsWith('pena.timeVisitedTasks.v1.')) || `pena.timeVisitedTasks.v1.7.${dateKey}`;
-		if (!localStorage.getItem(visitsKey)) localStorage.setItem(visitsKey, JSON.stringify([{
+		const dateKey = document.querySelector('.pena-native-time-date-input')?.value;
+		if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey || '')) throw new Error('Foreign-session fixture requires the selected portal date');
+		const leaseKey = 'pena.timeActivityOwner.v1.7';
+		const visitsKey = `pena.timeVisitedTasks.v1.7.${dateKey}`;
+		const existing = JSON.parse(localStorage.getItem(visitsKey) || '[]');
+		if (!Array.isArray(existing)) throw new Error('Foreign-session fixture requires an array journal');
+		// Earlier successful ADDs may already have created zero-visit ACK rows.
+		// Journal existence does not establish this particular foreign session.
+		const otherVisits = existing.filter(item => item.taskId !== '404');
+		const now = Date.now();
+		localStorage.setItem(visitsKey, JSON.stringify([...otherVisits, {
 			activityId: 'task:404', taskId: '404', title: 'Задача 404', dialogId: 'chat404',
-			visitedAt: Date.now(), firstVisitedAt: Date.now(), lastAccountedAt: Date.now(),
+			visitedAt: now, firstVisitedAt: now, lastAccountedAt: now,
 			visits: 0, activeSeconds: 0, sessionActive: true, sessionQualified: false
 		}]));
-		localStorage.setItem(leaseKey, JSON.stringify({ frameId: 'foreign-task-frame', activityId: 'task:404', heartbeatAt: Date.now() }));
+		localStorage.setItem(leaseKey, JSON.stringify({ frameId: 'foreign-task-frame', activityId: 'task:404', heartbeatAt: now }));
 		const before = {
-			leaseKey,
+			leaseKey, visitsKey, otherVisits,
 			lease: JSON.parse(localStorage.getItem(leaseKey) || 'null'),
 			visit: JSON.parse(localStorage.getItem(visitsKey) || '[]').find(item => item.taskId === '404') || null
 		};
@@ -635,34 +640,39 @@ try {
 		return {
 			before,
 			afterLease: JSON.parse(localStorage.getItem(leaseKey) || 'null'),
-			afterVisit: JSON.parse(localStorage.getItem(visitsKey) || '[]').find(item => item.taskId === '404') || null
+			afterVisit: JSON.parse(localStorage.getItem(visitsKey) || '[]').find(item => item.taskId === '404') || null,
+			afterOtherVisits: JSON.parse(localStorage.getItem(visitsKey) || '[]').filter(item => item.taskId !== '404')
 		};
 	});
+	assert.equal(foreignCloseState.before.visit?.sessionActive, true, `Foreign-session fixture did not seed task 404 in ${mode}`);
+	assert.equal(foreignCloseState.before.visit?.visits, 0, `Foreign-session fixture was already qualified in ${mode}`);
+	assert.equal(foreignCloseState.before.lease?.frameId, 'foreign-task-frame');
+	assert.deepEqual(foreignCloseState.afterLease, foreignCloseState.before.lease, `Non-owner close changed the foreign lease in ${mode}`);
+	assert.deepEqual(foreignCloseState.afterVisit, foreignCloseState.before.visit, `Non-owner close changed the foreign task journal in ${mode}`);
+	assert.deepEqual(foreignCloseState.afterOtherVisits, foreignCloseState.before.otherVisits, `Foreign-session setup/close changed other journal rows in ${mode}`);
 	assert.equal(foreignCloseState.afterVisit?.sessionActive === true, true,
 		`A non-owner Bitrix frame closed another frame's active task session in ${mode}: ${JSON.stringify(foreignCloseState)}`);
-	const foreignLeaseBaseline = await page.evaluate(() => {
-		const leaseKey = Object.keys(localStorage).find(key => key.startsWith('pena.timeActivityOwner.v1.'));
-		const visitsKey = Object.keys(localStorage).find(key => key.startsWith('pena.timeVisitedTasks.v1.'));
+	const foreignLeaseBaseline = await page.evaluate(({ leaseKey, visitsKey }) => {
 		return {
-			leaseKey,
+			leaseKey, visitsKey,
 			visit: JSON.parse(localStorage.getItem(visitsKey) || '[]').find(item => item.taskId === '404') || null
 		};
-	});
+	}, foreignCloseState.before);
 	await page.evaluate(() => window.dispatchNativeSidePanelTask('404'));
 	await page.waitForTimeout(180);
-	const foreignLeaseAfterOpen = await page.evaluate(leaseKey => {
-		const visitsKey = Object.keys(localStorage).find(key => key.startsWith('pena.timeVisitedTasks.v1.'));
+	const foreignLeaseAfterOpen = await page.evaluate(({ leaseKey, visitsKey }) => {
 		return {
 			lease: JSON.parse(localStorage.getItem(leaseKey) || 'null'),
 			visit: JSON.parse(localStorage.getItem(visitsKey) || '[]').find(item => item.taskId === '404') || null
 		};
-	}, foreignLeaseBaseline.leaseKey);
+	}, foreignLeaseBaseline);
 	assert.equal(foreignLeaseAfterOpen.lease?.frameId, 'foreign-task-frame', `A fresh foreign activity lease was stolen in ${mode}`);
 	assert.deepEqual(foreignLeaseAfterOpen.visit, foreignLeaseBaseline.visit, `A writer ignored a failed activity lease claim in ${mode}`);
 	await page.evaluate(() => {
-		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
+		const key = 'pena.timeVisitedTasks.v1.7.' + document.querySelector('.pena-native-time-date-input').value;
 		const activities = JSON.parse(localStorage.getItem(key) || '[]');
 		const task = activities.find(item => item.taskId === '404');
+		if (!task || task.sessionActive !== true) throw new Error('Expected the seeded foreign active task 404 before qualification');
 		task.activeSeconds = 61;
 		task.visits = 1;
 		task.sessionQualified = true;
@@ -673,12 +683,12 @@ try {
 	});
 	await page.waitForFunction(() => Array.from(document.querySelectorAll('.pena-native-time-suggestions-list .pena-native-time-task-title')).some(node => node.textContent === 'Задача 404'), null, { timeout: 7000 });
 	const qualifiedSidePanelTouch = await page.evaluate(() => {
-		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
+		const key = 'pena.timeVisitedTasks.v1.7.' + document.querySelector('.pena-native-time-date-input').value;
 		return JSON.parse(localStorage.getItem(key) || '[]').find(item => item.taskId === '404') || null;
 	});
 	assert.equal(qualifiedSidePanelTouch?.visits, 1, `One active minute did not qualify exactly one touch in ${mode}: ${JSON.stringify(qualifiedSidePanelTouch)}`);
 	await page.evaluate(() => {
-		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
+		const key = 'pena.timeVisitedTasks.v1.7.' + document.querySelector('.pena-native-time-date-input').value;
 		const activities = JSON.parse(localStorage.getItem(key) || '[]');
 		const task = activities.find(item => item.taskId === '404');
 		task.visits = 4;
@@ -708,7 +718,7 @@ try {
 	await page.waitForTimeout(200);
 	assert.equal(await timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Задача 405' }).count(), 0, 'Task with disabled time tracking entered suggestions');
 	assert.equal(await page.evaluate(() => {
-		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
+		const key = 'pena.timeVisitedTasks.v1.7.' + document.querySelector('.pena-native-time-date-input').value;
 		return JSON.parse(localStorage.getItem(key) || '[]').some(item => item.taskId === '405');
 	}), false, 'Task with disabled time tracking was persisted as work');
 	}
@@ -721,7 +731,7 @@ try {
 		await page.waitForTimeout(250);
 		assert.equal(await timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Задача 5' }).count(), 0, 'An incoming task message counted as the current user work');
 		assert.equal(await page.evaluate(() => {
-			const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
+			const key = 'pena.timeVisitedTasks.v1.7.' + document.querySelector('.pena-native-time-date-input').value;
 			return JSON.parse(localStorage.getItem(key) || '[]').find(item => item.dialogId === 'chat5')?.visits || 0;
 		}), 0, 'An incoming task message qualified a touch');
 		await page.evaluate(() => window.dispatchNativeTaskMessage('chat5'));
@@ -741,7 +751,7 @@ try {
 		assert.equal(await taskChatActivity.locator('.pena-native-time-activity-add').count(), 1, 'A task chat did not expose manual time entry');
 		assert.equal(await taskChatActivity.locator('.pena-native-time-task-detail').textContent(), '1 контакт');
 		assert.equal(await page.evaluate(() => {
-			const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
+			const key = 'pena.timeVisitedTasks.v1.7.' + document.querySelector('.pena-native-time-date-input').value;
 			return JSON.parse(localStorage.getItem(key) || '[]').find(item => item.taskId === '5')?.title || '';
 		}), 'Задача 5', 'Outgoing work persisted the native chat caption instead of the canonical task title');
 	} else {
@@ -752,18 +762,18 @@ try {
 		await page.waitForTimeout(250);
 		assert.equal(await timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Чат 5' }).count(), 0, 'An ordinary chat entered time activity');
 		assert.equal(await page.evaluate(() => {
-			const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
+			const key = 'pena.timeVisitedTasks.v1.7.' + document.querySelector('.pena-native-time-date-input').value;
 			return JSON.parse(localStorage.getItem(key) || '[]').some(item => item.dialogId === 'chat5' || item.taskId === '5' || !item.taskId);
 		}), false, 'Known task message/SidePanel events in ordinary chats were persisted as time activity');
 	}
 	const touchesBeforeMultiSelect = await page.evaluate(() => {
-		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
+		const key = 'pena.timeVisitedTasks.v1.7.' + document.querySelector('.pena-native-time-date-input').value;
 		return JSON.parse(localStorage.getItem(key) || '[]').find(item => item.dialogId === 'chat5' && item.taskId)?.visits || 0;
 	});
 	await page.locator('.test-host:not([hidden]) .pena-native-managed-row[data-id="chat5"]').dispatchEvent('click', { ctrlKey: true, button: 0 });
 	await page.waitForTimeout(100);
 	assert.equal(await page.evaluate(() => {
-		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.'));
+		const key = 'pena.timeVisitedTasks.v1.7.' + document.querySelector('.pena-native-time-date-input').value;
 		return JSON.parse(localStorage.getItem(key) || '[]').find(item => item.dialogId === 'chat5' && item.taskId)?.visits || 0;
 	}), touchesBeforeMultiSelect, `Multi-select click was counted as work in ${mode}`);
 	await page.evaluate(() => document.querySelector('.pena-native-group-tab')?.click());
