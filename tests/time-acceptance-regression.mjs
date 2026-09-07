@@ -40,6 +40,7 @@ function loadFixture() {
     _PENA_TIME_CONTROL: time, _dialogTimeRange: range, _dialogTimeView: 'day', _dialogControlNativeWorkspaceTab: 'time',
     _dialogTimeCache: new Map(), _dialogTimeInFlight: new Map(), _dialogTimeRangeRevisions: new Map(), _dialogTimeTaskRevisions: new Map(),
     _dialogTimeForcedRefreshes: new Map(), _dialogTimeRangeRechecks: new Map(), _dialogTimePanelRefreshes: new Map(),
+    _dialogTimeCatalogCursor: 0, _dialogTimeCatalogScope: 'portal:7',
     _DIALOG_TIME_LOGGED_TTL_MS: 10000, _DIALOG_TIME_EMPTY_TTL_MS: 120000, _DIALOG_TIME_FIRST_WAVE_SIZE: 16, _DIALOG_TIME_WAVE_SIZE: 50,
     _PENA_TIME_CACHE_TTL_MS: 120000, _getCurrentBitrixUserId: () => '7', _getDialogNativeSharedAuditScopeKey: () => state.scope,
     _dialogTimeTaskEligibility: eligibility, _dialogTimeTaskTitles: new Map([...eligibility.keys()].map(id => [id, `Task ${id}`])),
@@ -65,7 +66,7 @@ function loadFixture() {
       return pages;
     }
   });
-  const names = ['_getDialogTimeEligibleTaskIds', '_getDialogTimeWorkingTaskIds', '_getDialogTimeCacheKey', '_setDialogTimeCacheRecord', '_loadDialogTimeRange', '_invalidateDialogTimeCachesForDates', '_applyDialogTimeOptimisticEntry'];
+  const names = ['_getDialogTimeEligibleTaskIds', '_getDialogTimeWorkingTaskIds', '_getDialogTimeCacheKey', '_setDialogTimeCacheRecord', '_hasDialogTimeVerifiedData', '_loadDialogTimeRange', '_invalidateDialogTimeCachesForDates', '_applyDialogTimeOptimisticEntry'];
   for (const name of names) {
     const marker = new RegExp(`\\t(?:async )?function ${name}\\(`).exec(injected);
     assert.ok(marker, `Missing function ${name}`);

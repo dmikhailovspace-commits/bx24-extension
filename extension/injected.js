@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.97';
+	window.__ANITREC_RUNNING__ = '7.5.98';
 
-	const VER = '7.5.97';
+	const VER = '7.5.98';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -13106,6 +13106,10 @@ if (_presetChannel) {
 		return _dialogTimeCache.get(_getDialogTimeCacheKey(range)) || null;
 	}
 
+	function _hasDialogTimeVerifiedData(record) {
+		return !!record?.data && record.hasVerifiedData === true;
+	}
+
 	function _formatDialogTimeDate(dateKey) {
 		const date = _PENA_TIME_CONTROL?.parseDateKey?.(dateKey);
 		if (!date) return dateKey || '';
@@ -14370,7 +14374,7 @@ if (_presetChannel) {
 			next.pages = previous?.pages || 0;
 			if (previous?.coverage) next.coverage = { ...previous.coverage };
 			next.totalAvailable = next.entryCount;
-			_setDialogTimeCacheRecord(cacheKey, { ...record, range, status: 'ready', data: next, error: '', updatedAt: 0 });
+			_setDialogTimeCacheRecord(cacheKey, { ...record, range, status: 'ready', data: next, hasVerifiedData:true, error: '', updatedAt: 0 });
 		}
 		_queueDialogTimeUiSync();
 	}
@@ -15181,7 +15185,7 @@ if (_presetChannel) {
 		if (!switcher || !_PENA_TIME_CONTROL) return;
 		const today = _getDialogTimeRange('today');
 		const todayRecord = _getDialogTimeRecord(today);
-		const rawTodayData = todayRecord?.data || null;
+		const rawTodayData = _hasDialogTimeVerifiedData(todayRecord) ? todayRecord.data : null;
 		const visibleTodayData = _filterDialogTimeDataByEligibility(rawTodayData);
 		const tracker = _readDialogTimeTracker();
 		const timeButton = switcher.querySelector('.pena-native-time-button');
@@ -15209,7 +15213,7 @@ if (_presetChannel) {
 		const selectedDay = _getDialogTimeSelectedRange();
 		const visibleRange = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : selectedDay;
 		const record = _getDialogTimeRecord(visibleRange);
-		const rawData = record?.data || null;
+		const rawData = _hasDialogTimeVerifiedData(record) ? record.data : null;
 		const data = _filterDialogTimeDataByEligibility(rawData);
 		const initializing = panel._penaTimeInitialization?.pending === true;
 		const initializationError = panel._penaTimeInitialization?.error || '';
@@ -15711,6 +15715,13 @@ if (_presetChannel) {
 			return force || !entry || entry.revision !== (_dialogTimeTaskRevisions.get(id) || 0) || now - entry.at < 0 || now - entry.at >= ttl;
 		};
 		const pendingIds = taskIds.filter(needsRead);
+		const verifiedEmptyCatalog = !taskIds.length && _dialogTimeCatalogCursor > 0 && _dialogTimeCatalogScope === scope;
+		// No task IDs during bootstrap is not an observed empty time journal.
+		// A completed catalog can confirm that same cached zero without a new GET.
+		if (verifiedEmptyCatalog && cached?.data && !_hasDialogTimeVerifiedData(cached)) {
+			cached.hasVerifiedData = true;
+			_queueDialogTimeUiSync();
+		}
 		if (_dialogTimeInFlight.has(key)) {
 			const running = _dialogTimeInFlight.get(key);
 			if (!force && cached?.taskIdsKey === taskIdsKey && cached.readRevision === revision) return running;
@@ -15725,7 +15736,7 @@ if (_presetChannel) {
 		}
 		if (!force && cached?.error && now - (cached.failedAt || 0) < 15000) return cached.data || null;
 		if (!pendingIds.length && cached?.data) return cached.data;
-		const base = { ...cached, range: normalized, status: 'loading', data: cached?.data || null, error: '', taskIdsKey, taskFreshness: freshness, readRevision: revision, readProgress: { completedTasks:0, totalTasks:pendingIds.length } };
+		const base = { ...cached, range: normalized, status: 'loading', data: cached?.data || null, hasVerifiedData:_hasDialogTimeVerifiedData(cached) || verifiedEmptyCatalog, error: '', taskIdsKey, taskFreshness: freshness, readRevision: revision, readProgress: { completedTasks:0, totalTasks:pendingIds.length } };
 		_setDialogTimeCacheRecord(key, base);
 		_queueDialogTimeUiSync();
 		const request = (async () => {
@@ -15761,6 +15772,7 @@ if (_presetChannel) {
 				});
 				if (!current()) return _dialogTimeCache.get(key)?.data || null;
 				const accepted = new Set(wave.filter(id => !unavailable.has(id) && taskRevisions.get(id) === (_dialogTimeTaskRevisions.get(id) || 0)));
+				if (accepted.size) base.hasVerifiedData = true;
 				const merged = [
 					...(data.items || []).filter(entry => !accepted.has(String(entry.taskId))),
 					...(batch.items || []).filter(entry => accepted.has(String(entry.taskId)))

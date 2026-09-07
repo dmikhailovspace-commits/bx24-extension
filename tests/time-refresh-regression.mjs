@@ -20,7 +20,7 @@ function fixture(count = 2) {
   Date:TestDate, setTimeout:()=>0, clearTimeout:()=>{}, document:{visibilityState:'visible'}, navigator:{onLine:true},
   _PENA_TIME_CONTROL:model, _PENA_TIME_CACHE_TTL_MS:120000, _DIALOG_TIME_LOGGED_TTL_MS:10000, _DIALOG_TIME_EMPTY_TTL_MS:120000,
   _DIALOG_TIME_FIRST_WAVE_SIZE:16, _DIALOG_TIME_WAVE_SIZE:50,
-  _dialogTimeRange:range, _dialogTimeView:'day', _dialogControlNativeWorkspaceTab:'time', _dialogControlNativeSwitcherNode:null,
+  _dialogTimeCatalogCursor:0, _dialogTimeCatalogScope:'portal:7', _dialogTimeRange:range, _dialogTimeView:'day', _dialogControlNativeWorkspaceTab:'time', _dialogControlNativeSwitcherNode:null,
   _dialogTimeCache:new Map(), _dialogTimeInFlight:new Map(), _dialogTimeForcedRefreshes:new Map(), _dialogTimeRangeRechecks:new Map(),
   _dialogTimeRangeRevisions:new Map(), _dialogTimeTaskRevisions:new Map(), _dialogTimeTaskChangedAt:new Map(), _dialogTimePanelRefreshes:new Map(),
   _dialogTimeTaskTitles:new Map(), _dialogTimeTaskEligibility:new Map(), _readDialogTaskTimeTrackingFlag:row=>row.ALLOW_TIME_TRACKING==='Y', _rememberDialogTimeTaskChat:()=>{},
@@ -64,12 +64,12 @@ function fixture(count = 2) {
    return pages;
   }
  };
- const names=['_publishDialogTimeTaskIndexRows','_withDialogTimeTrackerLock','_buildDialogTimeWriteFields','_getDialogTimeTrackerSeconds','_getDialogTimeCacheKey','_setDialogTimeCacheRecord','_invalidateDialogTimeCachesForDates','_applyDialogTimeOptimisticEntry','_removeDialogTimeCachedEntry','_loadDialogTimeRange','_refreshDialogTimePanel','_getDialogTimeSavedItemId','_isDialogTimeDefiniteWriteFailure','_getDialogTimeWriteIntentKey','_withDialogTimeManualWriteLock','_commitDialogTimeManualEntry','_addDialogTimeManualEntry','_deleteDialogTimeEntry','_updateDialogTimeEntry','_stopDialogTimeTracker'];
+ const names=['_hasDialogTimeVerifiedData','_publishDialogTimeTaskIndexRows','_withDialogTimeTrackerLock','_buildDialogTimeWriteFields','_getDialogTimeTrackerSeconds','_getDialogTimeCacheKey','_setDialogTimeCacheRecord','_invalidateDialogTimeCachesForDates','_applyDialogTimeOptimisticEntry','_removeDialogTimeCachedEntry','_loadDialogTimeRange','_refreshDialogTimePanel','_getDialogTimeSavedItemId','_isDialogTimeDefiniteWriteFailure','_getDialogTimeWriteIntentKey','_withDialogTimeManualWriteLock','_commitDialogTimeManualEntry','_addDialogTimeManualEntry','_deleteDialogTimeEntry','_updateDialogTimeEntry','_stopDialogTimeTracker'];
  vm.createContext(sandbox); vm.runInContext(names.map(extract).join('\n'),sandbox);
  state.seed=(entries=[])=>{
   state.entries=structuredClone(entries);
   const data={...model.aggregateElapsedItems(entries),range,pages:1,totalAvailable:entries.length};
-  sandbox._dialogTimeCache.set('7:2026-09-07:2026-09-07',{status:'ready',range,data,updatedAt:state.clock,taskIdsKey:state.taskIds.join(','),taskFreshness:Object.fromEntries(state.taskIds.map(id=>[id,{at:state.clock,revision:0}]))});
+  sandbox._dialogTimeCache.set('7:2026-09-07:2026-09-07',{status:'ready',range,data,hasVerifiedData:true,updatedAt:state.clock,taskIdsKey:state.taskIds.join(','),taskFreshness:Object.fromEntries(state.taskIds.map(id=>[id,{at:state.clock,revision:0}]))});
  };
  state.record=()=>sandbox._dialogTimeCache.get('7:2026-09-07:2026-09-07');
  return {state,api:sandbox};
@@ -298,6 +298,36 @@ try {
   assert.equal(state.record().readProgress.completedTasks,0);assert.equal(state.record().readProgress.totalTasks,17);assert.equal(state.record().data.totalSeconds,600);
   gate.resolve();await read;assert.equal(state.record().readProgress.completedTasks,17);assert.equal(state.record().data.coverage.complete,true);
   return {initialCompleted:0,finalCompleted:17,retainedSeconds:600};
+ });
+
+ await phase('synthetic bootstrap zero stays unverified while first elapsed responses are held',async()=>{
+  const {state,api}=fixture(0);await api._loadDialogTimeRange(range);
+  assert.equal(state.record().data.totalSeconds,0);assert.equal(api._hasDialogTimeVerifiedData(state.record()),false);
+  state.taskIds=['1'];const gate=deferred();state.hold=gate;const pending=api._loadDialogTimeRange(range);
+  await Promise.resolve();assert.equal(state.record().status,'loading');assert.equal(state.record().readProgress.completedTasks,0);
+  assert.equal(api._hasDialogTimeVerifiedData(state.record()),false);
+  gate.resolve();await pending;
+  assert.equal(api._hasDialogTimeVerifiedData(state.record()),true);assert.equal(state.record().data.totalSeconds,0);
+  return {beforeFirstResponseVerified:false,actualEmptyResponseVerified:true,actualSeconds:0};
+ });
+ await phase('confirmed empty catalog upgrades bootstrap zero without requests and remains verified while new task loads',async()=>{
+  const {state,api}=fixture(0);await api._loadDialogTimeRange(range);assert.equal(api._hasDialogTimeVerifiedData(state.record()),false);
+  api._dialogTimeCatalogCursor=state.clock;await api._loadDialogTimeRange(range);
+  assert.equal(api._hasDialogTimeVerifiedData(state.record()),true);assert.equal(state.calls.length,0);
+  state.taskIds=['1'];const gate=deferred();state.hold=gate;const pending=api._loadDialogTimeRange(range);await Promise.resolve();
+  assert.equal(api._hasDialogTimeVerifiedData(state.record()),true);assert.equal(state.record().data.totalSeconds,0);
+  gate.reject(Object.assign(new Error('TIMEOUT'),{code:'TIMEOUT'}));await assert.rejects(pending);
+  assert.equal(state.record().status,'error');assert.equal(api._hasDialogTimeVerifiedData(state.record()),true);
+  return {emptyCatalogReads:0,confirmedZeroRetainedOnLoad:true,confirmedZeroRetainedOnError:true};
+ });
+ await phase('unknown catalog scope and failed first read cannot confirm synthetic zero; positive ACK can',async()=>{
+  const {state,api}=fixture(0);api._dialogTimeCatalogCursor=state.clock;api._dialogTimeCatalogScope='portal:8';await api._loadDialogTimeRange(range);
+  assert.equal(api._hasDialogTimeVerifiedData(state.record()),false);
+  state.taskIds=['1'];const gate=deferred();state.hold=gate;const pending=api._loadDialogTimeRange(range);await Promise.resolve();
+  gate.reject(Object.assign(new Error('TIMEOUT'),{code:'TIMEOUT'}));await assert.rejects(pending);assert.equal(api._hasDialogTimeVerifiedData(state.record()),false);
+  api._invalidateDialogTimeCachesForDates(range.from,{taskId:'1'});api._applyDialogTimeOptimisticEntry('1',600,range.from,'101');
+  assert.equal(api._hasDialogTimeVerifiedData(state.record()),true);assert.equal(state.record().data.totalSeconds,600);
+  return {foreignCatalogVerified:false,failedReadVerified:false,confirmedAddSeconds:600};
  });
  console.log(`PASS time refresh: ${phases.length} phases`);
 } finally {

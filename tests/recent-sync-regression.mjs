@@ -8,6 +8,7 @@ const { chromium } = require('playwright');
 const server = await startHarnessServer();
 const browser = await chromium.launch({ headless: true });
 const failures = [];
+const fixtureAvatarRequests = new WeakMap();
 const onlyScenario = String(process.env.PENA_RECENT_ONLY || '').trim().toLowerCase();
 
 const managedIds = page => page.evaluate(() => window.__recentHarness.managedItems().map(item => String(item.id)).sort());
@@ -93,6 +94,14 @@ const runScenario = async (name, test, query = '', expectedWindowCount = 401) =>
   if (onlyScenario && !name.toLowerCase().includes(onlyScenario)) return;
   const context = await browser.newContext({ viewport: { width: 420, height: 760 } });
   const page = await context.newPage();
+  const avatarRequests = [];
+  fixtureAvatarRequests.set(page, avatarRequests);
+  // These fixture URLs intentionally exercise unavailable-image fallbacks.
+  // Resolve their failure locally: host DNS/proxy latency must not hold page.load.
+  await context.route('https://cdn.example.test/**', route => {
+    avatarRequests.push(route.request().url());
+    return route.abort('namenotresolved');
+  });
   const pageErrors = collectPageErrors(page);
   try {
     await page.goto(`${server.baseUrl}/tests/recent-sync-harness.html${query}`);
@@ -105,7 +114,7 @@ const runScenario = async (name, test, query = '', expectedWindowCount = 401) =>
     failures.push(`${name}: ${error?.message || error}`);
     const diagnostic = await page.evaluate(() => ({ before: window.__storageBeforeMigrationTest, after: window.__storageAfterMigrationTest, sync: window.__PENA_RECENT_SYNC__, items: window.__recentHarness?.managedItems?.(), storage: localStorage.getItem('pena.dialogControl.v1.chats'), rest: window.__PENA_REST_DIAGNOSTICS__?.snapshot() })).catch(() => null);
     mkdirSync(new URL('./artifacts/', import.meta.url), { recursive: true });
-    writeFileSync(new URL(`./artifacts/recent-failure-${name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.json`, import.meta.url), JSON.stringify({ name, error: String(error), diagnostic, pageErrors }, null, 2));
+    writeFileSync(new URL(`./artifacts/recent-failure-${name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.json`, import.meta.url), JSON.stringify({ name, error: String(error), diagnostic, pageErrors, fixtureAvatarRequests: avatarRequests }, null, 2));
     console.error(`FAIL recent sync: ${name}\n  ${error?.stack || error}`);
   } finally {
     await context.close();
@@ -786,6 +795,9 @@ try {
 	}, '?groupauthoravatarshort=1');
 
   await runScenario('native chat avatar wins over an embedded author avatar', async page => {
+	const requests = fixtureAvatarRequests.get(page);
+	assert.ok(requests.some(url => url.endsWith('/native-chat-3.png')), 'Native chat image must use the controlled fixture transport');
+	assert.ok(requests.some(url => url.endsWith('/native-author-77.png')), 'Embedded author image must use the controlled fixture transport');
 	await activateAscending(page);
 	const row = page.locator('.pena-native-remote-row[data-id="chat3"]');
 	await row.waitFor({ state: 'visible' });

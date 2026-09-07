@@ -16,6 +16,16 @@ const instrumented = source.replace(anchor, `${anchor}
    _setDialogTimeCacheRecord(_getDialogTimeCacheKey(range), {..._getDialogTimeRecord(range), ...patch});
    _syncDialogTimeUi(_dialogControlNativeSwitcherNode);
   },
+  emptyState(hasVerifiedData, status, view='day') {
+   _dialogTimeView=view;
+   const range=view==='stats'?_getDialogTimeStatsRange():_getDialogTimeSelectedRange();
+   _setDialogTimeCacheRecord(_getDialogTimeCacheKey(range), {
+    status, range, data:{..._PENA_TIME_CONTROL.aggregateElapsedItems([]), range}, hasVerifiedData,
+    readProgress:{completedTasks:hasVerifiedData?30:0,totalTasks:30},
+    error:status==='error'?'Сеть недоступна':'',updatedAt:hasVerifiedData?Date.now():0
+   });
+   _syncDialogTimeUi(_dialogControlNativeSwitcherNode);
+  },
   holdManual() {
    window.manualReadCalls = 0;
    _refreshDialogTimePanel = () => {
@@ -50,6 +60,9 @@ const snapshot = () => page.evaluate(() => {
  const iconBox = icon.getBoundingClientRect(), buttonBox = refresh.getBoundingClientRect();
  return {
   total: panel.querySelector('.pena-native-time-total-value').textContent,
+  compactTotal: document.querySelector('.pena-native-time-button-label').textContent,
+  historyTotal: panel.querySelector('.pena-native-time-tracked-total').textContent,
+  historyLabel: panel.querySelector('.pena-native-time-tracked-label').textContent,
   entries: panel.querySelectorAll('.pena-native-time-entry-row').length,
   disabled: refresh.disabled, animation: getComputedStyle(icon).animationName,
   clockAnimation: getComputedStyle(document.querySelector('.pena-native-time-button > svg')).animationName,
@@ -68,6 +81,25 @@ try {
  await page.waitForFunction(() => timeUiProbe.idle());
  await page.evaluate(() => { window.timeUiOriginalData=timeUiProbe.record().data; timeUiProbe.state({status:'ready',error:'',updatedAt:Date.now()}); });
  const ready = await snapshot();
+ await phase('unverified bootstrap aggregate is unknown in every view, confirmed zero stays visible', async () => {
+  await page.evaluate(() => timeUiProbe.emptyState(false,'loading'));
+  const cold = await snapshot();
+  assert.equal(cold.total,'—','an empty bootstrap aggregate is not a checked zero');
+  assert.equal(cold.compactTotal,'Сегодня …');
+  assert.equal(cold.historyTotal,'—'); assert.equal(cold.historyLabel,'Записи · …');
+  assert.match(cold.label,/Загружаем данные/); assert.match(cold.label,/0 из 30 задач/);
+  await page.evaluate(() => timeUiProbe.emptyState(false,'loading','stats'));
+  const unknownDays = await page.locator('.pena-native-time-stats-duration').allTextContents();
+  assert.equal(unknownDays.length,7); assert.ok(unknownDays.every(value=>value==='—'),'unverified stats days must not fabricate zeroes');
+  await page.evaluate(() => timeUiProbe.emptyState(true,'ready'));
+  const zero = await snapshot(); assert.equal(zero.total,'0 мин'); assert.equal(zero.historyLabel,'Записи · 0'); assert.match(zero.compactTotal,/Сегодня 0:00/);
+  await page.evaluate(() => timeUiProbe.emptyState(true,'loading'));
+  const warm = await snapshot(); assert.equal(warm.total,'0 мин'); assert.equal(warm.compactTotal,zero.compactTotal); assert.match(warm.label,/Проверяем актуальность/);
+  await page.evaluate(() => timeUiProbe.emptyState(true,'error'));
+  const failed = await snapshot(); assert.equal(failed.total,'0 мин'); assert.equal(failed.state,'error');
+  await page.evaluate(() => timeUiProbe.state({status:'ready',data:window.timeUiOriginalData,hasVerifiedData:true,error:'',updatedAt:Date.now()}));
+  return {cold,unknownDays,zero,warm,failed};
+ });
  await phase('background validation preserves known figures and keeps both icons static', async () => {
   await page.evaluate(() => timeUiProbe.state({status:'loading',readProgress:{completedTasks:7,totalTasks:20}}));
   const state = await snapshot();

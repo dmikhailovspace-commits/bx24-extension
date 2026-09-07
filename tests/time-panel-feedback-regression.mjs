@@ -34,7 +34,7 @@ try {
  await page.goto(server.baseUrl+'/tests/native-consistency-harness.html?mode=tasks');
  await page.locator('.pena-native-time-button').waitFor();
  await page.evaluate(()=>{
-  const f=window.feedback={readMode:'hold',holdAdd:false,heldReads:[],heldAdds:[],readCalls:0,readTaskIds:[],addCalls:0,hideAdded:false,toastLog:[]};
+  const f=window.feedback={readMode:'hold',holdAdd:false,heldReads:[],heldAdds:[],readCalls:0,deliveredReads:0,readTaskIds:[],addCalls:0,hideAdded:false,toastLog:[]};
   const errorResult=()=>({error:()=> 'TEMPORARY_ERROR',error_description:()=> 'controlled elapsed refresh failed'});
   const transform=value=>{
    if(f.readMode==='fail')return errorResult();
@@ -51,7 +51,7 @@ try {
    if(name!=='task.elapseditem.getlist')return method.call(this,name,params,callback);
    f.readCalls++;
    f.readTaskIds.push(String(params?.[0]||params?.TASKID||''));
-   return method.call(this,name,params,value=>{const deliver=()=>callback(transform(value));if(f.readMode==='hold')f.heldReads.push(deliver);else deliver();});
+   return method.call(this,name,params,value=>{const deliver=()=>{f.deliveredReads++;callback(transform(value));};if(f.readMode==='hold')f.heldReads.push(deliver);else deliver();});
   };
   const batch=BX24.callBatch;
   BX24.callBatch=function(calls,callback){
@@ -60,7 +60,7 @@ try {
    f.readCalls+=elapsed.length;
    for(const[,call]of elapsed)f.readTaskIds.push(String(call.params?.[0]||''));
    return batch.call(this,calls,result=>{
-    const deliver=()=>{const next={...result};for(const[key]of elapsed)next[key]=transform(next[key]);callback(next);};
+    const deliver=()=>{const next={...result};for(const[key]of elapsed)next[key]=transform(next[key]);f.deliveredReads+=elapsed.length;callback(next);};
     if(f.readMode==='hold')f.heldReads.push(deliver);else deliver();
    });
   };
@@ -72,6 +72,7 @@ try {
    const status=panel?.querySelector('.pena-native-time-read-status,[role="status"]');
    return {active:window.feedbackProbe.active(),range:window.feedbackProbe.range(),cacheStatus:record?.status,error:record?.error||'',
     seconds:record?.data?.totalSeconds??null,entries:record?.data?.entryCount??null,total:panel?.querySelector('.pena-native-time-total-value')?.textContent,
+    coverage:record?.data?.coverage??null,readProgress:record?.readProgress??null,deliveredReads:f.deliveredReads,
     manualError:manualError&&!manualError.hidden?manualError.textContent:'',submit:panel?.querySelector('.pena-native-time-manual-submit')?.textContent,
     statusText:status?.textContent||'',statusHidden:status?.hidden??null,
     refreshDisabled:refresh?.disabled,refreshAnimation:refresh?.querySelector('svg')?getComputedStyle(refresh.querySelector('svg')).animationName:'',
@@ -83,8 +84,11 @@ try {
  await page.waitForFunction(()=>window.feedback.heldReads.length>0);
  await page.waitForTimeout(100);
  const first=await snapshot('first-open-before-response');
- await phase('first empty read is loading, not a failed write',()=>{
-  assert.equal(first.error,'');assert.equal(first.manualError,'');assert([null,0].includes(first.seconds));assert.equal(first.cacheStatus,'loading');
+ await phase('before any elapsed response visible total is unknown, not a synthetic zero',()=>{
+  assert.equal(first.error,'');assert.equal(first.manualError,'');assert.equal(first.deliveredReads,0);assert.equal(first.cacheStatus,'loading');
+  // An internal aggregate([]) may contain numeric zero. It is not evidence
+  // that this user's selected range has no entries before any response.
+  assert.equal(first.total,'—');assert.match(first.statusText,/Загружаем данные/);
  });
  await page.evaluate(()=>window.feedback.releaseReads('pass'));
  await page.waitForFunction(()=>window.feedbackProbe.record()?.status==='ready'&&window.feedbackProbe.record()?.data?.totalSeconds===5400);
@@ -171,7 +175,7 @@ try {
  await page.evaluate(()=>window.feedback.releaseReads('pass'));
  await page.waitForFunction(()=>window.feedbackProbe.record()?.status==='ready');
  const yesterday=await snapshot('different-range-after-old-read');
- await phase('old read cannot paint another selected date totals',()=>{assert.notEqual(yesterday.range.from,today);assert.equal(yesterday.seconds,0);});
+ await phase('completed empty read shows a verified zero on the selected date',()=>{assert.notEqual(yesterday.range.from,today);assert.equal(yesterday.seconds,0);assert.equal(yesterday.total,'0 мин');assert(yesterday.coverage.checkedTasks>0);});
  await phase('manual refresh completion does not toast for a different selected range',()=>{
   assert.equal(yesterday.toastLog.slice(manualRefresh.toastLog.length).some(toast=>/Обновлено/.test(toast.text)),false);
  });
@@ -179,6 +183,10 @@ try {
  await page.locator('.pena-native-time-refresh').click();
  await page.waitForFunction(()=>window.feedback.heldReads.length>0);
  const closing=await snapshot('manual-refresh-before-close');
+ await phase('refresh keeps a previously verified zero while new responses are held',()=>{
+  assert.equal(closing.seconds,0);assert.equal(closing.total,'0 мин');assert.equal(closing.readProgress.completedTasks,0);assert(closing.coverage.checkedTasks>0);
+  assert.match(closing.statusText,/Проверяем актуальность/);
+ });
  await page.locator('.pena-native-time-header-actions > .pena-native-popover-close').click();
  await page.evaluate(()=>window.feedback.releaseReads('fail'));
  await page.waitForTimeout(120);
