@@ -31,9 +31,9 @@ const instrumentInjected = rawSource => {
 		['\tfunction _getDialogControlItemsForMode(mode = getCurrentChatsMode()) {', 'getControlItems'],
 		['\tfunction _isDialogTimeFrameActive() {', 'timeFrameActive'],
 		['\tfunction _readDialogTimeVisits(dateKey = _getDialogTimeTodayKey()) {', 'readTimeVisits'],
-		['\tfunction _writeDialogTimeVisits(visits, dateKey = _getDialogTimeTodayKey()) {', 'writeTimeVisits'],
+		['\tasync function _writeDialogTimeVisits(visits, dateKey = _getDialogTimeTodayKey(), options = {}) {', 'writeTimeVisits'],
 		['\tfunction _claimDialogTimeActivityLease(activityId, options = {}) {', 'claimTimeLease'],
-		['\tfunction _persistDialogTimeActivity(activity = {}, options = {}) {', 'persistTimeActivity'],
+		['\tasync function _persistDialogTimeActivity(activity = {}, options = {}) {', 'persistTimeActivity'],
 		['\tasync function _refreshDialogRecentCatalog(options = {}) {', 'refreshRecentCatalog'],
 		['\tfunction _captureDialogNativeWindow(mode = getCurrentChatsMode(), container = findContainer(), options = {}) {', 'captureNativeWindow'],
 		['\tfunction _syncDialogNativeTraversalRows(container, rows = []) {', 'syncTraversalRows'],
@@ -65,6 +65,13 @@ const percentile = (values, quantile) => {
 	if (!values.length) return 0;
 	const sorted = values.slice().sort((left, right) => left - right);
 	return sorted[Math.max(0, Math.ceil(sorted.length * quantile) - 1)];
+};
+
+const assertStorageContract = (sample, label) => {
+	assert.equal(sample.synchronousCounts.localStorageSet || 0, 0, `${label}: synchronous localStorage set`);
+	assert.equal(sample.synchronousCounts.localStorageRemove || 0, 0, `${label}: synchronous localStorage remove`);
+	const backgroundWrites = (sample.counts.localStorageSet || 0) + (sample.counts.localStorageRemove || 0);
+	assert.ok(backgroundWrites <= 1, `${label}: more than one background storage write: ${JSON.stringify(sample.storageWrites)}`);
 };
 
 const server = await startHarnessServer();
@@ -122,9 +129,24 @@ try {
 		const nativeStorageSetItem = Storage.prototype.setItem;
 		const nativeStorageRemoveItem = Storage.prototype.removeItem;
 		const freshCounts = () => Object.create(null);
+		// eventPhase is nonzero only while the actual dispatch is on the stack.
+		// Retain bounded event references: clearing at a capture-listener microtask
+		// could miss later listeners during a trusted browser event.
+		const dispatchEvents = [];
+		let pullDepth = 0;
+		for (const type of ['click', 'keydown', 'keyup', 'beforeinput', 'input']) {
+			window.addEventListener(type, event => {
+				if (!event.target?.closest?.('#pena-cold-task-row,#pena-cold-task-composer')) return;
+				dispatchEvents.push(event);
+				if (dispatchEvents.length > 16) dispatchEvents.shift();
+			}, true);
+		}
+		const inSynchronousHandler = () => pullDepth > 0 || dispatchEvents.some(event => event.eventPhase !== Event.NONE);
 		const metrics = {
 			enabled: false,
 			counts: freshCounts(),
+			synchronousCounts: freshCounts(),
+			storageWrites: [],
 			lifetimeCounts: freshCounts(),
 			modeLoadReasons: [],
 			traversalReasons: [],
@@ -147,6 +169,14 @@ try {
 				this.lifetimeCounts[name] = (this.lifetimeCounts[name] || 0) + 1;
 				if (this.enabled) this.counts[name] = (this.counts[name] || 0) + 1;
 			},
+			recordStorage(operation, key) {
+				const synchronous = inSynchronousHandler();
+				if (synchronous) this.synchronousCounts[operation] = (this.synchronousCounts[operation] || 0) + 1;
+				if (operation !== 'localStorageGet' && this.storageWrites.length < 32) {
+					this.storageWrites.push({ operation, key: String(key), synchronous,
+						at: performance.now() - this.startedAt, stack: new Error().stack });
+				}
+			},
 			recordModeLoad(reason, delay) {
 				this.modeLoadReasons.push({ reason: String(reason || ''), delay: Number(delay) || 0, at: performance.now() });
 			},
@@ -156,6 +186,8 @@ try {
 			reset() {
 				this.enabled = true;
 				this.counts = freshCounts();
+				this.synchronousCounts = freshCounts();
+				this.storageWrites = [];
 				this.localStorageGets = Object.create(null);
 				this.localStorageSets = Object.create(null);
 				this.localStorageRemoves = Object.create(null);
@@ -182,6 +214,8 @@ try {
 			snapshot() {
 				return {
 					counts: { ...this.counts },
+					synchronousCounts: { ...this.synchronousCounts },
+					storageWrites: this.storageWrites.slice(),
 					lifetimeCounts: { ...this.lifetimeCounts },
 					modeLoadReasons: this.modeLoadReasons.slice(),
 					traversalReasons: this.traversalReasons.slice(),
@@ -267,6 +301,7 @@ try {
 		Storage.prototype.getItem = function instrumentedGetItem(key) {
 			if (metrics.enabled && this === window.localStorage) {
 				metrics.hit('localStorageGet');
+				metrics.recordStorage('localStorageGet', key);
 				bumpKey(metrics.localStorageGets, key);
 			}
 			return nativeStorageGetItem.call(this, key);
@@ -274,6 +309,7 @@ try {
 		Storage.prototype.setItem = function instrumentedSetItem(key, value) {
 			if (metrics.enabled && this === window.localStorage) {
 				metrics.hit('localStorageSet');
+				metrics.recordStorage('localStorageSet', key);
 				bumpKey(metrics.localStorageSets, key);
 			}
 			return nativeStorageSetItem.call(this, key, value);
@@ -281,6 +317,7 @@ try {
 		Storage.prototype.removeItem = function instrumentedRemoveItem(key) {
 			if (metrics.enabled && this === window.localStorage) {
 				metrics.hit('localStorageRemove');
+				metrics.recordStorage('localStorageRemove', key);
 				bumpKey(metrics.localStorageRemoves, key);
 			}
 			return nativeStorageRemoveItem.call(this, key);
@@ -313,8 +350,10 @@ try {
 						const handlers = nativeEventHandlers.get(name) || [];
 						handlers.push((...args) => {
 							const startedAt = performance.now();
+							pullDepth += 1;
 							try { return handler(...args); }
 							finally {
+								pullDepth -= 1;
 								if (metrics.enabled) metrics.pullHandlers.push({ name, duration: performance.now() - startedAt });
 							}
 						});
@@ -331,6 +370,9 @@ try {
 			for (const name of ['onPullEvent-im', 'onPullEvent-im-v2']) {
 				for (const handler of nativeEventHandlers.get(name) || []) handler(payload);
 			}
+		};
+		window.__PENA_DISPATCH_STORAGE_CONTROL__ = () => {
+			for (const handler of nativeEventHandlers.get('pena-storage-negative-control') || []) handler();
 		};
 	});
 
@@ -478,7 +520,46 @@ try {
 		};
 	}, sendBefore.restCalls);
 
+	// Prove attribution using deliberately bad writers, after collecting the real
+	// interaction so the controls cannot warm its caches or change its timing.
+	const storageControls = await page.evaluate(async () => {
+		const metrics = window.__PENA_COLD_TASK_METRICS__;
+		const composer = document.querySelector('#pena-cold-task-composer');
+		const probeKey = 'pena.test.storage-attribution';
+		metrics.reset();
+		document.addEventListener('keydown', () => localStorage.setItem(probeKey, 'dom'), { once: true });
+		composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true }));
+		const dom = metrics.stop();
+		BX.addCustomEvent('pena-storage-negative-control', () => localStorage.setItem(probeKey, 'pull'));
+		metrics.reset();
+		window.__PENA_DISPATCH_STORAGE_CONTROL__();
+		const pull = metrics.stop();
+		metrics.reset();
+		await new Promise(resolve => setTimeout(() => { localStorage.setItem(probeKey, 'timer'); resolve(); }, 0));
+		const timer = metrics.stop();
+		metrics.reset();
+		await new Promise(resolve => setTimeout(() => {
+			localStorage.setItem(probeKey, 'timer-1');
+			localStorage.setItem(probeKey, 'timer-2');
+			resolve();
+		}, 0));
+		const excessiveBackground = metrics.stop();
+		localStorage.removeItem(probeKey);
+		return { dom, pull, timer, excessiveBackground };
+	});
+	assert.equal(storageControls.dom.synchronousCounts.localStorageSet, 1, 'Late DOM listener write was not attributed to its dispatch');
+	assert.equal(storageControls.pull.synchronousCounts.localStorageSet, 1, 'Pull write was not attributed to its handler');
+	assert.throws(() => assertStorageContract(storageControls.dom, 'DOM negative control'), /synchronous localStorage set/);
+	assert.throws(() => assertStorageContract(storageControls.pull, 'Pull negative control'), /synchronous localStorage set/);
+	assert.equal(storageControls.timer.counts.localStorageSet, 1, 'Timer control did not write');
+	assertStorageContract(storageControls.timer, 'Timer attribution control');
+	assert.throws(() => assertStorageContract(storageControls.excessiveBackground, 'Background negative control'), /more than one background/);
+
 	const diagnostic = {
+		storageAttributionControls: Object.fromEntries(Object.entries(storageControls).map(([name, sample]) => [name, {
+			synchronousSets: sample.synchronousCounts.localStorageSet || 0,
+			totalSets: sample.counts.localStorageSet || 0
+		}])),
 		coldAt900ms,
 		rowHit,
 		realClick: {
@@ -486,6 +567,8 @@ try {
 			trustedClicks: realClick.metrics.trustedClicks,
 			clickP95: percentile(realClick.metrics.clickMs, 0.95),
 			counts: realClick.metrics.counts,
+			synchronousCounts: realClick.metrics.synchronousCounts,
+			storageWrites: realClick.metrics.storageWrites,
 			localStorageGets: realClick.metrics.localStorageGets
 		},
 		send: {
@@ -500,6 +583,8 @@ try {
 			longTasks: sendAfter.metrics.longTasks,
 			scrollEvents: sendAfter.metrics.scrollEvents,
 			counts: sendAfter.metrics.counts,
+			synchronousCounts: sendAfter.metrics.synchronousCounts,
+			storageWrites: sendAfter.metrics.storageWrites,
 			localStorageGets: sendAfter.metrics.localStorageGets,
 			restCalls: sendAfter.restCalls,
 			allFullRestCalls: sendAfter.allFullRestCalls,
@@ -524,9 +609,9 @@ try {
 	assert.ok(percentile(realClick.metrics.clickMs, 0.95) <= 8, `Task-row click handler exceeded 8 ms: ${JSON.stringify(diagnostic)}`);
 	assert.ok(percentile(sendAfter.metrics.keydownMs, 0.95) <= 8, `Task composer keydown p95 exceeded 8 ms: ${JSON.stringify(diagnostic)}`);
 	assert.ok(Math.max(0, ...sendAfter.metrics.pullHandlers.map(sample => sample.duration)) <= 8, `Outgoing Pull handler exceeded 8 ms: ${JSON.stringify(diagnostic)}`);
-	assert.equal(realClick.metrics.counts.localStorageSet || 0, 0, `Task-row click wrote localStorage synchronously: ${JSON.stringify(diagnostic)}`);
-	assert.equal(realClick.metrics.counts.localStorageGet || 0, 0, `Task-row click read localStorage synchronously: ${JSON.stringify(diagnostic)}`);
-	assert.equal(sendAfter.metrics.counts.localStorageSet || 0, 0, `Outgoing message wrote localStorage synchronously: ${JSON.stringify(diagnostic)}`);
+	assertStorageContract(realClick.metrics, 'Task-row click');
+	assert.equal(realClick.metrics.synchronousCounts.localStorageGet || 0, 0, `Task-row click read localStorage synchronously: ${JSON.stringify(diagnostic)}`);
+	assertStorageContract(sendAfter.metrics, 'Outgoing message');
 	assert.ok((sendAfter.metrics.counts.localStorageGet || 0) <= 12, `Outgoing interaction repeated broad localStorage reads: ${JSON.stringify(diagnostic)}`);
 	assert.equal(sendAfter.restCalls.some(call => call.method === 'tasks.task.get'), false, `Outgoing message started tasks.task.get in the hot path: ${JSON.stringify(diagnostic)}`);
 	assert.equal(sendAfter.metrics.scrollEvents, 0, `Interaction-priority path scrolled the task list: ${JSON.stringify(diagnostic)}`);
