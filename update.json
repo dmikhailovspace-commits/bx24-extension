@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "7.5.98",
+  "version": "7.5.99",
   "release_date": "2026-09-07",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.98",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.98",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.99",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.99",
   "extension_files": [
-    "worker-v7_5_98.js",
+    "worker-v7_5_99.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,6 +33,6 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.98/extension/injected.js",
-  "changelog": "v7.5.98: separates live time writes from uncertain outcomes; shows confirmed totals immediately, avoids redundant reads, adds a dedicated loading status and static manual refresh icon, and keeps timer ticks lightweight"
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.99/extension/injected.js",
+  "changelog": "v7.5.99: separates live time writes from uncertain outcomes; shows confirmed totals immediately, avoids redundant reads, adds a dedicated loading status and static manual refresh icon, and keeps timer ticks lightweight"
 }

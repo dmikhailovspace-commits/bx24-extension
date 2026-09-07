@@ -2,11 +2,25 @@ import assert from 'node:assert/strict';
 
 export async function verifyTimeTimeoutRecovery(page, timePanel, mode) {
  const elapsedSamples = () => page.evaluate(() => (window.__PENA_REST_DIAGNOSTICS__?.snapshot()?.samples || []).filter(sample => sample.method === 'batch:task.elapseditem.getlist'));
- const before = (await elapsedSamples()).length;
- await page.evaluate(() => {
+ // A useful first total can precede the catalog tail and its background read.
+ // Since refresh remains usable during that read, injecting "next batch"
+ // too early fails the predecessor, while the manual successor can succeed.
+ // Establish a complete idle view and arm/click in one browser task so this
+ // scenario specifically fails the manual request, without pausing scheduling.
+ const armed = await page.waitForFunction(() => {
+  const panel = document.querySelector('.pena-native-time-panel');
+  const refresh = panel?.querySelector('.pena-native-time-refresh');
+  const diagnostics = window.__PENA_REST_DIAGNOSTICS__?.snapshot();
+  if (panel?.querySelector('.pena-native-time-read-status')?.dataset.state !== 'ready' ||
+      panel.classList.contains('--loading') || !refresh || refresh.disabled ||
+      !diagnostics || diagnostics.active !== 0 || diagnostics.queued !== 0 || diagnostics.cooldownMs > 0) return false;
+  const before = diagnostics.samples.filter(sample => sample.method === 'batch:task.elapseditem.getlist').length;
   window.timeListTimeoutFailures = 1;
-  document.querySelector('.pena-native-time-refresh')?.click();
+  refresh.click();
+  return { before };
  });
+ const { before } = await armed.jsonValue();
+ await armed.dispose();
  await page.waitForFunction(previous => {
   const elapsed = (window.__PENA_REST_DIAGNOSTICS__?.snapshot()?.samples || []).filter(sample => sample.method === 'batch:task.elapseditem.getlist');
   return elapsed.length === previous + 1 && elapsed.at(-1)?.status === 'error' && !document.querySelector('.pena-native-time-panel')?.classList.contains('--loading');

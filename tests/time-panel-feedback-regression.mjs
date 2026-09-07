@@ -38,6 +38,7 @@ try {
   const errorResult=()=>({error:()=> 'TEMPORARY_ERROR',error_description:()=> 'controlled elapsed refresh failed'});
   const transform=value=>{
    if(f.readMode==='fail')return errorResult();
+   if(f.readMode==='timeout')return {error:()=> 'TIMEOUT',error_description:()=> 'controlled background elapsed timeout'};
    if(!f.hideAdded)return value;
    const data=(value.data?.()||[]).filter(item=>!String(item.ID||item.id).startsWith('90000'));
    return {error:()=>null,data:()=>data,total:()=>data.length,answer:{}};
@@ -93,6 +94,33 @@ try {
  await page.evaluate(()=>window.feedback.releaseReads('pass'));
  await page.waitForFunction(()=>window.feedbackProbe.record()?.status==='ready'&&window.feedbackProbe.record()?.data?.totalSeconds===5400);
  await snapshot('first-open-ready');
+
+ await phase('background timeout and a queued manual successor retain distinct outcomes',async()=>{
+  await page.waitForFunction(()=>{
+   const queue=window.__PENA_REST_DIAGNOSTICS__?.snapshot();
+   return document.querySelector('.pena-native-time-read-status')?.dataset.state==='ready'&&queue?.active===0&&queue?.queued===0;
+  });
+  await page.evaluate(()=>{window.feedback.readMode='hold';window.feedbackProbe.load(true).catch(()=>{});});
+  await page.waitForFunction(()=>window.feedback.heldReads.length>0);
+  const held=await snapshot('background-timeout-held');
+  await page.locator('.pena-native-time-refresh').click();
+  await page.waitForFunction(()=>document.querySelector('.pena-native-time-refresh')?.disabled===true);
+  await page.evaluate(()=>{window.feedback.releaseReads('timeout');window.feedback.readMode='pass';});
+  await page.waitForFunction(()=>window.__PENA_REST_DIAGNOSTICS__?.snapshot()?.samples.some(s=>s.method==='batch:task.elapseditem.getlist'&&s.code==='TIMEOUT'));
+  const failed=await snapshot('background-timeout-before-manual-successor');
+  assert.equal(failed.seconds,5400);assert.equal(failed.refreshDisabled,true);
+  assert.equal(failed.toastLog.slice(held.toastLog.length).some(toast=>toast.tone==='danger'),false);
+  const cooldown=await page.evaluate(()=>window.__PENA_REST_DIAGNOSTICS__.snapshot().cooldownMs);
+  assert(cooldown>=12000,`Actual queue cooldown was not active: ${cooldown}`);
+  await page.waitForFunction(()=>!document.querySelector('.pena-native-time-refresh')?.disabled&&window.feedback.toastLog.some(toast=>toast.tone==='ok'&&toast.text.includes('Обновлено')),{},{timeout:22000});
+  const recovered=await snapshot('background-timeout-manual-successor-ready');
+  assert.equal(recovered.total,'1 ч 30 мин');assert.equal(recovered.error,'');
+  assert.equal(recovered.toastLog.slice(held.toastLog.length).some(toast=>toast.tone==='danger'),false);
+  report.backgroundTimeoutTrace=await page.evaluate(()=>window.__PENA_REST_DIAGNOSTICS__.snapshot().samples.filter(sample=>sample.method==='batch:task.elapseditem.getlist'));
+  const timeoutIndex=report.backgroundTimeoutTrace.findIndex(sample=>sample.code==='TIMEOUT');
+  assert.equal(report.backgroundTimeoutTrace.filter(sample=>sample.code==='TIMEOUT').length,1);
+  assert(report.backgroundTimeoutTrace[timeoutIndex+1].queuedMs>=cooldown-250,'Manual successor bypassed the real timeout cooldown');
+ });
 
  await page.evaluate(()=>{window.feedback.holdAdd=true;window.feedback.readMode='hold';window.feedbackProbe.prepare({taskId:'101',title:'Задача 101'});});
  await page.locator('.pena-native-time-manual-minutes').fill('10');
