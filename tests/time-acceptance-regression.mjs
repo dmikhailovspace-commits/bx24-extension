@@ -37,7 +37,7 @@ function loadFixture() {
   const range = { from: '2026-09-07', to: '2026-09-07' };
   const eligibility = new Map(Array.from({ length: 41 }, (_, i) => [String(i + 1), i !== 40]));
   const context = vm.createContext({ Date: Clock, document: { visibilityState: 'visible' }, navigator: { onLine: true },
-    _PENA_TIME_CONTROL: time, _dialogTimeRange: range, _dialogTimeView: 'day', _dialogControlNativeWorkspaceTab: 'time',
+    _PENA_TIME_CONTROL: time, _dialogTimeRange: range, _dialogTimePortalDateKey: range.from, _dialogTimeView: 'day', _dialogControlNativeWorkspaceTab: 'time',
     _dialogTimeCache: new Map(), _dialogTimeInFlight: new Map(), _dialogTimeRangeRevisions: new Map(), _dialogTimeTaskRevisions: new Map(),
     _dialogTimeForcedRefreshes: new Map(), _dialogTimeRangeRechecks: new Map(), _dialogTimePanelRefreshes: new Map(),
     _dialogTimeCatalogCursor: 0, _dialogTimeCatalogScope: 'portal:7',

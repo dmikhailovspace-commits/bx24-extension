@@ -18,7 +18,7 @@ function fixture(count = 2) {
  class TestDate extends Date { static now() { return state.clock; } }
  const sandbox = {
   Date:TestDate, setTimeout:()=>0, clearTimeout:()=>{}, document:{visibilityState:'visible'}, navigator:{onLine:true},
-  _PENA_TIME_CONTROL:model, _PENA_TIME_CACHE_TTL_MS:120000, _DIALOG_TIME_CATALOG_REFRESH_MS:10000,
+  _PENA_TIME_CONTROL:model, _dialogTimePortalDateKey:range.from, _PENA_TIME_CACHE_TTL_MS:120000, _DIALOG_TIME_CATALOG_REFRESH_MS:10000,
   _DIALOG_TIME_FIRST_WAVE_SIZE:16, _DIALOG_TIME_WAVE_SIZE:50,
   _dialogTimeElapsedEventTimer:null, _dialogTimeElapsedEventScope:'', _dialogTimeCatalogCursor:0, _dialogTimeCatalogScope:'portal:7', _dialogTimeRange:range, _dialogTimeView:'day', _dialogControlNativeWorkspaceTab:'time', _dialogControlNativeSwitcherNode:null,
   _dialogTimeCache:new Map(), _dialogTimeInFlight:new Map(), _dialogTimeForcedRefreshes:new Map(), _dialogTimeRangeRechecks:new Map(),

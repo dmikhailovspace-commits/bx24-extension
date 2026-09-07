@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.104';
+	window.__ANITREC_RUNNING__ = '7.5.105';
 
-	const VER = '7.5.104';
+	const VER = '7.5.105';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -15970,7 +15970,33 @@ if (_presetChannel) {
 	}
 	async function _loadDialogTimeRange(range = _dialogTimeRange, { force = false, bootstrap = null } = {}) {
 		if (!_PENA_TIME_CONTROL) throw new Error('Модуль учета времени недоступен');
-		const normalized = _PENA_TIME_CONTROL.normalizeRange(range?.from, range?.to);
+		let normalized = _PENA_TIME_CONTROL.normalizeRange(range?.from, range?.to);
+		if (!_dialogTimePortalDateKey) {
+			const clockScope = _getDialogNativeSharedAuditScopeKey();
+			const clockCurrent = () => clockScope === _getDialogNativeSharedAuditScopeKey() &&
+				(_dialogControlNativeWorkspaceTab === 'time' || (bootstrap && bootstrap === _dialogTimeBootstrapToken && bootstrap.active && bootstrap.scope === clockScope && _isDialogTimeFrameActive())) &&
+				document.visibilityState !== 'hidden' && navigator.onLine !== false;
+			if (!clockCurrent()) return null;
+			const sameRange = (left, right) => left?.from === right?.from && left?.to === right?.to;
+			const selectedBefore = _PENA_TIME_CONTROL.normalizeRange(_dialogTimeRange?.from, _dialogTimeRange?.to);
+			const localToday = _PENA_TIME_CONTROL.getQuickRange('today');
+			const selectedStats = { from:_PENA_TIME_CONTROL.addDays(selectedBefore.to, -6), to:selectedBefore.to };
+			const viewBefore = _dialogTimeView;
+			const followsDay = sameRange(normalized, selectedBefore);
+			const followsStats = _dialogTimeView === 'stats' && sameRange(normalized, selectedStats);
+			await _ensureDialogTimePortalDate();
+			if (!clockCurrent()) return null;
+			if ((followsDay || followsStats) && viewBefore !== _dialogTimeView) return null;
+			if (!_dialogTimePortalDateKey) throw new Error('Не удалось определить дату портала');
+			const selectedAfter = _PENA_TIME_CONTROL.normalizeRange(_dialogTimeRange?.from, _dialogTimeRange?.to);
+			if ((followsDay || followsStats) && !sameRange(selectedBefore, selectedAfter)) {
+				const portalToday = _PENA_TIME_CONTROL.getQuickRange('today', _dialogTimePortalDateKey);
+				if (!sameRange(selectedBefore, localToday) || !sameRange(selectedAfter, portalToday)) return null;
+				// A first catalog page may arrive before server.time. Follow the resolved
+				// selected day, never fetch a provisional host-local day alongside it.
+				normalized = followsStats ? _PENA_TIME_CONTROL.normalizeRange(_PENA_TIME_CONTROL.addDays(portalToday.to, -6), portalToday.to) : portalToday;
+			}
+		}
 		const pendingKey = _getDialogTimeCacheKey(normalized);
 		const userId = _getCurrentBitrixUserId() || await _ensureCurrentBitrixUserId().catch(() => '');
 		if (!userId) {

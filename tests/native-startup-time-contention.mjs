@@ -32,7 +32,8 @@ function installProbe(){
  for(const proto of [Document.prototype,Element.prototype])for(const name of ['querySelector','querySelectorAll']){const old=proto[name];proto[name]=function(...args){if(scope)scope.queries++;return old.apply(this,args);};}
  let previous=0;const frame=now=>{if(p.stopped)return;if(previous&&p.frames.length<20000)p.frames.push(now-previous);previous=now;requestAnimationFrame(frame);};requestAnimationFrame(frame);
  new PerformanceObserver(list=>{p.longtasks.push(...list.getEntries().map(e=>({at:e.startTime,ms:e.duration,phase:p.phase})));}).observe({entryTypes:['longtask']});
- const summary=call=>({method:call.method,after:Number(call.params?.filter?.['>ID']||0),delta:Boolean(call.params?.filter?.['>=CHANGED_DATE']),start:Number(call.params?.start||0),select:call.params?.select?.join('|')||'',taskId:call.method==='task.elapseditem.getlist'?String(call.params?.[0]):undefined});
+ const summary=call=>({method:call.method,after:Number(call.params?.filter?.['>ID']||0),delta:Boolean(call.params?.filter?.['>=CHANGED_DATE']),start:Number(call.params?.start||0),select:call.params?.select?.join('|')||'',taskId:call.method==='task.elapseditem.getlist'?String(call.params?.[0]):undefined,
+   dateFrom:call.method==='task.elapseditem.getlist'?String(call.params?.[2]?.['>=CREATED_DATE']||''):undefined,dateTo:call.method==='task.elapseditem.getlist'?String(call.params?.[2]?.['<=CREATED_DATE']||''):undefined});
  const one=BX.rest.callMethod;
  BX.rest.callMethod=function(method,params,cb){p.rest.push({at:performance.now(),phase:p.phase,...summary({method,params})});fetch('/__latency?kind=extension').then(()=>one.call(this,method,params,cb)).catch(e=>p.errors.push(String(e)));};
  const batch=BX24.callBatch;

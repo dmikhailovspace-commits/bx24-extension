@@ -4,7 +4,7 @@ import {createRequire} from 'node:module';
 import vm from 'node:vm';
 const model=createRequire(import.meta.url)('../extension/native-time-control.js');
 const source=readFileSync(new URL('../extension/injected.js',import.meta.url),'utf8');
-const extract=name=>{const start=source.search(new RegExp('\\t(?:async )?function '+name+'\\('));assert.ok(start>=0,name);return source.slice(start,source.indexOf('\n\t}',start)+4);};
+const extract=name=>{if(name==='_loadDialogTimeRange'&&process.env.PENA_TIME_LOAD_BASELINE)return readFileSync(process.env.PENA_TIME_LOAD_BASELINE,'utf8');const start=source.search(new RegExp('\\t(?:async )?function '+name+'\\('));assert.ok(start>=0,name);return source.slice(start,source.indexOf('\n\t}',start)+4);};
 const phases=[];
 const phase=async(name,fn)=>{const at=performance.now();const metrics=await fn();phases.push({name,status:'PASS',ms:performance.now()-at,...metrics});};
 const row=(task,id,seconds,day='2026-09-07')=>({ID:String(id),TASK_ID:String(task),USER_ID:'7',SECONDS:seconds,CREATED_DATE:day+'T12:00:00+03:00',DATE_START:day+'T17:30:00+03:00'});
@@ -31,7 +31,52 @@ function fixture(count=51){
  return {c,state,range,ids};
 }
 
+function pendingClockFixture(){
+ const result=fixture(),{c,state}=result,clock=deferred();
+ c._dialogControlNativeWorkspaceTab='time';c._dialogTimePortalDateKey='';c._dialogTimePortalUtcOffsetMinutes=null;c._dialogTimePortalDatePromise=null;
+ c._dialogTimeRange=model.normalizeRange('2026-09-08','2026-09-08');
+ c._PENA_TIME_CONTROL={...model,getQuickRange:(kind,base)=>model.getQuickRange(kind,base??'2026-09-08')};
+ state.clockCalls=0;state.requestDays=[];
+ c._callBxRestPageWithTimeout=()=>{state.clockCalls++;return clock.promise;};
+ const elapsed=c._callDialogTimeElapsedPages;c._callDialogTimeElapsedPages=async params=>{state.requestDays.push(...params.map(p=>String(p[2]['>=CREATED_DATE']).slice(0,10)));return elapsed(params);};
+ vm.runInContext(extract('_ensureDialogTimePortalDate'),c);
+ return {...result,clock};
+}
+
 try {
+ await phase('first catalog page waits for portal clock and coalesces with panel initialization on the resolved day',async()=>{
+  const {c,state,clock,range}=pendingClockFixture();
+  const early=c._loadDialogTimeRange(c._dialogTimeRange);
+  const initialization=c._ensureDialogTimePortalDate().then(()=>c._loadDialogTimeRange(c._dialogTimeRange));
+  await Promise.resolve();assert.equal(state.calls.length,0,'Elapsed read started on an unconfirmed host-local date');assert.equal(state.clockCalls,1);
+  clock.resolve({data:'2026-09-07T22:00:00Z'});await Promise.all([early,initialization]);
+  assert.equal(state.calls.length,51);assert.equal(new Set(state.calls).size,51);assert.deepEqual([...new Set(state.requestDays)],['2026-09-07']);
+  assert.equal(c._getDialogTimeRecord(range).hasCompleteSnapshot,true);return{beforeClock:0,afterClock:51,clockRequests:1};
+ });
+ await phase('pending clock preserves explicit history and remaps only the selected provisional week',async()=>{
+  for(const stats of [false,true]){
+   const {c,state,clock}=pendingClockFixture();c._dialogTimeView=stats?'stats':'day';
+   const requested=stats?model.normalizeRange('2026-09-02','2026-09-08'):model.normalizeRange('2026-09-05','2026-09-05');
+   const read=c._loadDialogTimeRange(requested);assert.equal(state.calls.length,0);clock.resolve({data:'2026-09-07T22:00:00Z'});await read;
+   assert.deepEqual([...new Set(state.requestDays)],[stats?'2026-09-01':'2026-09-05']);assert.equal(state.calls.length,51);
+  }
+ });
+ await phase('pending clock cannot dispatch after scope, close, visibility or connectivity changes',async()=>{
+  for(const change of ['scope','close','hidden','offline']){
+   const {c,state,clock}=pendingClockFixture();const read=c._loadDialogTimeRange(c._dialogTimeRange);
+   if(change==='scope')state.scope='portal~8';if(change==='close')c._dialogControlNativeWorkspaceTab='';if(change==='hidden')c.document.visibilityState='hidden';if(change==='offline')c.navigator.onLine=false;
+   clock.resolve({data:'2026-09-07T22:00:00Z'});await read;assert.equal(state.calls.length,0,change);
+  }
+  const closed=pendingClockFixture();closed.c._dialogControlNativeWorkspaceTab='';await closed.c._loadDialogTimeRange(closed.range);assert.equal(closed.state.clockCalls,0);
+  const failed=pendingClockFixture();const read=failed.c._loadDialogTimeRange(failed.c._dialogTimeRange);failed.clock.resolve({data:''});await assert.rejects(read,/дату портала/);assert.equal(failed.state.calls.length,0);assert.equal(failed.c._dialogTimeCache.size,0);
+ });
+ await phase('switching the selected view during clock initialization drops the obsolete week and loads only the day',async()=>{
+  const {c,state,clock}=pendingClockFixture();c._dialogTimeView='stats';
+  const week=c._loadDialogTimeRange(model.normalizeRange('2026-09-02','2026-09-08'));
+  c._dialogTimeView='day';const day=c._loadDialogTimeRange(c._dialogTimeRange);
+  clock.resolve({data:'2026-09-07T22:00:00Z'});await Promise.all([week,day]);
+  assert.equal(state.calls.length,51);assert.deepEqual([...new Set(state.requestDays)],['2026-09-07']);
+ });
  await phase('incremental replacement preserves complete totals, dates, receipts and unchanged record identity',()=>{
   let data=model.aggregateElapsedItems(Array.from({length:400},(_,i)=>row(i+1,i+1,60+i%37,i%2?'2026-09-07':'2026-09-06')));
   for(let iteration=0;iteration<60;iteration++){
