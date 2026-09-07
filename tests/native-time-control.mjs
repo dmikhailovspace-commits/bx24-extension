@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { assertNativeFixtureClock } from './lib/native-fixture-clock.mjs';
+
+assertNativeFixtureClock();
 
 const require = createRequire(import.meta.url);
 const time = require('../extension/native-time-control.js');

@@ -66,6 +66,9 @@
   <button id="switch-mode" type="button">Переключить тестовый режим</button>
   <button id="dispatch-wheel" type="button">Проверить событие колеса</button>
 <script>
+  // The fake portal is UTC+03; its clock must describe the same instant as the browser.
+  window.timePortalTimestamp = (at = Date.now()) => new Date(at + 180 * 60000).toISOString().replace('Z', '+03:00');
+  window.timePortalDateKey = (at = Date.now()) => window.timePortalTimestamp(at).slice(0, 10);
 	document.querySelectorAll('.recent-host input[type="search"],.task-host input[type="search"]').forEach(input => { input.value = ''; });
 	const nativePassThrough = new URLSearchParams(location.search).get('passThrough') === '1';
 	const fallbackAvatar = new URLSearchParams(location.search).get('fallbackAvatar') === '1';
@@ -775,9 +778,8 @@
 		  return;
 		}
 		if (method === 'server.time') {
-		  const now = new Date();
-		  const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-		  callback({ error: () => null, data: () => `${localDate}T12:00:00+03:00` });
+		  const serverTime = window.timePortalTimestamp();
+		  callback({ error: () => null, data: () => serverTime });
 		  return;
 		}
 		if (method === 'task.elapseditem.getlist') {
@@ -792,8 +794,7 @@
 			callback({ error: () => 'TEMPORARY_ERROR', error_description: () => 'temporary elapsed-list failure' });
 			return;
 		  }
-		  const now = new Date();
-		  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+		  const today = window.timePortalDateKey();
 		  if (!window.timeSeedItems) window.timeSeedItems = [
 			{ ID: 'time-1', TASK_ID: '101', USER_ID: '7', SECONDS: '3600', CREATED_DATE: `${today}T10:00:00+03:00` },
 			{ ID: 'time-2', TASK_ID: '102', USER_ID: '7', SECONDS: '1800', CREATED_DATE: `${today}T12:00:00+03:00` }
@@ -954,8 +955,7 @@
 						window.timeListFailures -= 1;
 						return { error: () => 'TEMPORARY_ERROR', error_description: () => 'temporary elapsed-list failure' };
 					  }
-					  const now = new Date();
-					  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+					  const today = window.timePortalDateKey();
 					  if (!window.timeSeedItems) window.timeSeedItems = [
 						{ ID: 'time-1', TASK_ID: '101', USER_ID: '7', SECONDS: '3600', CREATED_DATE: `${today}T10:00:00+03:00` },
 						{ ID: 'time-2', TASK_ID: '102', USER_ID: '7', SECONDS: '1800', CREATED_DATE: `${today}T12:00:00+03:00` }

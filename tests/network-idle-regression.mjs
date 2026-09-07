@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { startHarnessServer, collectPageErrors } from './lib/harness-server.mjs';
 const require = createRequire(import.meta.url), { chromium } = require('playwright');
 const server = await startHarnessServer(), browser = await chromium.launch({headless:true});
-const page = await browser.newPage({viewport:{width:1100,height:800}});
+const page = await browser.newPage({viewport:{width:1100,height:800},timezoneId:process.env.PENA_TEST_BROWSER_TIMEZONE || undefined});
 const errors = collectPageErrors(page), phases=[];
 const phase = async(name,fn)=>{const start=Date.now();try{const evidence=await fn();phases.push({name,status:'PASS',ms:Date.now()-start,evidence});}catch(e){phases.push({name,status:'FAIL',ms:Date.now()-start,error:e.message});throw e;}};
 const source=readFileSync(new URL('../extension/injected.js',import.meta.url),'utf8').replace(

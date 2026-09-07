@@ -57,7 +57,8 @@ await listen();
 const address = server.address();
 const base = `http://127.0.0.1:${address.port}`;
 const browser = await chromium.launch({ headless: true });
-const page = await browser.newPage({ viewport: { width: 420, height: 760 } });
+const page = await browser.newPage({ viewport: { width: 420, height: 760 },
+	...(process.env.PENA_TEST_BROWSER_TIMEZONE ? {timezoneId:process.env.PENA_TEST_BROWSER_TIMEZONE} : {}) });
 await page.addInitScript(() => {
 	window.__PENA_TEST_EAGER_MATERIALIZATION__ = true;
 	window.__PENA_TEST_NATIVE_EXPECTED_AUDIT__ = true;
@@ -550,6 +551,9 @@ try {
 	assert.equal(await page.evaluate(() => Number(window.timeAddCalls[0]?.ARFIELDS?.SECONDS || 0)), 4500, `Manual duration was not saved in ${mode}`);
 	const selectedDateInput = timePanel.locator('.pena-native-time-date-input');
 	const todayKey = await selectedDateInput.inputValue();
+	// Independent oracle: the fixture portal is UTC+03; browser/CI timezone is unrelated.
+	const expectedPortalDay = await page.evaluate(() => new Date(Date.now() + 180 * 60000).toISOString().slice(0, 10));
+	assert.equal(todayKey, expectedPortalDay, `The panel selected a browser day instead of the portal day in ${mode}`);
 	assert.match(await page.evaluate(() => String(window.timeAddCalls[0]?.ARFIELDS?.CREATED_DATE || '')), new RegExp(`^${todayKey}T12:00:00`), `Manual write ignored the selected date in ${mode}`);
 	const previousDateKey = await page.evaluate(dateKey => {
 		const date = new Date(`${dateKey}T12:00:00`);
@@ -747,6 +751,8 @@ try {
 			const key = 'pena.timeVisitedTasks.v1.7.' + document.querySelector('.pena-native-time-date-input').value;
 			return JSON.parse(localStorage.getItem(key) || '[]').find(item => item.dialogId === 'chat5')?.visits || 0;
 		}), 0, 'An incoming task message qualified a touch');
+		const contactPortalDay = await page.evaluate(() => new Date(Date.now() + 180 * 60000).toISOString().slice(0, 10));
+		assert.equal(await selectedDateInput.inputValue(), contactPortalDay, 'Contact scenario must display the actual portal day');
 		await page.evaluate(() => window.dispatchNativeTaskMessage('chat5'));
 		try {
 			await page.waitForFunction(() => Array.from(document.querySelectorAll('.pena-native-time-suggestions-list .pena-native-time-task-title')).some(node => node.textContent === 'Задача 5'), null, { timeout: 5000 });
@@ -763,10 +769,15 @@ try {
 		const taskChatActivity = timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Задача 5' });
 		assert.equal(await taskChatActivity.locator('.pena-native-time-activity-add').count(), 1, 'A task chat did not expose manual time entry');
 		assert.equal(await taskChatActivity.locator('.pena-native-time-task-detail').textContent(), '1 контакт');
-		assert.equal(await page.evaluate(() => {
-			const key = 'pena.timeVisitedTasks.v1.7.' + document.querySelector('.pena-native-time-date-input').value;
-			return JSON.parse(localStorage.getItem(key) || '[]').find(item => item.taskId === '5')?.title || '';
-		}), 'Задача 5', 'Outgoing work persisted the native chat caption instead of the canonical task title');
+		const persistedContact = await page.evaluate(dateKey => {
+			const key = 'pena.timeVisitedTasks.v1.7.' + dateKey;
+			return JSON.parse(localStorage.getItem(key) || '[]').find(item => item.taskId === '5') || null;
+		}, contactPortalDay);
+		assert.equal(persistedContact?.title, 'Задача 5', 'Outgoing work persisted the native chat caption instead of the canonical task title');
+		assert.equal(persistedContact?.visits, 1, 'Outgoing work was not persisted in the exact portal-day ledger');
+		assert.equal(new Date(Number(persistedContact.lastQualifiedAt) + 180 * 60000).toISOString().slice(0, 10), contactPortalDay,
+			'Contact qualification timestamp and persisted portal day differ');
+
 	} else {
 		await page.evaluate(() => {
 			window.dispatchNativeTaskMessage('chat5');
