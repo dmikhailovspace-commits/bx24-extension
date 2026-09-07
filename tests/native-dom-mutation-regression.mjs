@@ -10,6 +10,47 @@ const anchor = '\tasync function boot() {';
 assert.equal(raw.split(anchor).length - 1, 1, 'DOM regression instrumentation anchor changed');
 const source = raw.replace(anchor, `${anchor}
 		window.__PENA_DOM_AUDIT__ = {
+			eventRowContracts() {
+				const originalFind = findContainer;
+				const originalManaged = _dialogControlManagedRoot;
+				const originalSource = _dialogControlManagedSource;
+				const originalContext = window.__PENA_ACTIVE_LIST_CONTEXT__;
+				const originalSelection = _dialogControlMultiSelected;
+				const originalAnchor = _dialogControlMultiSelectionAnchorId;
+				const host = document.createElement('div');
+				host.innerHTML = '<div class="bx-im-list-container-task__elements"><div class="bx-im-list-recent-item__wrap" data-id="chat901"><svg><circle></circle></svg><span>text</span></div><div class="bx-im-custom-row" data-id="chat902" style="width:200px;height:40px">generic</div><div class="bx-im-search-result-item" data-dialog-id="chat903">search</div></div><div class="pena-native-managed-list"><div class="bx-im-list-recent-item__wrap" data-id="chat904">managed</div></div><button>outside</button>';
+				document.body.append(host);
+				const native = host.firstElementChild;
+				const managed = host.children[1];
+				let reads = 0;
+				findContainer = () => { reads++; return native; };
+				_dialogControlManagedRoot = managed;
+				_dialogControlManagedSource = native;
+				window.__PENA_ACTIVE_LIST_CONTEXT__ = null;
+				try {
+					const svg = _getDialogControlNativeEventRow(native.querySelector('circle')) === native.children[0];
+					const text = _getDialogControlNativeEventRow(native.querySelector('span').firstChild) === native.children[0];
+					const generic = _getDialogControlNativeEventRow(native.children[1]) === native.children[1];
+					const lateSearch = _getDialogControlNativeEventRow(native.children[2]) === native.children[2];
+					const managedRow = _getDialogControlNativeEventRow(managed.firstElementChild) === managed.firstElementChild;
+					const before = reads;
+					const outside = _getDialogControlNativeEventRow(host.lastElementChild) === null;
+					const outsideDiscovery = reads - before;
+					_dialogControlMultiSelected = new Set(['chat901']);
+					_dialogControlMultiSelectionAnchorId = 'chat901';
+					const targetRow = _getDialogControlNativeEventRow(native.children[1].firstChild);
+					const range = !!targetRow && _selectDialogControlMultiSelectionRange(targetRow.dataset.id, [{id:'chat901'}, {id:'chat902'}, {id:'chat903'}]) && _dialogControlMultiSelected.has('chat901') && _dialogControlMultiSelected.has('chat902') && !_dialogControlMultiSelected.has('chat903');
+					return { svg, text, generic, lateSearch, managedRow, outside, outsideDiscovery, range };
+				} finally {
+					findContainer = originalFind;
+					_dialogControlManagedRoot = originalManaged;
+					_dialogControlManagedSource = originalSource;
+					window.__PENA_ACTIVE_LIST_CONTEXT__ = originalContext;
+					_dialogControlMultiSelected = originalSelection;
+					_dialogControlMultiSelectionAnchorId = originalAnchor;
+					host.remove();
+				}
+			},
 			repaint() { _dialogControlNativeViewSig = ''; _applyDialogControlNativeView(findContainer(), { forceShow: true }); },
 			repairLayers(row, host) { _syncDialogControlNativeAvatarLayers(row, host); },
 			syncStableTracker() {
@@ -19,13 +60,22 @@ const source = raw.replace(anchor, `${anchor}
 				finally { _readDialogTimeTracker = originalRead; }
 			},
 			nativeRowReads: 0,
+			eventRowDiscoveryReads: 0,
 			scans: 0
 		};
 		const originalRows = _getDialogControlNativeRows;
+		const originalEventRow = _getDialogControlNativeEventRow;
+		_getDialogControlNativeEventRow = function(...args) {
+			const originalFind = findContainer;
+			findContainer = function(...findArgs) { window.__PENA_DOM_AUDIT__.eventRowDiscoveryReads++; return originalFind.apply(this, findArgs); };
+			try { return originalEventRow.apply(this, args); }
+			finally { findContainer = originalFind; }
+		};
 		_getDialogControlNativeRows = function(...args) { window.__PENA_DOM_AUDIT__.nativeRowReads++; return originalRows.apply(this, args); };
 		const originalResolve = _resolveNativeLifecycleCandidates;
 		_resolveNativeLifecycleCandidates = function(...args) { window.__PENA_DOM_AUDIT__.scans++; return originalResolve.apply(this, args); };
-`);
+`).replace('\t\t\tconst knownRouteLists = new Set(document.querySelectorAll(routeListSelector));',
+ '\t\t\tconst knownRouteLists = new Set(document.querySelectorAll(routeListSelector));\nwindow.__PENA_DOM_AUDIT__.knownRouteListCount = () => knownRouteLists.size;\nwindow.__PENA_DOM_AUDIT__.hasRouteList = list => knownRouteLists.has(list);');
 const server = await startHarnessServer();
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
@@ -81,12 +131,14 @@ try {
   let nativeClicks = 0;
   outsideButton.addEventListener('click', () => nativeClicks++);
   const rowReadsBefore = window.__PENA_DOM_AUDIT__.nativeRowReads;
+  const discoveryReadsBefore = window.__PENA_DOM_AUDIT__.eventRowDiscoveryReads;
   for (let index = 0; index < 20; index++) {
    outsideButton.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }));
    outsideButton.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
    outsideButton.click();
   }
   const outsideRowReads = window.__PENA_DOM_AUDIT__.nativeRowReads - rowReadsBefore;
+  const outsideDiscoveryReads = window.__PENA_DOM_AUDIT__.eventRowDiscoveryReads - discoveryReadsBefore;
   outsideButton.remove();
   // A native typing/status node can be replaced without a row identity change.
   const row = rows.find(candidate => candidate.querySelector('.pena-native-avatar-ring'));
@@ -106,7 +158,69 @@ try {
    nativeOverlayPreserved = replacement.parentElement === host && replacement.classList.contains('pena-native-avatar-native-overlay') && ring.parentElement === host;
    replacement.remove();
   }
-  return { rows: rows.length, mutationRecords: mutations.length, repaintMs: durations, sourceStable, scrollStable: viewport.scrollTop === top, toolbarScans, nativeOverlayPreserved, stableTrackerMutations: labelMutations.length, outsideRowReads, nativeClicks };
+  return { rows: rows.length, mutationRecords: mutations.length, repaintMs: durations, sourceStable, scrollStable: viewport.scrollTop === top, toolbarScans, nativeOverlayPreserved, stableTrackerMutations: labelMutations.length, outsideRowReads, outsideDiscoveryReads, nativeClicks };
+ });
+ result.eventRowContracts = await page.evaluate(() => window.__PENA_DOM_AUDIT__.eventRowContracts());
+ const routeNoise = await page.evaluate(async () => {
+  const host = document.createElement('div');
+  host.id = 'native-message-attribute-noise';
+  host.innerHTML = '<div class="native-message"><span>Message</span></div>'.repeat(4000);
+  document.body.append(host);
+  await new Promise(resolve => requestAnimationFrame(resolve));
+  let routeSubtreeQueries = 0;
+  const originalQuery = host.querySelector.bind(host);
+  const originalQueries = host.querySelectorAll.bind(host);
+  host.querySelector = selector => { if (/bx-im-list-container|pena-native-folder-switcher/.test(selector)) routeSubtreeQueries++; return originalQuery(selector); };
+  host.querySelectorAll = selector => { if (/bx-im-list-container|pena-native-folder-switcher/.test(selector)) routeSubtreeQueries++; return originalQueries(selector); };
+  const scansBefore = window.__PENA_DOM_AUDIT__.scans;
+  for (let index = 0; index < 40; index++) {
+   host.classList.toggle('native-active');
+   host.style.opacity = index % 2 ? '1' : '.99';
+   await new Promise(resolve => requestAnimationFrame(resolve));
+  }
+  await new Promise(resolve => requestAnimationFrame(resolve));
+  const unrelatedRouteScans = window.__PENA_DOM_AUDIT__.scans - scansBefore;
+  host.remove();
+  return { routeSubtreeQueries, unrelatedRouteScans };
+ });
+ Object.assign(result, routeNoise);
+ // The task source was present but hidden at connection time. An attribute on
+ // that inactive ancestor must still switch the actual lifecycle context.
+ await page.evaluate(() => { document.querySelector('.recent-host').hidden = true; document.querySelector('.task-host').hidden = false; });
+ await page.waitForFunction(() => window.__PENA_ACTIVE_LIST_CONTEXT__?.mode === 'tasks', null, { timeout: 5000 });
+ result.inactiveAncestorActivated = true;
+ await page.evaluate(() => { document.querySelector('.recent-host').hidden = false; document.querySelector('.task-host').hidden = true; });
+ await page.waitForFunction(() => window.__PENA_ACTIVE_LIST_CONTEXT__?.mode === 'chats', null, { timeout: 5000 });
+ result.detachedRouteCache = await page.evaluate(async () => {
+  const count = window.__PENA_DOM_AUDIT__.knownRouteListCount;
+  if (!count) return null;
+  const before = count();
+  const first = document.createElement('div');
+  const second = document.createElement('div');
+  first.hidden = second.hidden = true;
+  first.innerHTML = '<div class="bx-im-list-container-task__elements"></div>';
+  second.innerHTML = '<div class="bx-im-list-container-task__elements"></div>';
+  document.body.append(first);
+  document.body.append(second);
+  // The first addition makes records.some() stop. The second ancestor changes
+  // before the queued RAF, then must remain in inventory for later attributes.
+  await Promise.resolve();
+  second.hidden = false;
+  for (let frame = 0; frame < 3; frame++) await new Promise(resolve => requestAnimationFrame(resolve));
+  const sameBatchSecondRegistered = window.__PENA_DOM_AUDIT__.hasRouteList(second.firstElementChild);
+  first.remove(); second.remove();
+  for (let frame = 0; frame < 2; frame++) await new Promise(resolve => requestAnimationFrame(resolve));
+  for (let index = 0; index < 12; index++) {
+   const shell = document.createElement('div');
+   shell.hidden = true;
+   shell.innerHTML = '<div class="bx-im-list-container-task__elements"></div>';
+   document.body.append(shell);
+   await new Promise(resolve => requestAnimationFrame(resolve));
+   shell.remove();
+   await new Promise(resolve => requestAnimationFrame(resolve));
+  }
+  await new Promise(resolve => requestAnimationFrame(resolve));
+  return { before, after: count(), sameBatchSecondRegistered };
  });
  // The extension on/off control runs even before Messenger exists. Unrelated
  // task/message renders must not restart document-wide header discovery.
@@ -143,9 +257,16 @@ try {
  assert.equal(result.nativeOverlayPreserved, true, 'Replaced native typing overlay lost its layer above the ring');
  assert.equal(result.stableTrackerMutations, 0, 'Unchanged compact tracker duration rewrote the native toolbar');
  assert.equal(result.outsideRowReads, 0, 'Native actions outside the list scanned every native row');
+ assert.equal(result.outsideDiscoveryReads, 0, 'Native actions outside the list entered layout-sensitive list discovery');
+ assert.deepEqual(result.eventRowContracts, { svg: true, text: true, generic: true, lateSearch: true, managedRow: true, outside: true, outsideDiscovery: 0, range: true }, 'Early event filtering broke native row targeting, late source discovery, or range selection');
  assert.equal(result.nativeClicks, 20, 'PENA intercepted an unrelated native action');
  assert.equal(result.absentHeaderRescans, 0, 'Missing header retried discovery on unrelated message renders');
  assert.equal(result.lateToolbarMounted, true, 'Header appearing after unrelated renders did not mount its controls');
+ assert.equal(result.routeSubtreeQueries, 0, 'Class/style changes rescanned the unrelated 4000-message subtree');
+ assert.equal(result.unrelatedRouteScans, 0, 'Unrelated attributes triggered full native route reconciliation');
+ assert.equal(result.inactiveAncestorActivated, true, 'Hidden inactive ancestor was omitted from native route detection');
+ assert.ok(result.detachedRouteCache && result.detachedRouteCache.after <= result.detachedRouteCache.before, 'Removed route lists leaked from the lifecycle candidate cache');
+ assert.equal(result.detachedRouteCache.sameBatchSecondRegistered, true, 'Early observer exit lost the second source inserted in the same mutation batch');
  assert.deepEqual(errors, [], `Page errors: ${errors.join('\n')}`);
  console.log(`PASS native DOM mutation budget: ${result.rows} rows, ${result.mutationRecords} mutations / 10 repaints, ${result.toolbarScans} toolbar route scans`);
 } finally {

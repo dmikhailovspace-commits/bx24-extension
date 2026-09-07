@@ -12,7 +12,8 @@ const root = resolve(import.meta.dirname, '..');
 const extension = resolve(process.env.PENA_EXTENSION_DIR || resolve(root, 'extension'));
 const label = process.env.PENA_CONTENTION_LABEL || 'current';
 const baselineOnly = process.env.PENA_CONTENTION_REPORT_ONLY === '1';
-const durationMs = Number(process.env.PENA_CONTENTION_DURATION_MS) || 5000;
+const samplesPerPhase = 24;
+const phaseTimeoutMs = 60000;
 const domCount = Number(process.env.PENA_CONTENTION_DOM_COUNT) || 4000;
 const output = resolve(root, `tests/artifacts/acceptance-audit-${label}.json`);
 const percentile = (xs, q) => xs.length ? xs.slice().sort((a,b)=>a-b)[Math.ceil(xs.length*q)-1] : 0;
@@ -89,11 +90,19 @@ const boot = `(${function() {
     },100);
   };
 }.toString()})();`;
-let html=readFileSync(resolve(root,'tests/native-resume-recovery-harness.html'),'utf8')
+const fixtureSource=readFileSync(resolve(root,'tests/native-resume-recovery-harness.html'),'utf8');
+const inheritedGuardSampler='setInterval(sampleGuard, 16);';
+assert.equal(fixtureSource.split(inheritedGuardSampler).length-1,1,'Inherited recovery sampler anchor changed; review fixture CPU overhead');
+let html=fixtureSource
+  // This is instrumentation for recovery tests, not Bitrix runtime. At 60 Hz
+  // it searches the whole document and reads scrollHeight, forcing layout on
+  // the mutation load being measured here. Our RAF sampler performs no DOM reads.
+  .replace(inheritedGuardSampler,'')
   .replace(/^.*window\.__PENA_(?:TEST_|FORCE_REST_CATALOG).*$/gm,'')
   .replace('const controlled = Number(delay) === 60 * 1000;','const controlled = false;')
   .replace('#anit-filters, #anit-dialog-control-dock { display: none !important; }','')
   .replace('<script src="../extension/native-catalog.js">',`<script>${boot}</script><script src="../extension/native-catalog.js">`);
+assert(!html.includes(inheritedGuardSampler),'Contention fixture must not run the inherited layout-reading guard sampler');
 const server=createServer((request,response)=>{
   const url=new URL(request.url,'http://localhost');
   if(url.pathname==='/__latency') { queued.push({response,kind:url.searchParams.get('kind'),at:performance.now()});pump();return; }
@@ -106,7 +115,7 @@ const server=createServer((request,response)=>{
 });
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const browser=await chromium.launch({headless:true});
-const report={label,at:new Date().toISOString(),source:{extension,sha256:createHash('sha256').update(readFileSync(resolve(extension,'injected.js'))).digest('hex')},configuration:{durationMs,domCount,cpuSlowdown:4,httpSlots:4,httpServiceMs:80,productionFlags:true},limitations:['Synthetic Bitrix SDK responses; controlled actual HTTP transport, not real Bitrix authentication/backend.','No full desktop-client installation or real portal measurement.','Native synthetic action handlers complete actual HTTP requests; trusted browser clicks are used.'],arms:[]};
+const report={label,at:new Date().toISOString(),source:{extension,sha256:createHash('sha256').update(readFileSync(resolve(extension,'injected.js'))).digest('hex')},configuration:{protocol:2,samplesPerPhase,phaseTimeoutMs,inheritedGuardSampler:false,domCount,cpuSlowdown:4,httpSlots:4,httpServiceMs:80,productionFlags:true},limitations:['Synthetic Bitrix SDK responses; controlled actual HTTP transport, not real Bitrix authentication/backend.','No full desktop-client installation or real portal measurement.','Native synthetic action handlers complete actual HTTP requests; trusted browser clicks are used.'],arms:[]};
 try {
   for(const enabled of [false,true]) {
     const page=await browser.newPage({viewport:{width:1100,height:800}}); const errors=[];page.on('pageerror',e=>errors.push(String(e)));
@@ -127,9 +136,14 @@ try {
         window.__contention.phase=phase;
         if(phase==='settled') window.__contention.warmStartStatus=window.__PENA_NATIVE_PREFETCH__?.status?.();
       },phase);
-      const deadline=Date.now()+durationMs; let i=0;
-      while(Date.now()<deadline) {
-        await page.locator(i++%2 ? '#native-task':'#native-send').click({timeout:10000});
+      const deadline=Date.now()+phaseTimeoutMs;
+      for(let i=0;i<samplesPerPhase;i++) {
+        assert(Date.now()<deadline,`${phase} did not complete its fixed sample count within ${phaseTimeoutMs} ms`);
+        await page.locator(i%2 ? '#native-task':'#native-send').click({timeout:10000});
+        // Same number of completed actions in both arms. A fixed 5-second
+        // sampling window made p95 equal to the single worst action when a
+        // slower runner completed <20 samples, but excluded it in the other arm.
+        await page.waitForFunction(({phase,count})=>window.__contention.samples.filter(sample=>sample.phase===phase).length>=count,{phase,count:i+1},{timeout:10000});
         await page.waitForTimeout(140);
       }
     }
@@ -137,14 +151,23 @@ try {
     const data=await page.evaluate(()=>{clearInterval(__contention.noiseTimer);__contention.measuring=false;return {...__contention,noiseTimer:undefined,status:window.__PENA_NATIVE_PREFETCH__?.status?.(),restDiagnostic:window.__PENA_REST_DIAGNOSTICS__?.snapshot?.()};});
     const arm={enabled,errors,...data,server:serverSamples.slice(serverStart),statistics:{inputToHandler:summary(data.samples.map(s=>s.inputToHandlerMs)),inputToPaint:summary(data.samples.map(s=>s.inputToPaintMs)),completion:summary(data.samples.map(s=>s.completionMs)),paint:summary(data.samples.map(s=>s.paintMs)),frames:summary(data.frames),longtasks:summary(data.longtasks.map(s=>s.duration)),phases:Object.fromEntries(['startup','settled'].map(phase=>[phase,{inputToHandler:summary(data.samples.filter(s=>s.phase===phase).map(s=>s.inputToHandlerMs)),inputToPaint:summary(data.samples.filter(s=>s.phase===phase).map(s=>s.inputToPaintMs)),completion:summary(data.samples.filter(s=>s.phase===phase).map(s=>s.completionMs)),paint:summary(data.samples.filter(s=>s.phase===phase).map(s=>s.paintMs))}]))}};
     report.arms.push(arm);console.log(JSON.stringify({enabled,...arm.statistics,observers:arm.observers.map(o=>({targets:o.targets,calls:o.calls,ms:o.ms,max:o.max})),rest:data.rest.length}));
-    assert.equal(data.samples.length>10,true,'Need enough completed native samples');assert(data.samples.every(s=>s.trusted),'Use trusted native input');assert.deepEqual(errors.concat(data.errors),[]);
+    assert.equal(data.samples.length,samplesPerPhase*2,'Both arms must finish the same number of native samples');
+    for(const phase of ['startup','settled']) assert.equal(data.samples.filter(sample=>sample.phase===phase).length,samplesPerPhase,`Completed sample count differs in ${phase}`);
+    assert(data.samples.every(s=>s.trusted),'Use trusted native input');assert.deepEqual(errors.concat(data.errors),[]);
     await page.close();
   }
   const [off,on]=report.arms;
+  assert.equal(off.samples.length,on.samples.length,'A/B completed sample counts must match');
   report.ratios={inputToPaintP95:on.statistics.inputToPaint.p95/off.statistics.inputToPaint.p95,nativeCompletionP95:on.statistics.completion.p95/off.statistics.completion.p95,nativePaintP95:on.statistics.paint.p95/off.statistics.paint.p95,frameP95:on.statistics.frames.p95/off.statistics.frames.p95};
+  const budget=(offStats,onStats)=>({
+    nativeCompletion:{actualP95:onStats.completion.p95,limitP95:Math.max(300,offStats.completion.p95*2)},
+    inputToPaint:{actualP95:onStats.inputToPaint.p95,limitP95:Math.max(350,offStats.inputToPaint.p95*2)}
+  });
+  report.budgets={combined:budget(off.statistics,on.statistics),...Object.fromEntries(['startup','settled'].map(phase=>[phase,budget(off.statistics.phases[phase],on.statistics.phases[phase])]))};
   if(!baselineOnly) {
-    assert(on.statistics.completion.p95<=Math.max(300,off.statistics.completion.p95*2),'Enabled native HTTP completion regressed beyond A/B budget');
-    assert(on.statistics.inputToPaint.p95<=Math.max(350,off.statistics.inputToPaint.p95*2),'Enabled input-to-paint regressed beyond A/B budget');
+    for(const [phase,checks] of Object.entries(report.budgets)) for(const [metric,check] of Object.entries(checks)) {
+      assert(check.actualP95<=check.limitP95,`${phase} ${metric} p95 ${check.actualP95.toFixed(1)} ms exceeded A/B budget ${check.limitP95.toFixed(1)} ms`);
+    }
   }
 } finally {
   mkdirSync(resolve(root,'tests/artifacts'),{recursive:true});writeFileSync(output,JSON.stringify(report,null,2));await browser.close();await new Promise(resolve=>server.close(resolve));

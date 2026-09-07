@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.92';
+	window.__ANITREC_RUNNING__ = '7.5.93';
 
-	const VER = '7.5.92';
+	const VER = '7.5.93';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -17874,6 +17874,11 @@ if (_presetChannel) {
 		const el = target?.nodeType === 1 ? target : target?.parentElement;
 		if (!el) return null;
 		if (el.closest?.('#anit-filters,#anit-dialog-control-dock,.dialog-control-palette,[data-dialog-control-context-menu="1"],.pena-native-folder-switcher')) return null;
+		// Native composer/task clicks do not need list discovery or its visibility
+		// reads. Use ancestry so a newly mounted list also works before lifecycle
+		// context is attached, and retain generic/typed row fallbacks inside it.
+		if (!el.closest?.('.bx-im-list-container-task__elements,.bx-im-list-container-recent__elements') &&
+			!_dialogControlManagedRoot?.contains?.(el)) return null;
 		const container = findContainer();
 		if (!container?.contains?.(el) && !_dialogControlManagedRoot?.contains?.(el)) return null;
 		const selector = '.bx-im-list-recent-item__wrap,.bx-im-list-item,.bx-messenger-cl-item,[data-dialog-id],[data-dialog-id-value],[data-dialogid]';
@@ -28405,15 +28410,31 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 				'.bx-im-list-container-recent__scroll-container', '.bx-im-list-container-task__scroll-container',
 				'.bx-im-list-recent__scroll-container', '.bx-im-list-task__scroll-container'
 			].join(',');
-			const containsRouteList = node => !!(
-				node?.nodeType === 1 && (
-					node.matches?.(`${routeListSelector},${routeShellSelector},.pena-native-folder-switcher`) ||
-					node.querySelector?.(`${routeListSelector},.pena-native-folder-switcher`)
-				)
-			);
+			// Keep hidden sources too: switching an inactive host to visible must be
+			// detected without searching every message/task subtree on class changes.
+			const knownRouteLists = new Set(document.querySelectorAll(routeListSelector));
+			const refreshRouteLists = () => {
+				knownRouteLists.clear();
+				document.querySelectorAll(routeListSelector).forEach(list => knownRouteLists.add(list));
+			};
+			const containsRouteList = node => {
+				if (node?.nodeType !== 1) return false;
+				if (node.matches?.(routeListSelector)) { knownRouteLists.add(node); return true; }
+				if (node.matches?.(`${routeShellSelector},.pena-native-folder-switcher`)) return true;
+				const descendants = node.querySelectorAll?.(`${routeListSelector},.pena-native-folder-switcher`) || [];
+				descendants.forEach(list => { if (list.matches?.(routeListSelector)) knownRouteLists.add(list); });
+				return descendants.length > 0;
+			};
 			_nativeLifecycleDisconnect = lifecycle.connect({
 				root: document.body || document.documentElement,
-				resolveCandidates: _resolveNativeLifecycleCandidates,
+				resolveCandidates() {
+					const candidates = _resolveNativeLifecycleCandidates();
+					// A move is connected again by the end of the mutation batch; only
+					// then rebuild the inventory. records.some() can skip later added
+					// nodes; even hidden sources excluded by candidate geometry belong here.
+					refreshRouteLists();
+					return candidates;
+				},
 				resolvePreferredMode: () => getPanelModeKey() === 'tasks' ? 'tasks' : 'chats',
 				onRelevantMutation() {
 					const visibleMode = getPanelModeKey() === 'tasks' ? 'tasks' : 'chats';
@@ -28430,9 +28451,12 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 					// Child insertion/removal still repairs a moved/replaced switcher;
 					// native host/viewport and ancestor visibility remain observed.
 					if (target.closest?.('.pena-native-folder-switcher')) return false;
-					if (containsRouteList(target)) return true;
-					const active = window.__PENA_ACTIVE_LIST_CONTEXT__;
-					return !!(active?.host && (target === active.host || target.contains?.(active.host)));
+					if (target.matches?.(routeListSelector)) knownRouteLists.add(target);
+					if (target.matches?.(`${routeListSelector},${routeShellSelector}`)) return true;
+					for (const list of knownRouteLists) {
+						if (target === list || target.contains?.(list)) return true;
+					}
+					return false;
 				}
 			});
 			routeObs = { disconnect: () => _nativeLifecycleDisconnect?.() };
