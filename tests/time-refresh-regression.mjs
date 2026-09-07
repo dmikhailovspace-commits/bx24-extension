@@ -222,6 +222,37 @@ try {
   }
   return {afterQueueExtraReads:0,slowServerLoggedTaskRechecks:1};
  });
+ const titleFixture = (known = false) => {
+  const state={scope:'portal:7',batches:[],commits:[],nativeFinds:0,gate:null,partial:false,clock:1000000};
+  class TitleDate extends Date { static now(){return state.clock;} }
+  const api={Date:TitleDate,Promise,document:{visibilityState:'visible'},navigator:{onLine:true},_dialogControlNativeWorkspaceTab:'time',
+   _dialogTimeTitleLoadPromise:null,_dialogTimeTitleLoadQueued:false,_dialogTimeTaskTitles:new Map(known?Array.from({length:50},(_,i)=>[String(i+1),'Task '+(i+1)]):[]),_dialogTimeTaskTitleAttempted:new Map(),
+   _getDialogNativeSharedAuditScopeKey:()=>state.scope,_readDialogTimeVisits:()=>[],_findDialogTimeTaskItem:()=>{state.nativeFinds++;return null;},_isDialogTimePlaceholderTaskTitle:(id,title)=>!title,
+   _getFreshDialogTimeTaskEligibility:()=>null,_queueDialogTimeUiSync:()=>{},_sleepDialogControl:async()=>{},
+   _rememberDialogTimeTaskEligibility:(id,data)=>{state.commits.push(id);api._dialogTimeTaskTitles.set(id,data.task.title);},
+   _callBxRestPagesFast:async(jobs,timeout,options)=>{assert.equal(options.isCurrent(),true);state.batches.push(jobs.map(j=>j.params.taskId));if(state.gate)await state.gate.promise;
+    const pages=jobs.map(j=>({data:{task:{id:j.params.taskId,title:'Task '+j.params.taskId}}}));
+    if(state.partial){pages[0]=undefined;throw Object.assign(new Error('partial'),{partialPages:pages});}return pages;}
+  };vm.createContext(api);vm.runInContext(extract('_loadDialogTimeTaskTitles'),api);return{state,api};
+ };
+ await phase('known titles never create eligibility-only hydration requests',async()=>{
+  const {state,api}=titleFixture(true);await api._loadDialogTimeTaskTitles({tasks:Array.from({length:50},(_,i)=>({taskId:String(i+1)}))});assert.equal(state.batches.length,0);assert.equal(state.nativeFinds,0);
+  return{knownTitles:50,baselineSingleGets:50,currentRequests:0};
+ });
+ await phase('missing title batches stop on close or scope change and reject late commits',async()=>{
+  for(const kind of ['close','scope']){
+   const {state,api}=titleFixture();state.gate=deferred();const request=api._loadDialogTimeTaskTitles({tasks:Array.from({length:120},(_,i)=>({taskId:String(i+1)}))});
+   assert.equal(state.batches.length,1);if(kind==='close')api._dialogControlNativeWorkspaceTab='';else state.scope='portal:8';state.gate.resolve();await request;
+   assert.equal(state.batches.length,1);assert.equal(state.commits.length,0);assert.equal(api._dialogTimeTaskTitleAttempted.size,0);
+  }return{sentBatches:1,unsentTailTasks:70,lateCommits:0};
+ });
+ await phase('title hydration combines history with current data and preserves partial successes',async()=>{
+  const {state,api}=titleFixture();state.partial=true;
+  const data={tasks:Array.from({length:25},(_,i)=>({taskId:String(i+1)}))},visits=Array.from({length:25},(_,i)=>({taskId:String(i+26),title:''}));
+  await api._loadDialogTimeTaskTitles(data,visits);assert.equal(state.batches.length,1);assert.equal(state.batches[0].length,50);assert.equal(state.commits.length,49);
+  state.partial=false;state.clock+=61000;await api._loadDialogTimeTaskTitles(data,visits);assert.equal(state.batches.length,2);assert.deepEqual(Array.from(state.batches[1]),['1']);
+  return{firstBatchTasks:50,preservedSuccessfulTitles:49,retryTaskCount:1};
+ });
  console.log(`PASS time refresh: ${phases.length} phases`);
 } finally {
  mkdirSync(new URL('./artifacts/',import.meta.url),{recursive:true});

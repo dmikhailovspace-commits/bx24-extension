@@ -238,9 +238,9 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' \
-            'Mark as read now reads the full conversation. Read-later removal is a separate action.' \
-            'Uses native Desktop batches and task-level freshness; elapsed history includes all accessible tasks and retains previously logged time after tracking is disabled.' \
-            'Hardens contact persistence, concurrent writes, timer day boundaries and recovery after an uncertain server response.' \
+            'Keeps employee selectors and mention inputs owned by Bitrix, including when the native list header is absent or replaced.' \
+            'Avoids unrelated popup subtree scans and batches lifecycle mutation checks while preserving native source discovery and recovery.' \
+            'Cancels obsolete title requests, batches missing titles, builds time candidates in linear work and coalesces overlapping repository writes.' \
             'All registered functional, concurrency, layout and performance suites gate this release.' \
             'Controlled tests are not a live Bitrix latency measurement. The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \
             'Includes Windows EXE and Universal macOS DMG for Intel and Apple Silicon.' \

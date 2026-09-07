@@ -704,14 +704,22 @@
 				});
 			};
 			const observer = new Constructor(records => {
-				const relevant = !Array.isArray(records) || records.some(record => {
-					if (typeof details.isRelevantMutation === 'function') {
-						try { return details.isRelevantMutation(record) === true; }
+				const isRelevantBatch = () => {
+					if (!Array.isArray(records)) return true;
+					if (typeof details.isRelevantMutations === 'function') {
+						try { return details.isRelevantMutations(records) === true; }
 						catch (_) { return true; }
 					}
-					if (!record || record.type === 'childList') return true;
-					return record.type === 'attributes' && OBSERVED_ATTRIBUTES.includes(record.attributeName);
-				});
+					return records.some(record => {
+						if (typeof details.isRelevantMutation === 'function') {
+							try { return details.isRelevantMutation(record) === true; }
+							catch (_) { return true; }
+						}
+						if (!record || record.type === 'childList') return true;
+						return record.type === 'attributes' && OBSERVED_ATTRIBUTES.includes(record.attributeName);
+					});
+				};
+				const relevant = isRelevantBatch();
 				if (relevant) {
 					// Let consumers invalidate mode-bound presentation synchronously.
 					// The heavier candidate reconciliation remains frame-batched below.

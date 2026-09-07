@@ -562,7 +562,43 @@ function testBrowserObserverConnection() {
 	controller.dispose();
 }
 
+function testBatchMutationClassifier() {
+	FakeMutationObserver.instances.length = 0;
+	const fixture = makeFixture();
+	const { controller } = makeController(fixture);
+	const frames = [];
+	let batchCalls = 0, recordCalls = 0, invalidations = 0;
+	const details = {
+		root: fixture.root,
+		MutationObserver: FakeMutationObserver,
+		requestAnimationFrame: callback => { frames.push(callback); return frames.length; },
+		cancelAnimationFrame() {},
+		resolveCandidates: () => [candidate(fixture.chats)],
+		onRelevantMutation: () => invalidations++,
+		isRelevantMutation() { recordCalls++; return true; },
+		isRelevantMutations(records) {
+			assert.equal(this, details, 'batch consumer retains connection methods');
+			batchCalls++;
+			if (records[0]?.throws) throw new Error('unknown mutation');
+			return records.some(record => record.relevant);
+		}
+	};
+	controller.connect(details);
+	const observer = FakeMutationObserver.instances[0];
+	observer.emit(Array.from({ length: 240 }, () => ({ type: 'childList' })));
+	assert.equal(batchCalls, 1);
+	assert.equal(recordCalls, 0, 'batch classification must replace per-record scans');
+	assert.equal(frames.length, 0);
+	observer.emit([{ type: 'childList' }, { type: 'childList', relevant: true }]);
+	assert.equal(frames.length, 1, 'later records cannot be omitted from the batch');
+	observer.emit([{ throws: true }]);
+	assert.equal(invalidations, 2, 'unknown classification must fail open for source recovery');
+	assert.equal(frames.length, 1, 'relevant deliveries still coalesce into one frame');
+	controller.dispose();
+}
+
 const tests = [
+	['batch mutation classification and fail-open recovery', testBatchMutationClassifier],
 	['browser publication', testBrowserPublication],
 	['hidden/class/style/aria visibility', testVisibilitySignals],
 	['catalog and recovery health separation', testDialogSyncHealthSeparation],

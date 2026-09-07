@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "7.5.95",
+  "version": "7.5.96",
   "release_date": "2026-09-07",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.95",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.95",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.96",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.96",
   "extension_files": [
-    "worker-v7_5_95.js",
+    "worker-v7_5_96.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,6 +33,6 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.95/extension/injected.js",
-  "changelog": "v7.5.95: reads complete task conversations; separates read-later removal; adds native Desktop batching, complete elapsed coverage, fresh task-level updates and durable contact/timer recording"
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.96/extension/injected.js",
+  "changelog": "v7.5.96: preserves native employee and mention search input; eliminates unrelated DOM scans and toolbar refresh loops; cancels obsolete title queries, indexes time candidates and coalesces concurrent catalog writes"
 }

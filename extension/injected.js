@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.95';
+	window.__ANITREC_RUNNING__ = '7.5.96';
 
-	const VER = '7.5.95';
+	const VER = '7.5.96';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -2857,6 +2857,14 @@
 		_dialogRecentCacheWriteTimer = null;
 		_dialogRecentCacheIdleHandle = null;
 		if (!_dialogRecentRepositoryReady || !_dialogRecentRepositoryAvailable || !_dialogRecentRepositoryScope) return;
+		const scopeRef = _dialogRecentRepositoryScope;
+		const scope = { ...scopeRef };
+		const scopeKey = `${scope.portalHost}~${scope.userId}`;
+		const isCurrent = () => _dialogRecentRepositoryScope === scopeRef && scopeKey === `${_dialogRecentRepositoryScope.portalHost}~${_dialogRecentRepositoryScope.userId}`;
+		if (_dialogRecentCacheWriteFlight?.scopeRef === scopeRef && _dialogRecentCacheWriteFlight.scopeKey === scopeKey) return _dialogRecentCacheWriteFlight.promise;
+		const flight = { scopeKey, scopeRef, promise:null };
+		_dialogRecentCacheWriteFlight = flight;
+		flight.promise = (async () => {
 		try {
 			const repository = window.__PENA_DIALOG_REPOSITORY__;
 			const full = _dialogRecentRepositoryNeedsFullCommit || !_dialogRecentRepositoryManifest;
@@ -2867,11 +2875,12 @@
 			if (full) {
 				const records = _getDialogRecentUniqueMeta().map(_dialogRecentMetaToRecord);
 				result = await repository.commit(
-					_dialogRecentRepositoryScope,
+					scope,
 					records,
 					_getDialogRecentRepositoryMeta(),
 					{ confirmedReplace }
 				);
+				if (!isCurrent()) return;
 				if (_dialogRecentRepositoryFullCommitRevision === fullCommitRevision) {
 					_dialogRecentRepositoryNeedsFullCommit = false;
 					_dialogRecentRepositoryConfirmedReplace = false;
@@ -2885,7 +2894,8 @@
 				const ids = Array.from(_dialogRecentRepositoryDirtyIds);
 				if (!ids.length) return;
 				const records = ids.map(id => _getDialogRecentMeta(id)).filter(Boolean).map(_dialogRecentMetaToRecord);
-				result = await repository.patch(_dialogRecentRepositoryScope, records, [], _getDialogRecentRepositoryMeta());
+				result = await repository.patch(scope, records, [], _getDialogRecentRepositoryMeta());
+				if (!isCurrent()) return;
 				ids.forEach(id => {
 					if (_dialogRecentRepositoryDirtyVersions.get(id) !== capturedVersions.get(id)) return;
 					_dialogRecentRepositoryDirtyVersions.delete(id);
@@ -2904,12 +2914,17 @@
 				_scheduleDialogRecentCacheWrite(80);
 			}
 		} catch (e) {
+			if (!isCurrent()) return;
 			warn('Не удалось сохранить каталог диалогов', e?.message || e);
 			const delays = [1000, 2000, 5000, 15000, 30000, 60000];
 			const delay = delays[Math.min(_dialogRecentRepositoryWriteRetryAttempt, delays.length - 1)];
 			_dialogRecentRepositoryWriteRetryAttempt += 1;
 			_scheduleDialogRecentCacheWrite(delay);
+		} finally {
+			if (_dialogRecentCacheWriteFlight === flight) _dialogRecentCacheWriteFlight = null;
 		}
+		})();
+		return flight.promise;
 	}
 
 	function _scheduleDialogRecentCacheWrite(delay = 180) {
@@ -4503,12 +4518,14 @@
 		return dialogId;
 	}
 
-	function _getDialogTimeTaskChatDialogId(taskId) {
+	function _getDialogTimeTaskChatDialogId(taskId, taskChatIndex = null) {
 		const id = String(taskId || '').trim();
 		if (!/^\d+$/.test(id)) return '';
 		const cached = normId(_dialogTimeTaskChatDialogIds.get(id) || '');
 		if (cached) return cached;
-		const meta = _getDialogRecentUniqueMeta().find(item => item?.isTask === true && String(item.taskId || '') === id);
+		const meta = taskChatIndex
+			? taskChatIndex.get(id)
+			: _getDialogRecentUniqueMeta().find(item => item?.isTask === true && String(item.taskId || '') === id);
 		if (!meta?.id) return '';
 		_dialogTimeTaskChatDialogIds.set(id, normId(meta.id));
 		_dialogTimeTaskIdsByChatDialogId.set(normId(meta.id), id);
@@ -9311,6 +9328,7 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogRecentCacheSavedAt = 0;
 	let _dialogRecentCacheWriteTimer = null;
 	let _dialogRecentCacheIdleHandle = null;
+	let _dialogRecentCacheWriteFlight = null;
 	let _dialogRecentRepositoryBootstrapPromise = null;
 	let _dialogRecentRepositoryReady = false;
 	let _dialogRecentRepositoryAvailable = false;
@@ -9710,19 +9728,29 @@ if (_presetChannel) {
 		return next;
 	}
 
+	function _isPenaNativeListSearchInput(input) {
+		if (!input?.matches?.('input[placeholder],input[type="search"]')) return false;
+		// Entity selectors can have exactly the same placeholder as Messenger.
+		// Ownership comes from the native list header, never from translated copy.
+		const header = input.closest('.bx-im-list-container-task__header_container,.bx-im-list-container-recent__header_container');
+		if (!header) return false;
+		const overlay = input.closest('.ui-selector-dialog,.popup-window,[role="dialog"],#anit-filters,#anit-dialog-control-dock');
+		return !overlay || overlay.contains(header);
+	}
+
 	function _getBitrixListSearchInput() {
 		if (IS_OL_FRAME) return null;
 		const controlled = window.__PENA_ACTIVE_LIST_CONTEXT__?.searchInput;
-		if (controlled?.isConnected && isVisibleElement(controlled)) {
+		if (controlled?.isConnected && _isPenaNativeListSearchInput(controlled) && isVisibleElement(controlled)) {
 			_bitrixSearchSourceInput = controlled;
 			return controlled;
 		}
-		if (_bitrixSearchSourceInput?.isConnected && isVisibleElement(_bitrixSearchSourceInput) && _isElementTopHit(_bitrixSearchSourceInput)) {
+		if (_bitrixSearchSourceInput?.isConnected && _isPenaNativeListSearchInput(_bitrixSearchSourceInput) && isVisibleElement(_bitrixSearchSourceInput) && _isElementTopHit(_bitrixSearchSourceInput)) {
 			return _bitrixSearchSourceInput;
 		}
 		_bitrixSearchSourceInput = null;
-		const candidates = Array.from(document.querySelectorAll('input[placeholder],input[type="search"]'))
-			.filter(input => !input.closest('#anit-filters,#anit-dialog-control-dock') && isVisibleElement(input))
+		const candidates = Array.from(document.querySelectorAll('.bx-im-list-container-task__header_container input,.bx-im-list-container-recent__header_container input'))
+			.filter(input => _isPenaNativeListSearchInput(input) && isVisibleElement(input))
 			.filter(input => /найти.{0,48}(?:задач|чат|диалог|сотрудник)|поиск.{0,32}(?:чат|задач|диалог|сотрудник)/i.test(String(input.placeholder || input.getAttribute('aria-label') || '')));
 		_bitrixSearchSourceInput = candidates.find(_isElementTopHit) || candidates.at(-1) || null;
 		return _bitrixSearchSourceInput;
@@ -9849,7 +9877,7 @@ if (_presetChannel) {
 		queueRefresh();
 		const toolbarSelector = '.bx-im-list-container-task__header_container,.bx-im-list-container-recent__header_container';
 		const searchSelector = 'input[placeholder],input[type="search"]';
-		const isSearchCandidate = node => node?.matches?.(searchSelector) &&
+		const isSearchCandidate = node => _isPenaNativeListSearchInput(node) &&
 			/найти.{0,48}(?:задач|чат|диалог|сотрудник)|поиск.{0,32}(?:чат|задач|диалог|сотрудник)/i.test(String(node.placeholder || node.getAttribute?.('aria-label') || ''));
 		const containsToolbarCandidate = node => {
 			if (node?.nodeType !== 1) return false;
@@ -9857,6 +9885,18 @@ if (_presetChannel) {
 			return Array.from(node.querySelectorAll?.(searchSelector) || []).some(isSearchCandidate);
 		};
 		const observer = new MutationObserver(mutations => {
+			// The lifecycle controller handles list/mode replacement. While this
+			// header is mounted, popup results elsewhere cannot change its controls.
+			// Keep observing its own children so native search remounts are repaired.
+			if (mountedControls?.isConnected) {
+				if (mutations.some(mutation => {
+					if (mutation.type === 'attributes') return isSearchCandidate(mutation.target);
+					// Setting our toggle label must not schedule another refresh frame.
+					if (mutation.target?.closest?.('.pena-extension-toolbar-controls')) return false;
+					return mutation.target === mountedControls || mountedControls.contains?.(mutation.target);
+				})) queueRefresh();
+				return;
+			}
 			// A page without the Messenger header may mutate continuously (messages,
 			// task side panels). Retry discovery only when a candidate actually arrives
 			// or the mounted header is replaced, never on every unrelated render.
@@ -9925,7 +9965,7 @@ if (_presetChannel) {
 	}
 
 	function _preparePenaSearchInput(input) {
-		if (!input) return null;
+		if (!_isPenaNativeListSearchInput(input)) return null;
 		const mode = _pMode();
 		if (!_penaSearchQueriesByMode.has(mode)) {
 			// The native Bitrix input can restore its own stale query before PENA
@@ -9990,7 +10030,7 @@ if (_presetChannel) {
 			_penaSearchFlowArmed = true;
 			const isOwnedSearchEvent = event => {
 				const target = event.target;
-				return target instanceof HTMLInputElement && target.dataset.penaSearchOwner === 'pena';
+				return target instanceof HTMLInputElement && target.dataset.penaSearchOwner === 'pena' && _isPenaNativeListSearchInput(target);
 			};
 			const isolateEvent = event => {
 				if (!isOwnedSearchEvent(event) || event.target === _penaSearchResetInput) return;
@@ -13759,67 +13799,68 @@ if (_presetChannel) {
 			value === id || value === `Задача #${id}`;
 	}
 
-	function _getDialogTimeTaskTitle(taskId, fallback = '') {
+	function _getDialogTimeTaskTitle(taskId, fallback = '', taskTitleIndex = null) {
 		const id = String(taskId || '');
-		const candidates = [
-			_dialogTimeTaskTitles.get(id),
-			_findDialogTimeTaskItem(id)?.title,
-			String(fallback || '').trim()
-		];
-		return candidates.find(title => !_isDialogTimePlaceholderTaskTitle(id, title)) || `Задача #${id}`;
+		const cached = _dialogTimeTaskTitles.get(id);
+		if (!_isDialogTimePlaceholderTaskTitle(id, cached)) return cached;
+		const itemTitle = taskTitleIndex ? taskTitleIndex.get(id) : _findDialogTimeTaskItem(id)?.title;
+		if (!_isDialogTimePlaceholderTaskTitle(id, itemTitle)) return itemTitle;
+		const fallbackTitle = String(fallback || '').trim();
+		return !_isDialogTimePlaceholderTaskTitle(id, fallbackTitle) ? fallbackTitle : `Задача #${id}`;
 	}
 
 	async function _loadDialogTimeTaskTitles(data, visits = _readDialogTimeVisits()) {
+		const visible = () => _dialogControlNativeWorkspaceTab === 'time' && document.visibilityState !== 'hidden' && navigator.onLine !== false;
+		if (!visible()) return null;
 		if (_dialogTimeTitleLoadPromise) {
-			// Activity can arrive from another Bitrix frame while an older title batch is
-			// running. Remember that newer input instead of silently dropping it.
 			_dialogTimeTitleLoadQueued = true;
 			return _dialogTimeTitleLoadPromise;
 		}
+		const scope = _getDialogNativeSharedAuditScopeKey();
+		const isCurrent = () => visible() && scope === _getDialogNativeSharedAuditScopeKey();
 		const fallbackById = new Map(visits.map(visit => [String(visit.taskId || ''), visit.title || '']));
 		const taskIds = Array.from(new Set([
 			...(data?.tasks || []).map(task => String(task.taskId || '')),
 			...visits.map(visit => String(visit.taskId || ''))
 		].filter(id => /^\d+$/.test(id))));
 		taskIds.forEach(id => {
+			if (!_isDialogTimePlaceholderTaskTitle(id, _dialogTimeTaskTitles.get(id))) return;
 			const localTitle = _findDialogTimeTaskItem(id)?.title || fallbackById.get(id) || '';
-			if (!_isDialogTimePlaceholderTaskTitle(id, localTitle) && !_dialogTimeTaskTitles.has(id)) {
-				_dialogTimeTaskTitles.set(id, localTitle);
-			}
+			if (!_isDialogTimePlaceholderTaskTitle(id, localTitle) && !_dialogTimeTaskTitles.has(id)) _dialogTimeTaskTitles.set(id, localTitle);
 		});
 		const now = Date.now();
-		const missing = taskIds.filter(id =>
-			(_isDialogTimePlaceholderTaskTitle(id, _dialogTimeTaskTitles.get(id)) ||
-				_getFreshDialogTimeTaskEligibility(id, now) == null) &&
-			now - (_dialogTimeTaskTitleAttempted.get(id) || 0) >= 60000
-		).slice(0, 50);
+		// Eligibility has its own fresh qualification path. A stale flag is not a reason
+		// to download a known title again while the user works in native Bitrix.
+		const missing = taskIds.filter(id => _isDialogTimePlaceholderTaskTitle(id, _dialogTimeTaskTitles.get(id)) &&
+			now - (_dialogTimeTaskTitleAttempted.get(id) || 0) >= 60000);
 		if (!missing.length) return null;
-		missing.forEach(id => _dialogTimeTaskTitleAttempted.set(id, now));
 		_dialogTimeTitleLoadPromise = (async () => {
-			let cursor = 0;
-			const workers = Array.from({ length: Math.min(4, missing.length) }, async () => {
-				while (cursor < missing.length) {
-					const taskId = missing[cursor++];
-					try {
-						const data = await _callBxRestMethod('tasks.task.get', {
-							taskId,
-							select: ['ID', 'TITLE', 'CHAT_ID', 'ALLOW_TIME_TRACKING']
-						});
-						_rememberDialogTimeTaskEligibility(taskId, data);
-					} catch {
-						const visit = visits.find(item => String(item.taskId || '') === taskId);
-						if (visit && (Number(visit.lastQualifiedAt) > Number(visit.accountedAt) || visit.sessionActive === true)) {
-							_scheduleDialogTimeEligibilityRetry(visit, { passive: true });
-						}
-					}
+			for (let offset = 0; offset < missing.length && isCurrent(); offset += 50) {
+				const ids = missing.slice(offset, offset + 50);
+				let pages = [];
+				try {
+					pages = await _callBxRestPagesFast(ids.map(taskId => ({ method:'tasks.task.get', params:{
+						taskId, select:['ID','TITLE','CHAT_ID','ALLOW_TIME_TRACKING']
+					} })), 12000, { isCurrent });
+				} catch (error) {
+					// Keep successful batch members; a failed/expired batch never fans out
+					// into a second set of individual requests.
+					pages = error.partialPages || [];
 				}
-			});
-			await Promise.allSettled(workers);
+				if (!isCurrent()) break;
+				ids.forEach((id, index) => {
+					_dialogTimeTaskTitleAttempted.set(id, Date.now());
+					if (pages[index]?.data != null) _rememberDialogTimeTaskEligibility(id, pages[index].data);
+				});
+				if (pages.length !== ids.length || ids.some((_, index) => !pages[index])) break;
+				if (offset + 50 < missing.length) await _sleepDialogControl(0);
+			}
 		})().finally(() => {
 			_dialogTimeTitleLoadPromise = null;
-			_queueDialogTimeUiSync();
-			if (_dialogTimeTitleLoadQueued) {
-				_dialogTimeTitleLoadQueued = false;
+			if (isCurrent()) _queueDialogTimeUiSync();
+			const queued = _dialogTimeTitleLoadQueued;
+			_dialogTimeTitleLoadQueued = false;
+			if (queued && visible()) {
 				const selected = _getDialogTimeSelectedRange();
 				const visibleRange = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : selected;
 				const current = _getDialogTimeRecord(visibleRange)?.data || null;
@@ -13831,32 +13872,61 @@ if (_presetChannel) {
 
 	function _getDialogTimeTaskCandidates(data, visits) {
 		const map = new Map();
+		// Build fallback indexes at most once per render. Tasks without CHAT_ID or
+		// a canonical title must not repeatedly scan the whole catalog. These maps
+		// are local so a later catalog update is visible on the very next render.
+		let taskTitleIndex = null;
+		let taskChatIndex = null;
+		const getTitle = (taskId, fallback = '') => {
+			if (!taskTitleIndex && _isDialogTimePlaceholderTaskTitle(taskId, _dialogTimeTaskTitles.get(taskId))) {
+				taskTitleIndex = new Map();
+				for (const mode of ['tasks', 'chats']) {
+					for (const item of _getDialogControlItemsForMode(mode)) {
+						if (_isDialogControlFolder(item)) continue;
+						for (const id of [String(item.taskId || ''), _extractTaskIdFromTaskUrl(item.taskUrl || '')]) {
+							if (id && !taskTitleIndex.has(id)) taskTitleIndex.set(id, item.title);
+						}
+					}
+				}
+			}
+			return _getDialogTimeTaskTitle(taskId, fallback, taskTitleIndex);
+		};
+		const getChatId = taskId => {
+			if (!normId(_dialogTimeTaskChatDialogIds.get(taskId) || '') && !taskChatIndex) {
+				taskChatIndex = new Map();
+				for (const item of _getDialogRecentUniqueMeta()) {
+					const id = String(item?.taskId || '');
+					if (item?.isTask === true && id && !taskChatIndex.has(id)) taskChatIndex.set(id, item);
+				}
+			}
+			return _getDialogTimeTaskChatDialogId(taskId, taskChatIndex);
+		};
 		visits.filter(visit => {
 			const taskId = String(visit.taskId || '');
 			const qualified = Number(visit.visits) > 0 && Number(visit.lastQualifiedAt) > 0;
 			return /^\d+$/.test(taskId) && _getDialogTimeTaskEligibilityForDisplay(taskId) && qualified;
 		}).forEach(visit => {
 			const taskId = String(visit.taskId);
-			const title = _getDialogTimeTaskTitle(taskId, visit.title);
+			const title = getTitle(taskId, visit.title);
 			if (title === `Задача #${taskId}`) return;
 			map.set(taskId, { taskId, title, dialogId: visit.dialogId || '', visitedAt: visit.visitedAt || 0 });
 		});
 		(data?.tasks || []).forEach(task => {
 			const id = String(task.taskId || '');
 			if (!id || id === 'unknown' || !_getDialogTimeTaskEligibilityForDisplay(id)) return;
-			const title = _getDialogTimeTaskTitle(id);
+			const title = getTitle(id);
 			if (title === `Задача #${id}`) return;
 			map.set(id, { ...(map.get(id) || {}), taskId: id, title, trackedSeconds: task.seconds || 0 });
 		});
 		_getDialogTimeEligibleTaskIds().forEach(taskId => {
-			if (!map.has(taskId)) map.set(taskId, { taskId, title: _getDialogTimeTaskTitle(taskId), dialogId: _getDialogTimeTaskChatDialogId(taskId) });
+			if (!map.has(taskId)) map.set(taskId, { taskId, title: getTitle(taskId), dialogId: getChatId(taskId) });
 		});
 		const selected = _dialogTimeManualSelectedTask;
 		if (selected?.taskId && _getDialogTimeTaskEligibilityForDisplay(String(selected.taskId))) {
 			map.set(String(selected.taskId), {
 				...(map.get(String(selected.taskId)) || {}),
 				taskId: String(selected.taskId),
-				title: _getDialogTimeTaskTitle(String(selected.taskId), selected.title),
+				title: getTitle(String(selected.taskId), selected.title),
 				dialogId: selected.dialogId || ''
 			});
 		}
@@ -28565,9 +28635,9 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 	function _findNativeLifecycleSearchInput(list, mode) {
 		const matcher = mode === 'tasks' ? /задач/i : /чат|диалог/i;
 		let ancestor = list?.parentElement || null;
-		for (let depth = 0; ancestor && depth < 10; depth += 1, ancestor = ancestor.parentElement) {
-			const inputs = Array.from(ancestor.querySelectorAll?.('input[type="search"],input[placeholder]') || [])
-				.filter(input => isVisibleElement(input) && matcher.test(String(input.placeholder || input.getAttribute?.('aria-label') || '')));
+		for (let depth = 0; ancestor && ancestor !== document.body && ancestor !== document.documentElement && depth < 10; depth += 1, ancestor = ancestor.parentElement) {
+			const inputs = Array.from(ancestor.querySelectorAll?.('.bx-im-list-container-task__header_container input,.bx-im-list-container-recent__header_container input') || [])
+				.filter(input => _isPenaNativeListSearchInput(input) && isVisibleElement(input) && matcher.test(String(input.placeholder || input.getAttribute?.('aria-label') || '')));
 			if (inputs.length) return inputs.find(_isElementTopHit) || inputs[0];
 		}
 		return null;
@@ -28894,9 +28964,16 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 				if (node?.nodeType !== 1) return false;
 				if (node.matches?.(routeListSelector)) { knownRouteLists.add(node); return true; }
 				if (node.matches?.(`${routeShellSelector},.pena-native-folder-switcher`)) return true;
+				if (!node.childElementCount) return false;
 				const descendants = node.querySelectorAll?.(`${routeListSelector},.pena-native-folder-switcher`) || [];
 				descendants.forEach(list => { if (list.matches?.(routeListSelector)) knownRouteLists.add(list); });
 				return descendants.length > 0;
+			};
+			const containsRemovedRoute = node => {
+				if (node?.nodeType !== 1) return false;
+				if (node.matches?.(`${routeListSelector},${routeShellSelector},.pena-native-folder-switcher`)) return true;
+				for (const list of knownRouteLists) if (node.contains?.(list)) return true;
+				return !!_dialogControlNativeSwitcherNode && node.contains?.(_dialogControlNativeSwitcherNode) === true;
 			};
 			_nativeLifecycleDisconnect = lifecycle.connect({
 				root: document.body || document.documentElement,
@@ -28912,6 +28989,38 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 				onRelevantMutation() {
 					const visibleMode = getPanelModeKey() === 'tasks' ? 'tasks' : 'chats';
 					if (visibleMode !== _pMode()) _publishDialogRecentModeBoundary(visibleMode);
+				},
+				isRelevantMutations(records) {
+					// Native selectors can replace hundreds of result nodes in one
+					// delivery. Search each small changed parent once, not every option
+					// and every detached old subtree. Never scan body/html as a group.
+					const addedByTarget = new Map();
+					let relevant = false;
+					for (const record of records) {
+						if (record?.type !== 'childList') {
+							if (this.isRelevantMutation(record)) relevant = true;
+							continue;
+						}
+						if (Array.from(record.removedNodes || []).some(containsRemovedRoute)) relevant = true;
+						let nodes = addedByTarget.get(record.target);
+						if (!nodes) addedByTarget.set(record.target, nodes = new Set());
+						for (const node of record.addedNodes || []) if (node?.nodeType === 1 && node.isConnected) nodes.add(node);
+					}
+					for (const [target, added] of addedByTarget) {
+						const nodes = Array.from(added);
+						if (nodes.length >= 8 && target?.nodeType === 1 && target !== document.body && target !== document.documentElement &&
+							target.childElementCount <= nodes.length * 2) {
+							const candidates = target.querySelectorAll(`${routeListSelector},${routeShellSelector},.pena-native-folder-switcher`);
+							for (const candidate of candidates) {
+								if (!nodes.some(node => node === candidate || node.contains(candidate))) continue;
+								if (candidate.matches(routeListSelector)) knownRouteLists.add(candidate);
+								relevant = true;
+							}
+						} else {
+							for (const node of nodes) if (containsRouteList(node)) relevant = true;
+						}
+					}
+					return relevant;
 				},
 				isRelevantMutation(record) {
 					if (!record) return true;

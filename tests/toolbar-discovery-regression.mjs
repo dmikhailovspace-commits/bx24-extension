@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+const source=fs.readFileSync(process.env.PENA_TOOLBAR_SOURCE || new URL('../extension/injected.js',import.meta.url),'utf8');
+const name='_armPenaExtensionToolbarControls';const start=source.indexOf(`\tfunction ${name}(`),match=/\n\t(?:async )?function /.exec(source.slice(start+1));assert.ok(start>=0&&match);
+let callback,queries=0,refreshes=0;
+const header={isConnected:true,matches:()=>true,querySelector:()=>({}),contains:node=>node?.insideHeader===true};let activeHeader=header;
+const leaf=()=>({nodeType:1,matches:()=>false,querySelector:()=>{queries++;return null},querySelectorAll:()=>{queries++;return []}});
+const root=leaf();const context=vm.createContext({IS_OL_FRAME:false,window:{},document:{getElementById:()=>({}),documentElement:{}},requestAnimationFrame:fn=>fn(),MutationObserver:class{constructor(fn){callback=fn}observe(){}},_ensureBitrixListSystemToolbarSticky:()=>{refreshes++;return activeHeader},_getBitrixListSearchHost:()=>activeHeader,_isPenaNativeListSearchInput:()=>false});
+vm.runInContext(source.slice(start,start+1+match.index)+`\n${name}();`,context);
+callback([{type:'childList',target:root,addedNodes:Array.from({length:240},leaf),removedNodes:[]}]);const popupQueries=queries,popupRefreshes=refreshes-1;
+const input=leaf();input.insideHeader=true;callback([{type:'childList',target:input,addedNodes:[leaf()],removedNodes:[]}]);const headerReplacementRefreshes=refreshes-1-popupRefreshes;
+header.isConnected=false;activeHeader={...header,isConnected:true};const inserted={...leaf(),matches:()=>true};callback([{type:'childList',target:root,addedNodes:[inserted],removedNodes:[header]}]);const replacedHeaderRecovered=refreshes>1+popupRefreshes+headerReplacementRefreshes;
+const report={popupRows:240,popupQueries,popupRefreshes,headerReplacementRefreshes,replacedHeaderRecovered};
+fs.mkdirSync('tests/artifacts',{recursive:true});fs.writeFileSync(process.env.PENA_TOOLBAR_REPORT || 'tests/artifacts/toolbar-discovery.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));
+assert.equal(popupQueries,0,'healthy mounted header must not scan every popup result subtree');assert.equal(popupRefreshes,0);assert.equal(headerReplacementRefreshes,1);assert.equal(replacedHeaderRecovered,true);

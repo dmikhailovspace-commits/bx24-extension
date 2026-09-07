@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import vm from 'node:vm';
 
 const localData = {};
@@ -971,5 +971,74 @@ const contentChanged = contentEvents
   .find(change => change.operationId === 'storage-operation');
 assert.equal(contentChanged?.scope?.portalHost, 'portal-content.example');
 assert.equal(contentChanged?.revision, 7, 'content bridge did not publish the storage revision');
+
+// Actual injected cache writer: redundant idle callbacks must not serialize or
+// send the same catalog while a storage mutation is waiting for acknowledgement.
+const cacheWriterSource = await readFile(new URL('../extension/injected.js', import.meta.url), 'utf8');
+const cacheWriterStart = cacheWriterSource.indexOf('\tasync function _writeDialogRecentCache(');
+const cacheWriterEnd = cacheWriterSource.indexOf('\tfunction _scheduleDialogRecentCacheWrite(', cacheWriterStart);
+assert.ok(cacheWriterStart >= 0 && cacheWriterEnd > cacheWriterStart);
+function cacheWriterFixture(full = true) {
+ const state = {calls:[],serialized:0,scheduled:[],records:new Map(Array.from({length:1000},(_,i)=>['chat'+i,{id:'chat'+i,value:0}]))};
+ const box = { Date, Map, _dialogRecentCacheWriteTimer:null,_dialogRecentCacheIdleHandle:null,_dialogRecentCacheWriteFlight:null,
+  _dialogRecentRepositoryReady:true,_dialogRecentRepositoryAvailable:true,_dialogRecentRepositoryScope:{portalHost:'portal',userId:'7'},
+  _dialogRecentRepositoryNeedsFullCommit:full,_dialogRecentRepositoryManifest:full?null:{savedAt:1},_dialogRecentRepositoryFullCommitRevision:1,
+  _dialogRecentRepositoryConfirmedReplace:false,_dialogRecentRepositoryDirtyVersions:new Map([['chat0',1]]),_dialogRecentRepositoryDirtyIds:new Set(['chat0']),
+  _dialogRecentLegacyMigrationPending:false,_dialogRecentRepositoryWriteRetryAttempt:0,_dialogRecentCacheSavedAt:0,
+  _getDialogRecentUniqueMeta:()=>Array.from(state.records.values()),_getDialogRecentMeta:id=>state.records.get(id),
+  _dialogRecentMetaToRecord:meta=>{state.serialized++;return {...meta};},_getDialogRecentRepositoryMeta:()=>({}),_rememberDialogRecentRepositoryLiveBase:()=>{},
+  _scheduleDialogRecentCacheWrite:delay=>state.scheduled.push(delay),warn:()=>{},window:{__PENA_DIALOG_REPOSITORY__:{}}
+ };
+ for(const method of ['commit','patch']) box.window.__PENA_DIALOG_REPOSITORY__[method]=(scope,records)=>new Promise((resolve,reject)=>state.calls.push({method,scope:{...scope},records,resolve:()=>resolve({manifest:{savedAt:Date.now()}}),reject}));
+ vm.createContext(box);vm.runInContext(cacheWriterSource.slice(cacheWriterStart,cacheWriterEnd),box);return {state,box};
+}
+const writerPhases=[];
+{
+ const {state,box}=cacheWriterFixture();const first=box._writeDialogRecentCache(),second=box._writeDialogRecentCache();
+ assert.equal(state.calls.length,1);assert.equal(state.serialized,1000);state.calls[0].resolve();await Promise.all([first,second]);
+ assert.equal(state.scheduled.length,0);assert.equal(box._dialogRecentCacheWriteFlight,null);
+ writerPhases.push({name:'identical pending full callbacks coalesce',commits:1,serializedRecords:1000,baselineCommits:2,baselineSerializedRecords:2000});
+}
+{
+ const {state,box}=cacheWriterFixture();const first=box._writeDialogRecentCache();
+ state.records.get('chat0').value=2;box._dialogRecentRepositoryDirtyVersions.set('chat0',2);box._dialogRecentRepositoryFullCommitRevision++;
+ const joined=Array.from({length:12},()=>box._writeDialogRecentCache());assert.equal(state.calls.length,1);
+ state.calls[0].resolve();await Promise.all([first,...joined]);assert.deepEqual(state.scheduled,[80]);assert.equal(box._dialogRecentRepositoryDirtyIds.has('chat0'),true);
+ const followup=box._writeDialogRecentCache();assert.equal(state.calls.length,2);assert.equal(state.calls[1].records[0].value,2);state.calls[1].resolve();await followup;
+ assert.equal(box._dialogRecentRepositoryDirtyIds.size,0);assert.deepEqual(state.scheduled,[80]);writerPhases.push({name:'new full revision drains exactly once',commits:2,joinedCallbacks:12});
+}
+{
+ const {state,box}=cacheWriterFixture(false);const first=box._writeDialogRecentCache();
+ box._dialogRecentRepositoryDirtyVersions.set('chat0',2);box._dialogRecentRepositoryDirtyVersions.set('chat1',1);box._dialogRecentRepositoryDirtyIds.add('chat1');
+ state.calls[0].resolve();await first;assert.equal(box._dialogRecentRepositoryDirtyIds.size,2);assert.deepEqual(state.scheduled,[80]);
+ const followup=box._writeDialogRecentCache();assert.deepEqual(Array.from(state.calls[1].records,r=>r.id),['chat0','chat1']);state.calls[1].resolve();await followup;
+ assert.equal(box._dialogRecentRepositoryDirtyIds.size,0);writerPhases.push({name:'per-record dirty versions survive pending patch',patches:2,followupRecords:2});
+}
+{
+ const {state,box}=cacheWriterFixture();const pending=box._writeDialogRecentCache();state.calls[0].reject(new Error('storage unavailable'));await pending;
+ assert.equal(box._dialogRecentRepositoryDirtyIds.size,1);assert.equal(box._dialogRecentRepositoryNeedsFullCommit,true);assert.deepEqual(state.scheduled,[1000]);assert.equal(state.calls.length,1);
+ writerPhases.push({name:'failure retains dirty state with bounded timer retry',retryDelayMs:1000,immediateRetries:0});
+}
+for(const failed of [false,true]) {
+ const {state,box}=cacheWriterFixture();const old=box._writeDialogRecentCache();
+ box._dialogRecentRepositoryScope={portalHost:'portal',userId:'8'};box._dialogRecentRepositoryDirtyIds=new Set(['chat1']);box._dialogRecentRepositoryDirtyVersions=new Map([['chat1',3]]);
+ const fresh=box._writeDialogRecentCache();const freshFlight=box._dialogRecentCacheWriteFlight;
+ if(failed)state.calls[0].reject(new Error('old failure'));else state.calls[0].resolve();await old;
+ assert.equal(box._dialogRecentCacheWriteFlight,freshFlight);assert.equal(box._dialogRecentRepositoryDirtyIds.has('chat1'),true);assert.equal(box._dialogRecentRepositoryManifest,null);assert.deepEqual(state.scheduled,[]);
+ state.calls[1].resolve();await fresh;assert.equal(box._dialogRecentCacheWriteFlight,null);assert.equal(box._dialogRecentRepositoryDirtyIds.size,0);
+ writerPhases.push({name:'old-scope '+(failed?'failure':'ack')+' cannot clear new flight',newScopeWrites:1,oldScopeStateMutations:0});
+}
+{
+ const {state,box}=cacheWriterFixture();const old=box._writeDialogRecentCache();
+ box._dialogRecentRepositoryScope={portalHost:'portal',userId:'8'};
+ box._dialogRecentRepositoryScope={portalHost:'portal',userId:'7'};
+ box._dialogRecentRepositoryDirtyIds=new Set(['chat1']);box._dialogRecentRepositoryDirtyVersions=new Map([['chat1',3]]);
+ const fresh=box._writeDialogRecentCache();assert.equal(state.calls.length,2);const flight=box._dialogRecentCacheWriteFlight;
+ state.calls[0].resolve();await old;assert.equal(box._dialogRecentCacheWriteFlight,flight);assert.equal(box._dialogRecentRepositoryDirtyIds.has('chat1'),true);
+ state.calls[1].resolve();await fresh;writerPhases.push({name:'returning to the same user still fences the old generation',oldGenerationStateMutations:0});
+}
+await mkdir(new URL('./artifacts/',import.meta.url),{recursive:true});
+await writeFile(new URL('./artifacts/repository-cache-write-report.json',import.meta.url),JSON.stringify({phases:writerPhases},null,2));
+console.log('PASS cache writer: '+writerPhases.length+' single-flight, dirty-version and scope phases');
 
 console.log('PASS dialog repository v2: CAS, idempotency, fence, confirmed tombstones, reconnect and three-way merge');
