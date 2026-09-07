@@ -11,6 +11,21 @@ const instrumented = source.replace(anchor, `${anchor}
  window.timeUiProbe = {
   record: () => _getDialogTimeRecord(_getDialogTimeSelectedRange()),
   idle: () => !_dialogTimeCatalogPromise && !_dialogTimeInFlight.size,
+  seedHistory(count, dateKey = _getDialogTimeSelectedRange().from) {
+   const range=_PENA_TIME_CONTROL.normalizeRange(dateKey,dateKey),today=_getDialogTimeTodayKey();
+   const base=dateKey===today?90000:80000;
+   const items=Array.from({length:count},(_,i)=>({ID:String(base+i),TASK_ID:'101',USER_ID:'7',SECONDS:60,CREATED_DATE:dateKey+'T12:00:00+03:00'}));
+   const data={..._PENA_TIME_CONTROL.aggregateElapsedItems(items),range,coverage:{checkedTasks:1,totalTasks:1,complete:true}};
+   _setDialogTimeCacheRecord(_getDialogTimeCacheKey(range),{status:'ready',range,data,hasVerifiedData:true,hasCompleteSnapshot:true,error:'',updatedAt:Date.now(),taskFreshness:Object.fromEntries(_getDialogTimeWorkingTaskIds(range).map(id=>[id,{at:Date.now(),revision:_dialogTimeTaskRevisions.get(id)||0}]))});
+   _dialogTimeView='day';_dialogTimeTrackedExpanded=true;_syncDialogTimeUi(_dialogControlNativeSwitcherNode);
+   return dateKey;
+  },
+  prepareOtherHistory() { return this.seedHistory(120,_PENA_TIME_CONTROL.addDays(_getDialogTimeTodayKey(),-1)); },
+  prependHistory() {
+   const range=_getDialogTimeSelectedRange(),record=this.record();
+   const data={..._PENA_TIME_CONTROL.aggregateElapsedItems([{ID:'99999',TASK_ID:'101',USER_ID:'7',SECONDS:60,CREATED_DATE:range.from+'T23:59:59+03:00'},...record.data.items]),range,coverage:record.data.coverage};
+   this.state({data});
+  },
   async contactSnapshot(checked) {
    _dialogTimeView='day';
    const range=_getDialogTimeSelectedRange(),now=Date.now();
@@ -96,7 +111,7 @@ try {
   assert.equal(cold.total,'—','an empty bootstrap aggregate is not a checked zero');
   assert.equal(cold.compactTotal,'Сегодня …');
   assert.equal(cold.historyTotal,'—'); assert.equal(cold.historyLabel,'Записи · …');
-  assert.match(cold.label,/Загружаем данные/); assert.match(cold.label,/0 из 30 задач/);
+  assert.match(cold.label,/Считаем время/); assert.match(cold.label,/0 из 30 задач/);
   await page.evaluate(() => timeUiProbe.emptyState(false,'loading','stats'));
   const unknownDays = await page.locator('.pena-native-time-stats-duration').allTextContents();
   assert.equal(unknownDays.length,7); assert.ok(unknownDays.every(value=>value==='—'),'unverified stats days must not fabricate zeroes');
@@ -136,7 +151,7 @@ try {
  await phase('cold coverage and errors reveal status; completed idle view releases its space', async () => {
   assert.equal(ready.statusHidden,true); assert.equal(ready.statusHeight,0);
   await page.evaluate(() => timeUiProbe.state({status:'loading',data:null,hasCompleteSnapshot:false,error:''}));
-  const cold = await snapshot(); assert.equal(cold.total,'—'); assert.match(cold.label,/Загружаем данные/); assert.equal(cold.statusHeight,24); assert.ok(cold.bodyTop>ready.bodyTop);
+  const cold = await snapshot(); assert.equal(cold.total,'—'); assert.match(cold.label,/Считаем время/); assert.equal(cold.statusHeight,24); assert.ok(cold.bodyTop>ready.bodyTop);
   await page.evaluate(() => timeUiProbe.state({status:'loading',data:{...window.timeUiOriginalData,coverage:{checkedTasks:366,totalTasks:4149,complete:false}},hasCompleteSnapshot:false,readProgress:{completedTasks:366,totalTasks:4149}}));
   const partial = await snapshot(); assert.equal(partial.statusHidden,false); assert.match(partial.label,/366 из 4149 задач/); assert.equal(partial.total,ready.total);
   await page.evaluate(() => timeUiProbe.state({status:'error',data:window.timeUiOriginalData,hasCompleteSnapshot:true,error:'Сеть недоступна'}));
@@ -189,6 +204,31 @@ try {
   await page.evaluate(()=>timeUiProbe.contactSnapshot(true));
   const checked=await detail.textContent();assert.match(checked,/Учтено 0 мин/);assert.match(checked,/\+1 контакт после записи/);
   return{unknown,checked};
+ });
+ await phase('history shows all 120 cached entries in pages without REST, preserves nodes and protects a displaced editor',async()=>{
+  await page.setViewportSize({width:1000,height:800});await page.evaluate(()=>{timeUiProbe.seedHistory(120);timeUiProbe.prepareOtherHistory();});
+  const rows=page.locator('.pena-native-time-entry-row'),more=page.locator('.pena-native-time-load-more');
+  await page.waitForFunction(()=>document.querySelectorAll('.pena-native-time-entry-row').length===50);
+  assert.equal(await page.locator('.pena-native-time-tracked-total').textContent(),'2 ч');assert.equal(await page.locator('.pena-native-time-tracked-label').textContent(),'Записи · 120');
+  const restBefore=await page.evaluate(()=>{window.originalHistoryRow=document.querySelector('.pena-native-time-entry-row');return{native:window.nativeRestCalls.length,elapsed:window.timeRestCalls.length};});
+  await more.click();await page.waitForFunction(()=>document.querySelectorAll('.pena-native-time-entry-row').length===100);
+  assert.equal(await page.evaluate(()=>originalHistoryRow===document.querySelector('.pena-native-time-entry-row')),true);
+  await more.click();await page.waitForFunction(()=>document.querySelectorAll('.pena-native-time-entry-row').length===120);
+  assert.equal(await more.count(),0);assert.equal(await page.evaluate(()=>originalHistoryRow===document.querySelector('.pena-native-time-entry-row')),true);
+  assert.equal(await page.locator('.pena-native-time-total-value').textContent(),'2 ч');
+  assert.deepEqual(await page.evaluate(()=>({native:window.nativeRestCalls.length,elapsed:window.timeRestCalls.length})),restBefore,'load-more must expose cached entries without a new network read');
+  await page.locator('.pena-native-time-date-prev').click();await page.waitForFunction(()=>document.querySelectorAll('.pena-native-time-entry-row').length===50&&document.querySelector('.pena-native-time-entry-row')?.dataset.penaEntry.startsWith('101:80'));
+  await page.locator('.pena-native-time-date-next').click();await page.waitForFunction(()=>document.querySelectorAll('.pena-native-time-entry-row').length===50&&document.querySelector('.pena-native-time-entry-row')?.dataset.penaEntry.startsWith('101:90'));
+  await rows.last().locator('.pena-native-time-row-edit').click();await page.locator('.pena-native-time-entry-minutes').fill('17');
+  const editingId=await page.evaluate(()=>{window.savedEditor=document.querySelector('.pena-native-time-entry-minutes');return savedEditor.closest('.pena-native-time-entry-row').dataset.penaEntry;});
+  await page.evaluate(()=>timeUiProbe.prependHistory());
+  assert.equal(await page.locator('.pena-native-time-entry-minutes').inputValue(),'17');assert.equal(await page.evaluate(()=>savedEditor===document.querySelector('.pena-native-time-entry-minutes')),true);
+  assert.equal(await rows.count(),51,'the edited 50th row must remain mounted when a new record moves it to position 51');
+  assert.equal(await page.locator('.pena-native-time-entry-minutes').evaluate(node=>node.closest('.pena-native-time-entry-row').dataset.penaEntry),editingId);
+  assert.equal(await page.locator('.pena-native-time-tracked-total').textContent(),'2 ч 1 мин');
+  assert.equal(await page.locator('.pena-native-time-tracked-label').textContent(),'Записи · 121');
+  await page.locator('.pena-native-time-entry-cancel').click();await page.waitForFunction(()=>document.querySelectorAll('.pena-native-time-entry-row').length===50);
+  return{initial:50,expanded:[100,120],loadMoreRest:0,nodeRetained:true,rangeReset:50,displacedEditorRetained:true,draftMinutes:'17',totalAfterPrepend:'2 ч 1 мин'};
  });
  assert.deepEqual(errors,[]);
 } finally {

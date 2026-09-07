@@ -90,7 +90,7 @@ try {
   assert.equal(first.error,'');assert.equal(first.manualError,'');assert.equal(first.deliveredReads,0);assert.equal(first.cacheStatus,'loading');
   // An internal aggregate([]) may contain numeric zero. It is not evidence
   // that this user's selected range has no entries before any response.
-  assert.equal(first.total,'—');assert.match(first.statusText,/Загружаем данные/);
+  assert.equal(first.total,'—');assert.match(first.statusText,/Загружаем список задач|Считаем время/);
  });
  await page.evaluate(()=>window.feedback.heldReads.shift()());
  await page.waitForFunction(()=>window.feedback.heldReads.length>0&&window.feedbackProbe.record()?.data?.coverage?.checkedTasks>0);

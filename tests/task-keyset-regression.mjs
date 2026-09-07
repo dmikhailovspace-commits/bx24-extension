@@ -26,7 +26,7 @@ function setup({count=100,deleteAfterFirst=false,ignoreCursor=false,reverse=fals
   setTimeout:()=>1,clearTimeout:()=>{},
   _getDialogNativeSharedAuditScopeKey:()=>context.scope,
   _isDialogTaskCatalogMetadataFresh:()=>false,
-  _dialogTaskCatalogSyncPromise:null,_dialogTaskCatalogSyncScopeKey:'',_dialogTaskCatalogLastResult:null,
+  _dialogTaskCatalogSyncFlights:new Map(),_dialogTaskCatalogSyncPromise:null,_dialogTaskCatalogSyncScopeKey:'',_dialogTaskCatalogLastResult:null,
   _DIALOG_TASK_CATALOG_MAX_PAGES:100,_DIALOG_TASK_CATALOG_PAGE_SIZE:50,_DIALOG_RECENT_PAGE_DELAY_MS:0,
   _DIALOG_TIME_CATALOG_REFRESH_MS:10000,
   _dialogTaskCatalogComplete:false,_dialogTaskCatalogFetchedAt:0,_dialogTaskCatalogScopeKey:'',
@@ -36,7 +36,7 @@ function setup({count=100,deleteAfterFirst=false,ignoreCursor=false,reverse=fals
   _publishDialogTimeTaskIndexRows:batch=>{published.push(...batch.map(r=>r.ID));return false;},
   _mergeDialogTaskCatalogRows:batch=>batch.length,
   findContainer:()=>null,_getDialogNativeSourceRows:()=>[],
-  _dialogControlNativeWorkspaceTab:'time',document:{visibilityState:'visible'},
+  _dialogControlNativeWorkspaceTab:'time',document:{visibilityState:'visible'},navigator:{onLine:true},
   _dialogTimeTaskRevisions:new Map(),_dialogTimeView:'day',_dialogTimeManualSearchQuery:'',
   _getDialogTimeSelectedRange:()=>({}),_loadDialogTimeRange:async()=>{},_sleepDialogControl:async()=>{}
  });
@@ -84,5 +84,15 @@ try {
   return{pages:calls.length,task51Present:true};
  });
 } finally {
- mkdirSync('tests/artifacts',{recursive:true});writeFileSync('tests/artifacts/task-keyset-report.json',JSON.stringify({phases},null,2));console.log(JSON.stringify({phases},null,2));
+ mkdirSync('tests/artifacts',{recursive:true});writeFileSync('tests/artifacts/task-keyset-report.json',JSON.stringify({phases},null,2));
+ await phase('shared full owner pauses hidden or offline without falsely committing a complete catalog',async()=>{
+  for(const condition of ['hidden','offline']){
+   const {context,calls}=setup({count:100});const original=context._callBxRestPageWithTimeout;
+   context._callBxRestPageWithTimeout=async(...args)=>{const page=await original(...args);if(condition==='hidden')context.document.visibilityState='hidden';else context.navigator.onLine=false;return page;};
+   const result=await context._syncDialogTaskCatalog({forceNetwork:true,deferMerge:true});
+   assert.equal(result.complete,false);assert.equal(result.discarded,true);assert.equal(calls.length,1);assert.equal(context._dialogTimeCatalogCursor,0);assert.equal(context._dialogTaskCatalogSyncFlights.size,0);
+  }
+  return {hiddenCalls:1,offlineCalls:1,partialCursor:0};
+ });
+console.log(JSON.stringify({phases},null,2));
 }

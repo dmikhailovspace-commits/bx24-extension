@@ -25,8 +25,8 @@ const source=readFileSync(new URL('../extension/injected.js',import.meta.url),'u
  loadAuto: () => _loadDialogTimeRange(_getDialogTimeSelectedRange()),
  load: () => _loadDialogTimeRange(_getDialogTimeSelectedRange(), {force:true})
  };`).replace(
- '\tasync function _loadDialogTimeRange(range = _dialogTimeRange, { force = false } = {}) {',
- '\tasync function _loadDialogTimeRange(range = _dialogTimeRange, { force = false } = {}) {\n window.timeRangeLoadStarts = (window.timeRangeLoadStarts || 0) + 1;'
+ '\tasync function _loadDialogTimeRange(range = _dialogTimeRange, { force = false, bootstrap = null } = {}) {',
+ '\tasync function _loadDialogTimeRange(range = _dialogTimeRange, { force = false, bootstrap = null } = {}) {\n window.timeRangeLoadStarts = (window.timeRangeLoadStarts || 0) + 1;'
  );
 await page.route('**/extension/injected.js*',route=>route.fulfill({status:200,contentType:'application/javascript',body:source}));
 try {
@@ -127,13 +127,15 @@ try {
   });
   const loadStarts = await page.evaluate(()=>window.timeRangeLoadStarts || 0);
   await page.evaluate(()=>window.timeProbe.refresh());
-  await page.waitForFunction(()=>[...document.querySelectorAll('.pena-native-time-task-select option')].some(o=>o.value==='92124'));
+  await page.waitForFunction(()=>timeProbe.eligibility('92124')===true);
   assert.deepEqual(await page.evaluate(()=>window.catalogProbeCalls.map(c=>c.start)),[0,0,0]);
   assert.deepEqual(await page.evaluate(()=>window.catalogProbeCalls.map(c=>c.filter['>ID'])),[0,92049,92099]);
   assert.equal((await page.evaluate(()=>window.timeRangeLoadStarts))-loadStarts,2,'catalog pages must refresh elapsed only on first page and tail');
   await page.evaluate(()=>window.timeProbe.refresh(false));
   assert.ok(await page.evaluate(()=>window.catalogProbeCalls.at(-1).filter['>=CHANGED_DATE']));
- assert.equal(await page.locator('.pena-native-time-task-select option[value="92000"]').count(),0);
+  await page.locator('.pena-native-time-tracker-search').fill('Каталог');
+  await page.locator('#pena-time-tracker-task-option-92124').waitFor();
+  assert.equal(await page.locator('#pena-time-tracker-task-option-92000').count(),0);
  });
  await phase('new eligible task coalesces one successor to a delayed elapsed read',async()=>{
   await page.evaluate(()=>{

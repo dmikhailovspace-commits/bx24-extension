@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { selectTimeTrackerTask } from './lib/native-time-task-search.mjs';
 import { createReadStream } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
@@ -93,7 +94,7 @@ const measure = page => page.locator('.pena-native-time-panel').evaluate(panel =
 			manualResults: styleMetrics(manualResults)
 		},
 		manualControls: controls('.pena-native-time-duration-field,.pena-native-time-manual-submit'),
-		trackerControls: controls('.pena-native-time-task-select:not([hidden]),.pena-native-time-start:not([hidden])'),
+		trackerControls: controls('.pena-native-time-tracker-search:not([hidden]),.pena-native-time-tracker-selected:not([hidden]),.pena-native-time-start:not([hidden])'),
 		headerControls: controls('.pena-native-time-refresh,.pena-native-time-report,.pena-native-time-header-actions>.pena-native-popover-close'),
 		dateControls: controls('.pena-native-time-date-prev,.pena-native-time-date-input,.pena-native-time-date-next,.pena-native-time-date-today:not([hidden])'),
 		visibleOverflow
@@ -121,9 +122,7 @@ try {
 		await page.waitForFunction(() => document.activeElement?.classList?.contains('pena-native-time-button'));
 	};
 	let panel = await open();
-	await page.waitForFunction(() => document.querySelectorAll('.pena-native-time-task-select option').length >= 2);
-	await page.waitForFunction(() => Array.from(document.querySelectorAll('.pena-native-time-task-select option'))
-		.some(option => option.value === '101' && option.textContent.length > 180));
+	await page.waitForFunction(() => document.querySelector('.pena-native-time-total-value')?.textContent === '1 ч 30 мин');
 
 	const focusedClass = await page.evaluate(() => document.activeElement?.className || '');
 	assert.match(focusedClass, /pena-native-time-panel/, `Focus did not enter the dialog shell: ${focusedClass}`);
@@ -175,13 +174,13 @@ try {
 			`${name} controls have inconsistent heights: ${JSON.stringify(controls)}`);
 	}
 
-	const taskSelect = page.locator('.pena-native-time-task-select');
-	await taskSelect.selectOption('101');
-	const longTitle = await taskSelect.locator('option:checked').textContent();
+	await selectTimeTrackerTask(page, '101');
+	const taskSelect = page.locator('.pena-native-time-tracker-selected');
+	const longTitle = await taskSelect.locator('span').textContent();
 	assert.ok(longTitle.length > 180, 'Long task fixture was not selected');
 	assert.equal(await taskSelect.getAttribute('data-pena-full-task-title'), longTitle);
 	assert.equal(await taskSelect.getAttribute('title'), null, 'Native title would duplicate the custom tooltip');
-	assert.equal(await taskSelect.getAttribute('aria-label'), `Задача для трекинга: ${longTitle}`);
+	assert.equal(await taskSelect.getAttribute('aria-label'), `Сменить задачу: ${longTitle}`);
 	await taskSelect.focus();
 	const tooltip = page.locator('.pena-native-time-title-tooltip');
 	await tooltip.waitFor({ state: 'visible' });

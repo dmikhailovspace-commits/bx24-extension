@@ -157,6 +157,42 @@
 		};
 	}
 
+	// Inputs are already validated, normalized aggregates. Replace only accepted
+	// tasks; unchanged records retain their identity and are not parsed/sorted again.
+	function replaceElapsedTasks(previous, replacement, taskIds) {
+		const accepted = new Set(Array.from(taskIds || [], String));
+		const days = new Map((previous.days || []).map(day => [day.dateKey, { ...day }]));
+		const tasks = new Map((previous.tasks || []).filter(task => !accepted.has(task.taskId)).map(task => [task.taskId, task]));
+		let totalSeconds = previous.totalSeconds || 0;
+		const adjust = (entry, direction) => {
+			const key = entry.dateKey || 'unknown';
+			const day = days.get(key) || { dateKey:key, seconds:0, entries:0 };
+			day.seconds += direction * entry.seconds;
+			day.entries += direction;
+			totalSeconds += direction * entry.seconds;
+			if (day.entries) days.set(key, day); else days.delete(key);
+		};
+		const kept = (previous.items || []).filter(entry => {
+			if (!accepted.has(entry.taskId)) return true;
+			adjust(entry, -1); return false;
+		});
+		const added = (replacement.items || []).filter(entry => accepted.has(entry.taskId));
+		added.forEach(entry => adjust(entry, 1));
+		for (const task of replacement.tasks || []) if (accepted.has(task.taskId)) tasks.set(task.taskId, task);
+		const compare = (a,b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')) || String(b.id || '').localeCompare(String(a.id || ''));
+		const items = [];
+		let left = 0, right = 0;
+		while (left < kept.length && right < added.length) items.push(compare(kept[left], added[right]) <= 0 ? kept[left++] : added[right++]);
+		while (left < kept.length) items.push(kept[left++]);
+		while (right < added.length) items.push(added[right++]);
+		return {
+			items, totalSeconds, entryCount:items.length,
+			taskCount:Array.from(tasks.keys()).filter(key => key !== 'unknown').length,
+			days:Array.from(days.values()).sort((a,b) => b.dateKey.localeCompare(a.dateKey)),
+			tasks:Array.from(tasks.values()).sort((a,b) => b.seconds - a.seconds || b.entries - a.entries)
+		};
+	}
+
 	function normalizeVisitedTask(task = {}) {
 		const rawTaskId = String(task.taskId ?? task.id ?? '').trim();
 		const taskId = /^\d+$/.test(rawTaskId) ? rawTaskId : '';
@@ -674,6 +710,7 @@
 		extractElapsedItems,
 		normalizeElapsedItem,
 		aggregateElapsedItems,
+		replaceElapsedTasks,
 		normalizeVisitedTask,
 		mergeVisitedTasks,
 		beginActivitySession,

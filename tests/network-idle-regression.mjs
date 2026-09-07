@@ -42,12 +42,15 @@ try {
    window.networkProbe.tab('time');
    const time=window.networkProbe.refresh();
    await Promise.all([full,time]);
+   const initialDeltaPages=window.networkCalls.filter(c=>c.method==='tasks.task.list'&&c.params.filter?.['>=CHANGED_DATE']).length;
+   await window.networkProbe.refresh(); // An explicit subsequent refresh uses the shared watermark.
    window.networkProbe.tab('dialogs');
    const calls=window.networkCalls.filter(c=>c.method==='tasks.task.list');
-   return {before,cursor:window.networkProbe.cursor(),full: calls.filter(c=>!c.params.filter?.['>=CHANGED_DATE']),delta:calls.filter(c=>c.params.filter?.['>=CHANGED_DATE'])};
+   return {before,initialDeltaPages,cursor:window.networkProbe.cursor(),full: calls.filter(c=>!c.params.filter?.['>=CHANGED_DATE']),delta:calls.filter(c=>c.params.filter?.['>=CHANGED_DATE'])};
   });
   assert.equal(result.full.length,3,'Time panel repeated the native 131-task full scan');
-  assert.equal(result.delta.length,1,'Expected one coalesced delta after the shared full scan');
+  assert.equal(result.initialDeltaPages,0,'Time opening performed a redundant delta immediately after its shared full scan');
+  assert.equal(result.delta.length,1,'Expected one explicit subsequent delta after the shared full scan');
   const watermark=Date.parse(result.delta[0].params.filter['>=CHANGED_DATE'])+60000;
   assert.ok(watermark>=result.before&&watermark<=result.full[0].at,'Delta cursor skipped changes received during the full scan');
   return {fullPages:result.full.length,deltaPages:result.delta.length,watermark};

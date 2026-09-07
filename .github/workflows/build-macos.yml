@@ -13,7 +13,8 @@ jobs:
   verify-source:
     name: Verify frozen release source
     runs-on: windows-2025
-    timeout-minutes: 20
+    # Includes the combined 4149-task startup/input and closed-panel preload test.
+    timeout-minutes: 30
 
     steps:
       - name: Checkout release source
@@ -238,10 +239,10 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' \
-            'Loads each time period once per in-memory snapshot, rereads changed tasks only, and coalesces manual full refreshes.' \
-            'Shows loading status for first reads, manual audits, substantial changes and errors; small background updates retain values quietly.' \
-            'Contact cards show logged day time and contacts since the last entry. Confirmed writes recover contact bookkeeping without duplicate ADD requests.' \
-            'All registered functional, concurrency, layout and performance suites gate this release.' \
+            'Shares one initial task catalog and preloads today after the native loading guard ends; later updates read changed tasks only.' \
+            'Moves the timer to the full-width bottom panel with independent task search. Reuses history rows and reveals cached entries in pages of 50, while totals include every entry.' \
+            'Removes repeated large select construction and aggregate work. Preserves contacts, drafts, acknowledged writes and day/user boundaries.' \
+            'All 52 functional, concurrency, layout and performance suites gate this release, including combined native startup and 4149-task input contention.' \
             'Controlled tests are not a live Bitrix latency measurement. The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \
             'Includes Windows EXE and Universal macOS DMG for Intel and Apple Silicon.' \
             > release-notes.md

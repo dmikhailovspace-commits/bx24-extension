@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.101';
+	window.__ANITREC_RUNNING__ = '7.5.102';
 
-	const VER = '7.5.101';
+	const VER = '7.5.102';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -4588,9 +4588,10 @@
 			add(meta.taskId);
 		}
 		const priority = Array.from(ids).sort((left, right) => Number(left) - Number(right));
+		const priorityIds = new Set(priority);
 		const all = new Set([..._dialogTimeTaskEligibility.keys(), ..._dialogTimeTaskTitles.keys()]);
 		Array.from(all).sort((left, right) => Number(left) - Number(right)).forEach(add);
-		return [...priority, ...Array.from(ids).filter(id => !priority.includes(id))];
+		return [...priority, ...Array.from(ids).filter(id => !priorityIds.has(id))];
 	}
 
 	function _getDialogTaskKeysetCursor(rows, afterId = 0) {
@@ -4616,12 +4617,15 @@
 		if (!scope || !current()) return;
 		if (scope !== _dialogTimeCatalogScope) { _dialogTimeCatalogCursor = 0; _dialogTimeCatalogScope = scope; }
 		_dialogTimeCatalogPromise = (async () => {
-			// The native catalog already publishes every task page into this index.
-			// Reuse its complete, scoped request-start watermark instead of starting
-			// a second portal-wide crawl while the first one is still running.
-			if (!force && _dialogTaskCatalogSyncPromise && _dialogTaskCatalogSyncScopeKey === `${scope}:full`) {
-				await _dialogTaskCatalogSyncPromise.catch(() => null);
+			// A single full-catalog owner serves native startup and time tracking in
+			// either opening order. Separate SELECT lists must not double the crawl.
+			if (force || !_dialogTimeCatalogCursor || _dialogTaskCatalogSyncFlights.has(`${scope}:full`)) {
+				const full = await _syncDialogTaskCatalog({ forceNetwork:force || !_dialogTimeCatalogCursor, deferMerge:true });
 				if (!current()) return;
+				if (full?.complete !== true || full?.discarded) throw new Error('Не удалось полностью проверить список задач');
+				const range = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
+				_loadDialogTimeRange(range).catch(() => {});
+				return;
 			}
 			const since = force ? 0 : _dialogTimeCatalogCursor;
 			const startedAt = Date.now();
@@ -4750,10 +4754,14 @@
 
 	async function _syncDialogTaskCatalog(options = {}) {
 		const scopeKey = _getDialogNativeSharedAuditScopeKey();
+		const current = () => !!scopeKey && scopeKey === _getDialogNativeSharedAuditScopeKey() &&
+			document.visibilityState !== 'hidden' && navigator.onLine !== false;
+		if (!current()) return { complete:false, discarded:true, reason:'task-catalog-paused', rows:[] };
 		const forceNetwork = options.forceNetwork === true || options.force === true;
 		const headOnly = options.headOnly === true;
 		const requestScopeKey = `${scopeKey}:${headOnly ? 'head' : 'full'}`;
-		if (_dialogTaskCatalogSyncPromise && _dialogTaskCatalogSyncScopeKey === requestScopeKey) return _dialogTaskCatalogSyncPromise;
+		const existing = _dialogTaskCatalogSyncFlights.get(`${scopeKey}:full`) || _dialogTaskCatalogSyncFlights.get(requestScopeKey);
+		if (existing) return existing;
 		if (!forceNetwork && _isDialogTaskCatalogMetadataFresh()) {
 			return _dialogTaskCatalogLastResult
 				? { ..._dialogTaskCatalogLastResult, cached: true }
@@ -4776,11 +4784,12 @@
 			let emptyQuorumConfirmed = false;
 			let emptyNativeContradiction = false;
 			while (pages < maxPages) {
+				if (!current()) return { count:0, tasks:0, pages, complete:false, discarded:true, reason:'task-catalog-paused', rows:[] };
 				const params = headOnly
 					? { select, order: { ACTIVITY_DATE: 'desc' }, start }
 					: { select, order: { ID: 'asc' }, filter: { '>ID': afterId }, start: 0 };
-				const page = await _callBxRestPageWithTimeout('tasks.task.list', params, 12000);
-				if (!scopeKey || scopeKey !== _getDialogNativeSharedAuditScopeKey()) {
+				const page = await _callBxRestPageWithTimeout('tasks.task.list', params, 12000, { isCurrent:current });
+				if (!current()) {
 					return { count: 0, tasks: 0, pages, complete: false, discarded: true, reason: 'task-catalog-fenced', rows: [] };
 				}
 				const batch = _extractDialogTaskCatalogRows(page?.data);
@@ -4793,6 +4802,10 @@
 				// catalog to finish or fail.
 				_publishDialogTimeTaskIndexRows(batch);
 				pages += 1;
+				if (!headOnly && pages === 1 && _dialogControlNativeWorkspaceTab === 'time' && document.visibilityState !== 'hidden') {
+					const range = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
+					_loadDialogTimeRange(range).catch(() => {});
+				}
 				if (page?.total != null && Number.isFinite(Number(page.total)) && Number(page.total) >= 0) {
 					total = Math.max(0, Number(page.total));
 				}
@@ -4837,7 +4850,7 @@
 				if (id) unique.set(id, task);
 			});
 			const uniqueRows = Array.from(unique.values());
-			if (!scopeKey || scopeKey !== _getDialogNativeSharedAuditScopeKey()) {
+			if (!current()) {
 				return { count: 0, tasks: 0, pages, complete: false, discarded: true, reason: 'task-catalog-fenced', rows: [] };
 			}
 			_publishDialogTimeTaskIndexRows(uniqueRows);
@@ -4856,11 +4869,15 @@
 			if (!headOnly || complete || !_dialogTaskCatalogLastResult) _dialogTaskCatalogLastResult = result;
 			return result;
 		})().finally(() => {
+			if (_dialogTaskCatalogSyncFlights.get(requestScopeKey) === syncPromise) _dialogTaskCatalogSyncFlights.delete(requestScopeKey);
 			if (_dialogTaskCatalogSyncPromise === syncPromise) {
-				_dialogTaskCatalogSyncPromise = null;
-				_dialogTaskCatalogSyncScopeKey = '';
+				const activeScope = _getDialogNativeSharedAuditScopeKey();
+				const activeKey = _dialogTaskCatalogSyncFlights.has(`${activeScope}:full`) ? `${activeScope}:full` : `${activeScope}:head`;
+				_dialogTaskCatalogSyncPromise = _dialogTaskCatalogSyncFlights.get(activeKey) || null;
+				_dialogTaskCatalogSyncScopeKey = _dialogTaskCatalogSyncPromise ? activeKey : '';
 			}
 		});
+		_dialogTaskCatalogSyncFlights.set(requestScopeKey, syncPromise);
 		_dialogTaskCatalogSyncPromise = syncPromise;
 		_dialogTaskCatalogSyncScopeKey = requestScopeKey;
 		return syncPromise;
@@ -7055,6 +7072,11 @@
 					_publishDialogRecentSyncState();
 				}).catch(() => {});
 			}
+			// Task metadata and elapsed entries do not require a complete physical
+			// recent list. Even an interrupted native pass has released its guard now.
+			if (_isDialogTimeFrameActive()) {
+				_scheduleDialogTimeBootstrap(taskCatalogOutcomePromise);
+			}
 			return {
 				...nativeResult,
 				nativeFirst: true,
@@ -7911,6 +7933,10 @@
 				userActionRequired: false
 			});
 			_publishDialogRecentSyncState();
+			// The default Bitrix view does not require PENA's full DOM audit. Its
+			// shared metadata/today snapshot still starts once the native guard ends.
+			_scheduleDialogTimeBootstrap(_dialogNativeOriginalScrollPromise
+				? _dialogNativeOriginalScrollPromise.then(() => null) : null);
 			return { deferred: true, native: true };
 		}
 		const expectedContext = options.context || null;
@@ -8004,6 +8030,9 @@
 			_scheduleDialogDeepRefresh(`${reason}-metadata`);
 		}
 		_refreshDialogNativeVisibleWindow();
+		if (_dialogNativePrefetchedModes.has(mode) && _isDialogNativeSourceGenerationCurrent(mode, container, viewport, sourceGeneration)) {
+			_scheduleDialogTimeBootstrap(null);
+		}
 		return { healthy: true };
 	}
 
@@ -8264,6 +8293,10 @@
 					...(savedPosition ? { restoreTop: savedPosition.top, restoreLeft: savedPosition.left } : {})
 				}).then(result => {
 					_dialogNativeColdConfirmationDebug = { ..._dialogNativeColdConfirmationDebug, stage: 'settled', result };
+					if (_dialogNativePrefetchedModes.has(targetMode) &&
+						_isDialogNativeSourceGenerationCurrent(targetMode, liveContainer, liveViewport, liveGeneration)) {
+						_scheduleDialogTimeBootstrap(null);
+					}
 				}).catch(error => {
 					_dialogNativeColdConfirmationDebug = { ..._dialogNativeColdConfirmationDebug, stage: 'failed', error: String(error?.message || error) };
 				});
@@ -8309,6 +8342,8 @@
 					});
 					if (_isDialogRecentInteractionBlocked()) _completeDialogRecentInteractionGate();
 					_publishDialogRecentSyncState();
+					_scheduleDialogTimeBootstrap(_dialogNativeOriginalScrollPromise
+						? _dialogNativeOriginalScrollPromise.then(() => null) : null);
 					return;
 				}
 				if (_isDialogNativeRecoveryDeferred(mode) && !_canBypassDialogNativeRecoveryDelay(reason)) return;
@@ -9439,6 +9474,7 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogRecentLastApiResult = null;
 	let _dialogTaskCatalogSyncPromise = null;
 	let _dialogTaskCatalogSyncScopeKey = '';
+	const _dialogTaskCatalogSyncFlights = new Map();
 	let _dialogTaskCatalogScopeKey = '';
 	let _dialogTaskCatalogLastResult = null;
 	let _dialogTaskCatalogRefreshTimer = null;
@@ -9576,7 +9612,7 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogTimeManualSearchTimer = null;
 	let _dialogTimeManualSearchToken = 0;
 	let _dialogTimeManualActiveIndex = -1;
-	let _dialogTimeTrackerSelectedTaskId = '';
+	const _dialogTimeTrackerSearch = { scope:'', query:'', selectedTask:null, results:[], loading:false, error:'', activeIndex:-1, token:0, timer:null };
 	let _dialogTimeTrackedExpanded = true;
 	let _dialogTimeVisitTrackingArmed = false;
 	const _dialogTimeSidePanelEventNamespaces = new WeakSet();
@@ -14103,7 +14139,7 @@ if (_presetChannel) {
 	function _selectDialogTimeManualTask(task, panel) {
 		if (!task?.taskId) return;
 		_dialogTimeManualSelectedTask = task;
-		_dialogTimeTrackerSelectedTaskId = String(task.taskId);
+		_dialogTimeManualSearchToken++;
 		_dialogTimeManualSearchQuery = task.title;
 		_dialogTimeManualSearchResults = [];
 		_dialogTimeManualActiveIndex = -1;
@@ -14160,25 +14196,61 @@ if (_presetChannel) {
 		return title;
 	}
 
-	function _renderDialogTimeManualSearch(panel = _dialogControlNativeSwitcherNode?.querySelector('.pena-native-time-panel')) {
-		if (!panel) return;
-		const input = panel.querySelector('.pena-native-time-manual-search');
-		const results = panel.querySelector('.pena-native-time-manual-results');
-		const selected = panel.querySelector('.pena-native-time-manual-selected');
-		if (input && document.activeElement !== input && input.value !== _dialogTimeManualSearchQuery) {
-			input.value = _dialogTimeManualSearchQuery;
+	function _getDialogTimeTaskSearchState(target = 'manual') {
+		if (target === 'tracker') {
+			const scope = _getDialogNativeSharedAuditScopeKey();
+			if (_dialogTimeTrackerSearch.scope !== scope) {
+				if (_dialogTimeTrackerSearch.timer) clearTimeout(_dialogTimeTrackerSearch.timer);
+				Object.assign(_dialogTimeTrackerSearch, { scope, query:'', selectedTask:null, results:[], loading:false, error:'', activeIndex:-1, token:_dialogTimeTrackerSearch.token + 1, timer:null });
+			}
+			return _dialogTimeTrackerSearch;
 		}
-		if (input) input.hidden = !!_dialogTimeManualSelectedTask;
+		return {
+			get query(){ return _dialogTimeManualSearchQuery; }, set query(value){ _dialogTimeManualSearchQuery=value; },
+			get selectedTask(){ return _dialogTimeManualSelectedTask; }, set selectedTask(value){ _dialogTimeManualSelectedTask=value; },
+			get results(){ return _dialogTimeManualSearchResults; }, set results(value){ _dialogTimeManualSearchResults=value; },
+			get loading(){ return _dialogTimeManualSearchLoading; }, set loading(value){ _dialogTimeManualSearchLoading=value; },
+			get error(){ return _dialogTimeManualError; }, set error(value){ _dialogTimeManualError=value; },
+			get activeIndex(){ return _dialogTimeManualActiveIndex; }, set activeIndex(value){ _dialogTimeManualActiveIndex=value; },
+			get token(){ return _dialogTimeManualSearchToken; }, set token(value){ _dialogTimeManualSearchToken=value; },
+			get timer(){ return _dialogTimeManualSearchTimer; }, set timer(value){ _dialogTimeManualSearchTimer=value; }
+		};
+	}
+
+	function _selectDialogTimeTrackerTask(task, panel) {
+		if (!task?.taskId) return;
+		const state = _getDialogTimeTaskSearchState('tracker');
+		Object.assign(state, { selectedTask:{ ...task }, query:task.title, results:[], loading:false, error:'', activeIndex:-1, token:state.token + 1 });
+		if (state.timer) { clearTimeout(state.timer); state.timer=null; }
+		_renderDialogTimeManualSearch(panel, 'tracker');
+		_queueDialogTimeUiSync();
+	}
+
+	function _renderDialogTimeManualSearch(panel = _dialogControlNativeSwitcherNode?.querySelector('.pena-native-time-panel'), target = 'manual') {
+		if (!panel) return;
+		const state = _getDialogTimeTaskSearchState(target);
+		const input = panel.querySelector(`.pena-native-time-${target}-search`);
+		const optionIdPrefix = target === 'manual' ? 'pena-time-task-option-' : 'pena-time-tracker-task-option-';
+		const results = panel.querySelector(`.pena-native-time-${target}-results`);
+		const selected = panel.querySelector(`.pena-native-time-${target}-selected`);
+		if (input && document.activeElement !== input && input.value !== state.query) {
+			input.value = state.query;
+		}
+		if (input) input.hidden = !!state.selectedTask;
 		if (selected) {
-			selected.hidden = !_dialogTimeManualSelectedTask;
+			selected.hidden = !state.selectedTask;
 			const title = selected.querySelector('span');
-			const fullTitle = _dialogTimeManualSelectedTask?.title || '';
-			if (title) title.textContent = fullTitle;
+			const fullTitle = state.selectedTask?.title || '';
+			if (title && title.textContent !== fullTitle) title.textContent = fullTitle;
 			_setDialogTimeFullTaskTitle(selected, fullTitle, 'Сменить задачу');
 		}
 		if (!results) return;
+		if (state.results.length && (state.activeIndex < 0 || state.activeIndex >= state.results.length)) state.activeIndex = 0;
+		const renderKey = JSON.stringify([state.query,state.selectedTask?.taskId,state.selectedTask?.title,state.loading,state.error,state.activeIndex,_dialogTimeActionInFlight,state.results.map(task => [task.taskId,task.title])]);
+		if (results.dataset.penaRenderKey === renderKey) return;
+		results.dataset.penaRenderKey = renderKey;
 		results.replaceChildren();
-		if (_dialogTimeManualSelectedTask || !_dialogTimeManualSearchQuery.trim()) {
+		if (state.selectedTask || !state.query.trim()) {
 			results.hidden = true;
 			input?.setAttribute('aria-expanded', 'false');
 			input?.removeAttribute('aria-activedescendant');
@@ -14186,20 +14258,20 @@ if (_presetChannel) {
 		}
 		results.hidden = false;
 		input?.setAttribute('aria-expanded', 'true');
-		if (_dialogTimeManualSearchLoading && !_dialogTimeManualSearchResults.length) {
+		if (state.loading && !state.results.length) {
 			const status = document.createElement('span');
 			status.className = 'pena-native-time-manual-search-status';
 			status.textContent = 'Поиск…';
 			results.appendChild(status);
 			return;
 		}
-		if (!_dialogTimeManualSearchResults.length) {
+		if (!state.results.length) {
 			const empty = document.createElement('div');
 			empty.className = 'pena-native-time-manual-search-status';
 			const copy = document.createElement('span');
-			copy.textContent = _dialogTimeManualError || 'Подходящие задачи не найдены';
+			copy.textContent = state.error || 'Подходящие задачи не найдены';
 			empty.appendChild(copy);
-			if (_dialogTimeManualError === 'Поиск недоступен. Повторите') {
+			if (state.error === 'Поиск недоступен. Повторите') {
 				const retry = document.createElement('button');
 				retry.type = 'button';
 				retry.className = 'pena-native-time-search-retry';
@@ -14207,25 +14279,26 @@ if (_presetChannel) {
 				retry.addEventListener('click', event => {
 					event.preventDefault();
 					event.stopPropagation();
-					_dialogTimeManualError = '';
+					state.error = '';
 					input?.focus?.({ preventScroll: true });
-					_searchDialogTimeEligibleTasks(_dialogTimeManualSearchQuery, ++_dialogTimeManualSearchToken).catch(() => {});
+					_searchDialogTimeEligibleTasks(state.query, ++state.token, target).catch(() => {});
 				});
 				empty.appendChild(retry);
 			}
 			results.appendChild(empty);
 			return;
 		}
-		if (_dialogTimeManualActiveIndex < 0 || _dialogTimeManualActiveIndex >= _dialogTimeManualSearchResults.length) {
-			_dialogTimeManualActiveIndex = 0;
+		if (state.activeIndex < 0 || state.activeIndex >= state.results.length) {
+			state.activeIndex = 0;
 		}
-		_dialogTimeManualSearchResults.forEach((task, index) => {
+		state.results.forEach((task, index) => {
 			const option = document.createElement('button');
 			option.type = 'button';
-			option.className = 'pena-native-time-manual-result';
-			option.id = `pena-time-task-option-${task.taskId}`;
+			option.className = `pena-native-time-${target}-result`;
+			option.disabled = _dialogTimeActionInFlight;
+			option.id = `${optionIdPrefix}${task.taskId}`;
 			option.setAttribute('role', 'option');
-			option.setAttribute('aria-selected', index === _dialogTimeManualActiveIndex ? 'true' : 'false');
+			option.setAttribute('aria-selected', index === state.activeIndex ? 'true' : 'false');
 			option.tabIndex = -1;
 			option.innerHTML = '<span class="pena-native-time-manual-result-title"></span><span class="pena-native-time-manual-result-id"></span>';
 			option.querySelector('.pena-native-time-manual-result-title').textContent = task.title;
@@ -14234,11 +14307,11 @@ if (_presetChannel) {
 			option.addEventListener('click', event => {
 				event.preventDefault();
 				event.stopPropagation();
-				_selectDialogTimeManualTask(task, panel);
+				(target === 'tracker' ? _selectDialogTimeTrackerTask : _selectDialogTimeManualTask)(task, panel);
 			});
 			results.appendChild(option);
 		});
-		input?.setAttribute('aria-activedescendant', `pena-time-task-option-${_dialogTimeManualSearchResults[_dialogTimeManualActiveIndex].taskId}`);
+		input?.setAttribute('aria-activedescendant', `${optionIdPrefix}${state.results[state.activeIndex].taskId}`);
 	}
 
 	function _getDialogTimeLocalTaskSearchResults(query) {
@@ -14278,32 +14351,34 @@ if (_presetChannel) {
 		return 'Поиск недоступен. Повторите';
 	}
 
-	async function _searchDialogTimeEligibleTasks(query, token = ++_dialogTimeManualSearchToken) {
+	async function _searchDialogTimeEligibleTasks(query, token = null, target = 'manual') {
+		const state = _getDialogTimeTaskSearchState(target);
+		if (token == null) token = ++state.token;
+		const scope = _getDialogNativeSharedAuditScopeKey();
+		const isCurrent = () => token === state.token && scope === _getDialogNativeSharedAuditScopeKey() && _dialogControlNativeWorkspaceTab === 'time' && !state.selectedTask;
 		const normalizedQuery = String(query || '').replace(/\s+/g, ' ').trim();
-		if (token !== _dialogTimeManualSearchToken) return [];
+		if (!isCurrent()) return [];
 		if (!normalizedQuery) {
-			_dialogTimeManualSearchLoading = false;
-			_dialogTimeManualSearchResults = [];
-			_renderDialogTimeManualSearch();
+			state.loading = false;
+			state.results = [];
+			_renderDialogTimeManualSearch(undefined, target);
 			return [];
 		}
 		const localResults = _getDialogTimeLocalTaskSearchResults(normalizedQuery);
 		let lastPublishedResults = localResults;
-		_dialogTimeManualSearchResults = localResults;
-		_dialogTimeManualSearchLoading = true;
-		_dialogTimeManualError = '';
-		_renderDialogTimeManualSearch();
+		state.results = localResults;
+		state.loading = true;
+		state.error = '';
+		_renderDialogTimeManualSearch(undefined, target);
 		try {
-			const scope = _getDialogNativeSharedAuditScopeKey();
-			const isCurrent = () => token === _dialogTimeManualSearchToken && scope === _getDialogNativeSharedAuditScopeKey() && _dialogControlNativeWorkspaceTab === 'time';
 			const byId = new Map(localResults.map(task => [task.taskId, task]));
 			const unknown = [];
 			let orderIndex = 0;
 			const normalizedLower = normalizedQuery.toLocaleLowerCase('ru');
-			const currentQuery = () => String(_dialogTimeManualSearchQuery || '').replace(/\s+/g, ' ').trim();
+			const currentQuery = () => String(state.query || '').replace(/\s+/g, ' ').trim();
 			const publishResults = () => {
 				if (!isCurrent() || normalizedQuery !== currentQuery()) return [];
-				_dialogTimeManualSearchResults = Array.from(byId.values())
+				state.results = Array.from(byId.values())
 					.sort((a, b) => {
 						const rank = task => {
 							const title = String(task.title || '').toLocaleLowerCase('ru');
@@ -14316,9 +14391,9 @@ if (_presetChannel) {
 					})
 					.slice(0, 50)
 					.map(({ orderIndex: _orderIndex, ...task }) => task);
-				lastPublishedResults = _dialogTimeManualSearchResults;
-				_renderDialogTimeManualSearch();
-				return _dialogTimeManualSearchResults;
+				lastPublishedResults = state.results;
+				_renderDialogTimeManualSearch(undefined, target);
+				return state.results;
 			};
 			const collectTask = task => {
 				const taskId = String(task?.ID ?? task?.id ?? '').trim();
@@ -14396,36 +14471,41 @@ if (_presetChannel) {
 			verified.sort((a, b) => a.index - b.index).forEach(entry => byId.set(entry.candidate.taskId, entry.candidate));
 			return publishResults();
 		} catch (error) {
-			const currentQuery = String(_dialogTimeManualSearchQuery || '').replace(/\s+/g, ' ').trim();
-			if (token !== _dialogTimeManualSearchToken || normalizedQuery !== currentQuery) return [];
-			_dialogTimeManualSearchResults = lastPublishedResults;
-			_dialogTimeManualError = lastPublishedResults.length ? '' : _getDialogTimeTaskSearchError(error);
+			const currentQuery = String(state.query || '').replace(/\s+/g, ' ').trim();
+			if (!isCurrent() || normalizedQuery !== currentQuery) return [];
+			state.results = lastPublishedResults;
+			state.error = lastPublishedResults.length ? '' : _getDialogTimeTaskSearchError(error);
 			return lastPublishedResults;
 		} finally {
-			if (token === _dialogTimeManualSearchToken) {
-				_dialogTimeManualSearchLoading = false;
-				_renderDialogTimeManualSearch();
+			if (isCurrent()) {
+				state.loading = false;
+				_renderDialogTimeManualSearch(undefined, target);
 				_queueDialogTimeUiSync();
 			}
 		}
 	}
 
-	function _scheduleDialogTimeManualSearch(query) {
-		_dialogTimeManualSearchQuery = String(query || '');
+	function _scheduleDialogTimeManualSearch(query, target = 'manual') {
+		const state = _getDialogTimeTaskSearchState(target);
+		state.query = String(query || '');
 		// Invalidate the running request at input time, not after the debounce.
 		// Otherwise a late failure can repaint results for the previous query.
-		const token = ++_dialogTimeManualSearchToken;
-		const scheduledQuery = _dialogTimeManualSearchQuery;
-		_dialogTimeManualSelectedTask = null;
-		_dialogTimeManualSearchResults = _getDialogTimeLocalTaskSearchResults(_dialogTimeManualSearchQuery);
-		_dialogTimeManualActiveIndex = _dialogTimeManualSearchResults.length ? 0 : -1;
-		_dialogTimeManualError = '';
-		if (_dialogTimeManualSearchTimer) clearTimeout(_dialogTimeManualSearchTimer);
-		_dialogTimeManualSearchTimer = setTimeout(() => {
-			_dialogTimeManualSearchTimer = null;
-			_searchDialogTimeEligibleTasks(scheduledQuery, token).catch(() => {});
+		const token = ++state.token;
+		const scheduledQuery = state.query;
+		const scope = _getDialogNativeSharedAuditScopeKey();
+		state.selectedTask = null;
+		state.loading = !!scheduledQuery.trim();
+		state.results = _getDialogTimeLocalTaskSearchResults(state.query);
+		state.activeIndex = state.results.length ? 0 : -1;
+		state.error = '';
+		if (state.timer) clearTimeout(state.timer);
+		state.timer = setTimeout(() => {
+			state.timer = null;
+			if (scope !== _getDialogNativeSharedAuditScopeKey() || token !== state.token) return;
+			_searchDialogTimeEligibleTasks(scheduledQuery, token, target).catch(() => {});
 		}, 240);
-		_renderDialogTimeManualSearch();
+		_renderDialogTimeManualSearch(undefined, target);
+		_queueDialogTimeUiSync();
 	}
 
 	function _applyDialogTimeOptimisticEntry(taskId, seconds, dateKey, itemId = '', options = {}) {
@@ -15312,7 +15392,7 @@ if (_presetChannel) {
 		}
 
 		const panel = switcher.querySelector('.pena-native-time-panel');
-		if (!panel) {
+		if (!panel || _dialogControlNativeWorkspaceTab !== 'time') {
 			_ensureDialogTimeTrackerTick();
 			return;
 		}
@@ -15386,9 +15466,10 @@ if (_presetChannel) {
 			// check. Only initial coverage, an explicit refresh or an error needs UI.
 			const needsAttention = !!error || initializing || !data || record?.hasCompleteSnapshot !== true || manualForRange || bulkUpdate;
 			const state = error ? 'error' : busy ? 'loading' : incomplete ? 'partial' : 'ready';
-			const label = error ? 'Не удалось обновить данные' : initializing ? 'Подключаемся к Битрикс24' : busy ? (bulkUpdate && record?.hasCompleteSnapshot && !manualForRange ? 'Обновляем изменённые задачи' : data ? 'Проверяем актуальность' : 'Загружаем данные')
+			const initialCatalog = catalogIncomplete && record?.hasCompleteSnapshot !== true;
+			const label = error ? 'Не удалось обновить данные' : initializing ? 'Подключаемся к Битрикс24' : initialCatalog ? 'Загружаем список задач' : busy ? (record?.hasCompleteSnapshot !== true ? 'Считаем время' : bulkUpdate && !manualForRange ? 'Обновляем изменённые задачи' : 'Проверяем актуальность')
 				: incomplete ? 'Данные проверены не полностью' : 'Данные обновлены';
-			const detail = error ? error : busy && readProgress?.totalTasks > 0
+			const detail = error ? error : initialCatalog ? `Найдено задач: ${_dialogTimeTaskTitles.size}` : busy && readProgress?.totalTasks > 0
 				? `${readProgress.completedTasks} из ${readProgress.totalTasks} ${readProgress.totalTasks % 10 === 1 && readProgress.totalTasks % 100 !== 11 ? 'задачи' : 'задач'}`
 				: record?.updatedAt ? new Date(record.updatedAt).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' }) : '';
 			const labelNode = status.querySelector('.pena-native-time-read-label');
@@ -15397,7 +15478,7 @@ if (_presetChannel) {
 			if (detailNode.textContent !== detail) detailNode.textContent = detail;
 			status.hidden = !needsAttention;
 			status.dataset.state = state;
-			status.dataset.indeterminate = state === 'loading' && !readProgress?.totalTasks ? 'true' : 'false';
+			status.dataset.indeterminate = state === 'loading' && (initialCatalog || !readProgress?.totalTasks) ? 'true' : 'false';
 			status.title = error ? `${error}${data ? '. Показаны сохранённые данные.' : ''}` : label;
 			status.setAttribute('aria-busy', busy && !error ? 'true' : 'false');
 			status.setAttribute('aria-live', needsAttention && (initializing || manualForRange || error) ? 'polite' : 'off');
@@ -15436,17 +15517,16 @@ if (_presetChannel) {
 
 		const visits = _readDialogTimeVisits(selectedDay.from);
 		_loadDialogTimeTaskTitles(rawData, visits).catch(() => {});
-		const candidates = _getDialogTimeTaskCandidates(data, visits);
 		const selectedIsToday = selectedDay.from === today.from;
 		const trackerTitle = panel.querySelector('.pena-native-time-tracker-title');
 		const trackerDuration = panel.querySelector('.pena-native-time-tracker-duration');
 		const trackerHint = panel.querySelector('.pena-native-time-tracker-hint');
 		const trackerInfo = panel.querySelector('.pena-native-time-tracker-info');
-		const trackerSelect = panel.querySelector('.pena-native-time-task-select');
-		const trackerEmpty = panel.querySelector('.pena-native-time-tracker-empty');
+		const trackerSearch = _getDialogTimeTaskSearchState('tracker');
+		const trackerSearchWrap = panel.querySelector('.pena-native-time-tracker-search-wrap');
 		const start = panel.querySelector('.pena-native-time-start');
 		const stop = panel.querySelector('.pena-native-time-stop');
-		const cancelTracker = panel.querySelector('.pena-native-time-cancel');
+		const cancelTracker = panel.querySelector('.pena-native-time-tracker .pena-native-time-cancel:not(.pena-native-time-tracker-journal)');
 		const trackerUnknown = tracker?.saveSegments?.some(segment => segment.status === 'unknown' || segment.status === 'sending');
 		const trackerAccounting = tracker?.saveSegments?.length && tracker.saveSegments.every(segment => segment.status === 'saved');
 		const retryConfirmed = tracker && _dialogTimeTrackerRetryConfirmKey === `${tracker.taskId}:${tracker.startedAt}`;
@@ -15476,37 +15556,14 @@ if (_presetChannel) {
 			trackerSection.classList.toggle('--active', !!tracker && !tracker.stoppedAt && tracker.pendingSeconds <= 0);
 			trackerSection.classList.toggle('--pending', !!tracker?.pendingSeconds);
 		}
-		if (trackerSelect) {
-			const optionsKey = candidates.map(task => `${task.taskId}:${task.title}`).join('|');
-			if (trackerSelect.dataset.penaOptionsKey !== optionsKey) {
-				const previous = trackerSelect.value;
-				const options = document.createDocumentFragment();
-				const placeholder = document.createElement('option');
-				placeholder.value = '';
-				placeholder.textContent = 'Выберите задачу';
-				options.appendChild(placeholder);
-				candidates.forEach(task => {
-					const option = document.createElement('option');
-					option.value = task.taskId;
-					option.textContent = task.title;
-					options.appendChild(option);
-				});
-				trackerSelect.replaceChildren(options);
-				const preferred = _dialogTimeTrackerSelectedTaskId || previous;
-				trackerSelect.value = candidates.some(task => task.taskId === preferred) ? preferred : '';
-				trackerSelect.dataset.penaOptionsKey = optionsKey;
-			}
-			trackerSelect.disabled = !!tracker || _dialogTimeActionInFlight || !selectedIsToday;
-			trackerSelect.hidden = !!tracker || !candidates.length;
-			const selectedTitle = trackerSelect.value
-				? String(trackerSelect.selectedOptions?.[0]?.textContent || '')
-				: '';
-			_setDialogTimeFullTaskTitle(trackerSelect, selectedTitle, 'Задача для трекинга');
+		if (trackerSearchWrap) {
+			trackerSearchWrap.hidden = !!tracker;
+			trackerSearchWrap.querySelectorAll('input,button').forEach(control => { control.disabled = !!tracker || _dialogTimeActionInFlight || !selectedIsToday; });
 		}
-		if (trackerEmpty) trackerEmpty.hidden = !!tracker || !!candidates.length;
+		_renderDialogTimeManualSearch(panel, 'tracker');
 		if (start) {
-			start.hidden = !!tracker || !candidates.length;
-			start.disabled = _dialogTimeActionInFlight || !trackerSelect?.value || !selectedIsToday;
+			start.hidden = !!tracker;
+			start.disabled = _dialogTimeActionInFlight || !trackerSearch.selectedTask?.taskId || !selectedIsToday;
 		}
 		if (stop) {
 			stop.hidden = !tracker;
@@ -15747,12 +15804,48 @@ if (_presetChannel) {
 		if (trackedList) {
 			trackedList.hidden = !_dialogTimeTrackedExpanded;
 			const emptyLabel = !data && (initializing || record?.status === 'loading') ? 'Загружаем записи…' : !data && (record?.error || initializationError) ? 'Не удалось загрузить записи' : 'За выбранную дату записей нет';
-			const trackedKey = `${_dialogTimeActionInFlight ? 'busy' : 'ready'}:${emptyLabel}:${_dialogTimeEditingEntryId}:${_dialogTimeDeleteConfirmEntryId}:${tracked.map(entry => `${entry.id}:${entry.taskId}:${entry.seconds}:${entry.dateKey}`).join('|')}`;
-			if (trackedList.dataset.penaRenderKey !== trackedKey) {
-				trackedList.replaceChildren(...(tracked.length
-					? tracked.map(createEntryRow)
-					: [Object.assign(document.createElement('div'), { className: 'pena-native-time-empty', textContent: emptyLabel })]));
-				trackedList.dataset.penaRenderKey = trackedKey;
+			const rangeKey = _getDialogTimeCacheKey(visibleRange);
+			if (trackedList.dataset.penaRange !== rangeKey) { trackedList.dataset.penaRange = rangeKey; trackedList._penaLimit = 50; }
+			if (_dialogTimeTrackedExpanded) {
+				const limit = Math.max(50, trackedList._penaLimit || 50);
+				const shown = tracked.slice(0, limit);
+				// Keep an open editor mounted even if a new record moves it beyond
+				// the current window. Background waves never erase typed input.
+				const editing = tracked.find(entry => String(entry.id) === _dialogTimeEditingEntryId);
+				if (editing && !shown.includes(editing)) shown.push(editing);
+				const existing = new Map(Array.from(trackedList.children).filter(node => node.dataset.penaEntry).map(node => [node.dataset.penaEntry, node]));
+				const rows = shown.map(entry => {
+					const id = `${entry.taskId}:${entry.id}`;
+					const editing = String(entry.id) === _dialogTimeEditingEntryId;
+					const key = editing ? `edit:${id}` : `${id}:${entry.seconds}:${entry.dateKey}:${_getDialogTimeTaskTitle(entry.taskId)}:${_dialogTimeActionInFlight}:${_dialogTimeDeleteConfirmEntryId === String(entry.id)}`;
+					const previous = existing.get(id);
+					if (previous?._penaEntryRenderKey === key) return previous;
+					const row = createEntryRow(entry);
+					row.dataset.penaEntry = id; row._penaEntryRenderKey = key;
+					return row;
+				});
+				if (!rows.length) {
+					const empty = trackedList.querySelector('.pena-native-time-empty') || document.createElement('div');
+					empty.className = 'pena-native-time-empty';
+					if (empty.textContent !== emptyLabel) empty.textContent = emptyLabel;
+					rows.push(empty);
+				}
+				if (tracked.length > limit) {
+					let more = trackedList.querySelector('.pena-native-time-load-more');
+					if (!more) {
+						more = document.createElement('button'); more.type = 'button'; more.className = 'pena-native-time-load-more';
+						more.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); trackedList._penaLimit = (trackedList._penaLimit || 50) + 50; _queueDialogTimeUiSync(); });
+					}
+					const text = `Показать ещё ${Math.min(50, tracked.length - limit)}`;
+					if (more.textContent !== text) more.textContent = text;
+					rows.push(more);
+				}
+				let cursor = trackedList.firstChild;
+				for (const row of rows) {
+					if (row === cursor) cursor = cursor.nextSibling;
+					else trackedList.insertBefore(row, cursor);
+				}
+				while (cursor) { const next = cursor.nextSibling; cursor.remove(); cursor = next; }
 			}
 		}
 		_ensureDialogTimeTrackerTick();
@@ -15792,6 +15885,63 @@ if (_presetChannel) {
 	const _dialogTimeRangeRechecks = new Map();
 	const _dialogTimeRangeRevisions = new Map();
 	const _dialogTimePanelRefreshes = new Map();
+	let _dialogTimeBootstrapToken = null;
+	let _dialogTimeBootstrapPromise = null;
+	let _dialogTimeBootstrapSequence = 0;
+	function _scheduleDialogTimeBootstrap(taskCatalogOutcomePromise = null) {
+		const scope = _getDialogNativeSharedAuditScopeKey();
+		if (!scope || !_PENA_TIME_CONTROL || !_isDialogTimeFrameActive() || navigator.onLine === false) return Promise.resolve(null);
+		if (_dialogTimeBootstrapPromise && _dialogTimeBootstrapToken?.scope === scope) {
+			// A midnight wake must not disappear into yesterday's cancelling read.
+			// Wait for that owner, then start one coalesced cycle for the new day.
+			if (_dialogTimeBootstrapToken.dateKey && _dialogTimeBootstrapToken.dateKey !== _getDialogTimeTodayKey()) {
+				return _dialogTimeBootstrapPromise.then(() => scope === _getDialogNativeSharedAuditScopeKey() ? _scheduleDialogTimeBootstrap(null) : null);
+			}
+			return _dialogTimeBootstrapPromise;
+		}
+		const token = { id:++_dialogTimeBootstrapSequence, scope, active:true, phase:'catalog', dateKey:'', completedTasks:0, totalTasks:0, elapsedPages:0, error:'' };
+		_dialogTimeBootstrapToken = token;
+		const current = () => token === _dialogTimeBootstrapToken && scope === _getDialogNativeSharedAuditScopeKey() && _isDialogTimeFrameActive() && document.visibilityState !== 'hidden' && navigator.onLine !== false;
+		const run = (async () => {
+			try {
+				let outcome = await taskCatalogOutcomePromise;
+				if (!current()) return null;
+				if (outcome?.error) throw outcome.error;
+				// A native task feed can be complete without ever needing the REST
+				// task index. Today still joins that same catalog owner, once, here.
+				if ((!_dialogTimeCatalogCursor || _dialogTimeCatalogScope !== scope) && !outcome?.value?.discarded && outcome?.value?.complete !== false) {
+					outcome = { value:await _syncDialogTaskCatalog({ forceNetwork:true, deferMerge:true }), error:null };
+					if (!current()) return null;
+				}
+				if (outcome?.value?.discarded || outcome?.value?.complete === false || !_dialogTimeCatalogCursor || _dialogTimeCatalogScope !== scope) {
+					token.phase = 'paused'; return null;
+				}
+				await _ensureDialogTimePortalDate();
+				if (!current()) return null;
+				_syncDialogTimePortalDay();
+				token.dateKey = _getDialogTimeTodayKey();
+				if (!_dialogTimePortalDateKey) throw new Error('Не удалось определить дату портала');
+				token.phase = 'elapsed';
+				const range = { from:token.dateKey, to:token.dateKey };
+				const data = await _loadDialogTimeRange(range, { bootstrap:token });
+				if (current()) token.phase = _getDialogTimeRecord(range)?.hasCompleteSnapshot ? 'ready' : 'paused';
+				return data;
+			} catch (error) {
+				if (current()) { token.phase = 'error'; token.error = _getDialogTimeFriendlyError(error); }
+				return null;
+			} finally {
+				token.active = false;
+				if (token.phase === 'elapsed' || token.phase === 'catalog') token.phase = 'paused';
+				if (_dialogTimeBootstrapToken === token) { _dialogTimeBootstrapPromise = null; _queueDialogTimeUiSync(); }
+			}
+		})();
+		_dialogTimeBootstrapPromise = run;
+		return run;
+	}
+	window.__PENA_TIME_LOAD_DIAGNOSTICS__ = Object.freeze({ snapshot: () => {
+		const token = _dialogTimeBootstrapToken;
+		return token ? { cycle:token.id, active:token.active, phase:token.phase, dateKey:token.dateKey, completedTasks:token.completedTasks, totalTasks:token.totalTasks, elapsedPages:token.elapsedPages, error:token.error } : { cycle:0, active:false, phase:'idle' };
+	} });
 	let _dialogTimeElapsedEventTimer = null;
 	let _dialogTimeElapsedEventScope = '';
 	const _DIALOG_TIME_CATALOG_REFRESH_MS = 10000;
@@ -15818,7 +15968,7 @@ if (_presetChannel) {
 			_loadDialogTimeRange(range).catch(() => {});
 		}, 100);
 	}
-	async function _loadDialogTimeRange(range = _dialogTimeRange, { force = false } = {}) {
+	async function _loadDialogTimeRange(range = _dialogTimeRange, { force = false, bootstrap = null } = {}) {
 		if (!_PENA_TIME_CONTROL) throw new Error('Модуль учета времени недоступен');
 		const normalized = _PENA_TIME_CONTROL.normalizeRange(range?.from, range?.to);
 		const pendingKey = _getDialogTimeCacheKey(normalized);
@@ -15833,8 +15983,10 @@ if (_presetChannel) {
 		const scope = _getDialogNativeSharedAuditScopeKey();
 		const cached = _dialogTimeCache.get(key);
 		const revision = _dialogTimeRangeRevisions.get(key) || 0;
+		const bootstrapCurrent = () => bootstrap && bootstrap === _dialogTimeBootstrapToken && bootstrap.active && bootstrap.scope === scope && _isDialogTimeFrameActive() &&
+			normalized.from === bootstrap.dateKey && normalized.to === bootstrap.dateKey && bootstrap.dateKey === _getDialogTimeTodayKey();
 		const current = () => key === _getDialogTimeCacheKey(normalized) && scope === _getDialogNativeSharedAuditScopeKey() &&
-			_dialogControlNativeWorkspaceTab === 'time' && document.visibilityState !== 'hidden' && navigator.onLine !== false &&
+			(_dialogControlNativeWorkspaceTab === 'time' || bootstrapCurrent()) && document.visibilityState !== 'hidden' && navigator.onLine !== false &&
 			revision === (_dialogTimeRangeRevisions.get(key) || 0);
 		if (!current()) return cached?.data || null;
 		const taskIds = _getDialogTimeWorkingTaskIds(normalized);
@@ -15878,7 +16030,7 @@ if (_presetChannel) {
 			if (rechecks.has(key)) return rechecks.get(key);
 			const recheck = running.catch(() => null).then(() => {
 				rechecks.delete(key);
-				return current() ? _loadDialogTimeRange(normalized, { force }) : _dialogTimeCache.get(key)?.data || null;
+				return current() ? _loadDialogTimeRange(normalized, { force, bootstrap }) : _dialogTimeCache.get(key)?.data || null;
 			}).finally(() => { if (rechecks.get(key) === recheck) rechecks.delete(key); });
 			rechecks.set(key, recheck);
 			return recheck;
@@ -15930,19 +16082,20 @@ if (_presetChannel) {
 				if (!current()) return _dialogTimeCache.get(key)?.data || null;
 				const accepted = new Set(wave.filter(id => !unavailable.has(id) && taskRevisions.get(id) === (_dialogTimeTaskRevisions.get(id) || 0)));
 				if (accepted.size) base.hasVerifiedData = true;
-				const merged = [
-					...(data.items || []).filter(entry => !accepted.has(String(entry.taskId))),
-					...(batch.items || []).filter(entry => accepted.has(String(entry.taskId)))
-				];
+				const merged = _PENA_TIME_CONTROL.replaceElapsedTasks(data, batch, accepted);
 				accepted.forEach(id => { freshness[id] = { at: dispatchedAt.get(id) || waveStartedAt, revision: taskRevisions.get(id) }; });
 				unavailable.forEach((error, id) => { freshness[id] = { at: dispatchedAt.get(id) || waveStartedAt, revision: taskRevisions.get(id), unavailable: error }; });
-				if (hasCompleteCoverage()) base.hasCompleteSnapshot = true;
 				offset += wave.length;
+				// Working-set discovery reads local metadata. Do it once at the tail,
+				// not again after every page of a large initial snapshot.
+				if (offset >= pendingIds.length && hasCompleteCoverage()) base.hasCompleteSnapshot = true;
 				pages += batch.pages;
 				const checkedTasks = taskIds.filter(id => freshness[id] && !freshness[id].unavailable && freshness[id].revision === (_dialogTimeTaskRevisions.get(id) || 0)).length;
-				data = { ..._PENA_TIME_CONTROL.aggregateElapsedItems(merged), range: normalized, pages, totalAvailable: merged.length,
+				if (bootstrapCurrent()) { bootstrap.completedTasks = checkedTasks; bootstrap.totalTasks = taskIds.length; bootstrap.elapsedPages += batch.pages; }
+				data = { ...merged, range: normalized, pages, totalAvailable: merged.entryCount,
 					coverage: { checkedTasks, totalTasks: taskIds.length, complete: checkedTasks === taskIds.length } };
-				_setDialogTimeCacheRecord(key, { ...base, status: offset < pendingIds.length ? 'loading' : 'ready', readProgress: { completedTasks:offset, totalTasks:pendingIds.length }, data, taskFreshness: { ...freshness }, updatedAt: Date.now() });
+				const readProgress = cached?.hasCompleteSnapshot === true ? { completedTasks:offset, totalTasks:pendingIds.length } : { completedTasks:checkedTasks, totalTasks:taskIds.length };
+				_setDialogTimeCacheRecord(key, { ...base, status: offset < pendingIds.length ? 'loading' : 'ready', readProgress, data, taskFreshness: { ...freshness }, updatedAt: Date.now() });
 				_queueDialogTimeUiSync();
 				if (offset < pendingIds.length) await _sleepDialogControl(0);
 			}
@@ -16253,32 +16406,51 @@ if (_presetChannel) {
 		trackerHint.hidden = true;
 		const trackerControls = document.createElement('div');
 		trackerControls.className = 'pena-native-time-tracker-controls';
-		const taskSelect = document.createElement('select');
-		taskSelect.className = 'pena-native-time-task-select';
-		taskSelect.setAttribute('aria-label', 'Задача для трекинга');
-		const trackerEmpty = document.createElement('span');
-		trackerEmpty.className = 'pena-native-time-tracker-empty';
-		trackerEmpty.textContent = 'Нет задач с включённым учётом времени';
+		const trackerSearchWrap = document.createElement('div');
+		trackerSearchWrap.className = 'pena-native-time-tracker-search-wrap';
+		const trackerSearch = document.createElement('input');
+		trackerSearch.type = 'search'; trackerSearch.autocomplete = 'off';
+		trackerSearch.className = 'pena-native-time-tracker-search';
+		trackerSearch.placeholder = 'Найти задачу';
+		trackerSearch.setAttribute('aria-label', 'Поиск задачи для таймера');
+		trackerSearch.setAttribute('role', 'combobox'); trackerSearch.setAttribute('aria-autocomplete', 'list');
+		trackerSearch.setAttribute('aria-expanded', 'false'); trackerSearch.setAttribute('aria-controls', 'pena-time-tracker-results');
+		const trackerSelected = document.createElement('button');
+		trackerSelected.type = 'button'; trackerSelected.className = 'pena-native-time-tracker-selected';
+		trackerSelected.innerHTML = '<span></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg>';
+		trackerSelected.hidden = true;
+		const trackerResults = document.createElement('div');
+		trackerResults.className = 'pena-native-time-tracker-results'; trackerResults.id = 'pena-time-tracker-results';
+		trackerResults.setAttribute('role', 'listbox'); trackerResults.hidden = true;
+		trackerSearchWrap.append(trackerSearch, trackerSelected, trackerResults);
+		trackerSearch.addEventListener('input', () => _scheduleDialogTimeManualSearch(trackerSearch.value, 'tracker'));
+		trackerSearch.addEventListener('keydown', event => {
+			const state = _getDialogTimeTaskSearchState('tracker');
+			if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && state.results.length) {
+				event.preventDefault(); event.stopPropagation();
+				state.activeIndex = (state.activeIndex + (event.key === 'ArrowDown' ? 1 : -1) + state.results.length) % state.results.length;
+				_renderDialogTimeManualSearch(panel, 'tracker');
+				panel.querySelector(`#pena-time-tracker-task-option-${state.results[state.activeIndex].taskId}`)?.scrollIntoView?.({ block:'nearest' });
+			} else if (event.key === 'Enter' && state.results.length && state.activeIndex >= 0) {
+				event.preventDefault(); event.stopPropagation(); _selectDialogTimeTrackerTask(state.results[state.activeIndex], panel);
+			} else if (event.key === 'Escape') {
+				event.preventDefault(); event.stopPropagation(); _scheduleDialogTimeManualSearch('', 'tracker');
+			}
+		});
+		trackerSelected.addEventListener('click', event => {
+			event.preventDefault(); event.stopPropagation(); _scheduleDialogTimeManualSearch('', 'tracker');
+			trackerSearch.value = ''; trackerSearch.focus({ preventScroll:true });
+		});
 		const start = document.createElement('button');
 		start.type = 'button';
 		start.className = 'pena-native-time-start';
 		start.textContent = 'Начать';
-		taskSelect.addEventListener('change', () => {
-			_dialogTimeTrackerSelectedTaskId = taskSelect.value;
-			start.disabled = _dialogTimeActionInFlight || !taskSelect.value;
-			_setDialogTimeFullTaskTitle(
-				taskSelect,
-				taskSelect.value ? String(taskSelect.selectedOptions?.[0]?.textContent || '') : '',
-				'Задача для трекинга'
-			);
-		});
 		start.addEventListener('click', event => {
 			event.preventDefault();
 			event.stopPropagation();
 			const selected = _getDialogTimeSelectedRange();
 			if (selected.from !== _getDialogTimeTodayKey()) return;
-			const data = _getDialogTimeRecord(selected)?.data || null;
-			const task = _getDialogTimeTaskCandidates(data, _readDialogTimeVisits(selected.from)).find(candidate => candidate.taskId === taskSelect.value);
+			const task = _getDialogTimeTaskSearchState('tracker').selectedTask;
 			if (task) _startDialogTimeTracker(task);
 		});
 		const stop = document.createElement('button');
@@ -16312,7 +16484,7 @@ if (_presetChannel) {
 			_dialogTimeTrackerRetryConfirmKey = '';
 			if (tracker) _openDialogTimeTask(tracker.taskId, tracker.title);
 		});
-		trackerControls.append(taskSelect, trackerEmpty, start, stop, cancelTracker, trackerJournal);
+		trackerControls.append(trackerSearchWrap, start, stop, cancelTracker, trackerJournal);
 		tracker.append(trackerHeader, trackerInfo, trackerHint, trackerControls);
 
 		const manualToggle = document.createElement('button');
@@ -16502,7 +16674,7 @@ if (_presetChannel) {
 
 		const activityColumn = document.createElement('div');
 		activityColumn.className = 'pena-native-time-column pena-native-time-column-activity';
-		activityColumn.append(tracker, suggestions);
+		activityColumn.append(suggestions);
 		const recordsColumn = document.createElement('div');
 		recordsColumn.className = 'pena-native-time-column pena-native-time-column-records';
 		const manualBlock = document.createElement('section');
@@ -16523,8 +16695,12 @@ if (_presetChannel) {
 		stats.append(statsHeader, statsList);
 		const scroll = document.createElement('div');
 		scroll.className = 'pena-native-time-scroll';
-		scroll.append(summaryGroup, stats, body);
+		scroll.append(summaryGroup, stats, body, tracker);
 		panel.append(panelHeader, scroll);
+		const restoredTrackerSearch = _getDialogTimeTaskSearchState('tracker');
+		if (restoredTrackerSearch.loading && restoredTrackerSearch.query.trim() && !restoredTrackerSearch.selectedTask) {
+			_scheduleDialogTimeManualSearch(restoredTrackerSearch.query, 'tracker');
+		}
 		Promise.all([
 			_ensureDialogTimePortalDate(),
 			_ensureCurrentBitrixUserId()
@@ -16574,7 +16750,7 @@ if (_presetChannel) {
 			}
 			const target = anchor.matches?.('.pena-native-time-tracker-title')
 				? anchor
-				: (anchor.querySelector?.('.pena-native-time-task-title,.pena-native-time-manual-result-title,.pena-native-time-manual-selected > span') || anchor);
+				: (anchor.querySelector?.('.pena-native-time-task-title,.pena-native-time-manual-result-title,.pena-native-time-manual-selected > span,.pena-native-time-tracker-selected > span') || anchor);
 			return target.scrollWidth > target.clientWidth + 1 || target.scrollHeight > target.clientHeight + 1;
 		};
 		const hide = () => {

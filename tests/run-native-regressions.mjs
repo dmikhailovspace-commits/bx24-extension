@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { verifyTimeTimeoutRecovery } from './lib/native-time-timeout-recovery.mjs';
+import { selectTimeTrackerTask } from './lib/native-time-task-search.mjs';
 import { createReadStream, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
@@ -375,11 +376,24 @@ try {
 	assert.equal(await page.getByRole('button', { name: /Фильтры/ }).getAttribute('aria-expanded'), 'false');
 	const beforeTimePanel = await readOutput(page);
 	await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('pena.time')).forEach(key => localStorage.removeItem(key)));
-	const closedTimeRestCalls = await page.evaluate(() => window.nativeRestCalls.filter(call =>
-		['server.time', 'user.current', 'task.elapseditem.getlist', 'task.elapseditem.add', 'task.elapseditem.update', 'task.elapseditem.delete'].includes(call.method)
-	).map(call => call.method));
-	assert.deepEqual(closedTimeRestCalls, [], `Closed time panel produced REST traffic in ${mode}: ${JSON.stringify(closedTimeRestCalls)}`);
-	assert.equal(await page.evaluate(() => window.timeRestCalls.length), 0, `Closed time panel batched elapsed-time REST in ${mode}`);
+	// This legacy managed fixture has no production native owner. The separate
+	// native-startup-time-contention suite proves the shared startup cycle.
+	// Keep closed-panel passivity strict here instead of hiding incidental REST.
+	const closedStartup = await page.evaluate(() => ({
+		managed:window.__PENA_TEST_MANAGED_CATALOG__,
+		forcedCatalog:window.__PENA_FORCE_REST_CATALOG__,
+		cycle:window.__PENA_TIME_LOAD_DIAGNOSTICS__?.snapshot().cycle,
+		methods:window.nativeRestCalls.filter(call => ['server.time','user.current','task.elapseditem.getlist','task.elapseditem.add','task.elapseditem.update','task.elapseditem.delete'].includes(call.method)).map(call=>call.method),
+		contacts:Object.keys(localStorage).filter(key=>key.startsWith('pena.timeVisitedTasks.v1.'))
+	}));
+	assert.equal(closedStartup.managed,true,'Closed-panel fixture must use the managed test owner');
+	assert.equal(closedStartup.forcedCatalog,true,'Closed-panel fixture must use the forced test catalog');
+	assert.equal(closedStartup.cycle,0,'Legacy managed fixture unexpectedly started a native time cycle');
+	assert.deepEqual(closedStartup.methods,[],`Closed managed fixture made time REST calls in ${mode}`);
+	assert.deepEqual(closedStartup.contacts,[],`Read-only startup created contacts in ${mode}`);
+	await page.evaluate(()=>window.dispatchNativeTaskMessage('chat5','8'));
+	await page.waitForTimeout(250);
+	assert.equal(await page.evaluate(()=>window.timeRestCalls.length),0,`An ordinary incoming event loaded elapsed time in ${mode}`);
 	await page.locator('.pena-native-time-button').click();
 	const timePanel = page.locator('.pena-native-time-panel');
 	await timePanel.waitFor({ state: 'visible' });
@@ -389,13 +403,14 @@ try {
 		const diagnostic = await page.evaluate(() => ({
 			total: document.querySelector('.pena-native-time-total-value')?.textContent || '',
 			meta: document.querySelector('.pena-native-time-meta')?.textContent || '',
-			options: Array.from(document.querySelectorAll('.pena-native-time-task-select option'), option => ({ value: option.value, text: option.textContent })),
+			trackerQuery: document.querySelector('.pena-native-time-tracker-search')?.value || '',
+			trackerResults: Array.from(document.querySelectorAll('.pena-native-time-tracker-result'), option => ({ id:option.id, text:option.textContent })),
 			restCalls: window.nativeRestCalls,
 			timeRestCalls: window.timeRestCalls
 		}));
 		throw new Error(`Time panel did not load its working set: ${JSON.stringify(diagnostic)}; ${error.message}`);
 	}
-	await page.waitForFunction(() => document.querySelectorAll('.pena-native-time-task-select option').length >= 2);
+	await timePanel.locator('.pena-native-time-tracker-search').waitFor({state:'visible'});
 	const initialElapsedRequests = await page.evaluate(() => window.timeRestCalls.map(params => ({
 		taskId: String(Array.isArray(params) ? params[0] : ''),
 		filter: Array.isArray(params) ? params[2] : null,
@@ -416,12 +431,10 @@ try {
 	assert.equal(await timePanel.evaluate(panel => {
 		const tracker = panel.querySelector('.pena-native-time-tracker');
 		const activity = panel.querySelector('.pena-native-time-suggestions');
-		return !!(tracker && activity && (tracker.compareDocumentPosition(activity) & Node.DOCUMENT_POSITION_FOLLOWING));
-	}), true, `Primary tracker is not placed before secondary activity in ${mode}`);
-	const trackerOptions = await timePanel.locator('.pena-native-time-task-select option').evaluateAll(options => options.map(option => ({ value: option.value, title: option.textContent?.trim() || '' })));
-	assert.deepEqual(trackerOptions[0], { value: '', title: 'Выберите задачу' }, `Tracker has no neutral initial choice in ${mode}`);
-	assert.equal(await timePanel.locator('.pena-native-time-task-select').inputValue(), '', `Tracker auto-selected an unexplained task in ${mode}`);
-	assert.ok(trackerOptions.slice(1).every(option => /^\d+$/.test(option.value) && option.title && !/^(Сначала откройте задачу|Задача #\d+)$/.test(option.title)), `Tracker contains a non-task entry in ${mode}: ${JSON.stringify(trackerOptions)}`);
+		return !!(tracker && activity && tracker.parentElement.lastElementChild === tracker && (activity.compareDocumentPosition(tracker) & Node.DOCUMENT_POSITION_FOLLOWING));
+	}), true, `Tracker is not the final full-width block in ${mode}`);
+	assert.equal(await timePanel.locator('.pena-native-time-tracker-search').inputValue(), '', `Tracker auto-selected an unexplained task in ${mode}`);
+	assert.equal(await timePanel.locator('.pena-native-time-start').isDisabled(), true);
 	assert.equal(await timePanel.locator('.pena-native-time-date-input').count(), 1, `Time panel has no selected-date control in ${mode}`);
 	assert.equal(await timePanel.locator('.pena-native-time-view-tab').count(), 2, `Time panel has no day/statistics switch in ${mode}`);
 	assert.equal(await timePanel.getByText('Трекинг сейчас', { exact: true }).count(), 0);
@@ -790,22 +803,23 @@ try {
 		link.remove();
 	});
 	await page.waitForTimeout(250);
-	assert.equal(await page.locator('.pena-native-time-task-select option[value="303"]').count(), 1, 'An eligible catalog task must be selectable before qualified work');
+	await selectTimeTrackerTask(page, '303');
+	assert.match(await page.locator('.pena-native-time-tracker-selected').textContent(), /303/, 'An eligible catalog task must be searchable before qualified work');
 	assert.equal(await timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Задача 303' }).count(), 0, 'Opening a task link counted as work');
 	activePhase = `time tracker start, cancel and confirmed retry (${mode})`;
-	await timePanel.locator('.pena-native-time-task-select').first().selectOption('101');
+	await selectTimeTrackerTask(page, '101');
 	await timePanel.locator('.pena-native-time-start').click();
 	await page.waitForFunction(() => document.querySelector('.pena-native-time-tracker')?.classList.contains('--active'));
 	const activeCancelTracker = timePanel.locator('.pena-native-time-tracker .pena-native-time-cancel:not(.pena-native-time-tracker-journal)');
 	assert.equal(await activeCancelTracker.isVisible(), true, `Running timer cannot be cancelled in ${mode}`);
 	const callsBeforeActiveCancel = await page.evaluate(() => window.timeAddCalls.length);
 	await activeCancelTracker.click();
-	await page.waitForFunction(() => document.querySelector('.pena-native-time-cancel')?.textContent === 'Сбросить?');
+	await page.waitForFunction(() => document.querySelector('.pena-native-time-tracker .pena-native-time-cancel')?.textContent === 'Сбросить?');
 	await activeCancelTracker.click();
 	await page.waitForFunction(() => !Object.keys(localStorage).some(key => key.startsWith('pena.timeActiveTracker.v1.')) && !document.querySelector('.pena-native-time-start')?.hidden);
 	assert.equal(await page.evaluate(() => window.timeAddCalls.length), callsBeforeActiveCancel, `Cancelling a running timer wrote time in ${mode}`);
 	activePhase = `time tracker start, cancel and confirmed retry (${mode})`;
-	await timePanel.locator('.pena-native-time-task-select').first().selectOption('101');
+	await selectTimeTrackerTask(page, '101');
 	await timePanel.locator('.pena-native-time-start').click();
 	await page.waitForFunction(() => document.querySelector('.pena-native-time-tracker')?.classList.contains('--active'));
 	await page.evaluate(() => {
@@ -827,14 +841,14 @@ try {
 	assert.ok(await page.evaluate(() => !!Object.keys(localStorage).find(key => key.startsWith('pena.timeActiveTracker.v1.'))), `Failed timer was lost in ${mode}`);
 	const cancelTracker = timePanel.locator('.pena-native-time-tracker .pena-native-time-cancel:not(.pena-native-time-tracker-journal)');
 	await cancelTracker.click();
-	await page.waitForFunction(() => document.querySelector('.pena-native-time-cancel')?.textContent === 'Сбросить?');
+	await page.waitForFunction(() => document.querySelector('.pena-native-time-tracker .pena-native-time-cancel')?.textContent === 'Сбросить?');
 	assert.equal(await cancelTracker.textContent(), 'Сбросить?', `Timer cancellation has no confirmation in ${mode}`);
 	assert.ok(await page.evaluate(() => !!Object.keys(localStorage).find(key => key.startsWith('pena.timeActiveTracker.v1.'))), `First cancel click discarded unsaved time in ${mode}`);
 	await cancelTracker.click();
 	await page.waitForFunction(() => !Object.keys(localStorage).some(key => key.startsWith('pena.timeActiveTracker.v1.')) && !document.querySelector('.pena-native-time-start')?.hidden);
 	assert.equal(await page.evaluate(() => window.timeAddCalls.length), callsBeforeFailedTimer + 1, `Cancelling retry performed another write in ${mode}`);
 	activePhase = `time tracker start, cancel and confirmed retry (${mode})`;
-	await timePanel.locator('.pena-native-time-task-select').first().selectOption('101');
+	await selectTimeTrackerTask(page, '101');
 	await timePanel.locator('.pena-native-time-start').click();
 	await page.waitForFunction(() => document.querySelector('.pena-native-time-tracker')?.classList.contains('--active'));
 	const callsBeforeRetryTimer = await page.evaluate(() => window.timeAddCalls.length);
@@ -1050,9 +1064,9 @@ try {
 	assert.ok(afterChildFrameClose.lease?.frameId === multiFrameAfterMessage.lease?.frameId && afterChildFrameClose.visit?.visits === 1,
 		`Closing an inactive iframe changed qualified task activity: ${JSON.stringify(afterChildFrameClose)}`);
 
-	// A closed time panel must not resolve the user or load elapsed time. Once the
-	// user explicitly opens it, identity resolution stays single-flight and no
-	// temporary `self` namespace is written while the response is pending.
+	// Without a native account scope, closed startup stays passive. A qualified
+	// outgoing event resolves identity once without a temporary self namespace
+	// or a task elapsed scan.
 	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=tasks&timeUserCurrentFallback=1&timeUserCurrentDelay=1500`);
 	await page.waitForFunction(() => (window.nativeCustomEventHandlers.get('onPullEvent-im') || []).length === 1);
@@ -1062,13 +1076,13 @@ try {
 		userCalls: window.nativeRestCalls.filter(call => call.method === 'user.current').length,
 		elapsedCalls: window.nativeRestCalls.filter(call => call.method === 'task.elapseditem.getlist').length
 	}));
-	assert.equal(unresolvedUserStorage.userCalls, 0, `Closed time panel resolved user.current: ${JSON.stringify(unresolvedUserStorage)}`);
+	assert.equal(unresolvedUserStorage.userCalls, 0, `Unscoped closed startup resolved identity: ${JSON.stringify(unresolvedUserStorage)}`);
 	assert.equal(unresolvedUserStorage.elapsedCalls, 0, `Closed time panel loaded elapsed time: ${JSON.stringify(unresolvedUserStorage)}`);
 	assert.deepEqual(unresolvedUserStorage.selfKeys, [], `Tracking wrote unscoped data before user.current resolved: ${JSON.stringify(unresolvedUserStorage)}`);
 	await page.evaluate(() => window.dispatchNativeTaskMessage('chat5', '8'));
 	await page.waitForTimeout(250);
 	assert.equal(await page.evaluate(() => window.nativeRestCalls.filter(call => call.method === 'user.current').length), 0,
-		'Incoming task message resolved fallback user identity while the panel was closed');
+		'Incoming task message triggered identity resolution');
 	assert.equal(await page.evaluate(() => Object.keys(localStorage).some(key => key.startsWith('pena.timeVisitedTasks.v1.'))), false,
 		'Incoming task message created time activity for an unknown current user');
 	await page.evaluate(() => window.dispatchNativeTaskMessage('chat5'));
@@ -1091,15 +1105,14 @@ try {
 	}
 	assert.equal(await page.evaluate(() => window.nativeRestCalls.filter(call => call.method === 'user.current').length), 1,
 		'user.current was not single-flight for duplicate outgoing-message events');
-	assert.equal(await page.evaluate(() => window.timeRestCalls.length), 0,
-		'Qualified task action loaded elapsed time while the panel was closed');
+	assert.equal(await page.evaluate(() => window.timeRestCalls.length), 0, 'Qualified contact launched an elapsed scan without native startup scope');
 	await page.locator('.task-host .pena-native-time-button').click();
 	await page.waitForFunction(() => !document.querySelector('.pena-native-time-panel')?.classList.contains('--loading') &&
 		window.timeRestCalls.length > 0, null, { timeout: 10000 });
 	await page.locator('.pena-native-time-panel').press('Escape');
 
-	// Even a known task/dialog event is ignored in ordinary chats. It must not
-	// resolve the fallback identity or create local activity.
+	// Even a known task/dialog event is ignored in ordinary chats. Without native
+	// account scope, it must not start identity/elapsed reads or create work.
 	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&timeUserCurrentFallback=1`);
 	await page.waitForFunction(() => (window.nativeCustomEventHandlers.get('onPullEvent-im') || []).length === 1);
@@ -1109,7 +1122,8 @@ try {
 	});
 	await page.waitForTimeout(300);
 	assert.equal(await page.evaluate(() => window.nativeRestCalls.filter(call => call.method === 'user.current').length), 0,
-		'Ordinary chat task events resolved time-tracking identity');
+		'Ordinary chat task events resolved fallback identity');
+	assert.equal(await page.evaluate(()=>window.timeRestCalls.length),0,'Ordinary chat task events triggered elapsed reads');
 	assert.equal(await page.evaluate(() => Object.keys(localStorage).some(key => key.startsWith('pena.timeVisitedTasks.v1.'))), false,
 		'Ordinary chat task events created time activity');
 
