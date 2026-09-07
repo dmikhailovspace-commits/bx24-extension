@@ -357,7 +357,7 @@
 		} : plan.paginationMetadata ? {
 		  error: () => null,
 		  data: () => ({ items: entries, hasMore: hasNext }),
-		  next: () => hasNext ? plan.offsets[pageIndex + 1] : false,
+		  answer: { next: hasNext ? plan.offsets[pageIndex + 1] : undefined },
 		  total: () => plan.reportedTotal == null
 			? plan.pages.reduce((sum, current) => sum + current.length, 0)
 			: plan.reportedTotal

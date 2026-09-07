@@ -669,7 +669,7 @@
 		error: () => null,
 		data: () => ({ items: pageItems, hasMore: next != null, hasMorePages: next != null }),
 		total: () => restUnknownTotal ? -1 : (restIncompleteZero ? 0 : availableEntries.length),
-		next: () => restUnknownTotal || restNoNext ? false : next
+		answer: { next: restUnknownTotal || restNoNext ? undefined : next }
 	  };
 	};
 	const taskCatalogPageResult = (startValue, params = {}) => {
@@ -680,7 +680,7 @@
 		  error: () => null,
 		  data: () => ({ tasks: [] }),
 		  total: () => taskBogusTotal ? 0 : taskCatalogEntries.length,
-		  next: () => false
+		  answer: {}
 		};
 	  }
 	  const limit = taskPageCap > 0 ? taskPageCap : 50;
@@ -693,7 +693,7 @@
 		error: () => null,
 		data: () => ({ tasks: page, ...(taskNoEndMarker ? {} : { hasMore, hasMorePages: hasMore }) }),
 		total: () => taskBogusTotal ? 0 : taskCatalogEntries.length,
-		next: () => taskNoNext ? false : (hasMore ? start + page.length : null)
+		answer: { next: taskNoNext ? undefined : (hasMore ? start + page.length : undefined) }
 	  };
 	};
 	window.nativeCustomEventHandlers = new Map();
@@ -818,11 +818,13 @@
 		  window.timeAddCalls.push(params);
 		  if (window.timeAddFailures > 0) {
 			window.timeAddFailures -= 1;
-			callback({ error: () => 'TEMPORARY_ERROR', error_description: () => 'temporary elapsed-item failure' });
+			// Explicit rejection proves no write occurred. Lost acknowledgements have
+			// separate recovery scenarios and must never use this simple retry path.
+			callback({ error: () => null, data: () => false });
 			return;
 		  }
 		  const item = {
-			ID: `time-added-${window.timeAddedItems.length + 1}`,
+			ID: String(900000 + window.timeAddedItems.length + 1),
 			TASK_ID: String(params?.TASKID || ''),
 			USER_ID: '7',
 			SECONDS: String(params?.ARFIELDS?.SECONDS || 0),
@@ -908,7 +910,7 @@
 		  }
 		  const searchLimit = taskPageCap > 0 ? taskPageCap : 50;
 		  const page = filtered.slice(start, start + searchLimit);
-		  callback({ error: () => null, data: () => ({ tasks: page }), total: () => filtered.length, next: () => start + searchLimit < filtered.length ? start + searchLimit : null });
+		  callback({ error: () => null, data: () => ({ tasks: page }), total: () => filtered.length, answer: { next: start + searchLimit < filtered.length ? start + searchLimit : undefined } });
 		  return;
 		}
 		if (method === 'im.recent.list') {
@@ -967,7 +969,7 @@
 						const dateKey = String(item.CREATED_DATE || '').slice(0, 10);
 						return String(item.TASK_ID || '') === taskId && (!from || dateKey >= from) && (!toExclusive || dateKey < toExclusive) && (!userId || String(item.USER_ID || '') === userId);
 					  });
-					  return { error: () => null, data: () => elapsedItems, total: () => elapsedItems.length, next: () => false };
+					  return { error: () => null, data: () => elapsedItems, total: () => elapsedItems.length, answer: {} };
 					})()
 				: call?.method === 'task.elapseditem.delete'
 				  ? (() => { const itemId = String(call.params?.ITEMID || ''); window.timeDeletedItems.push({ TASKID: call.params?.TASKID, ITEMID: call.params?.ITEMID }); window.timeSeedItems = (window.timeSeedItems || []).filter(item => String(item.ID) !== itemId); window.timeAddedItems = window.timeAddedItems.filter(item => String(item.ID) !== itemId); return { error: () => null, data: () => true }; })()

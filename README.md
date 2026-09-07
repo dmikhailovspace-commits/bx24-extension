@@ -2,7 +2,7 @@
 
 Расширение PENA Agency для настольного Bitrix24. Добавляет папки, цветовые маркеры, поиск, фильтрацию и сортировку диалогов, сохраняя нативную ленту чатов.
 
-Текущая версия: **7.5.90**.
+Текущая версия: **7.5.94**.
 
 ## Установка
 
@@ -19,7 +19,7 @@
 extension/          runtime расширения
 installers/windows/ Windows builder, installer и updater
 installers/macos/   macOS DMG builder, installer и updater
-tests/              23 регрессионных набора и harness-файлы
+tests/              функциональные регрессии, замеры и harness-файлы
 tools/              служебные скрипты проекта
 dist/               только текущие установочные артефакты
 ```

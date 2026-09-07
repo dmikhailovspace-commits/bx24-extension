@@ -238,10 +238,11 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' \
-            'Removes idle task detail requests and redundant DOM work during normal Bitrix use.' \
-            'Shares complete task audits using stable ID pagination and prevents batch retry amplification.' \
-            'Adds functional request, DOM and HTTP interaction diagnostics; 33 regression suites gate this release.' \
-            'Controlled tests do not establish a 3–10x whole-app speedup or reproduce the reported live-client five-second delay.' \
+            'Mark as read now reads the full conversation. Read-later removal is a separate action.' \
+            'Uses native Desktop batches and task-level freshness; elapsed history includes all accessible tasks and retains previously logged time after tracking is disabled.' \
+            'Hardens contact persistence, concurrent writes, timer day boundaries and recovery after an uncertain server response.' \
+            'All registered functional, concurrency, layout and performance suites gate this release.' \
+            'Controlled tests are not a live Bitrix latency measurement. The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \
             'Includes Windows EXE and Universal macOS DMG for Intel and Apple Silicon.' \
             > release-notes.md
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then

@@ -1,0 +1,121 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const model = require('../extension/native-time-control.js');
+const source = fs.readFileSync(process.env.PENA_CONTACT_SOURCE || new URL('../extension/injected.js', import.meta.url), 'utf8');
+function extract(name) {
+ const begin = source.indexOf(`\n\tfunction ${name}(`) >= 0 ? source.indexOf(`\n\tfunction ${name}(`) : source.indexOf(`\n\tasync function ${name}(`);
+ if (begin < 0) return '';
+ const tail = source.slice(begin + 1); const next = tail.slice(1).search(/\n\t(?:async )?function /);
+ return next < 0 ? tail : tail.slice(0, next + 1);
+}
+const names = ['_getDialogTimePendingQualificationMs','_syncDialogTimePendingLease','_qualifyPendingDialogTimeDuration','_stageDialogTimeActivity','_flushDialogTimePendingActivities','_getDialogTimeContactDateKey','_queueDialogTimeContactEvent','_journalDialogTimeContactEvents','_readDialogTimeContactEvents','_commitDialogTimeContactEvent','_reportDialogTimeContactError','_writeDialogTimeVisits'];
+function createLocks(){let tail=Promise.resolve();return{request(_name,callback){const next=tail.then(callback);tail=next.catch(()=>{});return next;}};}
+function frame({ storage = new Map(), locks = createLocks(), id = 'frame1' } = {}) {
+ let now = Date.parse('2026-09-06T20:59:00Z'), user = '7', resolver, delay = false, failWrite = false, failAck = false, eligibility = true, portalOffset = 180, portalFail = false, portalCalls = 0;
+ const writes = [], warnings = [];
+ const localStorage = { get length(){ return storage.size; }, key(i){ return [...storage.keys()][i] ?? null; }, getItem:k=>storage.get(k)??null,
+ setItem(k,v){ if(failWrite) throw Error('quota'); storage.set(k,String(v)); }, removeItem(k){ if(failAck) throw Error('ack failure');storage.delete(k); } };
+ const ctx = vm.createContext({ window:{}, navigator:{locks}, console:{warn:(...x)=>warnings.push(x)}, Date:class extends Date { static now(){ return now; } }, Map, Set, Promise, JSON, Number, String, Math, Array,
+ localStorage, setTimeout:()=>1, clearTimeout:()=>{}, _PENA_TIME_CONTROL:model,
+ _PENA_TIME_VISITS_KEY:'pena.timeVisitedTasks.v1', _PENA_TIME_CONTACT_OUTBOX_KEY:'pena.timeContactOutbox.v1',
+ _dialogTimePortalUtcOffsetMinutes:180, _dialogTimeFrameId:id, _dialogTimeTaskTitles:new Map(),
+ _getCurrentBitrixUserId:()=>user, _ensureCurrentBitrixUserId:async()=>user,
+ _getDialogTimeTodayKey:()=>new Date(now+180*60000).toISOString().slice(0,10),
+ _getDialogTimeScopedStorageKey:(prefix,date='')=>`${prefix}.${user}${date?'.'+date:''}`,
+ _isDialogTimeLocalCoordinator:()=>true, _isDialogTimeFrameActive:()=>true,
+ _getActiveDialogTimeActivity:()=>({taskId:'101'}), normId:x=>String(x||''),
+ _getFreshDialogTimeTaskEligibility:()=>true,
+ _ensureDialogTimeTaskEligibility:()=>delay?new Promise(r=>{resolver=r;}):Promise.resolve(eligibility),
+ _ensureDialogTimePortalDate:async()=>{portalCalls++;if(portalFail)throw Error('offline');ctx._dialogTimePortalUtcOffsetMinutes=portalOffset;return '';},
+ _scheduleDialogTimeDeferredFlush:()=>{}, _queueDialogTimeUiSync:()=>{},
+ _getDialogTimeTaskTitle:(id,title)=>title, _isDialogTimePlaceholderTaskTitle:()=>false,
+ _claimDialogTimeActivityLease:(activityId)=>{storage.set('lease',JSON.stringify({frameId:id,activityId}));return true;},
+ _readDialogTimeActivityLease:()=>JSON.parse(storage.get('lease')||'null'),
+ _releaseDialogTimeActivityLease:()=>{},
+ _persistDialogTimeActivity:(entry,opts)=>{writes.push({taskId:entry.taskId,qualify:opts.qualify,at:now});return true;},
+ _removeDialogTimeActivity:()=>{}
+ });
+ vm.runInContext(`const _dialogTimePendingActivities=new Map(); const _dialogTimeContactEvents=new Map(); let _dialogTimeContactEventSequence=0; let _dialogTimeContactJournalTimer=null; let _dialogTimeContactRetryAttempt=0; let _dialogTimeContactLastError=''; let _dialogTimeContactRecoveryScope=''; let _dialogTimeLeaseHeartbeatTimer=null; let _dialogTimePendingActiveId=''; let _dialogTimeQualificationTimer=null; let _dialogTimeDeferredFlushPromise=null; let _dialogControlNativeWorkspaceTab='time'; ${names.map(extract).join('\n')}\n globalThis.probe={stage:_stageDialogTimeActivity,flush:_flushDialogTimePendingActivities,pending:_dialogTimePendingActivities, events:_dialogTimeContactEvents,write:_writeDialogTimeVisits};`,ctx);
+ return { ...ctx.probe, storage,writes,warnings,titles:ctx._dialogTimeTaskTitles, tick:ms=>{now+=ms;}, setUser:id=>{user=id;}, eligibility:value=>{eligibility=value;}, delay:()=>{delay=true;}, resolve:()=>{delay=false;resolver?.(eligibility);}, failWrite:value=>{failWrite=value;},failAck:value=>{failAck=value;}, unknownPortal:(offset,fail=false)=>{ctx._dialogTimePortalUtcOffsetMinutes=null;portalOffset=offset;portalFail=fail;},portalCalls:()=>portalCalls, total:()=>[...storage].filter(([k])=>k.startsWith('pena.timeVisitedTasks.v1.')).flatMap(([,v])=>JSON.parse(v)).reduce((n,x)=>n+x.visits,0) };
+}
+const scenarios = [];
+async function check(name, run){ try{const detail=await run();scenarios.push({name,status:'PASS',detail});}catch(e){scenarios.push({name,status:'FAIL',error:e.message});} }
+await check('qualified A→B→A survives replacement',async()=>{const f=frame();f.stage({taskId:'101'},{qualify:true});f.stage({taskId:'102'});f.stage({taskId:'101'});await f.flush();assert.equal(f.total() || f.writes.filter(x=>x.qualify).length,1);return {contacts:f.total()};});
+await check('message while eligibility awaits is a separate immutable event',async()=>{const f=frame();f.stage({taskId:'101'},{qualify:true});f.delay();const pending=f.flush();await Promise.resolve();f.tick(20000);f.stage({taskId:'101'},{qualify:true});f.resolve();await pending;await f.flush();assert.equal(f.total()||f.writes.filter(x=>x.qualify).length,2);return {contacts:f.total()};});
+await check('daily ledger retains 41+ tasks',()=>{const rows=model.mergeVisitedTasks(Array.from({length:65},(_,i)=>({taskId:String(i+1),visits:1,visitedAt:100+i,lastQualifiedAt:100+i})));assert.equal(rows.length,65);return{tasks:rows.length};});
+await check('midnight and offline replay keep captured day and qualification time',async()=>{const f=frame();f.stage({taskId:'101'},{qualify:true});f.eligibility(null);await f.flush();f.tick(120000);f.eligibility(true);await f.flush();const row=JSON.parse(f.storage.get('pena.timeVisitedTasks.v1.7.2026-09-06'))[0];assert.equal(row.lastQualifiedAt,Date.parse('2026-09-06T20:59:00Z'));assert.equal(f.total(),1);return{day:'2026-09-06',qualifiedAt:row.lastQualifiedAt};});
+await check('user swap during REST cannot write into either wrong namespace',async()=>{const f=frame();f.stage({taskId:'101'},{qualify:true});f.delay();const p=f.flush();await Promise.resolve();f.setUser('8');f.resolve();await p;assert.equal(f.total(),0);assert.equal([...f.storage.keys()].filter(x=>x.startsWith('pena.timeContactOutbox.v1.7')).length,1);f.setUser('7');await f.flush();assert.equal(f.total(),1);return{contacts:f.total()};});
+await check('journal write failure retains event in memory and retries',async()=>{const f=frame();f.stage({taskId:'101'},{qualify:true});f.failWrite(true);await f.flush();assert.equal(f.events.size,1);assert.equal(f.total(),0);f.failWrite(false);await f.flush();assert.equal(f.events.size,0);assert.equal(f.total(),1);return{diagnostics:f.warnings.length};});
+await check('ledger write followed by failed ack reloads without duplicate',async()=>{const f=frame();f.stage({taskId:'101'},{qualify:true});f.failAck(true);await f.flush();assert.equal(f.total(),1);const reloaded=frame({storage:f.storage});await reloaded.flush();assert.equal(reloaded.total(),1);assert.equal([...f.storage.keys()].filter(x=>x.startsWith('pena.timeContactOutbox')).length,0);return{contacts:reloaded.total()};});
+await check('two frames commit different events to one day with shared lock',async()=>{const storage=new Map(),locks=createLocks(),a=frame({storage,locks,id:'A'}),b=frame({storage,locks,id:'B'});a.stage({taskId:'101'},{qualify:true});b.stage({taskId:'102'},{qualify:true});await Promise.all([a.flush(),b.flush()]);assert.equal(a.total(),2);return{contacts:a.total(),rows:JSON.parse(storage.get('pena.timeVisitedTasks.v1.7.2026-09-06')).length};});
+await check('65 qualified tasks survive bounded batches and reload',async()=>{const f=frame();for(let i=1;i<=65;i++) f.stage({taskId:String(i)},{qualify:true});for(let i=0;i<4;i++) await f.flush();assert.equal(f.total(),65);assert.equal(f.pending.size,1);return{contacts:f.total(),sessions:f.pending.size};});
+await check('out-of-order events preserve deterministic 15 second dedupe and IDs',()=>{const events=[0,10000,20000].map((delta,i)=>({taskId:'1',eventId:String(i),qualifiedAt:100000+delta,reason:'message'}));let a=[],b=[];for(const event of events)a=model.applyQualifiedContact(a,event);for(const event of [events[1],events[2],events[0]])b=model.applyQualifiedContact(b,event);assert.equal(a[0].visits,2);assert.equal(b[0].visits,2);assert.equal(b[0].contactEvents.length,3);assert.equal(model.applyQualifiedContact(b,events[0])[0].visits,2);return{visits:a[0].visits,eventIds:b[0].contactEvents.length};});
+await check('stale ordinary writer cannot erase an acknowledged contact or inflate its count',async()=>{const f=frame();const key='pena.timeVisitedTasks.v1.7.2026-09-06';f.storage.set(key,JSON.stringify([{taskId:'10',visits:1,lastQualifiedAt:1000}]));const stale=JSON.parse(f.storage.get(key));f.stage({taskId:'101'},{qualify:true});await f.flush();assert.equal(await f.write(model.markActivityAccounted(stale,'task:10',30000),'2026-09-06'),true);assert.equal(f.total(),2);const inflated=JSON.parse(f.storage.get(key));inflated.find(row=>row.taskId==='101').visits=500;await f.write(inflated,'2026-09-06');assert.equal(f.total(),2);assert.equal(JSON.parse(f.storage.get(key)).find(row=>row.taskId==='10').accountedAt,30000);return{contacts:f.total(),metadataPreserved:true};});
+await check('event commit preserves intervening accounting metadata and active foreign lease',async()=>{const f=frame();f.stage({taskId:'101'},{qualify:true});await f.flush();f.tick(20000);f.stage({taskId:'101'},{qualify:true});f.delay();const p=f.flush();await Promise.resolve();await f.write(rows=>model.markActivityAccounted(rows,'task:101',40000),'2026-09-06');const lease=JSON.stringify({frameId:'B',activityId:'task:999',heartbeatAt:123});f.storage.set('lease',lease);f.resolve();await p;assert.equal(f.total(),2);assert.equal(f.storage.get('lease'),lease);assert.equal(JSON.parse(f.storage.get('pena.timeVisitedTasks.v1.7.2026-09-06'))[0].accountedAt,40000);return{contacts:f.total(),foreignLeaseUnchanged:true};});
+await check('queued session writer checks the lease revision inside the storage lock',async()=>{const locks=createLocks(),f=frame({locks});let release;const blocked=locks.request('x',()=>new Promise(r=>{release=r;}));await Promise.resolve();const lease={frameId:'frame1',activityId:'task:101',heartbeatAt:10};f.storage.set('lease',JSON.stringify(lease));const pending=f.write([{taskId:'101',visits:1}],'2026-09-06',{lease});f.storage.set('lease',JSON.stringify({...lease,heartbeatAt:11}));release();await blocked;assert.equal(await pending,false);assert.equal(f.total(),0);return{staleWrites:0};});
+await check('unknown portal timezone: pre-midnight qualification survives next-day resolution',async()=>{const f=frame();f.tick(8*3600000);f.unknownPortal(-300,true);f.stage({taskId:'101'},{qualify:true});await f.flush();assert.equal(f.total(),0);const pending=JSON.parse([...f.storage].find(([k])=>k.startsWith('pena.timeContactOutbox'))[1]);assert.equal(pending.datePending,true);assert.equal(pending.dateKey,'');f.tick(120000);f.unknownPortal(-300);await f.flush();assert.equal(JSON.parse(f.storage.get('pena.timeVisitedTasks.v1.7.2026-09-06'))[0].visits,1);f.stage({taskId:'102'},{qualify:true});await f.flush();assert.equal(JSON.parse(f.storage.get('pena.timeVisitedTasks.v1.7.2026-09-07'))[0].visits,1);return{beforeMidnight:'2026-09-06',afterMidnight:'2026-09-07',portalCalls:f.portalCalls()};});
+await check('unresolved date failure is one request per bounded flush, never per event',async()=>{const f=frame();f.unknownPortal(-300,true);for(let i=0;i<20;i++)f.stage({taskId:String(400+i)},{qualify:true});await f.flush();assert.equal(f.portalCalls(),1);assert.equal(f.total(),0);assert.equal([...f.storage.keys()].filter(x=>x.startsWith('pena.timeContactOutbox')).length,20);return{events:20,serverTimeCalls:f.portalCalls()};});
+await check('confirmed title for the event task replaces an unrelated side-panel caption before commit',async()=>{const f=frame();f.stage({taskId:'5',dialogId:'chat5',title:'Задача 405'},{qualify:true});f.delay();const pending=f.flush();await Promise.resolve();f.titles.set('405','Задача 405');f.titles.set('5','Задача 5');f.resolve();await pending;const row=JSON.parse(f.storage.get('pena.timeVisitedTasks.v1.7.2026-09-06'))[0];assert.equal(row.taskId,'5');assert.equal(row.title,'Задача 5');return{taskId:row.taskId,title:row.title};});
+await check('foreign side panel cannot suppress native task lookup for an outgoing dialog',()=>{
+ const start=source.indexOf('const captureOutgoingTaskMessage = (...eventArgs) => {');const end=source.indexOf("BXNS.addCustomEvent('onPullEvent-im', captureOutgoingTaskMessage);",start);assert.ok(start>=0&&end>start);
+ let reads=0,contact=null;const context=vm.createContext({Date,Map,String,Number,normId:x=>String(x||''),_isDialogTimeFrameActive:()=>true,_currentPanelMode:'tasks',_getCurrentBitrixUserId:()=> '7',_dialogTimeOutgoingIntentAt:0,_dialogTimeOutgoingPullSeen:new Map(),_getDialogRecentMeta:()=>null,
+  _getActiveDialogTimeActivity:()=>({taskId:'405',dialogId:'chat405',title:'Задача 405'}),_dialogTimePendingActivities:new Map(),_dialogTimeTaskIdsByChatDialogId:new Map(),_dialogTimeTaskTitles:new Map([['5','Задача 5']]),
+  _getDialogControlItemsForMode:()=>{reads++;return[{id:'chat5',taskId:'5',title:'Чат 5'}]},_isDialogControlFolder:()=>false,_rememberDialogTimeTaskChat:()=>{},_rememberTaskChatDialogVisit:(dialogId,title,taskId)=>{contact={dialogId,title,taskId}}});
+ vm.runInContext(source.slice(start,end)+"\ncaptureOutgoingTaskMessage('message',{message:{author_id:'7',dialog_id:'chat5',id:'msg-contact-title'}});",context);
+ assert.equal(reads,1);assert.deepEqual(contact,{dialogId:'chat5',taskId:'5',title:'Задача 5'});return{nativeTaskLookups:reads,contact};
+});
+if(!process.env.PENA_CONTACT_SKIP_BROWSER) await check('Chromium two pages: real Web Locks, lease ownership, restart, missing capability and ack replay',async()=>{
+ const {startHarnessServer}=await import('./lib/harness-server.mjs');const{chromium}=require('playwright');
+ const server=await startHarnessServer(),browser=await chromium.launch({headless:true}),context=await browser.newContext();
+ await context.route('**/contact-journal-blank',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><title>Contact journal contract</title>'}));
+ const extra=['_getDialogTimeContactDiagnostics','_getDialogTimeScopedStorageKey','_getDialogTimeActivityLeaseKey','_readDialogTimeActivityLease','_claimDialogTimeActivityLease'];
+ const boot=async(page,id)=>{
+  await page.goto(server.baseUrl+'/contact-journal-blank');
+  await page.addScriptTag({content:fs.readFileSync(new URL('../extension/native-time-control.js',import.meta.url),'utf8')});
+  await page.addScriptTag({content:`const _PENA_TIME_CONTROL=window.__PENA_TIME_CONTROL__,_PENA_TIME_VISITS_KEY='pena.timeVisitedTasks.v1',_PENA_TIME_CONTACT_OUTBOX_KEY='pena.timeContactOutbox.v1',_PENA_TIME_ACTIVITY_LEASE_KEY='pena.timeActivityOwner.v1',_PENA_TIME_ACTIVITY_LEASE_STALE_MS=15000;
+   const _dialogTimeFrameId=${JSON.stringify(id)},_dialogTimePortalUtcOffsetMinutes=180,_dialogTimePendingActivities=new Map(),_dialogTimeContactEvents=new Map(),_dialogTimeTaskTitles=new Map();
+   let _dialogTimeContactEventSequence=0,_dialogTimeContactJournalTimer=null,_dialogTimeContactRetryAttempt=0,_dialogTimeContactLastError='',_dialogTimeContactRecoveryScope='',_dialogTimeLeaseHeartbeatTimer=null,_dialogTimePendingActiveId='',_dialogTimeQualificationTimer=null,_dialogTimeDeferredFlushPromise=null,_dialogControlNativeWorkspaceTab='time',_dialogTimeOwnedActivityId='';
+   function _getCurrentBitrixUserId(){return '7'} function _isDialogTimeLocalCoordinator(){return true} function _isDialogTimeFrameActive(){return true}
+   function _getActiveDialogTimeActivity(){return null} function normId(x){return String(x||'')} function _ensureDialogTimeTaskEligibility(){return Promise.resolve(true)}
+   function _scheduleDialogTimeDeferredFlush(){} function _queueDialogTimeUiSync(){}
+   ${[...names,...extra].map(extract).join('\n')}
+   window.probe={stage:_stageDialogTimeActivity,flush:_flushDialogTimePendingActivities,journal:_journalDialogTimeContactEvents,diagnostics:_getDialogTimeContactDiagnostics,heartbeat:_syncDialogTimePendingLease,qualify:()=>_qualifyPendingDialogTimeDuration(_dialogTimePendingActivities.get(_dialogTimePendingActiveId)),rows:()=>{let rows=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k.startsWith('pena.timeVisitedTasks.v1.7.'))rows.push(...JSON.parse(localStorage.getItem(k)));}return rows;}};`});
+ };
+ try{
+  const a=await context.newPage(),b=await context.newPage();await boot(a,'A');await boot(b,'B');
+  for(let batch=0;batch<8;batch++){
+   await Promise.all([a.evaluate(batch=>{probe.stage({taskId:String(100+batch)},{qualify:true});probe.journal();},batch),b.evaluate(batch=>{probe.stage({taskId:String(200+batch)},{qualify:true});probe.journal();},batch)]);
+   await Promise.all([a.evaluate(()=>probe.flush()),b.evaluate(()=>probe.flush())]);
+  }
+  const before=await a.evaluate(()=>({rows:probe.rows(),diag:probe.diagnostics()}));assert.equal(before.rows.length,16);assert.equal(before.rows.reduce((n,r)=>n+r.visits,0),16);assert.equal(before.diag.secureContext,true);assert.equal(before.diag.storageLockAvailable,true);
+  await a.evaluate(()=>{Object.defineProperty(navigator,'locks',{configurable:true,value:undefined});probe.stage({taskId:'301'},{qualify:true});});await a.evaluate(()=>probe.flush());
+  const unavailable=await a.evaluate(()=>probe.diagnostics());assert.equal(unavailable.pendingDurable,1);assert.equal(unavailable.lastError,'CONTACT_STORAGE_LOCK_UNAVAILABLE');
+  await boot(a,'A-reloaded');await a.evaluate(()=>probe.flush());assert.equal(await a.evaluate(()=>probe.rows().length),17);
+  await a.evaluate(()=>{const remove=Storage.prototype.removeItem;Storage.prototype.removeItem=function(key){if(String(key).startsWith('pena.timeContactOutbox'))throw Error('injected ack failure');return remove.call(this,key)};probe.stage({taskId:'302'},{qualify:true});});await a.evaluate(()=>probe.flush());
+  assert.equal(await a.evaluate(()=>probe.rows().length),18);await boot(a,'A-after-ack-failure');await a.evaluate(()=>probe.flush());
+  const result=await a.evaluate(()=>({rows:probe.rows(),diag:probe.diagnostics()}));assert.equal(result.rows.length,18);assert.equal(result.rows.reduce((n,r)=>n+r.visits,0),18);assert.equal(result.diag.pendingDurable,0);
+  const base=Date.now();
+  for(const page of [a,b])await page.evaluate(base=>{const NativeDate=Date;window.testNow=base;window.Date=class extends NativeDate{static now(){return window.testNow}};probe.stage({taskId:'401'},{takeover:true});},base);
+  assert.equal(await a.evaluate(()=>probe.heartbeat()),true);assert.equal(await b.evaluate(()=>probe.heartbeat()),false);
+  await a.evaluate(base=>{window.testNow=base+60000;probe.heartbeat();},base);assert.equal(await a.evaluate(()=>probe.qualify()),true);await a.evaluate(()=>probe.flush());
+  await a.evaluate(base=>{window.testNow=base+80000;probe.heartbeat();},base);
+  await b.evaluate(base=>{window.testNow=base+80000;},base);assert.equal(await b.evaluate(()=>probe.qualify()),false);await b.evaluate(()=>probe.flush());
+  assert.equal(await a.evaluate(()=>probe.rows().find(row=>row.taskId==='401')?.visits),1,'different duration thresholds in visible frames cannot qualify the same owned session twice');
+  await b.evaluate(()=>{probe.stage({taskId:'501'},{qualify:true,reason:'message'});});await b.evaluate(()=>probe.flush());assert.equal(await b.evaluate(()=>probe.rows().find(row=>row.taskId==='501')?.visits),1,'confirmed outgoing message cannot be blocked by another session lease');
+  await boot(a,'heartbeat-A');await boot(b,'heartbeat-B');await a.evaluate(()=>localStorage.clear());
+  const clock=async(page,at)=>page.evaluate(at=>{const NativeDate=Date;window.clockNow=at;window.Date=class extends NativeDate{static now(){return clockNow}};let sequence=0;const timers=new Map();window.setTimeout=(fn,delay=0)=>{const id=++sequence;timers.set(id,{at:clockNow+Number(delay),fn});return id;};window.clearTimeout=id=>timers.delete(id);window.advanceClock=until=>{for(;;){const next=[...timers].filter(([,v])=>v.at<=until).sort((a,b)=>a[1].at-b[1].at)[0];if(!next)break;timers.delete(next[0]);clockNow=next[1].at;next[1].fn();}clockNow=until;};},at);
+  await clock(a,base);await a.evaluate(()=>probe.stage({taskId:'601'},{takeover:true}));await a.evaluate(at=>advanceClock(at),base+1500);await a.evaluate(()=>probe.flush());
+  await a.evaluate(at=>advanceClock(at),base+20000);await clock(b,base+20000);await b.evaluate(()=>probe.stage({taskId:'601'},{takeover:true}));await b.evaluate(at=>advanceClock(at),base+21500);await b.evaluate(()=>probe.flush());
+  for(let elapsed=25000;elapsed<=80000;elapsed+=5000){await a.evaluate(at=>advanceClock(at),base+elapsed);await b.evaluate(at=>advanceClock(at),base+elapsed);if(elapsed===60000){assert.equal(await a.evaluate(()=>probe.qualify()),true);await a.evaluate(()=>probe.flush());}}
+  assert.equal(await b.evaluate(()=>probe.qualify()),false);await b.evaluate(()=>probe.flush());
+  const staggered=await a.evaluate(()=>({count:probe.rows().find(row=>row.taskId==='601')?.visits,lease:JSON.parse(localStorage.getItem('pena.timeActivityOwner.v1.7'))}));assert.equal(staggered.count,1);assert.equal(staggered.lease.frameId,'heartbeat-A');assert.ok(base+80000-staggered.lease.heartbeatAt<15000);
+  return{browser:browser.version(),pages:2,concurrentBatches:8,contacts:20,secureContext:result.diag.secureContext,webLocks:result.diag.storageLockAvailable,ackReplayDuplicateCount:0,dualVisibleDurationContacts:1,foreignLeaseOutgoingMessage:1,staggeredOpenMs:20000,staggeredDurationContacts:staggered.count,heartbeatAgeMs:base+80000-staggered.lease.heartbeatAt};
+ }finally{await browser.close();await server.close();}
+});
+fs.mkdirSync(new URL('./artifacts/',import.meta.url),{recursive:true});
+fs.writeFileSync(process.env.PENA_CONTACT_REPORT || new URL('./artifacts/time-contact-journal-regression.json',import.meta.url),JSON.stringify({scenarios,passed:scenarios.filter(x=>x.status==='PASS').length,total:scenarios.length},null,2));
+console.log(JSON.stringify(scenarios,null,2));
+if(scenarios.some(x=>x.status==='FAIL')) process.exitCode=1;

@@ -161,7 +161,7 @@
 		if (!taskId) return null;
 		const visitedAt = Math.max(0, Number(task.visitedAt) || 0);
 		const firstVisitedAt = Math.max(0, Number(task.firstVisitedAt) || visitedAt);
-		const activeSeconds = Math.max(0, Math.round(Number(task.activeSeconds) || 0));
+		const activeSeconds = Math.max(0, Number(task.activeSeconds) || 0);
 		const explicitVisits = task.visits != null ? Math.max(0, Number(task.visits) || 0) : null;
 		const visits = explicitVisits != null ? explicitVisits : (activeSeconds >= DEFAULT_QUALIFICATION_SECONDS ? 1 : 0);
 		const legacyQualifiedAt = visits > 0 && activeSeconds >= DEFAULT_QUALIFICATION_SECONDS ? visitedAt : 0;
@@ -175,18 +175,21 @@
 			firstVisitedAt,
 			lastAccountedAt: Math.max(0, Number(task.lastAccountedAt) || visitedAt),
 			activeSeconds,
-			accountedActiveSeconds: Math.max(0, Math.round(Number(task.accountedActiveSeconds) || 0)),
+			accountedActiveSeconds: Math.max(0, Number(task.accountedActiveSeconds) || 0),
 			sessionActive: task.sessionActive === true,
 			sessionQualified: task.sessionQualified === true,
-			sessionStartedActiveSeconds: Math.max(0, Math.round(Number(task.sessionStartedActiveSeconds) || 0)),
+			sessionStartedActiveSeconds: Math.max(0, Number(task.sessionStartedActiveSeconds) || 0),
 			lastQualifiedAt: Math.max(0, Number(task.lastQualifiedAt) || legacyQualifiedAt),
 			lastQualificationReason: String(task.lastQualificationReason || ''),
 			accountedAt: Math.max(0, Number(task.accountedAt) || 0),
+			contactEvents: Array.isArray(task.contactEvents) ? task.contactEvents.filter(event => event && typeof event.id === 'string' && Number.isFinite(Number(event.at))).map(event => ({ id: event.id, at: Number(event.at), reason: String(event.reason || '') })) : [],
+			contactBaseVisits: Math.max(0, Number(task.contactBaseVisits) || 0),
+			contactBaseQualifiedAt: Math.max(0, Number(task.contactBaseQualifiedAt) || 0),
 			visits
 		};
 	}
 
-	function mergeVisitedTasks(items = [], next = null, limit = 40) {
+	function mergeVisitedTasks(items = [], next = null, limit = Infinity) {
 		const byActivity = new Map();
 		for (const raw of [...(Array.isArray(items) ? items : []), ...(next ? [next] : [])]) {
 			const task = normalizeVisitedTask(raw);
@@ -207,6 +210,9 @@
 				accountedActiveSeconds: Math.max(previous.accountedActiveSeconds || 0, task.accountedActiveSeconds || 0),
 				sessionActive: newest.sessionActive === true,
 				accountedAt: Math.max(previous.accountedAt || 0, task.accountedAt || 0),
+				contactEvents: Array.from(new Map([...previous.contactEvents, ...task.contactEvents].map(event => [event.id, event])).values()),
+				contactBaseVisits: Math.max(previous.contactBaseVisits, task.contactBaseVisits),
+				contactBaseQualifiedAt: Math.max(previous.contactBaseQualifiedAt, task.contactBaseQualifiedAt),
 				visits: raw === next ? previous.visits + Math.max(1, task.visits) : Math.max(previous.visits, task.visits),
 				lastQualifiedAt: Math.max(previous.lastQualifiedAt || 0, task.lastQualifiedAt || 0),
 				lastQualificationReason: newest.lastQualificationReason || previous.lastQualificationReason || task.lastQualificationReason,
@@ -216,7 +222,32 @@
 		}
 		return Array.from(byActivity.values())
 			.sort((a, b) => b.visitedAt - a.visitedAt || a.activityId.localeCompare(b.activityId))
-			.slice(0, Math.max(1, Number(limit) || 40));
+			.slice(0, Math.max(1, Number(limit) || Infinity));
+	}
+
+	// Qualified events and their count are committed in the same daily ledger
+	// record. Replaying an unacknowledged outbox event is therefore harmless.
+	function applyQualifiedContact(items = [], event = {}) {
+		const merged = mergeVisitedTasks(items);
+		const task = normalizeVisitedTask({ ...event, visitedAt: event.qualifiedAt, visits: 0 });
+		if (!task || !event.eventId || !(Number(event.qualifiedAt) > 0)) return merged;
+		const previous = merged.find(item => item.taskId === task.taskId);
+		if (previous?.contactEvents.some(item => item.id === event.eventId)) return merged;
+		const baseVisits = previous?.contactEvents.length ? previous.contactBaseVisits : previous?.visits || 0;
+		const baseAt = previous?.contactEvents.length ? previous.contactBaseQualifiedAt : previous?.lastQualifiedAt || 0;
+		const events = [...(previous?.contactEvents || []), { id: String(event.eventId), at: Number(event.qualifiedAt), reason: String(event.reason || 'message') }]
+			.sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
+		let visits = baseVisits, lastAt = 0, lastReason = '';
+		for (const item of events) {
+			if (baseAt && Math.abs(item.at - baseAt) < DEFAULT_TOUCH_DEDUPE_MS) continue;
+			if (lastAt && item.at - lastAt < DEFAULT_TOUCH_DEDUPE_MS) continue;
+			visits++; lastAt = item.at; lastReason = item.reason;
+		}
+		const updated = { ...(previous || task), title: task.title || previous?.title || '', dialogId: task.dialogId || previous?.dialogId || '',
+			visitedAt: Math.max(previous?.visitedAt || 0, task.visitedAt), firstVisitedAt: Math.min(previous?.firstVisitedAt || task.visitedAt, task.visitedAt),
+			lastQualifiedAt: Math.max(baseAt, lastAt), lastQualificationReason: lastAt >= baseAt ? lastReason : previous?.lastQualificationReason || '',
+			sessionActive: false, sessionQualified: true, visits, contactEvents: events, contactBaseVisits: baseVisits, contactBaseQualifiedAt: baseAt };
+		return mergeVisitedTasks([...merged.filter(item => item.taskId !== task.taskId), updated]);
 	}
 
 	function accountActiveActivity(items, now, idleCapSeconds = DEFAULT_IDLE_CAP_SECONDS, activityId = '') {
@@ -227,7 +258,7 @@
 		const from = Math.max(active.visitedAt || 0, active.lastAccountedAt || 0);
 		const elapsed = Math.max(0, (now - from) / 1000);
 		if (elapsed > 0) active.activeSeconds += Math.min(elapsed, Math.max(1, Number(idleCapSeconds) || DEFAULT_IDLE_CAP_SECONDS));
-		active.activeSeconds = Math.max(0, Math.round(active.activeSeconds));
+		active.activeSeconds = Math.max(0, active.activeSeconds);
 		active.lastAccountedAt = Math.max(active.lastAccountedAt || 0, now);
 		active.visitedAt = Math.max(active.visitedAt || 0, now);
 	}
@@ -249,12 +280,14 @@
 		const activity = normalizeVisitedTask({ ...(next || {}), visits: Math.max(0, Number(next?.visits) || 0) });
 		if (!activity) return mergeVisitedTasks(items, null, options.limit);
 		const now = activity.visitedAt || Date.now();
-		const limit = Math.max(1, Number(options.limit) || 40);
+		const limit = Math.max(1, Number(options.limit) || Infinity);
 		const merged = mergeVisitedTasks(items, null, limit);
 		let previous = merged.find(item => item.activityId === activity.activityId) || null;
 		const duplicate = !!previous && previous.sessionActive && now >= previous.visitedAt &&
 			now - previous.visitedAt < Math.max(0, Number(options.dedupeMs) || DEFAULT_TOUCH_DEDUPE_MS);
 		if (duplicate) {
+			accountActiveActivity(merged, now, options.idleCapSeconds, activity.activityId);
+			qualifyActiveSession(merged, now, options.qualificationSeconds);
 			return merged.map(item => item.activityId === activity.activityId ? {
 				...item,
 				title: activity.title || item.title,
@@ -398,9 +431,9 @@
 		return `${offset < 0 ? '-' : '+'}${pad2(Math.floor(absolute / 60))}:${pad2(absolute % 60)}`;
 	}
 
-	function buildElapsedWriteFields({ seconds, dateKey, offsetMinutes, commentText = '' } = {}) {
-		const normalizedSeconds = Math.round(Number(seconds) || 0);
-		if (normalizedSeconds < 60) throw new RangeError('Укажите хотя бы одну минуту');
+	function buildElapsedWriteFields({ seconds, dateKey, offsetMinutes, commentText = '', allowSubMinute = false } = {}) {
+		const normalizedSeconds = Math.floor(Number(seconds) || 0);
+		if (normalizedSeconds < (allowSubMinute ? 1 : 60)) throw new RangeError(allowSubMinute ? 'Нет прошедшего времени' : 'Укажите хотя бы одну минуту');
 		if (normalizedSeconds > 24 * 3600) throw new RangeError('За один раз можно добавить не больше 24 часов');
 		const normalizedDate = String(dateKey || '').trim();
 		if (!parseDateKey(normalizedDate)) throw new RangeError('Выберите корректную дату');
@@ -411,6 +444,25 @@
 			COMMENT_TEXT: String(commentText || ''),
 			CREATED_DATE: `${normalizedDate}T12:00:00${formatPortalOffset(offsetMinutes)}`
 		};
+	}
+
+	function segmentTimerByPortalDay({ startedAt, stoppedAt, seconds, utcOffsetMinutes } = {}) {
+		const start = Number(startedAt), stop = Number(stoppedAt);
+		if (!Number.isFinite(start) || !Number.isFinite(stop) || stop <= start) return [];
+		const total = Math.max(0, Math.floor(seconds == null ? (stop - start) / 1000 : Number(seconds) || 0));
+		if (!total) return [];
+		const offset = Number.isFinite(Number(utcOffsetMinutes)) && utcOffsetMinutes != null ? Number(utcOffsetMinutes) : -new Date(start).getTimezoneOffset();
+		const segments = []; let cursor = start, assigned = 0;
+		while (cursor < stop) {
+			const portal = new Date(cursor + offset * 60000);
+			const dateKey = portal.toISOString().slice(0, 10);
+			const midnight = Date.UTC(portal.getUTCFullYear(), portal.getUTCMonth(), portal.getUTCDate() + 1) - offset * 60000;
+			const end = Math.min(stop, midnight);
+			const cumulative = end === stop ? total : Math.min(total, Math.floor((end - start) / 1000));
+			if (cumulative > assigned) segments.push({ dateKey, seconds: cumulative - assigned });
+			assigned = cumulative; cursor = end;
+		}
+		return segments;
 	}
 
 	async function loadElapsedItems({
@@ -462,19 +514,31 @@
 			const nextWave = [];
 			responses.forEach((response, index) => {
 				const job = wave[index];
-				const batch = extractElapsedItems(response?.data ?? response);
+				if (response == null) throw new Error(`Bitrix24 не вернул записи времени задачи #${job.taskId}`);
+				const payload = response?.data ?? response;
+				if (!Array.isArray(payload) && !Array.isArray(payload?.result) && !Array.isArray(payload?.items)) {
+					throw Object.assign(new Error(`Bitrix24 вернул некорректный список времени задачи #${job.taskId}`), { code: 'TIME_RESPONSE_INVALID' });
+				}
+				const batch = extractElapsedItems(payload);
 				const expectedTotal = Number.isFinite(Number(response?.total)) && Number(response.total) >= 0
 					? Number(response.total)
 					: null;
 				if (job.page === 1) totals.set(job.taskId, expectedTotal);
+				let newItems = 0;
 				for (const raw of batch) {
 					const item = normalizeElapsedItem(raw);
+					const amount = raw?.SECONDS ?? raw?.seconds ?? raw?.MINUTES ?? raw?.minutes;
+					if ((/^\d+$/.test(String(userId || '')) && !/^[1-9]\d*$/.test(item.userId)) ||
+						!item.dateKey || amount == null || String(amount).trim() === '' || !Number.isFinite(Number(amount)) || Number(amount) < 0) {
+						throw Object.assign(new Error(`Bitrix24 вернул неполную запись времени задачи #${job.taskId}`), { code: 'TIME_RESPONSE_INVALID' });
+					}
 					if (!item.taskId) item.taskId = job.taskId;
 					const identity = item.id
 						? `${job.taskId}:${item.id}`
 						: `${job.taskId}:${item.userId}:${item.createdAt}:${item.seconds}`;
 					if (seen.has(identity)) continue;
 					seen.add(identity);
+					newItems++;
 					collected.push(item);
 				}
 				pages += 1;
@@ -482,6 +546,7 @@
 				const totalHasMore = expectedTotal != null && job.page * safePageSize < expectedTotal;
 				const fullPageMayHaveMore = batch.length >= safePageSize;
 				const hasMore = explicitNext || totalHasMore || fullPageMayHaveMore;
+				if (job.page > 1 && batch.length && newItems === 0 && hasMore) throw new Error(`Bitrix24 повторил страницу записей времени задачи #${job.taskId}`);
 				if (!hasMore) return;
 				if (job.page >= safeMaxPages) throw new Error(`Слишком много записей времени в задаче #${job.taskId}: уточните даты`);
 				nextWave.push({ taskId: job.taskId, page: job.page + 1 });
@@ -493,7 +558,7 @@
 		const inRange = collected.filter(item =>
 			requestedTaskIdSet.has(item.taskId) &&
 			item.dateKey && item.dateKey >= range.from && item.dateKey <= range.to &&
-			(!requestedUserId || !item.userId || item.userId === requestedUserId)
+			(!requestedUserId || item.userId === requestedUserId)
 		);
 		const knownTotals = Array.from(totals.values());
 		const totalAvailable = knownTotals.every(value => value != null)
@@ -550,6 +615,8 @@
 	}
 
 	return Object.freeze({
+		applyQualifiedContact,
+		segmentTimerByPortalDay,
 		createRequestQueue,
 		DEFAULT_PAGE_SIZE,
 		DEFAULT_MAX_PAGES,

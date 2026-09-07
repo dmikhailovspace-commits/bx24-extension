@@ -496,14 +496,14 @@
       error: () => null,
       error_description: () => '',
       data: () => data,
-      next: () => options.next ?? null,
+      answer: { next: options.next ?? undefined },
       total: () => options.total ?? 0
     });
     const failure = message => ({
       error: () => 'NETWORK_ERROR',
       error_description: () => message,
       data: () => null,
-      next: () => null,
+      answer: {},
       total: () => 0
     });
 

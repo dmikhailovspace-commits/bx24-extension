@@ -708,6 +708,7 @@ try {
 		return JSON.parse(localStorage.getItem(key) || '[]').some(item => item.taskId === '405');
 	}), false, 'Task with disabled time tracking was persisted as work');
 	}
+	activePhase = `time contact canonical title after side-panel switch (${mode})`;
 	await page.evaluate(() => document.querySelector('.test-host:not([hidden]) [data-id="chat5"]')?.click());
 	if (mode === 'tasks') {
 		await page.waitForTimeout(200);
@@ -777,10 +778,11 @@ try {
 	await page.waitForTimeout(250);
 	assert.equal(await page.locator('.pena-native-time-task-select option[value="303"]').count(), 1, 'An eligible catalog task must be selectable before qualified work');
 	assert.equal(await timePanel.locator('.pena-native-time-suggestions-list .pena-native-time-task-row').filter({ hasText: 'Задача 303' }).count(), 0, 'Opening a task link counted as work');
+	activePhase = `time tracker start, cancel and confirmed retry (${mode})`;
 	await timePanel.locator('.pena-native-time-task-select').first().selectOption('101');
 	await timePanel.locator('.pena-native-time-start').click();
 	await page.waitForFunction(() => document.querySelector('.pena-native-time-tracker')?.classList.contains('--active'));
-	const activeCancelTracker = timePanel.locator('.pena-native-time-cancel');
+	const activeCancelTracker = timePanel.locator('.pena-native-time-tracker .pena-native-time-cancel:not(.pena-native-time-tracker-journal)');
 	assert.equal(await activeCancelTracker.isVisible(), true, `Running timer cannot be cancelled in ${mode}`);
 	const callsBeforeActiveCancel = await page.evaluate(() => window.timeAddCalls.length);
 	await activeCancelTracker.click();
@@ -788,6 +790,7 @@ try {
 	await activeCancelTracker.click();
 	await page.waitForFunction(() => !Object.keys(localStorage).some(key => key.startsWith('pena.timeActiveTracker.v1.')) && !document.querySelector('.pena-native-time-start')?.hidden);
 	assert.equal(await page.evaluate(() => window.timeAddCalls.length), callsBeforeActiveCancel, `Cancelling a running timer wrote time in ${mode}`);
+	activePhase = `time tracker start, cancel and confirmed retry (${mode})`;
 	await timePanel.locator('.pena-native-time-task-select').first().selectOption('101');
 	await timePanel.locator('.pena-native-time-start').click();
 	await page.waitForFunction(() => document.querySelector('.pena-native-time-tracker')?.classList.contains('--active'));
@@ -796,6 +799,7 @@ try {
 		const tracker = JSON.parse(localStorage.getItem(key) || 'null');
 		tracker.startedAt = Date.now() - 61000;
 		localStorage.setItem(key, JSON.stringify(tracker));
+		window.dispatchEvent(new StorageEvent('storage', { key, newValue:JSON.stringify(tracker), storageArea:localStorage }));
 		window.timeAddFailures = 1;
 	});
 	await page.waitForTimeout(1100);
@@ -807,7 +811,7 @@ try {
 	});
 	assert.equal(await page.evaluate(() => window.timeAddCalls.length), callsBeforeFailedTimer + 1, `Failed elapsed-item write was not attempted in ${mode}`);
 	assert.ok(await page.evaluate(() => !!Object.keys(localStorage).find(key => key.startsWith('pena.timeActiveTracker.v1.'))), `Failed timer was lost in ${mode}`);
-	const cancelTracker = timePanel.locator('.pena-native-time-cancel');
+	const cancelTracker = timePanel.locator('.pena-native-time-tracker .pena-native-time-cancel:not(.pena-native-time-tracker-journal)');
 	await cancelTracker.click();
 	await page.waitForFunction(() => document.querySelector('.pena-native-time-cancel')?.textContent === 'Сбросить?');
 	assert.equal(await cancelTracker.textContent(), 'Сбросить?', `Timer cancellation has no confirmation in ${mode}`);
@@ -815,14 +819,17 @@ try {
 	await cancelTracker.click();
 	await page.waitForFunction(() => !Object.keys(localStorage).some(key => key.startsWith('pena.timeActiveTracker.v1.')) && !document.querySelector('.pena-native-time-start')?.hidden);
 	assert.equal(await page.evaluate(() => window.timeAddCalls.length), callsBeforeFailedTimer + 1, `Cancelling retry performed another write in ${mode}`);
+	activePhase = `time tracker start, cancel and confirmed retry (${mode})`;
 	await timePanel.locator('.pena-native-time-task-select').first().selectOption('101');
 	await timePanel.locator('.pena-native-time-start').click();
+	await page.waitForFunction(() => document.querySelector('.pena-native-time-tracker')?.classList.contains('--active'));
 	const callsBeforeRetryTimer = await page.evaluate(() => window.timeAddCalls.length);
 	await page.evaluate(() => {
 		const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeActiveTracker.v1.'));
 		const tracker = JSON.parse(localStorage.getItem(key) || 'null');
 		tracker.startedAt = Date.now() - 61000;
 		localStorage.setItem(key, JSON.stringify(tracker));
+		window.dispatchEvent(new StorageEvent('storage', { key, newValue:JSON.stringify(tracker), storageArea:localStorage }));
 		window.timeAddFailures = 1;
 	});
 	await timePanel.locator('.pena-native-time-stop').click();

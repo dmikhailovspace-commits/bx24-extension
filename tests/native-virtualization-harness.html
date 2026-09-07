@@ -113,7 +113,7 @@
 		callback({
 		  error: () => null,
 		  data: () => ({ items: page, hasMore: offset + page.length < recentEntries.length }),
-		  next: () => offset + page.length < recentEntries.length ? offset + page.length : null,
+		  answer: { next: offset + page.length < recentEntries.length ? offset + page.length : undefined },
 		  total: () => recentEntries.length
 		});
       } } };

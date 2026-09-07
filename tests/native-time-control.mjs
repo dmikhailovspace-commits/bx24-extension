@@ -238,6 +238,32 @@ async function testPaginationAndDedupe() {
 	);
 }
 
+function testExactTimerAndContactBoundaries() {
+	const start = Date.parse('2026-09-06T23:59:59.750+03:00');
+	assert.deepEqual(time.segmentTimerByPortalDay({startedAt:start,stoppedAt:start+10250,utcOffsetMinutes:180}),[{dateKey:'2026-09-07',seconds:10}]);
+	const longStart=Date.parse('2026-09-06T23:59:50+03:00');
+	const parts=time.segmentTimerByPortalDay({startedAt:longStart,stoppedAt:longStart+90000500,utcOffsetMinutes:180});
+	assert.deepEqual(parts,[{dateKey:'2026-09-06',seconds:10},{dateKey:'2026-09-07',seconds:86400},{dateKey:'2026-09-08',seconds:3590}]);
+	assert.equal(parts.reduce((sum,p)=>sum+p.seconds,0),90000);
+	assert.deepEqual(time.segmentTimerByPortalDay({startedAt:start,stoppedAt:start-1,utcOffsetMinutes:180}),[]);
+	assert.deepEqual(time.segmentTimerByPortalDay({startedAt:start,stoppedAt:start+999,utcOffsetMinutes:180}),[]);
+	assert.equal(time.buildElapsedWriteFields({seconds:10.9,dateKey:'2026-09-06',allowSubMinute:true}).SECONDS,10);
+	assert.throws(()=>time.buildElapsedWriteFields({seconds:10,dateKey:'2026-09-06'}),/минуту/);
+	let visits=time.beginActivitySession([],{taskId:'1',visitedAt:start});
+	for(let ms=500;ms<60000;ms+=500) visits=time.beginActivitySession(visits,{taskId:'1',visitedAt:start+ms});
+	assert.equal(visits[0].visits,0,'subsecond duplicate opens cannot round up to a qualified minute');
+	visits=time.syncActivitySession(visits,'task:1',start+60000);
+	assert.equal(visits[0].visits,1,'duplicate opens cannot lose accumulated visible time');
+}
+
+async function testRepeatedFullPageStops() {
+	let calls=0;const batch=Array.from({length:50},(_,i)=>makeItem(i+1,'2026-09-06'));
+	await assert.rejects(time.loadElapsedItems({taskIds:['10'],from:'2026-09-06',to:'2026-09-06',callPage:async()=>{calls++;return{data:batch};}}),/повторил страницу/);
+	assert.equal(calls,2,'a server repeating its first full page must not trigger 100 requests');
+}
+
+testExactTimerAndContactBoundaries();
+await testRepeatedFullPageStops();
 testRanges();
 testOrderedRequestParams();
 testAggregation();

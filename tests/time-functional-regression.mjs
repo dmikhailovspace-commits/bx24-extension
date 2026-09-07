@@ -11,6 +11,8 @@ const source=readFileSync(new URL('../extension/injected.js',import.meta.url),'u
  '\tconst _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;',
  `\tconst _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
  window.timeProbe = {
+ prepare: (...args) => _prepareDialogTimeManualEntry(...args),
+ draft: () => _readDialogTimeManualDraft(),
  stage: (...args) => _stageDialogTimeActivity(...args),
  qualify: (...args) => _qualifyPendingDialogTimeDuration(...args),
  pending: id => _dialogTimePendingActivities.get('task:'+id),
@@ -41,7 +43,7 @@ try {
     return original.call(this,calls,result=>{
      const frozen=Object.fromEntries(Object.entries(result).map(([key,value])=>{
       const data=JSON.parse(JSON.stringify(value.data()));
-      return [key,{error:()=>null,data:()=>data,total:()=>value.total?.(),next:()=>value.next?.()}];
+      return [key,{error:()=>null,data:()=>data,total:()=>value.total?.(),answer:{next:value.answer?.next}}];
      }));
      window.heldElapsedRead=true;
      setTimeout(()=>callback(frozen),1400);
@@ -218,6 +220,36 @@ try {
    return {hiddenQualified,whileHidden,resumedQualified,afterMinute,visibleMs:entry.visibleMs};
   });
   assert.equal(r.hiddenQualified,false);assert.equal(r.whileHidden,false);assert.equal(r.resumedQualified,false);assert.equal(r.afterMinute,true);
+ });
+ await phase('uncertain manual write survives form changes and reload without an automatic duplicate',async()=>{
+  await page.evaluate(()=>{
+   const original=window.BX.rest.callMethod;
+   window.BX.rest.callMethod=function(method,params,callback){
+    if(method==='task.elapseditem.add') { window.timeAddCalls.push(params); callback({error:()=>null,data:()=>true}); return; }
+    return original.apply(this,arguments);
+   };
+   window.timeProbe.prepare({taskId:'101',title:'Задача 101'});
+  });
+  await page.locator('.pena-native-time-manual-hours').fill('0');
+  await page.locator('.pena-native-time-manual-minutes').fill('10');
+  await page.locator('.pena-native-time-manual-submit').click();
+  await page.waitForFunction(()=>window.timeAddCalls.length===1 && document.querySelector('.pena-native-time-manual-submit').textContent==='Проверить запись');
+  assert.equal(await page.evaluate(()=>window.timeAddCalls.length),1);
+  await page.evaluate(()=>window.timeProbe.prepare({taskId:'102',title:'Задача 102'}));
+  assert.equal(await page.evaluate(()=>window.timeProbe.draft().pendingWrite.taskId),'101');
+  await page.reload();
+  await page.locator('.pena-native-time-button').waitFor();await page.locator('.pena-native-time-button').click();
+  await page.locator('.pena-native-time-manual-recovery').waitFor();
+  assert.equal(await page.locator('.pena-native-time-manual-recovery button').count(),2);
+  assert.equal(await page.locator('.pena-native-time-manual-submit').textContent(),'Проверить запись');
+  await page.locator('.pena-native-time-manual-submit').click();
+  assert.equal(await page.evaluate(()=>window.timeAddCalls.length),0);
+  await page.waitForFunction(()=>document.querySelector('.pena-native-time-manual-submit').textContent==='Записи нет — повторить');
+  await page.locator('.pena-native-time-manual-submit').click();
+  await page.waitForFunction(()=>!window.timeProbe.draft().pendingWrite);
+  assert.equal(await page.evaluate(()=>window.timeAddCalls.length),1);
+  assert.equal(await page.evaluate(()=>String(window.timeAddCalls[0].TASKID)),'101');
+  assert.equal(await page.evaluate(()=>window.timeAddCalls[0].ARFIELDS.SECONDS),600);
  });
  assert.deepEqual(errors,[]);
  await page.screenshot({path:'tests/artifacts/time-panel-current.png'});

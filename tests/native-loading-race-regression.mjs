@@ -195,7 +195,7 @@ const installRaceHooks = async page => {
 									const total = typeof result?.total === 'function' ? Number(result.total()) : Number(result?.total);
 									return Number.isFinite(total) ? total + (injectTask225 ? 1 : 0) : (tasks?.length || items?.length || 0);
 								},
-								next: () => typeof result?.next === 'function' ? result.next() : result?.next
+								answer: { next: result?.answer?.next ?? (typeof result?.next === 'function' ? undefined : result?.next) }
 							});
 						};
 						const oldDelay = Math.max(0, Number(search.get('raceOldDelay')) || 0);
