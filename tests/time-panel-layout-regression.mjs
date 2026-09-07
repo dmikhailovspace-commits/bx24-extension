@@ -181,12 +181,61 @@ try {
 	assert.equal(await taskSelect.getAttribute('data-pena-full-task-title'), longTitle);
 	assert.equal(await taskSelect.getAttribute('title'), null, 'Native title would duplicate the custom tooltip');
 	assert.equal(await taskSelect.getAttribute('aria-label'), `Сменить задачу: ${longTitle}`);
-	await taskSelect.focus();
 	const tooltip = page.locator('.pena-native-time-title-tooltip');
+	const tooltipState = () => page.evaluate(() => ({
+		focusedClass:document.activeElement?.className || '',
+		focusedTitle:document.activeElement?.dataset?.penaFullTaskTitle || '',
+		hoveredTitles:Array.from(document.querySelectorAll('[data-pena-full-task-title]:hover'), node => ({className:node.className,title:node.dataset.penaFullTaskTitle})),
+		describedAnchors:Array.from(document.querySelectorAll('[aria-describedby="pena-time-title-tooltip"]'), node => node.className),
+		visible:!document.querySelector('.pena-native-time-title-tooltip')?.hidden,
+		text:document.querySelector('.pena-native-time-title-tooltip')?.textContent || ''
+	}));
+	const tooltipProof = { afterSelection:await tooltipState() };
+	// Selection enables Start in the queued UI render. Focusing a still-disabled
+	// button is a no-op, so wait for readiness and verify the actual focus below.
+	// Keep keyboard ownership independent of any pointer left by the result click.
+	await page.waitForFunction(() => document.querySelector('.pena-native-time-start')?.disabled === false);
+	await page.mouse.move(2, 2);
+	assert.equal(await panel.evaluate(node => node.matches(':hover')), false, 'Keyboard tooltip precondition: pointer must be outside the panel');
+	await taskSelect.focus();
 	await tooltip.waitFor({ state: 'visible' });
-	assert.equal(await tooltip.textContent(), longTitle, 'Select tooltip does not expose the exact task title');
+	assert.equal(await tooltip.textContent(), longTitle, 'Selected task tooltip does not expose the exact task title');
+	tooltipProof.keyboardFocused = await tooltipState();
+	assert.match(tooltipProof.keyboardFocused.focusedClass, /pena-native-time-tracker-selected/);
 	await page.locator('.pena-native-time-start').focus();
 	await tooltip.waitFor({ state: 'hidden' });
+	tooltipProof.keyboardBlurred = await tooltipState();
+	assert.match(tooltipProof.keyboardBlurred.focusedClass, /pena-native-time-start/);
+	assert.deepEqual(tooltipProof.keyboardBlurred.describedAnchors, [], 'Blur without hover must remove the tooltip association');
+
+	// A pointer-only tooltip must disappear on mouseleave, with focus kept on
+	// the Start button rather than a task title.
+	await taskSelect.hover();
+	await tooltip.waitFor({ state: 'visible' });
+	tooltipProof.pointerOnly = await tooltipState();
+	assert.match(tooltipProof.pointerOnly.focusedClass, /pena-native-time-start/);
+	assert.ok(tooltipProof.pointerOnly.hoveredTitles.some(item => /pena-native-time-tracker-selected/.test(item.className)),
+		`Pointer tooltip has no hovered title: ${JSON.stringify(tooltipProof.pointerOnly)}`);
+	assert.equal(tooltipProof.pointerOnly.text, longTitle);
+	await page.mouse.move(2, 2);
+	await tooltip.waitFor({ state: 'hidden' });
+	tooltipProof.pointerLeft = await tooltipState();
+	assert.deepEqual(tooltipProof.pointerLeft.describedAnchors, [], 'Mouseleave without title focus must remove the tooltip association');
+
+	// Keyboard focus remains authoritative when the mouse subsequently leaves.
+	await taskSelect.hover();
+	await taskSelect.focus();
+	await page.mouse.move(2, 2);
+	await page.waitForTimeout(100);
+	tooltipProof.focusAfterMouseleave = await tooltipState();
+	assert.match(tooltipProof.focusAfterMouseleave.focusedClass, /pena-native-time-tracker-selected/);
+	assert.equal(tooltipProof.focusAfterMouseleave.visible, true,
+		`Mouseleave hid a keyboard-owned tooltip: ${JSON.stringify(tooltipProof.focusAfterMouseleave)}`);
+	assert.equal(tooltipProof.focusAfterMouseleave.text, longTitle);
+	assert.deepEqual(tooltipProof.focusAfterMouseleave.hoveredTitles, []);
+	await page.locator('.pena-native-time-start').focus();
+	await tooltip.waitFor({ state: 'hidden' });
+	console.log(`time tooltip ownership: ${JSON.stringify(tooltipProof)}`);
 
 	const topBefore = wide.panel.top;
 	const trackedToggleWide = page.locator('.pena-native-time-tracked-toggle');

@@ -58,7 +58,29 @@ const instrumentInjected = rawSource => {
 		assert.equal(matches, 1, `Reason instrumentation anchor changed: ${signature}`);
 		source = source.replace(signature, `${signature}\n\t\t${hook}`);
 	}
+	const ownerAnchor = '\t\tconst syncStartedAt = Date.now();\n\t\tconst syncPromise = (async () => {';
+	assert.equal(source.split(ownerAnchor).length - 1, 1, 'Task catalog owner instrumentation anchor changed');
+	source = source.replace(ownerAnchor, '\t\tconst syncStartedAt = Date.now();\n\t\twindow.__PENA_COLD_TASK_METRICS__?.catalogOwners.push({ scope:scopeKey, headOnly, at:syncStartedAt });\n\t\tconst syncPromise = (async () => {');
 	return source;
+};
+
+const assertSingleStartupCatalog = (sample, label) => {
+	assert.equal(sample.catalogOwners.length, 1, `${label}: startup must have exactly one catalog owner`);
+	assert.equal(sample.catalogOwners[0].headOnly, false, `${label}: expected one full initial catalog`);
+	assert.equal(sample.bootstrap.cycle, 1, `${label}: input created a second startup cycle`);
+	assert.ok(sample.fullRestCalls.length > 0, `${label}: initial catalog did not start`);
+	assert.ok(sample.fullRestCalls.length <= Math.ceil(5000 / 50) + 1, `${label}: initial 5000-task keyset exceeded its page bound`);
+	let previous = -1;
+	for (const call of sample.fullRestCalls) {
+		assert.equal(call.method, 'tasks.task.list', `${label}: unexpected full recent-dialog crawl`);
+		assert.equal(call.params.order?.ID, 'asc', `${label}: startup must use stable ID keyset pagination`);
+		assert.equal(Number(call.params.start), 0, `${label}: offset pagination is not the startup owner`);
+		const cursor = Number(call.params.filter?.['>ID']);
+		assert.ok(Number.isFinite(cursor) && cursor > previous, `${label}: repeated or regressing catalog cursor ${cursor} after ${previous}`);
+		if (previous < 0) assert.equal(cursor, 0, `${label}: initial catalog did not begin at the first page`);
+		assert.ok(call.at >= sample.catalogOwners[0].at, `${label}: REST preceded its catalog owner`);
+		previous = cursor;
+	}
 };
 
 const percentile = (values, quantile) => {
@@ -84,6 +106,9 @@ try {
 	await page.route(/\/tests\/native-resume-recovery-harness\.html(?:\?.*)?$/, async route => {
 		const response = await route.fetch();
 		let body = await response.text();
+		const restSnapshotAnchor = 'restCalls.map(call => ({ at: call.at, method: call.method, online: call.online }))';
+		assert.equal(body.split(restSnapshotAnchor).length - 1, 1, 'REST snapshot attribution anchor changed');
+		body = body.replace(restSnapshotAnchor, 'restCalls.map(call => ({ at: call.at, method: call.method, online: call.online, params: call.params }))');
 		const chatAnchor = '<section class="test-host recent-host" data-mode="chats">';
 		const taskAnchor = '<section class="test-host task-host" data-mode="tasks" hidden>';
 		assert.ok(body.includes(chatAnchor) && body.includes(taskAnchor), 'Initial task-mode HTML anchors changed');
@@ -150,6 +175,7 @@ try {
 			lifetimeCounts: freshCounts(),
 			modeLoadReasons: [],
 			traversalReasons: [],
+			catalogOwners: [],
 			localStorageGets: Object.create(null),
 			localStorageSets: Object.create(null),
 			localStorageRemoves: Object.create(null),
@@ -219,6 +245,7 @@ try {
 					lifetimeCounts: { ...this.lifetimeCounts },
 					modeLoadReasons: this.modeLoadReasons.slice(),
 					traversalReasons: this.traversalReasons.slice(),
+					catalogOwners: this.catalogOwners.slice(),
 					localStorageGets: { ...this.localStorageGets },
 					localStorageSets: { ...this.localStorageSets },
 					localStorageRemoves: { ...this.localStorageRemoves },
@@ -417,7 +444,9 @@ try {
 			fullRestCalls: state.restCalls.filter(call => call.method === 'im.recent.list' || call.method === 'tasks.task.list'),
 			lifetimeCounts: metrics.lifetimeCounts,
 			modeLoadReasons: metrics.modeLoadReasons,
-			traversalReasons: metrics.traversalReasons
+			traversalReasons: metrics.traversalReasons,
+			catalogOwners: metrics.catalogOwners,
+			bootstrap: window.__PENA_TIME_LOAD_DIAGNOSTICS__?.snapshot?.() || {}
 		};
 	});
 
@@ -512,6 +541,8 @@ try {
 			metrics: window.__PENA_COLD_TASK_METRICS__.stop(),
 			restCalls: state.restCalls.slice(restStart),
 			allFullRestCalls: state.restCalls.filter(call => call.method === 'im.recent.list' || call.method === 'tasks.task.list'),
+			catalogOwners: window.__PENA_COLD_TASK_METRICS__.catalogOwners.slice(),
+			bootstrap: window.__PENA_TIME_LOAD_DIAGNOSTICS__?.snapshot?.() || {},
 			scrollTop: state.modes.tasks.scrollTop,
 			originalActive: !!status.originalActive,
 			modeLoadReason: String(status.modeLoadReason || ''),
@@ -588,6 +619,8 @@ try {
 			localStorageGets: sendAfter.metrics.localStorageGets,
 			restCalls: sendAfter.restCalls,
 			allFullRestCalls: sendAfter.allFullRestCalls,
+			catalogOwners: sendAfter.catalogOwners,
+			bootstrap: sendAfter.bootstrap,
 			originalActive: sendAfter.originalActive,
 			modeLoadReason: sendAfter.modeLoadReason,
 			attemptReason: sendAfter.attemptReason,
@@ -601,7 +634,7 @@ try {
 	assert.equal(coldAt900ms.apiActive, false, `Cold tasks started blocking API load: ${JSON.stringify(diagnostic)}`);
 	assert.equal(coldAt900ms.overlayVisible, false, `Cold tasks exposed a loading overlay: ${JSON.stringify(diagnostic)}`);
 	assert.equal(coldAt900ms.overlayCount, 0, `Cold tasks retained an overlay node: ${JSON.stringify(diagnostic)}`);
-	assert.deepEqual(coldAt900ms.fullRestCalls, [], `Cold tasks started a full REST crawl: ${JSON.stringify(diagnostic)}`);
+	assertSingleStartupCatalog(coldAt900ms, 'Cold initial snapshot');
 	assert.deepEqual(coldAt900ms.traversalReasons, [], `Cold tasks entered full native traversal: ${JSON.stringify(diagnostic)}`);
 	assert.equal(rowHit.rowTargetable, true, `Task row was not pointer-targetable: ${JSON.stringify(diagnostic)}`);
 	assert.equal(realClick.openCount, 1, `A real task-row click was lost: ${JSON.stringify(diagnostic)}`);
@@ -616,7 +649,8 @@ try {
 	assert.equal(sendAfter.restCalls.some(call => call.method === 'tasks.task.get'), false, `Outgoing message started tasks.task.get in the hot path: ${JSON.stringify(diagnostic)}`);
 	assert.equal(sendAfter.metrics.scrollEvents, 0, `Interaction-priority path scrolled the task list: ${JSON.stringify(diagnostic)}`);
 	assert.ok(Math.abs(sendAfter.scrollTop - sendBefore.scrollTop) < 0.5, `Interaction changed task-list scrollTop: ${JSON.stringify(diagnostic)}`);
-	assert.deepEqual(sendAfter.allFullRestCalls, [], `Interaction started a full REST crawl: ${JSON.stringify(diagnostic)}`);
+	assertSingleStartupCatalog({ ...sendAfter, fullRestCalls:sendAfter.allFullRestCalls }, 'Outgoing message during initial snapshot');
+	assert.deepEqual(sendAfter.catalogOwners, coldAt900ms.catalogOwners, 'Task click/send created another catalog owner');
 	assert.equal(sendAfter.originalActive, false, `Interaction started native traversal: ${JSON.stringify(diagnostic)}`);
 	assert.equal(sendAfter.overlays, 0, `Interaction left a loading overlay: ${JSON.stringify(diagnostic)}`);
 	assert.ok(Math.max(0, ...sendAfter.metrics.frameGaps) <= 50, `Interaction created a frame gap above 50 ms: ${JSON.stringify(diagnostic)}`);
@@ -624,7 +658,7 @@ try {
 	assert.deepEqual(pageErrors, [], `Page errors: ${pageErrors.join(' | ')}`);
 
 	console.log(
-		`PASS native cold task interaction-priority: real click, zero full REST/scroll, ` +
+		`PASS native cold task interaction-priority: real click, one shared startup catalog, zero input-triggered full crawl/scroll, ` +
 		`keydown p95 ${percentile(sendAfter.metrics.keydownMs, 0.95).toFixed(1)} ms`
 	);
 } finally {
