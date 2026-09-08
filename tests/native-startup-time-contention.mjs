@@ -248,7 +248,10 @@ try{
   report.unsupported=await page.evaluate(()=>startupProbe.snapshot());
   const fallback=counts(report.unsupported),fallbackCommands=commands(report.unsupported);
   const pointIds=fallbackCommands.filter(c=>c.method==='task.elapseditem.getlist'&&c.taskId!=='0').map(c=>c.taskId);
-  report.phases.push({name:'unsupported global sentinel falls back to149 distinct selected-task reads once',status:fallback.globalPages===1&&fallback.pointReads===149&&new Set(pointIds).size===149&&report.unsupported.record.entries===12&&report.unsupported.record.seconds===720&&fallbackErrors.length===0?'PASS':'FAIL'});
+  const loggedPointIds=['50012','50025','50038','50051','90000','90013','90026','90039','90052','90065','90078','90091'];
+  const expectedPointReads=logMetadata?loggedPointIds.length:149;
+  const exactFallbackIds=!logMetadata||pointIds.length===loggedPointIds.length&&loggedPointIds.every(id=>pointIds.includes(id));
+  report.phases.push({name:logMetadata?'unsupported global sentinel skips137 confirmed empty journals and reads12 logged tasks once':'unsupported global sentinel falls back to149 distinct selected-task reads once',status:fallback.globalPages===1&&fallback.pointReads===expectedPointReads&&new Set(pointIds).size===expectedPointReads&&exactFallbackIds&&report.unsupported.record.coverage.checkedTasks===149&&report.unsupported.record.coverage.complete===true&&report.unsupported.record.entries===12&&report.unsupported.record.seconds===720&&fallbackErrors.length===0?'PASS':'FAIL'});
   const before=fallbackCommands.length;await page.locator('.pena-native-time-button').click();await page.waitForTimeout(350);
   report.unsupportedOpen=await page.evaluate(()=>startupProbe.snapshot());
   report.phases.push({name:'unsupported capability is remembered and first warm open creates no elapsed/full-catalog traffic',status:report.unsupportedOpen.record.seconds===720&&!commands(report.unsupportedOpen).slice(before).some(c=>c.method==='task.elapseditem.getlist'||c.method==='tasks.task.list'&&!c.delta)?'PASS':'FAIL'});
