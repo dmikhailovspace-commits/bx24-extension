@@ -60,13 +60,22 @@ const instrumentInjected = rawSource => {
 	}
 	const ownerAnchor = '\t\tconst syncStartedAt = Date.now();\n\t\tconst syncPromise = (async () => {';
 	assert.equal(source.split(ownerAnchor).length - 1, 1, 'Task catalog owner instrumentation anchor changed');
-	source = source.replace(ownerAnchor, '\t\tconst syncStartedAt = Date.now();\n\t\twindow.__PENA_COLD_TASK_METRICS__?.catalogOwners.push({ scope:scopeKey, headOnly, at:syncStartedAt });\n\t\tconst syncPromise = (async () => {');
+	source = source.replace(ownerAnchor, '\t\tconst syncStartedAt = Date.now();\n\t\twindow.__PENA_COLD_TASK_METRICS__?.catalogOwners.push({ scope:scopeKey, headOnly, kind:\'native\', at:syncStartedAt });\n\t\tconst syncPromise = (async () => {');
+	const projectOwnerAnchor = '\t\tconst owner = { scope, delta, promise:null };\n\t\t_dialogTimeProjectCatalogOwner = owner;';
+	assert.equal(source.split(projectOwnerAnchor).length - 1, 1, 'Selected-project catalog owner instrumentation anchor changed');
+	source = source.replace(projectOwnerAnchor, `${projectOwnerAnchor}\n\t\twindow.__PENA_COLD_TASK_METRICS__?.catalogOwners.push({ scope, headOnly:false, kind:'projects', delta, at:Date.now() });`);
 	return source;
 };
 
 const assertSingleStartupCatalog = (sample, label) => {
-	assert.equal(sample.catalogOwners.length, 1, `${label}: startup must have exactly one catalog owner`);
-	assert.equal(sample.catalogOwners[0].headOnly, false, `${label}: expected one full initial catalog`);
+	const transportOwners=sample.catalogOwners.filter(owner=>owner.kind==='native');
+	const projectOwners=sample.catalogOwners.filter(owner=>owner.kind==='projects');
+	assert.equal(sample.catalogOwners.length, 2, `${label}: expected one project wrapper and one shared transport owner`);
+	assert.equal(transportOwners.length, 1, `${label}: startup must have exactly one transport catalog owner`);
+	assert.equal(projectOwners.length, 1, `${label}: startup must have exactly one project wrapper`);
+	assert.equal(transportOwners[0].headOnly, false, `${label}: expected one full initial catalog`);
+	assert.match(projectOwners[0].scope, /:projects:/, `${label}: startup catalog has no project scope`);
+	assert.equal(projectOwners[0].delta, false, `${label}: a cold project catalog cannot start from a delta`);
 	assert.equal(sample.bootstrap.cycle, 1, `${label}: input created a second startup cycle`);
 	assert.ok(sample.fullRestCalls.length > 0, `${label}: initial catalog did not start`);
 	assert.ok(sample.fullRestCalls.length <= Math.ceil(5000 / 50) + 1, `${label}: initial 5000-task keyset exceeded its page bound`);
@@ -78,7 +87,7 @@ const assertSingleStartupCatalog = (sample, label) => {
 		const cursor = Number(call.params.filter?.['>ID']);
 		assert.ok(Number.isFinite(cursor) && cursor > previous, `${label}: repeated or regressing catalog cursor ${cursor} after ${previous}`);
 		if (previous < 0) assert.equal(cursor, 0, `${label}: initial catalog did not begin at the first page`);
-		assert.ok(call.at >= sample.catalogOwners[0].at, `${label}: REST preceded its catalog owner`);
+		assert.ok(call.at >= transportOwners[0].at, `${label}: REST preceded its transport catalog owner`);
 		previous = cursor;
 	}
 };

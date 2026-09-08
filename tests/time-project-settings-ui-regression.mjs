@@ -39,8 +39,36 @@ try{
   const timeCatalogCalls=await page.evaluate(()=>window.nativeRestCalls.filter(c=>c.method==='tasks.task.list'&&(c.params?.filter?.GROUP_ID!=null||c.params?.filter?.['>GROUP_ID']!=null)));
   assert.deepEqual(timeCatalogCalls,[],'Unconfigured projects launched a time catalog crawl');
  });
+ await phase('task selection before the initial project catalog is confirmed cannot write time',async()=>{
+  await page.evaluate(()=>{
+   const original=window.BX.rest.callMethod;
+   window.initialProjectCatalogHolds=[];window.releaseInitialProjectCatalog=false;
+   window.BX.rest.callMethod=function(method,params,callback){
+    if(method==='tasks.task.list'&&params.order?.ID==='asc'&&!window.releaseInitialProjectCatalog){
+     window.initialProjectCatalogHolds.push(()=>original.call(this,method,params,callback));return;
+    }
+    return original.apply(this,arguments);
+   };
+  });
+  await project('1').check();await save();
+  await page.waitForFunction(()=>window.initialProjectCatalogHolds.length===1);
+  await page.locator('.pena-native-time-manual-search').fill('Задача 101');
+  await page.locator('#pena-time-task-option-101').click();
+  await page.locator('.pena-native-time-manual-minutes').fill('10');
+  await page.locator('.pena-native-time-tracker-search').fill('Задача 101');
+  await page.locator('#pena-time-tracker-task-option-101').click();
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  assert.equal(await page.locator('.pena-native-time-manual-submit').isDisabled(),true,'Manual write became available before project membership was confirmed');
+  assert.equal(await page.locator('.pena-native-time-start').isDisabled(),true,'Timer became available before project membership was confirmed');
+  const held=await page.evaluate(()=>({catalog:window.initialProjectCatalogHolds.length,elapsed:window.timeRestCalls.length,adds:window.timeAddCalls.length,updates:window.timeUpdateCalls.length,deletes:window.timeDeletedItems.length}));
+  assert.deepEqual(held,{catalog:1,elapsed:0,adds:0,updates:0,deletes:0});
+  await page.evaluate(()=>{window.releaseInitialProjectCatalog=true;window.initialProjectCatalogHolds.splice(0).forEach(release=>release());});
+  await settled('1 ч');
+  await page.waitForFunction(()=>document.querySelector('.pena-native-time-manual-submit')?.disabled===false&&document.querySelector('.pena-native-time-start')?.disabled===false);
+  assert.equal(await page.evaluate(()=>window.timeAddCalls.length),0,'Releasing project metadata must not write time automatically');
+  return held;
+ });
  await phase('saving project 1 persists the exact selection and reads only its elapsed tasks',async()=>{
-  await project('1').check();await save();await settled('1 ч');
   assert.deepEqual(await preference(),{version:1,all:false,ids:['1'],includeUnassigned:false});
   assert.equal(await page.locator('.pena-native-time-total-value').innerText(),'1 ч');
   const ids=await timeIds();assert.ok(ids.includes('101'));assert.ok(!ids.includes('102')&&!ids.includes('303'));

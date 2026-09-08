@@ -19,12 +19,15 @@ function fixture(storage=new Map()){
  const state={scope:'portal.test~7',now:1000000,storage,storageFailure:false,rows:[...Array.from({length:101},(_,i)=>task(i+1)),task(201,'20'),task(202,'20'),task(301,'0')],calls:[],elapsed:[],catalogHook:null,elapsedHook:null,ignoredFilter:false};
  class Clock extends Date{static now(){return state.now++;}}
  const range={from:'2026-09-07',to:'2026-09-07'};
- const c=vm.createContext({Date:Clock,Map,Set,Promise,clearTimeout:()=>{},setTimeout:()=>0,
+ const c=vm.createContext({Date:Clock,Map,Set,Promise,clearTimeout:()=>{},setTimeout:fn=>{queueMicrotask(fn);return 0;},
   document:{visibilityState:'visible'},navigator:{onLine:true},_PENA_TIME_CONTROL:model,
   localStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>{if(state.storageFailure)throw new Error('storage denied');storage.set(key,value);}},
   _getDialogNativeSharedAuditScopeKey:()=>state.scope,_getCurrentBitrixUserId:()=>state.scope.split('~').at(-1),_isDialogTimeFrameActive:()=>true,
   _dialogTimeProjectPreference:null,_dialogTimeProjectGeneration:0,_dialogTimeProjectTaskIds:new Set(),_dialogTimeProjectCatalogOwner:null,_dialogTimeProjectListOwner:null,
   _dialogTaskCatalogLastResult:null,_dialogTaskCatalogScopeKey:'',_dialogTaskCatalogFetchedAt:0,_dialogTaskCatalogSyncFlights:new Map(),
+  _dialogTaskCatalogSyncPromise:null,_dialogTaskCatalogSyncScopeKey:'',_dialogTaskCatalogComplete:false,
+  _DIALOG_TASK_CATALOG_MAX_PAGES:1000,_DIALOG_TASK_CATALOG_PAGE_SIZE:50,_DIALOG_RECENT_PAGE_DELAY_MS:0,
+  _isDialogTaskCatalogMetadataFresh:()=>false,_mergeDialogTaskCatalogRows:rows=>rows.length,findContainer:()=>null,_getDialogNativeSourceRows:()=>[],
   _dialogTimeProjectCatalogError:null,_dialogTimeProjectCatalogDirty:false,_dialogTimeCatalogScope:'',_dialogTimeCatalogCursor:0,
   _dialogTimeManualSearchToken:0,_dialogTimeManualSelectedTask:null,_dialogTimeManualSearchQuery:'',_dialogTimeManualSearchResults:[],_dialogTimeManualSearchTimer:null,
   _dialogTimeRange:range,_dialogTimeView:'day',_dialogControlNativeWorkspaceTab:'time',_dialogTimePortalDateKey:range.from,
@@ -42,7 +45,9 @@ function fixture(storage=new Map()){
   _getDialogControlItemsForMode:()=>[],_isDialogControlFolder:()=>false,_readDialogTimeVisits:()=>[{taskId:'999',title:'Foreign task'}],normId:value=>value||'',
   _callBxRestPageWithTimeout:async(method,params,timeout,options)=>{
    assert.equal(method,'tasks.task.list');assert.equal(options.isCurrent(),true);
-   assert(params.filter.GROUP_ID||params.filter['>GROUP_ID']===0||c._readDialogTimeProjectPreference()?.all&&c._readDialogTimeProjectPreference()?.includeUnassigned,'Unscoped request without explicit all+unassigned choice');
+   const explicitAll=c._readDialogTimeProjectPreference()?.all&&c._readDialogTimeProjectPreference()?.includeUnassigned;
+   if(explicitAll&&params.filter['>ID']===0)state.unfilteredCatalogAuthorized=true;
+   assert(params.filter.GROUP_ID||params.filter['>GROUP_ID']===0||explicitAll||state.unfilteredCatalogAuthorized&&c._dialogTaskCatalogSyncFlights.has(state.scope+':full'),'Unscoped request without an authorized native full owner');
    const request={scope:c._getDialogTimeProjectScopeKey(),params:structuredClone(params)};state.calls.push(request);
    let rows=state.rows.filter(row=>Number(row.ID)>Number(params.filter['>ID']||0));
    if(!state.ignoredFilter){if(params.filter.GROUP_ID)rows=rows.filter(row=>params.filter.GROUP_ID.includes(row.GROUP_ID));else if(params.filter['>GROUP_ID']===0)rows=rows.filter(row=>Number(row.GROUP_ID)>0);}
@@ -55,7 +60,7 @@ function fixture(storage=new Map()){
    if(state.elapsedHook)await state.elapsedHook(requested);return result;
   }
  });
- const names=['_normalizeDialogTimeProjectPreference','_getDialogTimeProjectStorageKey','_readDialogTimeProjectPreference','_getDialogTimeProjectScopeKey','_getDialogTimeProjectFilter','_matchesDialogTimeProjectTask','_isDialogTimeProjectTask','_rememberDialogTimeProjectTask','_pruneDialogTimeProjectSnapshots','_saveDialogTimeProjectPreference','_getDialogTimeReusableNativeCatalog','_ensureDialogTimeProjectCatalog','_getDialogTaskKeysetCursor','_getDialogTimeWorkingTaskIds','_getDialogTimeCacheKey','_getDialogTimeRecord','_setDialogTimeCacheRecord','_hasDialogTimeVerifiedData','_loadDialogTimeRange','_scheduleDialogTimeBootstrap','_getDialogTimeLocalTaskSearchResults','_buildDialogTimeWriteFields','_applyDialogTimeOptimisticEntry'];
+ const names=['_syncDialogTaskCatalog','_normalizeDialogTimeProjectPreference','_getDialogTimeProjectStorageKey','_readDialogTimeProjectPreference','_getDialogTimeProjectScopeKey','_getDialogTimeProjectFilter','_matchesDialogTimeProjectTask','_isDialogTimeProjectTask','_rememberDialogTimeProjectTask','_pruneDialogTimeProjectSnapshots','_saveDialogTimeProjectPreference','_getDialogTimeReusableNativeCatalog','_ensureDialogTimeProjectCatalog','_getDialogTaskKeysetCursor','_getDialogTimeWorkingTaskIds','_getDialogTimeCacheKey','_getDialogTimeRecord','_setDialogTimeCacheRecord','_hasDialogTimeVerifiedData','_loadDialogTimeRange','_scheduleDialogTimeBootstrap','_getDialogTimeLocalTaskSearchResults','_buildDialogTimeWriteFields','_applyDialogTimeOptimisticEntry'];
  vm.runInContext(names.map(extract).join('\n'),c);
  return {state,c,range,save:value=>c._saveDialogTimeProjectPreference(value),load:()=>{const promise=c._loadDialogTimeRange(range);promise.catch(()=>{});return promise;},record:()=>c._getDialogTimeRecord(range)};
 }
@@ -129,12 +134,63 @@ await phase('only a fresh complete same-user native catalog with group metadata 
  }
  return {validReuseOwnCatalogRequests:0,invalidProofVariants:5,eachInvalidScopedPages:3};
 });
-await phase('configured all joins a running native full owner without duplicate catalog or early elapsed',async()=>{
- const f=fixture(),gate=deferred();f.save({version:1,all:true,ids:[],includeUnassigned:true});f.c._dialogTaskCatalogSyncFlights.set(f.state.scope+':full',gate.promise);
- const read=f.load();await Promise.resolve();await Promise.resolve();assert.equal(f.state.calls.length,0);assert.equal(f.state.elapsed.length,0);
- f.c._dialogTaskCatalogLastResult={complete:true,rows:structuredClone(f.state.rows),startedAt:999800};f.c._dialogTaskCatalogScopeKey=f.state.scope;f.c._dialogTaskCatalogFetchedAt=999900;gate.resolve();await read;
- assert.equal(f.state.calls.length,0);assert.equal(f.state.elapsed.length,104);assert.equal(new Set(f.state.elapsed).size,104);assert.equal(f.c._dialogTimeCatalogCursor,999800);
- return {duplicateCatalogRequests:0,beforeNativeProofElapsed:0,afterNativeProofElapsed:104};
+await phase('both startup orders share the actual native transport until full proof',async()=>{
+ for(const order of ['native-first','time-first']){
+  const f=fixture(),gate=deferred();f.save({version:1,all:true,ids:[],includeUnassigned:true});
+  f.state.catalogHook=async request=>{if(request.params.filter['>ID']===0)await gate.promise;};
+  let native,read;
+  if(order==='native-first'){native=f.c._syncDialogTaskCatalog({forceNetwork:true,deferMerge:true});read=f.load();}
+  else{read=f.load();await until(()=>f.state.calls.length===1);native=f.c._syncDialogTaskCatalog({forceNetwork:true,deferMerge:true});}
+  await until(()=>f.state.calls.length===1);assert.equal(f.state.elapsed.length,0);assert.equal(f.c._dialogTimeCatalogCursor,0);
+  gate.resolve();const [result]=await Promise.all([native,read]);
+  assert.equal(result.complete,true);assert.equal(result.pages,3);assert.equal(f.state.calls.length,3,order);
+  assert.equal(f.state.calls.filter(call=>call.params.filter['>ID']===0).length,1);
+  assert.equal(f.state.elapsed.length,104);assert.equal(new Set(f.state.elapsed).size,104);assert.equal(f.c._dialogTimeCatalogCursor,result.startedAt);
+  assert.equal(f.c._dialogTaskCatalogSyncFlights.size,0);assert.equal(f.record().data.totalSeconds,6240);
+ }
+ return {startupOrders:2,fullFirstPagesPerOrder:1,catalogPagesPerOrder:3,beforeProofElapsed:0,uniqueElapsed:104};
+});
+await phase('shared native errors and incomplete or malformed proof fail closed without a private fallback crawl',async()=>{
+ for(const fault of ['rejected','partial','missingGroup']){
+  const f=fixture();f.save({version:1,all:true,ids:[],includeUnassigned:true});
+  if(fault==='rejected')f.state.catalogHook=async()=>{throw new Error('native transport denied');};
+  if(fault==='partial')f.c._DIALOG_TASK_CATALOG_MAX_PAGES=1;
+  if(fault==='missingGroup')delete f.state.rows[0].GROUP_ID;
+  await assert.rejects(f.load());assert.equal(f.state.elapsed.length,0);assert.equal(f.c._dialogTimeCatalogCursor,0);assert.equal(f.c._dialogTimeProjectTaskIds.size,0);
+  assert.equal(f.state.calls.length,fault==='missingGroup'?3:1);assert.equal(f.state.calls.filter(call=>call.params.filter['>ID']===0).length,1);
+  assert(f.c._dialogTimeProjectCatalogError);assert.equal(f.c._dialogTaskCatalogSyncFlights.size,0);
+ }
+ return {rejectedProofVariants:3,elapsedRequests:0,fallbackCrawls:0};
+});
+await phase('switching projects during a shared native read cannot commit its old membership',async()=>{
+ const f=fixture(),gate=deferred();f.save({version:1,all:true,ids:[],includeUnassigned:true});
+ f.state.catalogHook=async request=>{if(!request.params.filter.GROUP_ID&&request.params.filter['>ID']===0)await gate.promise;};
+ const old=f.load();await until(()=>f.state.calls.length===1);f.save(choice(['20']));await f.load();
+ const accepted=f.record();assert.equal(accepted.data.totalSeconds,120);gate.resolve();await old;
+ assert.equal(f.record(),accepted);assert.deepEqual(Array.from(f.c._dialogTimeProjectTaskIds),['201','202']);assert.deepEqual(f.state.elapsed,['201','202']);
+ return {newSelectionSeconds:120,oldSharedRowsAccepted:0};
+});
+await phase('native completion plus a zero project cursor reuses proof even when a dirty signal was seen',async()=>{
+ for(const dirty of [false,true]){
+  const f=fixture();f.save({version:1,all:true,ids:[],includeUnassigned:true});f.c._dialogTimeProjectCatalogDirty=dirty;
+  f.c._dialogTaskCatalogLastResult={complete:true,rows:structuredClone(f.state.rows),startedAt:999800};
+  f.c._dialogTaskCatalogScopeKey=f.state.scope;f.c._dialogTaskCatalogFetchedAt=999900;
+  assert.equal(f.c._dialogTimeCatalogCursor,0);
+  await f.c._scheduleDialogTimeBootstrap(Promise.resolve({value:{complete:true}}));
+  assert.equal(f.state.calls.length,0,`Zero cursor incorrectly requested a second task catalog (dirty=${dirty})`);
+  assert.equal(f.state.elapsed.length,104);assert.equal(new Set(f.state.elapsed).size,104);assert.equal(f.record().data.totalSeconds,6240);
+  assert.equal(f.c._dialogTimeCatalogCursor,999800);assert.equal(f.c._dialogTimeBootstrapToken.phase,'ready');
+ }
+ return {zeroCursorVariants:2,duplicateCatalogReads:0,uniqueElapsedPerVariant:104};
+});
+await phase('a stale committed project cursor still performs a delta and reads only newly discovered work',async()=>{
+ const f=fixture();f.save({version:1,all:true,ids:[],includeUnassigned:true});await f.load();
+ const initialCatalog=f.state.calls.length,initialElapsed=f.state.elapsed.length;
+ f.state.now+=61000;f.state.rows.push(task(401));
+ await f.c._scheduleDialogTimeBootstrap(Promise.resolve({value:{complete:true}}));
+ const delta=f.state.calls.slice(initialCatalog);assert(delta.length>0);assert(delta.every(call=>call.params.filter['>=CHANGED_DATE']));
+ assert.deepEqual(f.state.elapsed.slice(initialElapsed),['401']);assert.equal(f.record().data.totalSeconds,6300);assert.equal(f.c._dialogTimeBootstrapToken.phase,'ready');
+ return {deltaPages:delta.length,newElapsedTasks:1,existingElapsedRereads:0};
 });
 
 mkdirSync('tests/artifacts',{recursive:true});writeFileSync('tests/artifacts/time-project-scope-report.json',JSON.stringify(report,null,2));

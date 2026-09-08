@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.106';
+	window.__ANITREC_RUNNING__ = '7.5.107';
 
-	const VER = '7.5.106';
+	const VER = '7.5.107';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -4673,10 +4673,25 @@
 		const since = delta && _dialogTimeCatalogScope === scope ? _dialogTimeCatalogCursor : 0;
 		const startedAt = Date.now();
 		const run = (async () => {
+			const preference=_readDialogTimeProjectPreference();
+			if (preference?.all && preference.includeUnassigned && !since) {
+				// An explicitly unfiltered full catalog has one transport owner in
+				// either startup order. Selected-project and delta reads stay scoped.
+				const reusable = !force && _getDialogTimeReusableNativeCatalog();
+				const result = reusable ? _dialogTaskCatalogLastResult : await _syncDialogTaskCatalog({forceNetwork:true,deferMerge:true});
+				if (!current()) return false;
+				if (!result?.complete || result.discarded || result.headOnly || !Array.isArray(result.rows) ||
+					result.rows.some(task => !_matchesDialogTimeProjectTask(task))) throw new Error('Не удалось подтвердить полный список задач');
+				_dialogTimeProjectTaskIds = new Set(result.rows.map(task => String(task.ID ?? task.id)));
+				_dialogTimeCatalogScope = scope;
+				_dialogTimeCatalogCursor = result.startedAt || _dialogTaskCatalogFetchedAt;
+				_dialogTimeProjectCatalogDirty = false;
+				_pruneDialogTimeProjectSnapshots();
+				_publishDialogTimeTaskIndexRows(result.rows);
+				_queueDialogTimeUiSync();
+				return true;
+			}
 			if (!force && !delta) {
-				const preference=_readDialogTimeProjectPreference();
-				const nativeOwner=preference?.all && preference.includeUnassigned ? _dialogTaskCatalogSyncFlights.get(`${_getDialogNativeSharedAuditScopeKey()}:full`) : null;
-				if (nativeOwner) await nativeOwner.catch(() => null);
 				if (!current()) return false;
 				const nativeRows=_getDialogTimeReusableNativeCatalog();
 				if (nativeRows) {
@@ -15764,7 +15779,7 @@ if (_presetChannel) {
 		_renderDialogTimeManualSearch(panel, 'tracker');
 		if (start) {
 			start.hidden = !!tracker;
-			start.disabled = _dialogTimeActionInFlight || !trackerSearch.selectedTask?.taskId || !selectedIsToday;
+			start.disabled = _dialogTimeActionInFlight || !_isDialogTimeProjectTask(trackerSearch.selectedTask?.taskId) || !selectedIsToday;
 		}
 		if (stop) {
 			stop.hidden = !tracker;
@@ -15798,7 +15813,7 @@ if (_presetChannel) {
 			const hours = Math.max(0, Number(manualHours?.value) || 0);
 			const minutes = Math.max(0, Number(manualMinutes?.value) || 0);
 			const validDuration = hours * 60 + minutes >= 1 && hours * 60 + minutes <= 1440 && minutes <= 59;
-			manualSubmit.disabled = _dialogTimeActionInFlight || (!manualPending && (!_dialogTimeManualSelectedTask?.taskId || !validDuration));
+			manualSubmit.disabled = _dialogTimeActionInFlight || (!manualPending && (!_isDialogTimeProjectTask(_dialogTimeManualSelectedTask?.taskId) || !validDuration));
 			manualSubmit.textContent = _dialogTimeActionInFlight ? 'Сохраняем…' : manualAcknowledged ? 'Повторить отметку' : (manualPending ? (manualRetryConfirmed ? 'Записи нет — повторить' : 'Проверить запись') : 'Добавить');
 		}
 		const manual = panel.querySelector('.pena-native-time-manual');
@@ -16111,7 +16126,8 @@ if (_presetChannel) {
 				if (!current()) return null;
 				// Time has an independent project scope. Native dialog metadata cannot
 				// grant completeness or invalidate a committed time snapshot.
-				if (!await _ensureDialogTimeProjectCatalog({ delta:_dialogTimeProjectCatalogDirty || (!!taskCatalogOutcomePromise && Date.now()-_dialogTimeCatalogCursor>60000) }) || !current()) { token.phase='paused'; return null; }
+				const hasProjectCatalog = _dialogTimeCatalogScope === scope && _dialogTimeCatalogCursor > 0;
+				if (!await _ensureDialogTimeProjectCatalog({ delta:hasProjectCatalog && (_dialogTimeProjectCatalogDirty || (!!taskCatalogOutcomePromise && Date.now()-_dialogTimeCatalogCursor>60000)) }) || !current()) { token.phase='paused'; return null; }
 				await _ensureDialogTimePortalDate();
 				if (!current()) return null;
 				_syncDialogTimePortalDay();
@@ -16833,7 +16849,7 @@ if (_presetChannel) {
 		const syncManualValidity = () => {
 			saveDraft();
 			const totalMinutes = (Math.max(0, Number(hoursField.input.value) || 0) * 60) + Math.max(0, Number(minutesField.input.value) || 0);
-			manualSubmit.disabled = _dialogTimeActionInFlight || !_dialogTimeManualSelectedTask?.taskId ||
+			manualSubmit.disabled = _dialogTimeActionInFlight || !_isDialogTimeProjectTask(_dialogTimeManualSelectedTask?.taskId) ||
 				totalMinutes < 1 || totalMinutes > 1440 || Math.max(0, Number(minutesField.input.value) || 0) > 59;
 		};
 		hoursField.input.addEventListener('input', syncManualValidity);

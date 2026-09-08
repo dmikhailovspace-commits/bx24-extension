@@ -36,10 +36,18 @@ const snapshot = () => page.evaluate(() => ({
 	recentCalls: (window.nativeRestCalls || []).filter(call => call.method === 'im.recent.list').length,
 	taskCalls: (window.nativeRestCalls || []).filter(call => call.method === 'tasks.task.list').length,
 	restCalls: window.nativeRestCalls || [],
-	batches: window.nativeBatchSizes || []
+	batches: window.nativeBatchSizes || [],
+	projectStarts:window.dualProjectStarts || [],
+	startup:window.dualStartupState?.() || null
 }));
 
 try {
+	const startSource = readFileSync(join(root,'extension/injected.js'),'utf8');
+	const projectStart = '\tasync function _ensureDialogTimeProjectCatalog({ force = false, delta = false } = {}) {';
+	assert.equal(startSource.split(projectStart).length-1,1);
+	const startupAnchor='\tconst _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;';
+	const startupSource=startSource.replace(projectStart, projectStart+`\n (window.dualProjectStarts ||= []).push({at:Date.now(),force,delta,cursor:_dialogTimeCatalogCursor,scope:_dialogTimeCatalogScope,requestedScope:_getDialogTimeProjectScopeKey(),preference:_readDialogTimeProjectPreference(),reusableRows:_getDialogTimeReusableNativeCatalog()?.length ?? null});`).replace(startupAnchor,startupAnchor+`\n window.dualStartupState=()=>({cycle:_dialogTimeBootstrapSequence,active:!!_dialogTimeBootstrapPromise,phase:_dialogTimeBootstrapToken?.phase,projectActive:!!_dialogTimeProjectCatalogOwner,cursor:_dialogTimeCatalogCursor});`);
+	await page.route('**/extension/injected.js*', route => route.fulfill({contentType:'application/javascript',body:startupSource}));
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&lazy=1&catalogRows=80&lazyChunk=12&lazyDelay=20&initialTop=24&startupBudget=10000`);
 	try {
 		await page.waitForFunction(() => {
@@ -50,7 +58,16 @@ try {
 	} catch (error) {
 		throw new Error(`Shared cold catalog did not settle: ${JSON.stringify(await snapshot())}; ${error.message}`);
 	}
+	// Include the automatic time bootstrap in startup, before measuring the
+	// source switch. All-projects time must reuse the complete native catalog.
+	await page.waitForFunction(()=>{
+		const state=window.dualStartupState?.();
+		return state?.cycle>0 && !state.active && !state.projectActive && state.cursor>0;
+	},null,{timeout:25000});
 	const beforeSwitch = await snapshot();
+	mkdirSync(join(root,'tests/artifacts'),{recursive:true});
+	writeFileSync(join(root,'tests/artifacts/native-dual-catalog-startup.json'),JSON.stringify(beforeSwitch,null,2));
+	assert.equal(beforeSwitch.taskCalls,1,'All-projects startup duplicated the complete native task catalog: '+JSON.stringify(beforeSwitch));
 	await page.locator('#switch-mode').evaluate(button => button.click());
 	try {
 		await page.waitForFunction(() => {
@@ -72,22 +89,22 @@ try {
  const anchor='\tconst _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;';
  const instrumented=raw.replace(anchor,anchor+`\n window.catalogConcurrencyProbe={
   sync:options=>_syncDialogTaskCatalog(options),
-  reset:()=>{_dialogTaskCatalogFetchedAt=0;_dialogTaskCatalogComplete=false;_dialogTaskCatalogLastResult=null;_dialogTimeCatalogCursor=0;clearTimeout(_dialogTimeCatalogTimer);},
-  snapshot:()=>({nativeActive:!!_dialogTaskCatalogSyncPromise,timeActive:!!_dialogTimeCatalogPromise,flights:_dialogTaskCatalogSyncFlights.size,cursor:_dialogTimeCatalogCursor})
+  reset:()=>{_dialogTaskCatalogFetchedAt=0;_dialogTaskCatalogComplete=false;_dialogTaskCatalogLastResult=null;_dialogTimeCatalogCursor=0;},
+  snapshot:()=>({nativeActive:!!_dialogTaskCatalogSyncPromise,timeActive:!!_dialogTimeCatalogPromise||!!_dialogTimeProjectCatalogOwner,projectActive:!!_dialogTimeProjectCatalogOwner,flights:_dialogTaskCatalogSyncFlights.size,cursor:_dialogTimeCatalogCursor,nativeRows:_dialogTaskCatalogLastResult?.rows?.length||0})
  };`);
  const concurrency=[];
  for(const scenario of ['full-head-full','time-first-native-full']){
   const probe=await browser.newPage({viewport:{width:900,height:800}});
   try{
    await probe.route('**/extension/injected.js*',route=>route.fulfill({contentType:'application/javascript',body:instrumented}));
-   await probe.goto(base+'/tests/native-consistency-harness.html?mode=chats&taskCatalogRows=24');
+   await probe.goto(base+'/tests/native-consistency-harness.html?mode=chats&taskCatalogRows=124');
    await probe.locator('.pena-native-time-button').waitFor();
    await probe.waitForFunction(()=>!catalogConcurrencyProbe.snapshot().nativeActive&&!catalogConcurrencyProbe.snapshot().timeActive);
    await probe.evaluate(()=>{
-    catalogConcurrencyProbe.reset();window.catalogHolds=[];window.catalogDispatches=[];window.catalogRequests=[];
+    catalogConcurrencyProbe.reset();window.catalogHolds=[];window.catalogDispatches=[];window.catalogRequests=[];window.catalogHoldEnabled=true;
     const original=BX.rest.callMethod;
     BX.rest.callMethod=function(method,params,callback){
-     if(method==='tasks.task.list'){catalogDispatches.push({at:performance.now(),order:params.order,filter:params.filter});catalogHolds.push(()=>original.call(this,method,params,callback));return;}
+     if(method==='tasks.task.list'){catalogDispatches.push({at:performance.now(),order:params.order,filter:params.filter});if(catalogHoldEnabled){catalogHolds.push(()=>original.call(this,method,params,callback));return;}}
      return original.call(this,method,params,callback);
     };
    });
@@ -103,11 +120,16 @@ try {
    const during=await probe.evaluate(()=>({dispatches:catalogDispatches.slice(),state:catalogConcurrencyProbe.snapshot()}));
    assert.equal(during.dispatches.length,1,scenario+' duplicated a real SDK catalog request: '+JSON.stringify(during));
    assert.equal(during.state.flights,1);
-   await probe.evaluate(()=>{for(const release of catalogHolds.splice(0))release();});
+   if(scenario==='time-first-native-full')assert.equal(during.state.projectActive,true,'Time-first catalog did not retain its selected-project owner while SDK response was held');
+   await probe.evaluate(()=>{catalogHoldEnabled=false;for(const release of catalogHolds.splice(0))release();});
    await probe.evaluate(()=>Promise.all(catalogRequests));
    await probe.waitForFunction(()=>!catalogConcurrencyProbe.snapshot().nativeActive&&!catalogConcurrencyProbe.snapshot().timeActive);
-   assert.equal(await probe.evaluate(()=>catalogDispatches.length),1,scenario+' started a second full scan after shared completion');
-   concurrency.push({scenario,actualSdkRequests:1,concurrentOwners:1});
+   const complete=await probe.evaluate(()=>({dispatches:catalogDispatches.slice(),state:catalogConcurrencyProbe.snapshot()}));
+   assert.equal(complete.dispatches.length,3,scenario+' must fetch exactly three pages for 130 tasks, with no repeated scan');
+   const cursors=complete.dispatches.map(call=>Number(call.filter['>ID']));
+   assert.deepEqual(cursors,[0,50043,50093],scenario+' duplicated or skipped a keyset page');
+   assert.equal(complete.state.nativeRows,130,scenario+' lost tasks after the shared first page');
+   concurrency.push({scenario,actualSdkRequests:3,cursors,tasks:130,nativeFlights:during.state.flights,projectOwnerActive:during.state.projectActive});
   }finally{await probe.close();}
  }
  mkdirSync(join(root,'tests/artifacts'),{recursive:true});writeFileSync(join(root,'tests/artifacts/native-dual-catalog-concurrency.json'),JSON.stringify(concurrency,null,2));
