@@ -25,6 +25,7 @@ function fixture(count=51){
   // project-scope suite verifies actual persistence and catalog membership.
   _getDialogTimeProjectScopeKey:()=>state.scope,
   _isDialogTimeProjectTask:id=>ids.includes(String(id)),
+  _isDialogTimeWritableTask:id=>ids.includes(String(id)),_getDialogTimeContactExceptionTaskIds:()=>new Set(),_readDialogTimeManualDraft:()=>({}),_readDialogTimeTracker:()=>null,
   _dialogTimeProjectCatalogDirty:false,_dialogTimeProjectCatalogError:null,
   _ensureDialogTimeProjectCatalog:async()=>{if(c._dialogTimeCatalogCursor&&c._dialogTimeCatalogScope===state.scope)return true;state.catalogCalls++;c._dialogTimeCatalogCursor=100;c._dialogTimeCatalogScope=state.scope;return true;},
   _ensureDialogTimePortalDate:async()=>range.from,_syncDialogTimePortalDay:()=>{},_getDialogTimeTodayKey:()=>state.today,
@@ -101,6 +102,7 @@ try {
   const ids=Array.from({length:4149},(_,i)=>String(i+1));
   const c=vm.createContext({_PENA_TIME_CONTROL:model,_dialogTimeRange:{from:'2026-09-07',to:'2026-09-07'},_dialogTimeCache:new Map([['day',{data:{tasks:ids.map(taskId=>({taskId}))}}]]),
    _dialogTimeProjectTaskIds:new Set(ids),_dialogTimeCatalogCursor:1,_dialogTimeCatalogScope:'configured',_getDialogTimeProjectScopeKey:()=> 'configured',
+   _getDialogTimeIdentityScopeKey:()=> 'configured',_getDialogTimeContactExceptionTaskIds:()=>new Set(),_readDialogTimeManualDraft:()=>({}),
    _dialogTimeTaskTitles:new Map(ids.map(id=>[id,'Task '+id])),_dialogTimeTaskEligibility:new Map(ids.map(id=>[id,true])),
    _readDialogTimeVisits:()=>[],_dialogTimeManualSelectedTask:null,_readDialogTimeTracker:()=>null,_getActiveDialogTimeActivity:()=>null,
    _getDialogTimeEligibleTaskIds:()=>ids,_getDialogRecentUniqueMeta:()=>[],_getDialogTimeTaskEligibilityForDisplay:()=>true});

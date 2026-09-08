@@ -37,6 +37,10 @@ if (Number.parseInt(process.versions.node.split('.')[0], 10) < minimumNodeMajor 
 }
 
 const suites = [
+  'chrome-package-regression.mjs',
+  'chrome-portal-worker-regression.mjs',
+  'chrome-popup-regression.mjs',
+  'chrome-browser-regression.mjs',
   'extension-enable-state.mjs',
   'content-frame-scope-regression.mjs',
   'native-catalog-model.mjs',
@@ -50,6 +54,9 @@ const suites = [
   'task-keyset-regression.mjs',
   'time-catalog-partitions-regression.mjs',
   'time-log-empty-regression.mjs',
+  'time-global-elapsed-regression.mjs',
+  'time-counter-reset-regression.mjs',
+  'time-contact-project-exception-regression.mjs',
   'time-today-preview-regression.mjs',
   'time-startup-preview-regression.mjs',
   'time-functional-regression.mjs',

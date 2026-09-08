@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.113';
+	window.__ANITREC_RUNNING__ = '7.5.114';
 
-	const VER = '7.5.113';
+	const VER = '7.5.114';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -4608,6 +4608,33 @@
 	function _isDialogTimeProjectTask(taskId) {
 		return !!_dialogTimeCatalogCursor && _dialogTimeCatalogScope === _getDialogTimeProjectScopeKey() && _dialogTimeProjectTaskIds.has(String(taskId));
 	}
+	function _getDialogTimeContactExceptionTaskIds(range = _getDialogTimeSelectedRange(), { includeReceipts = false, visits = null } = {}) {
+		const ids = new Set();
+		if (!_getDialogTimeIdentityScopeKey() || !_getDialogTimeProjectScopeKey() ||
+			!_PENA_TIME_CONTROL?.parseDateKey(range?.from) || !_PENA_TIME_CONTROL.parseDateKey(range?.to) || range.from > range.to) return ids;
+		for (let day = range.from; day && day <= range.to; day = _PENA_TIME_CONTROL.addDays(day, 1)) {
+			for (const visit of (range.from === range.to && Array.isArray(visits) ? visits : _readDialogTimeVisits(day))) {
+				// A task open or an accounting placeholder is not a qualified contact.
+				const qualified = Number(visit.visits) > 0 && Number(visit.lastQualifiedAt) > 0;
+				const recorded = includeReceipts && visit.accountedEntries?.length > 0;
+				if ((qualified || recorded) && /^\d+$/.test(String(visit.taskId || ''))) ids.add(String(visit.taskId));
+			}
+		}
+		return ids;
+	}
+	function _getDialogTimeWritableTaskIds(dateKey = _getDialogTimeSelectedRange()?.from, visits = null) {
+		const ids = _getDialogTimeContactExceptionTaskIds({from:dateKey,to:dateKey}, {visits});
+		const scope = _getDialogTimeProjectScopeKey();
+		if (scope && _getDialogTimeIdentityScopeKey() && _dialogTimeCatalogScope === scope && _dialogTimeCatalogCursor) {
+			for (const id of _dialogTimeProjectTaskIds) ids.add(String(id));
+		}
+		return ids;
+	}
+	function _isDialogTimeWritableTask(taskId, dateKey = _getDialogTimeSelectedRange()?.from) {
+		const id = String(taskId || '');
+		if (!/^\d+$/.test(id) || !_getDialogTimeIdentityScopeKey() || !_getDialogTimeProjectScopeKey()) return false;
+		return _isDialogTimeProjectTask(id) || _getDialogTimeContactExceptionTaskIds({from:dateKey,to:dateKey}).has(id);
+	}
 	function _rememberDialogTimeProjectTask(task) {
 		const id = String(task?.ID ?? task?.id ?? '');
 		if (!/^\d+$/.test(id) || _dialogTimeCatalogScope !== _getDialogTimeProjectScopeKey() || !_dialogTimeCatalogCursor) return;
@@ -4632,27 +4659,62 @@
 		const scope = _getDialogTimeProjectScopeKey();
 		for (const [key, record] of Array.from(_dialogTimeCache)) {
 			if (!key.startsWith(`${scope}:`) || !record.data?.items) continue;
-			const items=record.data.items.filter(item => _dialogTimeProjectTaskIds.has(String(item.taskId)));
-			const taskFreshness=Object.fromEntries(Object.entries(record.taskFreshness || {}).filter(([id]) => _dialogTimeProjectTaskIds.has(id)));
+			const allowed = new Set(_getDialogTimeWorkingTaskIds(record.range || record.data.range));
+			const items=record.data.items.filter(item => allowed.has(String(item.taskId)));
+			const taskFreshness=Object.fromEntries(Object.entries(record.taskFreshness || {}).filter(([id]) => allowed.has(id)));
 			if (items.length === record.data.items.length && Object.keys(taskFreshness).length===Object.keys(record.taskFreshness || {}).length) continue;
 			_dialogTimeRangeRevisions.set(key,(_dialogTimeRangeRevisions.get(key)||0)+1);
-			const checkedTasks=Array.from(_dialogTimeProjectTaskIds).filter(id => taskFreshness[id] && !taskFreshness[id].unavailable && taskFreshness[id].revision===(_dialogTimeTaskRevisions.get(id)||0)).length;
-			const complete=checkedTasks===_dialogTimeProjectTaskIds.size;
-			const data={ ...record.data, ..._PENA_TIME_CONTROL.aggregateElapsedItems(items), totalAvailable:items.length, coverage:{checkedTasks,totalTasks:_dialogTimeProjectTaskIds.size,complete} };
+			const checkedTasks=Array.from(allowed).filter(id => taskFreshness[id] && !taskFreshness[id].unavailable && taskFreshness[id].revision===(_dialogTimeTaskRevisions.get(id)||0)).length;
+			const complete=checkedTasks===allowed.size;
+			const data={ ...record.data, ..._PENA_TIME_CONTROL.aggregateElapsedItems(items), totalAvailable:items.length, coverage:{checkedTasks,totalTasks:allowed.size,complete} };
 			_setDialogTimeCacheRecord(key,{...record,data,taskFreshness,hasCompleteSnapshot:complete});
 		}
 	}
+	function _migrateDialogTimeProjectSnapshots(previous, next, previousScope, nextScope, { persistPreview = true } = {}) {
+		const identity = _getDialogTimeIdentityScopeKey();
+		if (!previous || !next || !identity || !previousScope.startsWith(`${identity}:`) || !nextScope.startsWith(`${identity}:`) || previousScope === nextScope) return;
+		const expands = (!previous.includeUnassigned || next.includeUnassigned) &&
+			(next.all || (!previous.all && previous.ids.every(id => next.ids.includes(id))));
+		for (const [key, record] of Array.from(_dialogTimeCache)) {
+			if (!key.startsWith(`${previousScope}:`) || !record?.data) continue;
+			const range = record.range || record.data.range;
+			if (!range) continue;
+			// An expanded set contains the confirmed old rows, but has not yet been
+			// fully checked. A narrower/changed set must not display the old total.
+			const data = { ...record.data, coverage:{ checkedTasks:0, totalTasks:0, complete:false } };
+			_setDialogTimeCacheRecord(`${nextScope}:${range.from}:${range.to}`, {
+				...record, range, data, status:'loading', error:'', failedAt:0,
+				hasVerifiedData:expands && record.hasVerifiedData === true, hasCompleteSnapshot:false,
+				scopeSelectionPending:!expands, globalSnapshotRead:false, taskFreshness:{}, taskIdsKey:'', readRevision:undefined, readScope:undefined,
+				readForce:false, failedTaskRevisions:null,
+				readProgress:{ completedTasks:0, totalTasks:0 }
+			});
+		}
+		if (!persistPreview) return;
+		// Keep this transition across reloads without promoting the old selection
+		// to a complete new snapshot. The reader still validates day/user/items.
+		try {
+			const key = `pena.timeToday.v1.${identity}`;
+			const saved = JSON.parse(localStorage.getItem(key) || 'null');
+			if (saved?.version !== 1 || saved.scope !== previousScope.replace(/:g\d+$/, '')) return;
+			localStorage.setItem(key, JSON.stringify({ ...saved, scope:nextScope.replace(/:g\d+$/, ''),
+				scopeSelectionPending:!expands || saved.scopeSelectionPending === true }));
+		} catch { /* The saved preference and in-memory confirmed snapshot remain usable. */ }
+	}
+
 	function _saveDialogTimeProjectPreference(value) {
 		const normalized = _normalizeDialogTimeProjectPreference(value);
 		const key = _getDialogTimeProjectStorageKey();
 		if (!normalized || !key) throw new Error('Выберите хотя бы один проект или задачи без проекта');
 		const previous = _readDialogTimeProjectPreference();
 		if (JSON.stringify(previous) === JSON.stringify(normalized)) return false;
+		const previousScope = _getDialogTimeProjectScopeKey();
 		// Persist before changing the live scope. A failed write leaves the working
 		// snapshot, timer and contact journal intact and the settings form open.
 		localStorage.setItem(key, JSON.stringify(normalized));
 		_dialogTimeProjectPreference = { key, value:normalized };
 		_dialogTimeProjectGeneration++;
+		_migrateDialogTimeProjectSnapshots(previous, normalized, previousScope, _getDialogTimeProjectScopeKey());
 		_dialogTimeManualSearchToken++;
 		_dialogTimeManualSelectedTask = null;
 		_dialogTimeManualSearchQuery = '';
@@ -4735,8 +4797,7 @@
 				const root = page.data?.result || page.data || {};
 				let tail = root.hasMore === false || root.hasMorePages === false || !batch.length ||
 					(!(page.next != null && page.next > 0) && root.hasMore !== true && root.hasMorePages !== true && batch.length < 50);
-				if (!tail && !since && afterId === 0 && Number(page.total) >= 500 &&
-					batch.every(task => Object.prototype.hasOwnProperty.call(task, 'TIME_SPENT_IN_LOGS') || Object.prototype.hasOwnProperty.call(task, 'timeSpentInLogs'))) {
+				if (!tail && !since && afterId === 0 && Number(page.total) >= 500) {
 					const partitioned = await _loadDialogTaskCatalogPartitionTail({ page, firstRows:batch, afterId:nextId, filter, select, isCurrent:current });
 					if (!current()) return false;
 					if (partitioned) {
@@ -4884,8 +4945,18 @@
 	}
 
 	function _getDialogTimeWorkingTaskIds(range = _dialogTimeRange) {
-		if (_dialogTimeCatalogScope !== _getDialogTimeProjectScopeKey() || !_dialogTimeCatalogCursor) return [];
-		return Array.from(_dialogTimeProjectTaskIds).sort((a,b) => Number(a)-Number(b));
+		const scope = _getDialogTimeProjectScopeKey();
+		if (!scope || !_getDialogTimeIdentityScopeKey()) return [];
+		const ids = _getDialogTimeContactExceptionTaskIds(range, {includeReceipts:true});
+		if (_dialogTimeCatalogScope === scope && _dialogTimeCatalogCursor) for (const id of _dialogTimeProjectTaskIds) ids.add(String(id));
+		const inRange = day => day && range?.from <= day && day <= range?.to;
+		// Confirmed or uncertain writes and a running timer must remain visible
+		// while their own reconciliation completes, even after a project change.
+		const pending = _readDialogTimeManualDraft().pendingWrite;
+		if (pending?.scope === _getDialogTimeIdentityScopeKey() && inRange(pending.dateKey) && /^\d+$/.test(String(pending.taskId))) ids.add(String(pending.taskId));
+		const tracker = _readDialogTimeTracker({fresh:true});
+		if (tracker && (inRange(tracker.dateKey) || tracker.saveSegments?.some(segment => inRange(segment.dateKey)))) ids.add(String(tracker.taskId));
+		return Array.from(ids).sort((a,b) => Number(a)-Number(b));
 	}
 	function _getDialogTaskKeysetCursor(rows, afterId = 0) {
 		let cursor = Number(afterId) || 0;
@@ -4915,6 +4986,13 @@
 	function _publishDialogTimeTaskIndexRows(rows = [], evidence = null) {
 		let changed = false;
 		const scope = _getDialogTimeIdentityScopeKey();
+		// A catalog SUM is only a shortcut for an unseen journal. It cannot erase
+		// actual elapsed rows (including zero-duration rows) already read or ACKed.
+		const knownLoggedTaskIds = new Set();
+		for (const [key, record] of _dialogTimeCache) {
+			if (!key.startsWith(`${scope}:`)) continue;
+			for (const item of record?.data?.items || []) knownLoggedTaskIds.add(String(item.taskId));
+		}
 		for (const task of Array.isArray(rows) ? rows : []) {
 			const taskId = String(task?.ID ?? task?.id ?? '').trim();
 			if (!/^\d+$/.test(taskId)) continue;
@@ -4932,7 +5010,14 @@
 				// contain zero-duration entries: those must retain their journal IDs.
 				const field = Object.prototype.hasOwnProperty.call(task, 'TIME_SPENT_IN_LOGS') ? 'TIME_SPENT_IN_LOGS' : 'timeSpentInLogs';
 				if (Object.prototype.hasOwnProperty.call(task, field) && task[field] === null) {
-					_dialogTimeTaskLogEvidence.set(taskId, { scope, at:evidence.at, revision:evidence.revisions.get(taskId) || 0 });
+					if (knownLoggedTaskIds.has(taskId)) {
+						_dialogTimeTaskLogEvidence.delete(taskId);
+						// Contradictory metadata dirties only this task. Keep the old total
+						// until its elapsed endpoint confirms either rows or an empty result.
+						_dialogTimeTaskRevisions.set(taskId, (_dialogTimeTaskRevisions.get(taskId) || 0) + 1);
+					} else {
+						_dialogTimeTaskLogEvidence.set(taskId, { scope, at:evidence.at, revision:evidence.revisions.get(taskId) || 0 });
+					}
 				} else if (Object.prototype.hasOwnProperty.call(task, field) &&
 					(typeof task[field] === 'number' || (typeof task[field] === 'string' && /^\d+$/.test(task[field]))) &&
 					Number.isFinite(Number(task[field])) && Number(task[field]) >= 0) {
@@ -5009,10 +5094,9 @@
 	}
 
 	async function _loadDialogTaskCatalogPartitionTail({ page, firstRows, afterId, filter = {}, select, isCurrent, maxPages = 2000 }) {
-		// Keep older/partial SDK shapes on the established serial path. Large
-		// catalogs with the selected computed field can use the bounded batch owner.
+		// Computed time fields are unrelated to ID-keyset/batch capability.
+		// Missing TIME_SPENT_IN_LOGS must not serialize a large catalog.
 		if (!(Number(page?.total) >= 500) || !firstRows?.length ||
-			!firstRows.every(row => Object.prototype.hasOwnProperty.call(row, 'TIME_SPENT_IN_LOGS') || Object.prototype.hasOwnProperty.call(row, 'timeSpentInLogs')) ||
 			typeof _PENA_TIME_CONTROL?.loadTaskCatalogPartitions !== 'function') return null;
 		const topWin = _getSafeTopWindow();
 		if (![window.BX?.rest, topWin?.BX?.rest, window.BX24, topWin?.BX24].some(client => typeof client?.callBatch === 'function')) return null;
@@ -5125,8 +5209,7 @@
 					complete = paginationChainValid;
 					break;
 				}
-				if (!headOnly && firstWindow && Number(page.total) >= 500 &&
-					batch.every(task => Object.prototype.hasOwnProperty.call(task, 'TIME_SPENT_IN_LOGS') || Object.prototype.hasOwnProperty.call(task, 'timeSpentInLogs'))) {
+				if (!headOnly && firstWindow && Number(page.total) >= 500) {
 					const partitioned = await _loadDialogTaskCatalogPartitionTail({ page, firstRows:batch, afterId:nextId, select, isCurrent:current, maxPages:maxPages-pages });
 					if (partitioned) {
 						rows.push(...partitioned.rows); pages += partitioned.pages; complete = true;
@@ -13429,8 +13512,20 @@ if (_presetChannel) {
 	function _setDialogTimeCacheRecord(key, record) {
 		_dialogTimeCache.delete(key);
 		_dialogTimeCache.set(key, record);
+		if (_dialogTimeCache.size <= 8) return;
+		// Browsing history must not evict the toolbar's day or the selected panel.
+		// Keys include the current scope; old users/projects are never pinned.
+		const today = _PENA_TIME_CONTROL.getQuickRange('today', _dialogTimePortalDateKey || undefined);
+		const pinned = new Set([key, _getDialogTimeCacheKey(today), _getDialogTimeCacheKey(_dialogTimeRange)]);
+		if (_dialogTimeView === 'stats') {
+			const lastDay = _dialogTimeRange.to;
+			pinned.add(_getDialogTimeCacheKey({ from:_PENA_TIME_CONTROL.addDays(lastDay, -6), to:lastDay }));
+		}
 		while (_dialogTimeCache.size > 8) {
-			const removable = Array.from(_dialogTimeCache.keys()).find(candidate => candidate !== key && !_dialogTimeInFlight.has(candidate));
+			const candidates = Array.from(_dialogTimeCache.keys()).filter(candidate => !pinned.has(candidate));
+			// An in-flight request keeps its own snapshot. Evicting that cache entry
+			// is safe and bounds retained ranges even during rapid date navigation.
+			const removable = candidates.find(candidate => !_dialogTimeInFlight.has(candidate)) || candidates[0];
 			if (!removable) break;
 			_dialogTimeCache.delete(removable);
 		}
@@ -14265,10 +14360,11 @@ if (_presetChannel) {
 		const scope = _getDialogTimeProjectScopeKey();
 		const isCurrent = () => !!scope && visible() && scope === _getDialogTimeProjectScopeKey();
 		const fallbackById = new Map(visits.map(visit => [String(visit.taskId || ''), visit.title || '']));
+		const writableIds = _getDialogTimeWritableTaskIds(_getDialogTimeSelectedRange()?.from, visits);
 		const taskIds = Array.from(new Set([
 			...(data?.tasks || []).map(task => String(task.taskId || '')),
 			...visits.map(visit => String(visit.taskId || ''))
-		].filter(id => /^\d+$/.test(id) && _isDialogTimeProjectTask(id))));
+		].filter(id => /^\d+$/.test(id) && writableIds.has(id))));
 		taskIds.forEach(id => {
 			if (!_isDialogTimePlaceholderTaskTitle(id, _dialogTimeTaskTitles.get(id))) return;
 			const localTitle = _findDialogTimeTaskItem(id)?.title || fallbackById.get(id) || '';
@@ -14318,6 +14414,7 @@ if (_presetChannel) {
 
 	function _getDialogTimeTaskCandidates(data, visits) {
 		const map = new Map();
+		const writableIds = _getDialogTimeWritableTaskIds(_getDialogTimeSelectedRange()?.from, visits);
 		// Build fallback indexes at most once per render. Tasks without CHAT_ID or
 		// a canonical title must not repeatedly scan the whole catalog. These maps
 		// are local so a later catalog update is visible on the very next render.
@@ -14376,7 +14473,7 @@ if (_presetChannel) {
 				dialogId: selected.dialogId || ''
 			});
 		}
-		return Array.from(map.values()).filter(task => _isDialogTimeProjectTask(task.taskId)).sort((a, b) => (b.visitedAt || 0) - (a.visitedAt || 0) || (b.trackedSeconds || 0) - (a.trackedSeconds || 0));
+		return Array.from(map.values()).filter(task => writableIds.has(task.taskId)).sort((a, b) => (b.visitedAt || 0) - (a.visitedAt || 0) || (b.trackedSeconds || 0) - (a.trackedSeconds || 0));
 	}
 
 	function _filterDialogTimeDataByEligibility(data) {
@@ -14677,11 +14774,13 @@ if (_presetChannel) {
 	function _getDialogTimeLocalTaskSearchResults(query) {
 		const normalizedQuery = String(query || '').replace(/\s+/g, ' ').trim().toLocaleLowerCase('ru');
 		if (!normalizedQuery) return [];
+		const visits = _readDialogTimeVisits(_getDialogTimeSelectedRange()?.from);
+		const writableIds = _getDialogTimeWritableTaskIds(_getDialogTimeSelectedRange()?.from, visits);
 		const byId = new Map();
 		const add = (taskId, title, dialogId = '') => {
 			const id = String(taskId || '').trim();
 			const cleanTitle = String(title || '').replace(/\s+/g, ' ').trim();
-			if (!_isDialogTimeProjectTask(id) || !/^\d+$/.test(id) || !cleanTitle || !_getDialogTimeTaskEligibilityForDisplay(id)) return;
+			if (!writableIds.has(id) || !/^\d+$/.test(id) || !cleanTitle || !_getDialogTimeTaskEligibilityForDisplay(id)) return;
 			const haystack = `${cleanTitle} ${id}`.toLocaleLowerCase('ru');
 			if (!haystack.includes(normalizedQuery)) return;
 			byId.set(id, { taskId: id, title: cleanTitle, dialogId: normId(dialogId || '') });
@@ -14695,7 +14794,7 @@ if (_presetChannel) {
 			add(item.taskId || _extractTaskIdFromTaskUrl(item.taskUrl || ''), item.title, item.id);
 		});
 		_dialogTimeTaskTitles.forEach((title, taskId) => add(taskId, title));
-		_readDialogTimeVisits().forEach(visit => add(visit.taskId, visit.title, visit.dialogId));
+		visits.forEach(visit => add(visit.taskId, visit.title, visit.dialogId));
 		return Array.from(byId.values())
 			.sort((a, b) => {
 				const aStarts = a.title.toLocaleLowerCase('ru').startsWith(normalizedQuery) ? 0 : 1;
@@ -14872,7 +14971,7 @@ if (_presetChannel) {
 	function _applyDialogTimeOptimisticEntry(taskId, seconds, dateKey, itemId = '', options = {}) {
 		if (!_PENA_TIME_CONTROL?.aggregateElapsedItems) return;
 		_dialogTimeTaskLogEvidence.delete(String(taskId));
-		if (!_isDialogTimeProjectTask(taskId)) return;
+		if (!_getDialogTimeWorkingTaskIds({from:dateKey,to:dateKey}).includes(String(taskId))) return;
 		const day = _PENA_TIME_CONTROL.normalizeRange(dateKey, dateKey);
 		const createdAt = _buildDialogTimeWriteFields(seconds, dateKey, '', { allowSubMinute: true }).CREATED_DATE;
 		const id = String(itemId || `pena-local-${Date.now()}`);
@@ -14967,9 +15066,9 @@ if (_presetChannel) {
 		const intent = { operationId: globalThis.crypto?.randomUUID?.() || `${Date.now()}:${Math.random()}`, status:'sending', taskId, title:String(task?.title || initialDraft.title || ''), seconds:duration.seconds, dateKey, scope, attemptedAt:Date.now(), contactCutoffAt: uncertain?.contactCutoffAt || uncertain?.attemptedAt || Date.now() };
 		const draft = { ...initialDraft, taskId, title:intent.title, query:intent.title, hours:String(hours), minutes:String(minutes), dateKey, pendingWrite:intent };
 		try {
-			const eligibility = await _ensureDialogTimeTaskEligibility(taskId);
+			const eligibility = await _ensureDialogTimeTaskEligibility(taskId, {force:true});
 			if (scope !== _getDialogTimeIdentityScopeKey()) return;
-			if (!uncertain && (projectScope !== _getDialogTimeProjectScopeKey() || !_isDialogTimeProjectTask(taskId))) { _dialogTimeManualError='Задача не входит в выбранные проекты'; return; }
+			if (!uncertain && (projectScope !== _getDialogTimeProjectScopeKey() || !_isDialogTimeWritableTask(taskId,dateKey))) { _dialogTimeManualError='Выберите задачу проекта или задачу с контактом за этот день'; return; }
 			if (eligibility !== true) {
 				_dialogTimeManualError = eligibility === false ? 'В задаче выключен учёт времени' : 'Не удалось подтвердить учёт времени в задаче';
 				return;
@@ -15132,12 +15231,12 @@ if (_presetChannel) {
 		_queueDialogTimeUiSync();
 		const startScope = _getDialogTimeIdentityScopeKey();
 		try {
-		if (await _ensureDialogTimeTaskEligibility(taskId) !== true) {
+		if (await _ensureDialogTimeTaskEligibility(taskId, {force:true}) !== true) {
 			_showDialogDockToast('В задаче недоступен учёт времени', 'danger');
 			return;
 		}
 		await _withDialogTimeTrackerLock(async existing => {
-		if (existing || startScope !== _getDialogTimeIdentityScopeKey() || projectScope !== _getDialogTimeProjectScopeKey() || !_isDialogTimeProjectTask(taskId)) return;
+		if (existing || startScope !== _getDialogTimeIdentityScopeKey() || projectScope !== _getDialogTimeProjectScopeKey() || !_isDialogTimeWritableTask(taskId,_getDialogTimeTodayKey())) return;
 		const title = _getDialogTimeTaskTitle(taskId, task?.title);
 		_dialogTimeTrackerCancelConfirmTaskId = '';
 		const tracker = { taskId, title, dialogId: String(task?.dialogId || ''), startedAt: Date.now(), dateKey: _getDialogTimeTodayKey(), pendingSeconds: 0, error: '' };
@@ -15229,7 +15328,7 @@ if (_presetChannel) {
 					savedAny = true;
 					const persisted = persist(pending);
 					if (scope !== _getDialogTimeIdentityScopeKey()) return;
-					_invalidateDialogTimeCachesForDates(segment.dateKey, { taskId: pending.taskId });
+					_invalidateDialogTimeCachesForDates(segment.dateKey, { taskId: pending.taskId, preserveTaskFreshness:true });
 					_applyDialogTimeOptimisticEntry(pending.taskId, segment.seconds, segment.dateKey, itemId, { contactCutoffAt:segment.contactsCutoffAt || stoppedAt });
 					segment.contactsAccounted = await _markDialogTimeTaskAccounted(pending.taskId, segment.contactsCutoffAt || stoppedAt, segment.dateKey, { itemId }) === true;
 					persist(pending);
@@ -15539,7 +15638,11 @@ if (_presetChannel) {
 		window.addEventListener('storage', event => {
 			if (!event.key) return;
 			if (event.key === _getDialogTimeProjectStorageKey()) {
+				const previous = _readDialogTimeProjectPreference();
+				const previousScope = _getDialogTimeProjectScopeKey();
 				_dialogTimeProjectPreference = null;
+				const next = _readDialogTimeProjectPreference();
+				_migrateDialogTimeProjectSnapshots(previous, next, previousScope, _getDialogTimeProjectScopeKey(), { persistPreview:false });
 				_dialogTimeManualSearchToken++;
 				_dialogTimeManualSelectedTask=null; _dialogTimeManualSearchQuery=''; _dialogTimeManualSearchResults=[];
 				const panel=_dialogControlNativeSwitcherNode?.querySelector('.pena-native-time-panel');
@@ -15778,7 +15881,7 @@ if (_presetChannel) {
 						item.userId === String(_getCurrentBitrixUserId()) && item.dateKey === today.from && _PENA_TIME_CONTROL.normalizeElapsedItem(item).dateKey === today.from && Number.isFinite(item.seconds) && item.seconds >= 0)) {
 					const data = { ..._PENA_TIME_CONTROL.aggregateElapsedItems(saved.items), range:today };
 					_setDialogTimeCacheRecord(_getDialogTimeCacheKey(today), { range:today, data, status:'ready', restored:true, restoredAt:saved.savedAt,
-						hasVerifiedData:true, hasCompleteSnapshot:false, taskFreshness:{}, updatedAt:saved.savedAt });
+						hasVerifiedData:saved.scopeSelectionPending !== true, hasCompleteSnapshot:false, scopeSelectionPending:saved.scopeSelectionPending === true, taskFreshness:{}, updatedAt:saved.savedAt });
 				}
 			} catch {}
 		}
@@ -16008,7 +16111,7 @@ if (_presetChannel) {
 		_renderDialogTimeManualSearch(panel, 'tracker');
 		if (start) {
 			start.hidden = !!tracker;
-			start.disabled = _dialogTimeActionInFlight || !_isDialogTimeProjectTask(trackerSearch.selectedTask?.taskId) || !selectedIsToday;
+			start.disabled = _dialogTimeActionInFlight || !_isDialogTimeWritableTask(trackerSearch.selectedTask?.taskId,selectedDay.from) || !selectedIsToday;
 		}
 		if (stop) {
 			stop.hidden = !tracker;
@@ -16042,7 +16145,7 @@ if (_presetChannel) {
 			const hours = Math.max(0, Number(manualHours?.value) || 0);
 			const minutes = Math.max(0, Number(manualMinutes?.value) || 0);
 			const validDuration = hours * 60 + minutes >= 1 && hours * 60 + minutes <= 1440 && minutes <= 59;
-			manualSubmit.disabled = _dialogTimeActionInFlight || (!manualPending && (!_isDialogTimeProjectTask(_dialogTimeManualSelectedTask?.taskId) || !validDuration));
+			manualSubmit.disabled = _dialogTimeActionInFlight || (!manualPending && (!_isDialogTimeWritableTask(_dialogTimeManualSelectedTask?.taskId,selectedDay.from) || !validDuration));
 			manualSubmit.textContent = _dialogTimeActionInFlight ? 'Сохраняем…' : manualAcknowledged ? 'Повторить отметку' : (manualPending ? (manualRetryConfirmed ? 'Записи нет — повторить' : 'Проверить запись') : 'Добавить');
 		}
 		const manual = panel.querySelector('.pena-native-time-manual');
@@ -16326,6 +16429,9 @@ if (_presetChannel) {
 		throw new Error('Не удалось получить записи времени');
 	}
 
+	async function _callDialogTimeGlobalElapsedPage(params, options = {}) {
+		return _callBxRestPageWithTimeout('task.elapseditem.getlist', params, 12000, options);
+	}
 	const _dialogTimeForcedRefreshes = new Map();
 	const _dialogTimeRangeRechecks = new Map();
 	const _dialogTimeRangeRevisions = new Map();
@@ -16382,7 +16488,8 @@ if (_presetChannel) {
 	}
 	window.__PENA_TIME_LOAD_DIAGNOSTICS__ = Object.freeze({ snapshot: () => {
 		const token = _dialogTimeBootstrapToken;
-		return token ? { cycle:token.id, active:token.active, phase:token.phase, dateKey:token.dateKey, completedTasks:token.completedTasks, totalTasks:token.totalTasks, elapsedPages:token.elapsedPages, error:token.error } : { cycle:0, active:false, phase:'idle' };
+		const read = _callDialogTimeGlobalElapsedPage.diagnostics;
+		return token ? { cycle:token.id, active:token.active, phase:token.phase, dateKey:token.dateKey, completedTasks:token.completedTasks, totalTasks:token.totalTasks, elapsedPages:token.elapsedPages, error:token.error, read:read ? {...read} : null } : { cycle:0, active:false, phase:'idle', read:read ? {...read} : null };
 	} });
 	let _dialogTimeElapsedEventTimer = null;
 	let _dialogTimeElapsedEventScope = '';
@@ -16465,14 +16572,27 @@ if (_presetChannel) {
 			revision === (_dialogTimeRangeRevisions.get(key) || 0);
 		if (!current()) return cached?.data || null;
 		const taskIds = _getDialogTimeWorkingTaskIds(normalized);
+		const workingTaskIdSet = new Set(taskIds);
 		const taskIdsKey = taskIds.slice().sort((a, b) => Number(a) - Number(b)).join(',');
 		const now = Date.now();
 		const freshness = { ...(cached?.taskFreshness || {}) };
 		const emptyLogs = new Set();
+		const knownLoggedTaskIds = new Set((cached?.data?.items || []).map(item => String(item.taskId)));
 		const identity = _getDialogTimeIdentityScopeKey();
+		const globalTransport = typeof _callDialogTimeGlobalElapsedPage === 'function' && typeof _PENA_TIME_CONTROL.loadGlobalElapsedItems === 'function' ? _callDialogTimeGlobalElapsedPage : null;
+		if (globalTransport) globalTransport.capabilities ||= new Map();
+		const globalCapability = globalTransport?.capabilities.get(identity);
+		const tryGlobal = !!globalTransport && taskIds.length > 0 && (force || (!cached?.hasCompleteSnapshot && !cached?.globalSnapshotRead)) && globalCapability?.supported !== false;
 		for (const id of taskIds) {
 			const proof = _dialogTimeTaskLogEvidence.get(id);
-			if (proof?.scope === identity && proof.revision === (_dialogTimeTaskRevisions.get(id) || 0) && now >= proof.at && now - proof.at < 60000) {
+			if (!tryGlobal && proof?.scope === identity && proof.revision === (_dialogTimeTaskRevisions.get(id) || 0) && now >= proof.at && now - proof.at < 60000) {
+				// A saved preview may restore rows after the catalog supplied null.
+				// Recheck at consumption as well as publication; never erase that preview.
+				if (knownLoggedTaskIds.has(id)) {
+					_dialogTimeTaskLogEvidence.delete(id);
+					_dialogTimeTaskRevisions.set(id, (_dialogTimeTaskRevisions.get(id) || 0) + 1);
+					continue;
+				}
 				emptyLogs.add(id);
 				freshness[id] = { at:proof.at, revision:proof.revision };
 			}
@@ -16534,6 +16654,49 @@ if (_presetChannel) {
 		const request = (async () => {
 			let data = cached?.data || { ..._PENA_TIME_CONTROL.aggregateElapsedItems([]), range: normalized, pages: 0, totalAvailable: 0,
 				coverage: { checkedTasks:0, totalTasks:taskIds.length, complete:verifiedEmptyCatalog } };
+			const diagnostics = { strategy:tryGlobal ? 'global' : (cached?.hasCompleteSnapshot && !force ? 'point' : 'legacy'), tasks:taskIds.length, pendingTasks:pendingIds.length, pages:0, fallbackReason:globalCapability?.reason || '', from:normalized.from, to:normalized.to };
+			if (globalTransport) globalTransport.diagnostics = diagnostics;
+			if (tryGlobal) {
+				const taskRevisions = new Map(taskIds.map(id => [id, _dialogTimeTaskRevisions.get(id) || 0]));
+				let dispatchedAt = 0;
+				let globalData;
+				try {
+					globalData = await _PENA_TIME_CONTROL.loadGlobalElapsedItems({ ...normalized, userId, knownItems:cached?.data?.items || [], supported:globalCapability?.supported === true, isCurrent:current,
+						callPage:async params => {
+							const startedAt = Date.now();
+							const response = await globalTransport(params, { isCurrent:current });
+							diagnostics.pages++;
+							const at = Number(response?.requestedAt) || startedAt;
+							dispatchedAt = Math.min(dispatchedAt || at, at);
+							return response;
+						}
+					});
+				} catch (error) {
+					if (!error.globalFallback || _isBxRestBatchPressureError(error)) throw error;
+					globalData = { supported:false, reason:'invalid-global-response' };
+				}
+				if (!current()) return _dialogTimeCache.get(key)?.data || null;
+				globalTransport.capabilities.set(identity, { supported:globalData.supported === true, reason:globalData.reason || '' });
+				if (globalTransport.capabilities.size > 8) globalTransport.capabilities.delete(globalTransport.capabilities.keys().next().value);
+				if (globalData.supported) {
+					const working = new Set(_getDialogTimeWorkingTaskIds(normalized));
+					const accepted = new Set(taskIds.filter(id => working.has(id) && taskRevisions.get(id) === (_dialogTimeTaskRevisions.get(id) || 0)));
+					const selected = _PENA_TIME_CONTROL.aggregateElapsedItems(globalData.items.filter(item => accepted.has(String(item.taskId))));
+					data = { ..._PENA_TIME_CONTROL.replaceElapsedTasks(data, selected, accepted), range:normalized, pages:globalData.pages };
+					accepted.forEach(id => { freshness[id] = { at:dispatchedAt, revision:taskRevisions.get(id) }; });
+					for (const item of selected.items) _dialogTimeTaskLogEvidence.delete(String(item.taskId));
+					const checkedTasks = Array.from(working).filter(id => freshness[id] && !freshness[id].unavailable && freshness[id].revision === (_dialogTimeTaskRevisions.get(id) || 0)).length;
+					const complete = checkedTasks === working.size;
+					data.coverage = { checkedTasks, totalTasks:working.size, complete };
+					data.totalAvailable = data.entryCount;
+					if (bootstrapCurrent()) { bootstrap.completedTasks=checkedTasks; bootstrap.totalTasks=working.size; bootstrap.elapsedPages=globalData.pages; }
+					_setDialogTimeCacheRecord(key, { ...base, data, status:'ready', hasVerifiedData:true, globalSnapshotRead:true, hasCompleteSnapshot:base.hasCompleteSnapshot || complete, taskFreshness:{...freshness}, updatedAt:Date.now(), readProgress:{completedTasks:checkedTasks,totalTasks:working.size} });
+					_queueDialogTimeUiSync();
+					_loadDialogTimeTaskTitles(data).catch(() => {});
+					return data;
+				}
+				diagnostics.strategy = 'legacy'; diagnostics.fallbackReason = globalData.reason;
+			}
 			if (emptyLogs.size) {
 				data = { ..._PENA_TIME_CONTROL.replaceElapsedTasks(data, _PENA_TIME_CONTROL.aggregateElapsedItems([]), emptyLogs), range:normalized, pages:0 };
 				base.hasVerifiedData = true;
@@ -16572,7 +16735,7 @@ if (_presetChannel) {
 					}
 				});
 				if (!current()) return _dialogTimeCache.get(key)?.data || null;
-				const accepted = new Set(wave.filter(id => _isDialogTimeProjectTask(id) && !unavailable.has(id) && taskRevisions.get(id) === (_dialogTimeTaskRevisions.get(id) || 0)));
+				const accepted = new Set(wave.filter(id => workingTaskIdSet.has(id) && !unavailable.has(id) && taskRevisions.get(id) === (_dialogTimeTaskRevisions.get(id) || 0)));
 				if (accepted.size) base.hasVerifiedData = true;
 				const merged = _PENA_TIME_CONTROL.replaceElapsedTasks(data, batch, accepted);
 				accepted.forEach(id => { freshness[id] = { at: dispatchedAt.get(id) || waveStartedAt, revision: taskRevisions.get(id) }; });
@@ -16582,6 +16745,7 @@ if (_presetChannel) {
 				// not again after every page of a large initial snapshot.
 				if (offset >= pendingIds.length && hasCompleteCoverage()) base.hasCompleteSnapshot = true;
 				pages += batch.pages;
+				diagnostics.pages += batch.pages;
 				const checkedTasks = taskIds.filter(id => freshness[id] && !freshness[id].unavailable && freshness[id].revision === (_dialogTimeTaskRevisions.get(id) || 0)).length;
 				if (bootstrapCurrent()) { bootstrap.completedTasks = checkedTasks; bootstrap.totalTasks = taskIds.length; bootstrap.elapsedPages += batch.pages; }
 				data = { ...merged, range: normalized, pages, totalAvailable: merged.entryCount,
@@ -17096,7 +17260,7 @@ if (_presetChannel) {
 		const syncManualValidity = () => {
 			saveDraft();
 			const totalMinutes = (Math.max(0, Number(hoursField.input.value) || 0) * 60) + Math.max(0, Number(minutesField.input.value) || 0);
-			manualSubmit.disabled = _dialogTimeActionInFlight || !_isDialogTimeProjectTask(_dialogTimeManualSelectedTask?.taskId) ||
+			manualSubmit.disabled = _dialogTimeActionInFlight || !_isDialogTimeWritableTask(_dialogTimeManualSelectedTask?.taskId,_getDialogTimeSelectedRange()?.from) ||
 				totalMinutes < 1 || totalMinutes > 1440 || Math.max(0, Number(minutesField.input.value) || 0) > 59;
 		};
 		hoursField.input.addEventListener('input', syncManualValidity);

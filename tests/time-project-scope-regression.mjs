@@ -36,6 +36,10 @@ function fixture(storage=new Map()){
   _dialogTimeCache:new Map(),_dialogTimeInFlight:new Map(),_dialogTimeRangeRevisions:new Map(),_dialogTimeTaskRevisions:new Map(), _dialogTimeTaskLogEvidence:new Map(),
   _dialogTimeForcedRefreshes:new Map(),_dialogTimeRangeRechecks:new Map(),_dialogTimePanelRefreshes:new Map(),
   _dialogTimeTaskTitles:new Map([['999','Foreign task']]),_dialogTimeTaskEligibility:new Map([['999',true]]),
+  // This fixture has no qualified contact, pending write or running timer exceptions.
+  _getDialogTimeContactExceptionTaskIds:()=>new Set(),_readDialogTimeManualDraft:()=>({}),_readDialogTimeTracker:()=>null,
+  _isDialogTimeWritableTask:id=>c._isDialogTimeProjectTask(id),
+  _getDialogTimeSelectedRange:()=>range,_getDialogTimeWritableTaskIds:()=>new Set(c._dialogTimeProjectTaskIds),
   _DIALOG_TIME_FIRST_WAVE_SIZE:16,_DIALOG_TIME_WAVE_SIZE:50,_queueDialogTimeUiSync:()=>{},_loadDialogTimeTaskTitles:async()=>{},
   _sleepDialogControl:async()=>{},_getDialogTimeFriendlyError:error=>error.message,_isBxRestBatchPressureError:()=>false,
   _getDialogTimeTodayKey:()=>range.from,_getDialogTimeRange:()=>range,_syncDialogTimePortalDay:()=>{},_ensureDialogTimePortalDate:async()=>range.from,
@@ -60,7 +64,7 @@ function fixture(storage=new Map()){
    if(state.elapsedHook)await state.elapsedHook(requested);return result;
   }
  });
- const names=['_getDialogTimeIdentityScopeKey','_syncDialogTaskCatalog','_normalizeDialogTimeProjectPreference','_getDialogTimeProjectStorageKey','_readDialogTimeProjectPreference','_getDialogTimeProjectScopeKey','_getDialogTimeProjectFilter','_matchesDialogTimeProjectTask','_isDialogTimeProjectTask','_rememberDialogTimeProjectTask','_pruneDialogTimeProjectSnapshots','_saveDialogTimeProjectPreference','_getDialogTimeReusableNativeCatalog','_ensureDialogTimeProjectCatalog','_getDialogTaskKeysetCursor','_getDialogTimeWorkingTaskIds','_getDialogTimeCacheKey','_getDialogTimeRecord','_setDialogTimeCacheRecord','_hasDialogTimeVerifiedData','_loadDialogTimeRange','_scheduleDialogTimeBootstrap','_getDialogTimeLocalTaskSearchResults','_buildDialogTimeWriteFields','_applyDialogTimeOptimisticEntry'];
+ const names=['_getDialogTimeIdentityScopeKey','_syncDialogTaskCatalog','_normalizeDialogTimeProjectPreference','_getDialogTimeProjectStorageKey','_readDialogTimeProjectPreference','_getDialogTimeProjectScopeKey','_getDialogTimeProjectFilter','_matchesDialogTimeProjectTask','_isDialogTimeProjectTask','_rememberDialogTimeProjectTask','_pruneDialogTimeProjectSnapshots','_migrateDialogTimeProjectSnapshots','_saveDialogTimeProjectPreference','_getDialogTimeReusableNativeCatalog','_ensureDialogTimeProjectCatalog','_getDialogTaskKeysetCursor','_getDialogTimeWorkingTaskIds','_getDialogTimeCacheKey','_getDialogTimeRecord','_setDialogTimeCacheRecord','_hasDialogTimeVerifiedData','_loadDialogTimeRange','_scheduleDialogTimeBootstrap','_getDialogTimeLocalTaskSearchResults','_buildDialogTimeWriteFields','_applyDialogTimeOptimisticEntry'];
  vm.runInContext(names.map(extract).join('\n'),c);
  return {state,c,range,save:value=>c._saveDialogTimeProjectPreference(value),load:()=>{const promise=c._loadDialogTimeRange(range);promise.catch(()=>{});return promise;},record:()=>c._getDialogTimeRecord(range)};
 }
@@ -108,6 +112,22 @@ await phase('held catalog tail prevents every elapsed request; committed members
  const before=f.state.calls.length;await f.load();assert.equal(f.state.calls.length,before);assert.equal(f.state.elapsed.length,101);
  assert.equal(f.c._getDialogTimeLocalTaskSearchResults('Foreign').length,0);
  return {beforeTailElapsed:0,afterTailUnique:101,historicalDisabledIncluded:f.state.elapsed.includes('101'),warmExtraReads:0};
+});
+await phase('project expansion preserves confirmed totals through held catalog and elapsed; narrowing never verifies the old total',async()=>{
+ const f=fixture();f.state.nativeScope='';f.save(choice(['20']));await f.load();assert.equal(f.record().data.totalSeconds,120);
+ const catalog=deferred(),elapsed=deferred();let catalogHeld=false,elapsedHeld=false;
+ f.state.catalogHook=async()=>{if(!catalogHeld){catalogHeld=true;await catalog.promise;}};
+ f.state.elapsedHook=async()=>{if(!elapsedHeld){elapsedHeld=true;await elapsed.promise;}};
+ f.save({version:1,all:true,ids:[],includeUnassigned:true});
+ assert.equal(f.record().data.totalSeconds,120);assert.equal(f.c._hasDialogTimeVerifiedData(f.record()),true);assert.equal(f.record().hasCompleteSnapshot,false);
+ const expanding=f.load();await until(()=>catalogHeld);assert.equal(f.record().data.totalSeconds,120);assert.equal(f.state.elapsed.length,2);
+ catalog.resolve();await until(()=>elapsedHeld);assert.equal(f.record().data.totalSeconds,120);assert.equal(f.c._hasDialogTimeVerifiedData(f.record()),true);assert.equal(f.record().hasCompleteSnapshot,false);
+ elapsed.resolve();await expanding;assert.equal(f.record().data.totalSeconds,6240);assert.equal(f.record().hasCompleteSnapshot,true);
+ const narrowingGate=deferred();let narrowingHeld=false;f.state.catalogHook=async()=>{narrowingHeld=true;await narrowingGate.promise;};f.state.elapsedHook=null;
+ f.save(choice(['20']));assert.equal(f.record().data.totalSeconds,6240);assert.equal(f.c._hasDialogTimeVerifiedData(f.record()),false);
+ const narrowing=f.load();await until(()=>narrowingHeld);assert.equal(f.c._hasDialogTimeVerifiedData(f.record()),false);assert.equal(f.record().status,'loading');
+ narrowingGate.resolve();await narrowing;assert.equal(f.record().data.totalSeconds,120);assert.equal(f.record().hasCompleteSnapshot,true);assert.equal(f.c._hasDialogTimeVerifiedData(f.record()),true);
+ return {oldConfirmedSeconds:120,heldCatalogSeconds:120,heldElapsedSeconds:120,expandedSeconds:6240,narrowedSeconds:120,incorrectVerifiedNarrowingSnapshots:0};
 });
 await phase('server ignoring GROUP_ID fails without publishing membership or elapsed',async()=>{
  const f=fixture();f.save(choice(['20']));f.state.ignoredFilter=true;await assert.rejects(f.load(),/вне выбранных/);assert.equal(f.state.elapsed.length,0);assert.equal(f.c._dialogTimeCatalogCursor,0);assert.equal(f.c._dialogTimeProjectTaskIds.size,0);

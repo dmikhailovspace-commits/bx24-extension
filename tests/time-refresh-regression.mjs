@@ -33,6 +33,7 @@ function fixture(count = 2) {
   // CRUD/elapsed tests assume an explicitly configured scope. They do not certify
   // preference persistence or the initial catalog gate; the scope suite does that.
   _getDialogTimeProjectScopeKey:()=>state.scope,_isDialogTimeProjectTask:id=>state.taskIds.includes(String(id)),
+  _isDialogTimeWritableTask:id=>state.taskIds.includes(String(id)),
   _rememberDialogTimeProjectTask:()=>{},
   _ensureDialogTimeProjectCatalog:async()=>true,
   _getDialogTimeWorkingTaskIds:()=>state.taskIds.slice(), _getDialogTimeSelectedRange:()=>range, _getDialogTimeStatsRange:()=>range,
@@ -236,6 +237,7 @@ try {
    _dialogTimeTitleLoadPromise:null,_dialogTimeTitleLoadQueued:false,_dialogTimeTaskTitles:new Map(known?Array.from({length:50},(_,i)=>[String(i+1),'Task '+(i+1)]):[]),_dialogTimeTaskTitleAttempted:new Map(),
    _getDialogNativeSharedAuditScopeKey:()=>state.scope,_getDialogTimeIdentityScopeKey:()=>state.scope,_getDialogTimeProjectScopeKey:()=>state.scope,_isDialogTimeProjectTask:()=>true,_readDialogTimeVisits:()=>[],_findDialogTimeTaskItem:()=>{state.nativeFinds++;return null;},_isDialogTimePlaceholderTaskTitle:(id,title)=>!title,
    _getFreshDialogTimeTaskEligibility:()=>null,_queueDialogTimeUiSync:()=>{},_sleepDialogControl:async()=>{},
+   _getDialogTimeSelectedRange:()=>range,_getDialogTimeWritableTaskIds:()=>new Set(Array.from({length:120},(_,i)=>String(i+1))),
    _rememberDialogTimeTaskEligibility:(id,data)=>{state.commits.push(id);api._dialogTimeTaskTitles.set(id,data.task.title);},
    _callBxRestPagesFast:async(jobs,timeout,options)=>{assert.equal(options.isCurrent(),true);state.batches.push(jobs.map(j=>j.params.taskId));if(state.gate)await state.gate.promise;
     const pages=jobs.map(j=>({data:{task:{id:j.params.taskId,title:'Task '+j.params.taskId}}}));

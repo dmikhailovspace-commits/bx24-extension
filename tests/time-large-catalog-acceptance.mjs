@@ -22,6 +22,7 @@ function fixture(count=4149){
   // The mandatory settings/catalog gate has its own actual-helper acceptance suite.
   _getDialogTimeProjectScopeKey:()=>s.scope,_dialogTimeProjectTaskIds:new Set(ids),
   _isDialogTimeProjectTask:id=>ids.includes(String(id)),_ensureDialogTimeProjectCatalog:async()=>true,
+  _isDialogTimeWritableTask:id=>ids.includes(String(id)),_getDialogTimeContactExceptionTaskIds:()=>new Set(),_readDialogTimeManualDraft:()=>({}),
   _dialogTimeTaskEligibility:new Map(ids.map(id=>[id,true])),_dialogTimeTaskTitles:new Map(ids.map(id=>[id,`Task ${id}`])),
   _getDialogTimeTaskEligibilityForDisplay:()=>true,_readDialogTimeVisits:()=>[],_dialogTimeManualSelectedTask:null,_readDialogTimeTracker:()=>null,
   _getActiveDialogTimeActivity:()=>null,_getDialogRecentUniqueMeta:()=>[],_queueDialogTimeUiSync:()=>{},_loadDialogTimeTaskTitles:async()=>{},

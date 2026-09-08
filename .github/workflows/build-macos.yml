@@ -239,10 +239,10 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' \
-            'Shares one initial task catalog and preloads today after the native loading guard ends; later updates read changed tasks only.' \
-            'Moves the timer to the full-width bottom panel with independent task search. Reuses history rows and reveals cached entries in pages of 50, while totals include every entry.' \
-            'Removes repeated large select construction and aggregate work. Preserves contacts, drafts, acknowledged writes and day/user boundaries.' \
-            'All 52 functional, concurrency, layout and performance suites gate this release, including combined native startup and 4149-task input contention.' \
+            'Reads the current user elapsed journal in bounded pages where the portal supports it; unchanged views reuse the cache and changed tasks refresh individually.' \
+            'Preserves confirmed totals, contacts and the running timer when saving project selection. Qualified contact tasks can receive time outside selected projects after fresh access validation.' \
+            'Sorts contacts by pending contact count and avoids repeated journal reads during task search. Adds a separately prepared Chrome edition with explicit portal permissions.' \
+            'All 71 functional, concurrency, browser, layout and performance suites gate this release, including project-switch resets and a 4149-task journal fixture.' \
             'Controlled tests are not a live Bitrix latency measurement. The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \
             'Includes Windows EXE and Universal macOS DMG for Intel and Apple Silicon.' \
             > release-notes.md

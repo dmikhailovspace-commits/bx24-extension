@@ -423,7 +423,7 @@
     <div id="inst-br" style="display:none">
       <div class="alert a-blue">
         <span class="ai">📁</span>
-        <div><strong>Выбирайте именно папку <code>extension/</code></strong> — внутри неё должен лежать <code>manifest.json</code>. Не выбирайте весь проект, архив или папку <code>installers/</code>.</div>
+        <div><strong>Для Chrome выбирайте <code>chrome-release/unpacked/</code></strong> — внутри неё должен лежать <code>manifest.json</code>. Пакет создаётся командой <code>pnpm build:chrome</code>; ZIP для Store не нужно загружать через кнопку распакованного расширения.</div>
       </div>
       <div class="alert a-yellow">
         <span class="ai">⚠️</span>
@@ -446,8 +446,8 @@
             </div></li>
             <li><div class="snum">2</div><div class="sbody">Включите <strong>«Режим разработчика»</strong>: на странице <code>chrome://extensions/</code> найдите переключатель <strong>Developer mode / Режим разработчика</strong> в правом верхнем углу и переведите его во включённое положение. После этого сверху появятся кнопки для загрузки расширений.</div></li>
             <li><div class="snum">3</div><div class="sbody">Нажмите <strong>«Загрузить распакованное»</strong> / <strong>Load unpacked</strong>.</div></li>
-            <li><div class="snum">4</div><div class="sbody">В открывшемся окне выберите папку <code>extension/</code> с файлом <code>manifest.json</code> и подтвердите выбор.</div></li>
-            <li><div class="snum">5</div><div class="sbody">Откройте Bitrix24 в этом же браузере и перейдите в <strong>Чаты</strong>. Если панель не появилась, обновите вкладку Bitrix24.</div></li>
+            <li><div class="snum">4</div><div class="sbody">В открывшемся окне выберите папку <code>chrome-release/unpacked/</code> с файлом <code>manifest.json</code> и подтвердите выбор.</div></li>
+            <li><div class="snum">5</div><div class="sbody">Откройте HTTPS-портал Bitrix24, нажмите значок расширения и <strong>«Подключить портал»</strong>. Разрешите доступ, сохраните черновики и обновите вкладку. Затем откройте <strong>Чаты</strong>.</div></li>
           </ol>
         </div>
       </div>
@@ -550,7 +550,7 @@
         <ol class="steps">
           <li>
             <div class="snum">1</div>
-            <div class="sbody">Откройте Bitrix24 в том же браузере, куда было загружено расширение.</div>
+            <div class="sbody">Откройте HTTPS-портал Bitrix24 в том же браузере. В Chrome нажмите значок расширения → <strong>«Подключить портал»</strong>, разрешите доступ и обновите вкладку после сохранения черновиков.</div>
           </li>
           <li>
             <div class="snum">2</div>

@@ -470,7 +470,10 @@
 				cutoffAt = Math.max(cutoffAt, localEntries.get(String(entry.id)) || Number(entry.contactCutoffAt) || Number(entry.recordedAt) || 0);
 			}
 			return { ...task, pendingContacts: countPendingContacts(task, cutoffAt), trackedSeconds: Math.max(0, Number(tracked?.seconds) || 0), contactCutoffAt: cutoffAt };
-		}).filter(task => task.pendingContacts > 0);
+		}).filter(task => task.pendingContacts > 0).sort((a, b) =>
+			b.pendingContacts - a.pendingContacts ||
+			(Number(b.lastQualifiedAt) || Number(b.visitedAt) || 0) - (Number(a.lastQualifiedAt) || Number(a.visitedAt) || 0) ||
+			String(a.taskId).localeCompare(String(b.taskId), 'en', {numeric:true}));
 	}
 
 	function formatDurationCompact(seconds) {
@@ -644,6 +647,71 @@
 		return { ...aggregateElapsedItems(inRange), range, pages, totalAvailable };
 	}
 
+	// tasks/classes/general/elapseditem.php has an explicit taskId === 0 global
+	// branch (observed in 23.675.0). Empty responses need independent evidence:
+	// older portals can silently interpret the sentinel as an ordinary task ID.
+	async function loadGlobalElapsedItems({ callPage, from, to, userId, knownItems = [], supported = false, isCurrent = () => true, maxPages = 2000 } = {}) {
+		if (typeof callPage !== 'function') throw new TypeError('callPage is required');
+		if (!/^[1-9]\d*$/.test(String(userId || ''))) throw new TypeError('Current user ID is required');
+		const range = normalizeRange(from, to);
+		if (countRangeDays(range.from, range.to) > 366) throw new RangeError('Выберите период не больше 366 дней');
+		const select = ['ID','TASK_ID','USER_ID','SECONDS','MINUTES','CREATED_DATE','DATE_START','DATE_STOP','COMMENT_TEXT','SOURCE'];
+		const dateFilter = { USER_ID:Number(userId), '>=CREATED_DATE':`${range.from}T00:00:00`, '<CREATED_DATE':`${addDays(range.to, 1)}T00:00:00` };
+		const invalid = message => Object.assign(new Error(message), { code:'GLOBAL_TIME_RESPONSE_INVALID', globalFallback:true });
+		let pages = 0;
+		const request = async (filter, order = { ID:'ASC' }, size = 50) => {
+			if (!isCurrent()) throw Object.assign(new Error('Request superseded'), { code:'SUPERSEDED' });
+			const response = await callPage([0, order, filter, select, { NAV_PARAMS:{ nPageSize:size, iNumPage:1 } }]);
+			if (!isCurrent()) throw Object.assign(new Error('Request superseded'), { code:'SUPERSEDED' });
+			pages++;
+			if (response?.error || response?.partial || response?.complete === false) throw Object.assign(new Error('Битрикс24 вернул неполный общий журнал'), { code:response?.error?.code || 'GLOBAL_TIME_RESPONSE_INCOMPLETE' });
+			const payload = response?.data ?? response;
+			if (response == null || (!Array.isArray(payload) && !Array.isArray(payload?.result) && !Array.isArray(payload?.items))) throw invalid('Битрикс24 вернул некорректный общий журнал');
+			const rows = extractElapsedItems(payload);
+			if (rows.length > size) throw invalid('Битрикс24 проигнорировал размер страницы журнала');
+			const items = rows.map(raw => {
+				const item = normalizeElapsedItem(raw), seconds = raw?.SECONDS ?? raw?.seconds;
+				const created = raw?.CREATED_DATE ?? raw?.createdDate ?? raw?.createdAt;
+				if (!/^[1-9]\d*$/.test(item.id) || !Number.isSafeInteger(Number(item.id)) || !/^[1-9]\d*$/.test(item.taskId) || !Number.isSafeInteger(Number(item.taskId)) ||
+					item.userId !== String(userId) || !item.dateKey || !created || !Number.isFinite(Date.parse(created)) ||
+					!['number','string'].includes(typeof seconds) || String(seconds).trim() === '' || !Number.isSafeInteger(Number(seconds)) || Number(seconds) < 0) throw invalid('Битрикс24 вернул неполную или чужую запись времени');
+				return item;
+			});
+			return { items, response };
+		};
+		try {
+			const collected = [];
+			let cursor = 0;
+			for (let page = 0; page < Math.max(1, maxPages); page++) {
+				const { items, response } = await request({ ...dateFilter, '>ID':cursor });
+				for (const item of items) {
+					if (Number(item.id) <= cursor || item.dateKey < range.from || item.dateKey > range.to) throw invalid('Битрикс24 проигнорировал курсор или даты общего журнала');
+					cursor = Number(item.id); collected.push(item);
+				}
+				if (!collected.length) {
+					const known = knownItems.find(item => /^[1-9]\d*$/.test(String(item?.id || '')) && String(item.userId) === String(userId));
+					if (!supported || known) {
+						const witness = await request({ USER_ID:Number(userId), ...(known ? { ID:Number(known.id) } : {}) }, { ID:'DESC' }, 1);
+						if (!witness.items.length) return { supported:false, reason:'empty-unverified', pages };
+						const item = witness.items[0];
+						if ((known && (item.id !== String(known.id) || item.taskId !== String(known.taskId))) ||
+							(item.dateKey >= range.from && item.dateKey <= range.to)) throw invalid('Пустой общий журнал противоречит подтверждённой записи');
+					}
+				}
+				const explicitMore = response?.next === true || Number(response?.next) > 0;
+				const totalMore = Number.isFinite(Number(response?.total)) && Number(response.total) > items.length;
+				if (items.length < 50 && !explicitMore && !totalMore) return { ...aggregateElapsedItems(collected), range, pages, totalAvailable:collected.length, supported:true };
+				if (!items.length) throw invalid('Битрикс24 не вернул ожидаемый хвост журнала');
+			}
+			throw invalid('Превышен предел страниц общего журнала');
+		} catch (error) {
+			// Network/quota failures must not fan out into a portal-wide legacy scan.
+			const detail = `${error?.code || ''} ${error?.message || ''}`;
+			if (/UNKNOWN_METHOD|METHOD_NOT_FOUND|ERROR_METHOD_NOT_FOUND|WRONG_ARGUMENTS|INVALID_PARAMETERS|ERROR_ARGUMENT|TASK_NOT_FOUND|ACTION_NOT_ALLOWED/.test(detail) && !/TIMEOUT|QUERY_LIMIT|OPERATION_TIME_LIMIT|429/.test(detail)) return { supported:false, reason:'unsupported', pages };
+			throw error;
+		}
+	}
+
 	// Parallel, disjoint ID ranges retain keyset safety without serial network
 	// round trips. The high watermark belongs to this read; later IDs are picked
 	// up by the next delta whose cursor is the start of the full read.
@@ -768,6 +836,7 @@
 		formatPortalOffset,
 		buildElapsedWriteFields,
 		loadTaskCatalogPartitions,
-		loadElapsedItems
+		loadElapsedItems,
+		loadGlobalElapsedItems
 	});
 });

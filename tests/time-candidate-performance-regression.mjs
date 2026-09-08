@@ -26,7 +26,9 @@ function fixture(count, canonical = true) {
     _dialogTimeManualSelectedTask: null, normId: value => String(value || '').trim(),
     // Candidate rendering cost starts after project membership is confirmed.
     // The scope suite separately rejects foreign native/cache candidates.
-    _isDialogTimeProjectTask: () => true,
+    _isDialogTimeWritableTask: id => state.projectTaskIds.has(String(id)),
+    _getDialogTimeWritableTaskIds: () => new Set(state.projectTaskIds),
+    _getDialogTimeSelectedRange: () => ({ from: '2026-09-08', to: '2026-09-08' }),
     _isDialogControlFolder: item => item?.type === 'folder',
     _isDialogTimeProjectTask: id => state.projectTaskIds.has(String(id)),
     _extractTaskIdFromTaskUrl: value => /task\/(\d+)/.exec(value)?.[1] || '',

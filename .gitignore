@@ -20,6 +20,7 @@ __pycache__/
 
 # Build output (compiled installers)
 dist/
+chrome-release/
 
 # Archives
 *.zip

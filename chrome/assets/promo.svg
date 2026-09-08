@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="440" height="280" viewBox="0 0 440 280" role="img" aria-label="Порядок в чатах Bitrix24: папки, фильтры и учёт времени">
+  <rect width="440" height="280" fill="#EAF1EE"/>
+  <g transform="translate(26 25) scale(.36)">
+    <rect x="4" y="4" width="120" height="120" rx="28" fill="#173E40"/>
+    <path d="M41 28h46a17 17 0 0 1 17 17v27a17 17 0 0 1-17 17H59L38 103V89a17 17 0 0 1-14-17V45a17 17 0 0 1 17-17Z" fill="#F4FAF8"/>
+    <path d="M39 44h26v7H39zm0 14h20v7H39zm0 14h14v7H39z" fill="#173E40"/>
+    <path d="M79 43h7v24h8L82.5 80 71 67h8Z" fill="#267C70"/>
+  </g>
+  <g font-family="Onest, Arial, sans-serif">
+    <text x="84" y="45" font-size="23" font-weight="650" letter-spacing="-.7" fill="#173E40">Порядок в чатах</text>
+    <text x="85" y="67" font-size="14" font-weight="500" fill="#526C68">для Bitrix24</text>
+    <text x="28" y="99" font-size="15" font-weight="450" fill="#385650">Папки, фильтры и учёт времени</text>
+    <rect x="26" y="117" width="388" height="141" rx="14" fill="#FFFFFF"/>
+    <path d="M26 166h388" stroke="#E4ECE8"/>
+    <rect x="38" y="130" width="48" height="25" rx="7" fill="#173E40"/>
+    <text x="62" y="147" text-anchor="middle" font-size="12" font-weight="550" fill="#FFFFFF">Все</text>
+    <g fill="none" stroke="#57736C" stroke-width="1.6" stroke-linejoin="round">
+      <path d="M99 140v9h14v-11h-7l-2-2h-5Z"/>
+    </g>
+    <text x="120" y="147" font-size="12" font-weight="550" fill="#385650">Проекты</text>
+    <path d="M196 134v17" stroke="#E4ECE8"/>
+    <g fill="none" stroke="#267C70" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="218" cy="142" r="7"/><path d="M218 138v4l3 2"/>
+    </g>
+    <text x="232" y="147" font-size="12" font-weight="550" fill="#385650">Сегодня</text>
+    <text x="389" y="147" text-anchor="end" font-size="13" font-weight="650" fill="#173E40" font-variant-numeric="tabular-nums">1:30</text>
+    <rect x="39" y="178" width="31" height="31" rx="10" fill="#DFEEE7"/>
+    <path d="M48 194h13m-13-5h9m-9 10h6" stroke="#267C70" stroke-width="2" stroke-linecap="round"/>
+    <text x="82" y="190" font-size="13" font-weight="600" fill="#173E40">Команда</text>
+    <text x="82" y="206" font-size="11" fill="#687C76">Обсуждения и рабочие задачи</text>
+    <circle cx="388" cy="193" r="4" fill="#267C70"/>
+    <path d="M82 218h319" stroke="#EEF2F0"/>
+    <rect x="39" y="226" width="31" height="20" rx="7" fill="#EDF1EF"/>
+    <path d="M48 232h13m-13 7h9" stroke="#789087" stroke-width="2" stroke-linecap="round"/>
+    <text x="82" y="240" font-size="13" font-weight="550" fill="#385650">Задачи проектов</text>
+  </g>
+</svg>

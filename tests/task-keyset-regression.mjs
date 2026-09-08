@@ -25,7 +25,7 @@ function setup({count=100,deleteAfterFirst=false,ignoreCursor=false,reverse=fals
   if(reverse)batch=batch.slice().reverse();
   if(calls.length===1&&deleteAfterFirst)rows.shift();
   if(calls.length===1&&changeScope)context.scope='portal:8';
-  return{data:{tasks:batch},total:computed?count:100,next:null};
+  return{data:{tasks:batch},total:count,next:null};
  };
  context=vm.createContext({scope:'portal:7',Date,Map,Set,Promise,
   _PENA_TIME_CONTROL:timeModel,window:{BX:{rest:{callBatch(){}}}},_getSafeTopWindow:()=>null,
@@ -106,6 +106,15 @@ try {
   assert.equal(calls.filter(call=>call.order.ID==='desc').length,1);
   assert.ok(evidences.every(item=>item===evidences[0]&&item.scope===context.scope&&item.at===result.startedAt));
   return {tasks:result.rows.length,batchWaves:waves.length,httpRequests:2+waves.length,logicalPages:calls.length};
+ });
+ await phase('missing computed time field still uses bounded native and selected catalog partitions',async()=>{
+  for(const owner of ['native','selected']){
+   const {context,calls,waves,published}=setup({count:700,computed:false});
+   if(owner==='native'){const result=await context._syncDialogTaskCatalog({forceNetwork:true,deferMerge:true});assert.equal(result.complete,true);assert.equal(result.rows.length,700);}
+   else{assert.equal(await context._ensureDialogTimeProjectCatalog({force:true}),true);assert.equal(published.length,700);}
+   assert.ok(waves.length>0);assert.ok(waves.every(wave=>wave.length<=16));assert.equal(2+waves.length,3);assert.equal(calls.filter(call=>call.order.ID==='desc').length,1);
+  }
+  return{tasks:700,missingField:true,owners:2,httpRequestsEach:3};
  });
  await phase('selected-project partition tails preserve source filter and commit only complete rows',async()=>{
   const {context,calls,published,evidences}=setup({count:700,computed:true});

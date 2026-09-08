@@ -22,6 +22,9 @@ function fixture(storage=new Map()){
   _dialogTimeCache:new Map(),_dialogTimeInFlight:new Map(),_dialogTimeForcedRefreshes:new Map(),_dialogTimeRangeRechecks:new Map(),_dialogTimePanelRefreshes:new Map(),
   _dialogTimeTaskRevisions:new Map(),_dialogTimeRangeRevisions:new Map(),_dialogTimeTaskLogEvidence:new Map(),_dialogTimeProjectTaskIds:new Set(['1']),_dialogTimeCatalogCursor:1,_dialogTimeCatalogScope:scope(),
   _isDialogTimeProjectTask:id=>id==='1',_ensureDialogTimeProjectCatalog:async()=>{c._dialogTimeCatalogScope=scope();return true;},
+  // This fixture has no qualified contact, pending write or running timer exceptions.
+  _getDialogTimeContactExceptionTaskIds:()=>new Set(),_readDialogTimeManualDraft:()=>({}),_readDialogTimeTracker:()=>null,
+  _isDialogTimeWritableTask:id=>c._isDialogTimeProjectTask(id),
   _DIALOG_TIME_FIRST_WAVE_SIZE:16,_DIALOG_TIME_WAVE_SIZE:50,_queueDialogTimeUiSync:()=>{},_loadDialogTimeTaskTitles:async()=>{},_sleepDialogControl:async()=>{},_getDialogTimeFriendlyError:e=>e.message,_isBxRestBatchPressureError:()=>false,
   _callDialogTimeElapsedPages:async jobs=>{state.elapsed.push(...jobs.map(p=>String(p[0])));return jobs.map(()=>({data:structuredClone(state.serverRows),requestedAt:state.now}));}
  });

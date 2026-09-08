@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Сортировщик чатов Bitrix24</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header><img src="icons/icon48.png" width="40" height="40" alt=""><div><h1>Сортировщик чатов</h1><p>Для Bitrix24 <span id="version"></span></p></div></header>
+  <main>
+    <section class="card" aria-labelledby="portal-heading">
+      <h2 id="portal-heading">Подключите ваш Bitrix24</h2>
+      <p id="intro">Откройте портал в этой вкладке и разрешите расширению работать на нём.</p>
+      <div id="host" class="host" hidden></div>
+      <button id="connect" type="button" disabled>Подключить портал</button>
+      <button id="reload" type="button" class="secondary" hidden>Обновить вкладку</button>
+      <p id="status" role="status" aria-live="polite"></p>
+    </section>
+    <section id="portals-section" hidden aria-labelledby="portals-heading">
+      <h2 id="portals-heading">Подключённые порталы</h2>
+      <ul id="portals"></ul>
+    </section>
+    <p class="note">Папки, фильтры и учёт времени появятся в чатах Bitrix24. Доступ к другим сайтам не нужен.</p>
+  </main>
+  <footer>Обновления версии из магазина устанавливает Chrome.<br><a href="privacy.html" target="_blank" rel="noopener">Конфиденциальность</a></footer>
+  <script src="popup.js"></script>
+</body>
+</html>

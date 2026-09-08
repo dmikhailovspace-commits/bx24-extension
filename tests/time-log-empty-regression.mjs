@@ -19,6 +19,7 @@ function fixture(){
   // This elapsed/evidence oracle begins with a user-selected, fully committed catalog.
   // The project-scope suite proves the independent initial setup gate.
   _getDialogTimeProjectScopeKey:()=>state.scope,_getDialogTimeIdentityScopeKey:()=>state.scope,_getCurrentBitrixUserId:()=>state.user,
+  _getDialogTimeContactExceptionTaskIds:()=>new Set(),_readDialogTimeManualDraft:()=>({}),_readDialogTimeTracker:()=>null,
   _ensureDialogTimeProjectCatalog:async()=>{c._dialogTimeCatalogScope=state.scope;return true;},_isDialogTimeProjectTask:id=>id==='1',
   _DIALOG_TIME_FIRST_WAVE_SIZE:16,_DIALOG_TIME_WAVE_SIZE:50,_queueDialogTimeUiSync:()=>{},_loadDialogTimeTaskTitles:async()=>{},_sleepDialogControl:async()=>{},
   _getDialogTimeFriendlyError:error=>error.message,_isBxRestBatchPressureError:()=>false,
@@ -57,11 +58,11 @@ await phase('age boundary and backwards clocks cannot turn stale null evidence i
  const fresh=fixture();fresh.publish({TIME_SPENT_IN_LOGS:null});fresh.state.now+=59999;await fresh.load();assert.equal(fresh.state.calls.length,0);
  return{rejectedAges:[-1,60000,60001],lastAcceptedAge:59999};
 });
-await phase('a fresh confirmed null replaces previously logged cache data and stays stable on warm reopen',async()=>{
+await phase('a fresh null conflicting with known rows requires journal verification before clearing cached time',async()=>{
  const f=fixture();await f.load();assert.equal(f.record().data.totalSeconds,60);f.c._dialogTimeTaskRevisions.set('1',1);f.state.rows=[];f.publish({TIME_SPENT_IN_LOGS:null});
- await f.load();assert.equal(f.state.calls.length,1);assert.equal(f.record().data.totalSeconds,0);assert.equal(f.record().data.entryCount,0);assert.equal(f.record().data.coverage.complete,true);
- f.state.now+=120000;await f.load();assert.equal(f.state.calls.length,1);assert.equal(f.record().data.totalSeconds,0);
- return{initialElapsedRequests:1,reconciliationElapsedRequests:0,warmElapsedRequests:0};
+ await f.load();assert.equal(f.state.calls.length,2);assert.equal(f.record().data.totalSeconds,0);assert.equal(f.record().data.entryCount,0);assert.equal(f.record().data.coverage.complete,true);
+ f.state.now+=120000;await f.load();assert.equal(f.state.calls.length,2);assert.equal(f.record().data.totalSeconds,0);
+ return{initialElapsedRequests:1,reconciliationElapsedRequests:1,warmElapsedRequests:0};
 });
 await phase('a real journal total revokes an earlier null proof while an omitted field cannot contradict it',async()=>{
  for(const fields of [{TIME_SPENT_IN_LOGS:120},{TIME_SPENT_IN_LOGS:0}]){const f=fixture();f.publish({TIME_SPENT_IN_LOGS:null});f.publish(fields);await f.load();assert.equal(f.state.calls.length,1);assert.equal(f.record().data.totalSeconds,60);}
