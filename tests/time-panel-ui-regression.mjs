@@ -43,6 +43,7 @@ const instrumented = source.replace(anchor, `${anchor}
    rows=_PENA_TIME_CONTROL.applyQualifiedContact(rows,{taskId:'101',eventId:'newer-contact',qualifiedAt:now-20000,reason:'message'});
    await _writeDialogTimeVisits(rows,range.from);_setDialogTimeTaskEligibility('101',true);
    this.state({status:'loading',range,data:{..._PENA_TIME_CONTROL.aggregateElapsedItems([]),range,coverage:{checkedTasks:16,totalTasks:117,complete:false}},hasVerifiedData:true,hasCompleteSnapshot:false,taskFreshness:checked?{'101':{at:now,revision:0}}:{},readProgress:{completedTasks:16,totalTasks:117}});
+   return {record:this.record(),contacts:_PENA_TIME_CONTROL.selectUntrackedVisits(_readDialogTimeVisits(range.from),this.record().data.tasks)};
   },
   state(patch) {
    const range = _getDialogTimeSelectedRange();
@@ -104,11 +105,16 @@ const snapshot = () => page.evaluate(() => {
  const panel = document.querySelector('.pena-native-time-panel');
  const refresh = panel.querySelector('.pena-native-time-refresh');
  const status = panel.querySelector('.pena-native-time-read-status');
+ const overlay = panel.querySelector('.pena-native-time-loading-overlay');
+ const record = timeUiProbe.record();
  const body = panel.querySelector('.pena-native-time-body').getBoundingClientRect();
  const icon = refresh.querySelector('svg');
  const iconBox = icon.getBoundingClientRect(), buttonBox = refresh.getBoundingClientRect();
  return {
   total: panel.querySelector('.pena-native-time-total-value').textContent,
+  recordSeconds:record?.data?.totalSeconds??null, recordEntries:record?.data?.entryCount??null,
+  overlayVisible:!!overlay&&!overlay.hidden, overlayDetail:overlay?.querySelector('.pena-native-time-loading-detail')?.textContent,
+  contentInert:panel.querySelector('.pena-native-time-scroll').inert,
   compactTotal: document.querySelector('.pena-native-time-button-label').textContent,
   historyTotal: panel.querySelector('.pena-native-time-tracked-total').textContent,
   historyLabel: panel.querySelector('.pena-native-time-tracked-label').textContent,
@@ -169,11 +175,12 @@ try {
   const cold = await snapshot();
   assert.equal(cold.total,'—','an empty bootstrap aggregate is not a checked zero');
   assert.equal(cold.compactTotal,'Сегодня …');
-  assert.equal(cold.historyTotal,'—'); assert.equal(cold.historyLabel,'Записи · …');
+  assert.equal(cold.recordSeconds,0); assert.equal(cold.recordEntries,0);
+  assert.equal(cold.overlayVisible,true); assert.equal(cold.contentInert,true,'retained history must be inaccessible until the snapshot is complete');
   assert.equal(cold.statusPresent,false); assert.match(cold.meta,/Загружаем время/);
   await page.evaluate(() => timeUiProbe.emptyState(false,'loading','stats'));
-  const unknownDays = await page.locator('.pena-native-time-stats-duration').allTextContents();
-  assert.equal(unknownDays.length,7); assert.ok(unknownDays.every(value=>value==='—'),'unverified stats days must not fabricate zeroes');
+  const unknownDays = await snapshot();
+  assert.equal(unknownDays.total,'—'); assert.equal(unknownDays.overlayVisible,true); assert.equal(unknownDays.contentInert,true,'unverified statistics must remain masked');
   await page.evaluate(() => timeUiProbe.emptyState(true,'ready'));
   const zero = await snapshot(); assert.equal(zero.total,'0 мин'); assert.equal(zero.historyLabel,'Записи · 0'); assert.match(zero.compactTotal,/Сегодня 0:00/); assert.equal(zero.statusPresent,false);
   await page.evaluate(() => timeUiProbe.emptyState(true,'loading'));
@@ -212,12 +219,14 @@ try {
   await page.evaluate(() => timeUiProbe.state({status:'ready',readProgress:{completedTasks:4149,totalTasks:4149}}));
   return bulk;
  });
- await phase('unknown and partial totals remain honest without a status bar; cached failure is quiet', async () => {
+ await phase('unknown and partial totals stay masked while their cached entries are preserved; cached failure is quiet', async () => {
   assert.equal(ready.statusPresent,false);
   await page.evaluate(() => timeUiProbe.state({status:'loading',data:null,hasCompleteSnapshot:false,error:''}));
   const cold = await snapshot(); assert.equal(cold.total,'—'); assert.match(cold.meta,/Загружаем время/); assert.equal(cold.statusPresent,false); assert.equal(cold.bodyTop,ready.bodyTop);
   await page.evaluate(() => timeUiProbe.state({status:'loading',data:{...window.timeUiOriginalData,coverage:{checkedTasks:366,totalTasks:4149,complete:false}},hasCompleteSnapshot:false,readProgress:{completedTasks:366,totalTasks:4149}}));
-  const partial = await snapshot(); assert.equal(partial.statusPresent,false); assert.match(partial.meta,/Часть данных/); assert.match(partial.metaTitle,/366 из 4149/); assert.equal(partial.total,ready.total);
+  const partial = await snapshot(); assert.equal(partial.statusPresent,false); assert.equal(partial.total,'—');
+  assert.equal(partial.recordSeconds,ready.recordSeconds); assert.equal(partial.recordEntries,ready.recordEntries);
+  assert.equal(partial.overlayVisible,true); assert.equal(partial.contentInert,true); assert.match(partial.overlayDetail,/366 из 4149/);
   await page.evaluate(() => timeUiProbe.state({status:'error',data:window.timeUiOriginalData,hasCompleteSnapshot:true,error:'Сеть недоступна'}));
   const failed = await snapshot(); assert.equal(failed.total,ready.total); assert.equal(failed.entries,ready.entries);
   assert.equal(failed.statusPresent,false); assert.doesNotMatch(failed.meta,/Не удалось|Сеть недоступна|Часть данных/); assert.match(failed.metaTitle,/сохранённое время/); assert.equal(failed.bodyTop,cold.bodyTop); assert.equal(failed.disabled,false);
@@ -263,13 +272,16 @@ try {
   await page.locator('.pena-native-time-panel').screenshot({path:'tests/artifacts/time-panel-background-360.png'});
   return result;
  });
- await phase('a contact card cannot invent zero before its own task has been checked in a partial read',async()=>{
-  await page.evaluate(()=>timeUiProbe.contactSnapshot(false));
-  const detail=page.locator('.pena-native-time-suggestions .pena-native-time-task-detail');
-  const unknown=await detail.textContent();assert.match(unknown,/Учтено —/);assert.match(unknown,/\+1 контакт после записи/);
-  await page.evaluate(()=>timeUiProbe.contactSnapshot(true));
-  const checked=await detail.textContent();assert.match(checked,/Учтено 0 мин/);assert.match(checked,/\+1 контакт после записи/);
-  return{unknown,checked};
+ await phase('partial contact snapshots retain their accounting data while the panel stays masked',async()=>{
+  const unknown=await page.evaluate(()=>timeUiProbe.contactSnapshot(false));
+  assert.equal(unknown.record.data.totalSeconds,0); assert.equal(unknown.record.taskFreshness['101'],undefined);
+  assert.equal(unknown.contacts.length,1); assert.equal(unknown.contacts[0].pendingContacts,1); assert.ok(unknown.contacts[0].contactCutoffAt>0);
+  const unknownUi=await snapshot(); assert.equal(unknownUi.total,'—'); assert.equal(unknownUi.overlayVisible,true); assert.equal(unknownUi.contentInert,true);
+  const checked=await page.evaluate(()=>timeUiProbe.contactSnapshot(true));
+  assert.equal(checked.record.data.totalSeconds,0); assert.ok(checked.record.taskFreshness['101']);
+  assert.equal(checked.contacts.length,1); assert.equal(checked.contacts[0].pendingContacts,1); assert.equal(checked.contacts[0].trackedSeconds,0);
+  const checkedUi=await snapshot(); assert.equal(checkedUi.total,'—'); assert.equal(checkedUi.overlayVisible,true); assert.equal(checkedUi.contentInert,true);
+  return{unknown,checked,unknownUi,checkedUi};
  });
  await phase('history shows all 120 cached entries in pages without REST, preserves nodes and protects a displaced editor',async()=>{
   await page.setViewportSize({width:1000,height:800});await page.evaluate(()=>{timeUiProbe.seedHistory(120);timeUiProbe.prepareOtherHistory();});

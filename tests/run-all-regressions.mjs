@@ -61,6 +61,7 @@ const suites = [
   'time-startup-preview-regression.mjs',
   'time-functional-regression.mjs',
   'time-refresh-regression.mjs',
+  'time-date-navigation-regression.mjs',
   'time-snapshot-performance-regression.mjs',
 	'time-project-scope-regression.mjs',
 	'time-project-layout-regression.mjs',
@@ -123,7 +124,12 @@ const runtimeFiles = JSON.parse(readFileSync(join(testsRoot, '../update.json'), 
 const sourceSha256 = Object.fromEntries(runtimeFiles.map(file => [file,createHash('sha256').update(readFileSync(join(testsRoot,'../extension',file))).digest('hex')]));
 const artifacts = join(testsRoot, 'artifacts');
 mkdirSync(artifacts, { recursive: true });
-const saveReport = state => writeFileSync(join(artifacts, 'regression-summary.json'), JSON.stringify({ state, startedAt: new Date(startedAt).toISOString(), node: process.versions.node, sourceSha256, durationMs: Date.now() - startedAt, suites: measurements, slowest: measurements.toSorted((a,b) => b.durationMs-a.durationMs).slice(0, 5) }, null, 2));
+const validationScope = requested.size ? (process.env.PENA_TEST_PROFILE === 'time-focused' ? 'time-focused' : 'selected') : 'full';
+if (validationScope === 'time-focused') {
+  const expected = JSON.parse(readFileSync(join(testsRoot, 'time-focused-suites.json'), 'utf8')).sort();
+  if (JSON.stringify(selected.slice().sort()) !== JSON.stringify(expected)) throw new Error('Time-focused gate must run its exact registered suite set');
+}
+const saveReport = state => writeFileSync(join(artifacts, 'regression-summary.json'), JSON.stringify({ state, validationScope, registeredSuiteCount:suites.length, startedAt: new Date(startedAt).toISOString(), node: process.versions.node, sourceSha256, durationMs: Date.now() - startedAt, suites: measurements, slowest: measurements.toSorted((a,b) => b.durationMs-a.durationMs).slice(0, 5) }, null, 2));
 saveReport('running');
 for (const suite of selected) {
   console.log(`\n[tests] ${suite}`);

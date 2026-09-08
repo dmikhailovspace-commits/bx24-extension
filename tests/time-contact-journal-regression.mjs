@@ -71,6 +71,44 @@ await check('foreign side panel cannot suppress native task lookup for an outgoi
  vm.runInContext(source.slice(start,end)+"\ncaptureOutgoingTaskMessage('message',{message:{author_id:'7',dialog_id:'chat5',id:'msg-contact-title'}});",context);
  assert.equal(reads,1);assert.deepEqual(contact,{dialogId:'chat5',taskId:'5',title:'Задача 5'});return{nativeTaskLookups:reads,contact};
 });
+await check('legacy ledger taskId/id aliases persist as one canonical row without losing accounting metadata',async()=>{
+ const f=frame(),day='2026-09-06',key='pena.timeVisitedTasks.v1.7.'+day,at=Date.parse('2026-09-06T20:59:00Z');
+ f.storage.set(key,JSON.stringify([
+  {taskId:'00101',visitedAt:at,lastQualifiedAt:at,visits:2,accountedAt:at-1000,accountedVisits:1},
+  {id:101,visitedAt:at+1000,lastQualifiedAt:at,visits:2,title:'Актуальная задача'}
+ ]));
+ assert.equal(await f.write(rows=>rows,day),true);
+ const saved=JSON.parse(f.storage.get(key));
+ assert.equal(saved.length,1);assert.equal(saved[0].taskId,'101');assert.equal(saved[0].visits,2);
+ assert.equal(saved[0].accountedAt,at-1000);assert.equal(saved[0].accountedVisits,1);
+ assert.equal(model.selectUntrackedVisits(saved)[0].pendingContacts,1);
+ return{persistedRows:1,taskId:'101',pendingContacts:1,accountingPreserved:true};
+});
+await check('time contact identity ignores message task links, arbitrary numbers and untyped entity IDs',()=>{
+ const ctx=vm.createContext({_buildTaskUrl:id=>`/tasks/task/view/${id}/`,_normalizeBitrixPath:x=>x,
+  _extractTaskIdFromTaskUrl:url=>/\/tasks\/task\/view\/(\d+)/.exec(url)?.[1]||''});
+ vm.runInContext(extract('_extractDialogTimeTaskMetaFromElement')+'\nglobalThis.read=_extractDialogTimeTaskMetaFromElement;',ctx);
+ const row=(attrs={},links=[])=>({dataset:{},textContent:'Обсудить задачу #999',getAttribute:key=>attrs[key]||'',querySelectorAll:()=>links});
+ const link=(id,preview=false)=>({getAttribute:()=>`/tasks/task/view/${id}/`,closest:()=>preview?{}:null});
+ assert.equal(ctx.read(row({},[link(999,true)])),null);
+ assert.equal(ctx.read(row({entityId:'999'})),null);
+ assert.equal(ctx.read(row({},[link(10),link(999)])),null,'ambiguous task links do not identify the dialog');
+ assert.equal(ctx.read(row({'data-task-id':'0010'},[link(999)]))?.taskId,'10');
+ assert.equal(ctx.read(row({'data-entity-type':'TASKS','data-entity-id':'10'}))?.taskId,'10');
+ assert.equal(ctx.read(row({},[link(10)]))?.taskId,'10');
+ return{falsePreviewContacts:0,falseNumberContacts:0,explicitIdentityWins:true};
+});
+await check('active time contact keeps known chat-task identity when preview points at another task',()=>{
+ const ctx=vm.createContext({IS_OL_FRAME:false,_PENA_TIME_CONTROL:model,document:{visibilityState:'visible'},
+  isTasksChatsModeNow:()=>true,_dialogTimeActiveSidePanelTaskId:'',normId:x=>x,_readDialogControlOpenedId:()=> 'chat10',
+  findChatElementById:()=>({}),getChatTitleFromElement:()=> 'Одна задача',_extractDialogTimeTaskMetaFromElement:()=>({taskId:'999'}),
+  _getDialogControlItemsForMode:()=>[{id:'chat10',taskId:'10',title:'Одна задача'}],_isDialogControlFolder:()=>false,
+  _getDialogRecentMeta:()=>({taskId:'10',isTask:true}),_dialogTimeTaskIdsByChatDialogId:new Map([['chat10','10']]),
+  _getDialogTimeTaskTitle:id=>`Задача ${id}`});
+ vm.runInContext(extract('_getActiveDialogTimeActivity')+'\nglobalThis.activity=_getActiveDialogTimeActivity();',ctx);
+ assert.equal(ctx.activity.taskId,'10');assert.equal(ctx.activity.title,'Задача 10');
+ return{taskId:ctx.activity.taskId,previewTaskId:'999',falseContactCreated:false};
+});
 if(!process.env.PENA_CONTACT_SKIP_BROWSER) await check('Chromium two pages: real Web Locks, lease ownership, restart, missing capability and ack replay',async()=>{
  const {startHarnessServer}=await import('./lib/harness-server.mjs');const{chromium}=require('playwright');
  const server=await startHarnessServer(),browser=await chromium.launch({headless:true}),context=await browser.newContext();

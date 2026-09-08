@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.123';
+	window.__ANITREC_RUNNING__ = '7.5.124';
 
-	const VER = '7.5.123';
+	const VER = '7.5.124';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -15458,6 +15458,31 @@ if (_presetChannel) {
 		return _openDialogTimeTask(activity.taskId, activity.title);
 	}
 
+	function _extractDialogTimeTaskMetaFromElement(row) {
+		if (!row) return null;
+		// A message preview can mention another task or contain an arbitrary
+		// order number. Neither establishes the identity of the current task.
+		const normalize = value => /^\d+$/.test(String(value || '').trim()) ? String(value).trim().replace(/^0+/, '') : '';
+		for (const name of ['taskId', 'taskid', 'task-id', 'data-task-id']) {
+			const taskId = normalize(row.dataset?.[name] || row.getAttribute?.(name));
+			if (taskId) return { taskId, taskUrl: _buildTaskUrl(taskId) };
+		}
+		const entityType = String(row.dataset?.entityType || row.getAttribute?.('data-entity-type') || row.getAttribute?.('entityType') || '').toUpperCase();
+		if (/^(TASKS|TASKS_TASK)$/.test(entityType)) {
+			const taskId = normalize(row.dataset?.entityId || row.getAttribute?.('data-entity-id') || row.getAttribute?.('entityId'));
+			if (taskId) return { taskId, taskUrl: _buildTaskUrl(taskId) };
+		}
+		const links = [row, ...Array.from(row.querySelectorAll?.('a[href]') || [])];
+		const candidates = new Map();
+		for (const link of links) {
+			if (link !== row && link.closest?.('[class*="message" i],[class*="preview" i],[class*="recent-item-content" i]')) continue;
+			const taskUrl = _normalizeBitrixPath(link.getAttribute?.('href') || '');
+			const taskId = normalize(_extractTaskIdFromTaskUrl(taskUrl));
+			if (taskId) candidates.set(taskId, { taskId, taskUrl });
+		}
+		return candidates.size === 1 ? candidates.values().next().value : null;
+	}
+
 	function _getActiveDialogTimeActivity() {
 		if (IS_OL_FRAME || !_PENA_TIME_CONTROL || document.visibilityState === 'hidden') return null;
 		if (!isTasksChatsModeNow()) return null;
@@ -15473,12 +15498,13 @@ if (_presetChannel) {
 		if (!dialogId) return null;
 		const nativeRow = findChatElementById(dialogId);
 		const nativeTitle = nativeRow ? getChatTitleFromElement(nativeRow) : '';
-		const nativeTask = _extractTaskMetaFromElement(nativeRow, nativeTitle);
+		const nativeTask = _extractDialogTimeTaskMetaFromElement(nativeRow);
 		const item = _getDialogControlItemsForMode('tasks')
 			.find(candidate => !_isDialogControlFolder(candidate) && normId(candidate.id) === dialogId);
 		const meta = _getDialogRecentMeta(dialogId);
-		const taskId = String(nativeTask?.taskId || item?.taskId || meta?.taskId || '').trim();
-		if (!/^\d+$/.test(taskId) || (!nativeTask && !item && meta?.isTask !== true)) return null;
+		const mappedTaskId = _dialogTimeTaskIdsByChatDialogId.get(dialogId) || '';
+		const taskId = String(mappedTaskId || item?.taskId || meta?.taskId || nativeTask?.taskId || '').trim();
+		if (!/^\d+$/.test(taskId) || (!mappedTaskId && !nativeTask && !item && meta?.isTask !== true)) return null;
 		const title = _getDialogTimeTaskTitle(
 			taskId,
 			item?.title || meta?.displayTitle || nativeTitle || _getActiveDialogTitleFromScreen() || meta?.title || ''
@@ -15636,10 +15662,10 @@ if (_presetChannel) {
 			if (!row) return;
 			if (!isTasksChatsModeNow()) return;
 			const title = getChatTitleFromElement(row);
-			const meta = _extractTaskMetaFromElement(row, title);
+			const meta = _extractDialogTimeTaskMetaFromElement(row);
 			const dialogId = getChatIdFromElement(row);
 			if (dialogId) _setDialogControlCurrentId(dialogId);
-			_rememberTaskChatDialogVisit(dialogId, title, meta?.taskId || _getDialogRecentMeta(dialogId)?.taskId || '', { takeover: true });
+			_rememberTaskChatDialogVisit(dialogId, title, _dialogTimeTaskIdsByChatDialogId.get(normId(dialogId)) || _getDialogRecentMeta(dialogId)?.taskId || meta?.taskId || '', { takeover: true });
 		}, true);
 		const captureAfterRoute = () => {
 			_dialogTimeCoordinatorRuntimeSync?.();
@@ -15833,10 +15859,10 @@ if (_presetChannel) {
 						? null
 						: findChatElementById(dialogId);
 					const nativeTaskMeta = nativeRow
-						? _extractTaskMetaFromElement(nativeRow, getChatTitleFromElement(nativeRow))
+						? _extractDialogTimeTaskMetaFromElement(nativeRow)
 						: null;
 					const taskId = String(
-						meta?.taskId ||
+						mappedTaskId || meta?.taskId ||
 						(active?.dialogId === dialogId ? active.taskId : '') ||
 						pending?.taskId ||
 						mappedTaskId ||
@@ -15955,7 +15981,7 @@ if (_presetChannel) {
 		const today = _getDialogTimeRange('today');
 		_syncDialogTimeTodayPreview(today);
 		const todayRecord = _getDialogTimeRecord(today);
-		const rawTodayData = _hasDialogTimeVerifiedData(todayRecord) ? todayRecord.data : null;
+		const rawTodayData = _hasDialogTimeVerifiedData(todayRecord) && todayRecord.hasCompleteSnapshot === true && todayRecord.data?.coverage?.complete !== false ? todayRecord.data : null;
 		const visibleTodayData = _filterDialogTimeDataByEligibility(rawTodayData);
 		const tracker = _readDialogTimeTracker();
 		const timeButton = switcher.querySelector('.pena-native-time-button');
@@ -15966,7 +15992,7 @@ if (_presetChannel) {
 				? _PENA_TIME_CONTROL.formatDurationCompact(_getDialogTimeTrackerSeconds(tracker))
 				: (visibleTodayData
 					? _PENA_TIME_CONTROL.formatDurationCompact(visibleTodayData.totalSeconds)
-					: (todayRecord?.status === 'loading' || initializingToday ? '…' : '--:--'));
+						: (todayRecord?.status === 'loading' || initializingToday || (todayRecord && !todayRecord.error) ? '…' : '--:--'));
 			const label = tracker ? `Сейчас ${compact}` : (!_getDialogTimeProjectScopeKey() ? 'Учёт времени' : `Сегодня ${compact}`);
 			const title = todayRecord?.error || (todayRecord?.restored && !todayRecord.hasCompleteSnapshot ? 'Сохранённое время за сегодня. Проверяем актуальность.' : 'Затраченное время за сегодня');
 			if (timeButtonLabel.textContent !== label) timeButtonLabel.textContent = label;
@@ -15982,12 +16008,15 @@ if (_presetChannel) {
 			return;
 		}
 		if (!_readDialogTimeProjectPreference() && !panel._penaTimeProjectSettings) _openDialogTimeProjectSettings(panel);
-		if (panel._penaTimeProjectSettings) return;
+		if (panel._penaTimeProjectSettings) {
+			_syncDialogTimeLoadingOverlay(panel, { range:_getDialogTimeSelectedRange() });
+			return;
+		}
 		const selectedDay = _getDialogTimeSelectedRange();
 		const visibleRange = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : selectedDay;
 		const record = _getDialogTimeRecord(visibleRange);
 		const rawData = _hasDialogTimeVerifiedData(record) ? record.data : null;
-		const data = _filterDialogTimeDataByEligibility(rawData);
+		const data = record?.hasCompleteSnapshot === true && record.data?.coverage?.complete !== false ? _filterDialogTimeDataByEligibility(rawData) : null;
 		const initializing = panel._penaTimeInitialization?.pending === true;
 		const initializationError = panel._penaTimeInitialization?.error || (_dialogTimeProjectCatalogError?.scope === _getDialogTimeProjectScopeKey() ? _dialogTimeProjectCatalogError.message : '');
 		panel.classList.toggle('--loading', record?.status === 'loading');
@@ -16036,6 +16065,7 @@ if (_presetChannel) {
 		}
 		const refresh = panel.querySelector('.pena-native-time-refresh');
 		const manualRefreshing = _dialogTimeManualRefreshToken?.scope === refreshScope;
+		_syncDialogTimeLoadingOverlay(panel, { record, range:visibleRange, initializing, catalogBusy, readError, manualRefreshing });
 		if (refresh) {
 			refresh.disabled = manualRefreshing;
 			refresh.classList.remove('--loading');
@@ -16043,6 +16073,11 @@ if (_presetChannel) {
 			refresh.title = manualRefreshing ? 'Обновляем время…' : readError ? `${action}. ${data ? 'Показано сохранённое время. ' : ''}${readError}` : action;
 			refresh.setAttribute('aria-label', action);
 			refresh.setAttribute('aria-busy', manualRefreshing ? 'true' : 'false');
+		}
+		if (panel.classList.contains('--read-blocked')) {
+			// Progress changes must not rebuild hundreds of hidden rows each wave.
+			_ensureDialogTimeTrackerTick();
+			return;
 		}
 		const body = panel.querySelector('.pena-native-time-body');
 		if (body) body.hidden = _dialogTimeView === 'stats';
@@ -16361,7 +16396,7 @@ if (_presetChannel) {
 		}
 		if (trackedList) {
 			trackedList.hidden = !_dialogTimeTrackedExpanded;
-			const emptyLabel = !data && (initializing || record?.status === 'loading') ? 'Загружаем записи…' : !data && (record?.error || initializationError) ? 'Не удалось загрузить записи' : 'За выбранную дату записей нет';
+			const emptyLabel = !data && (initializing || record?.status === 'loading') ? 'Загружаем записи…' : !data ? 'Записи ещё не загружены полностью' : 'За выбранную дату записей нет';
 			const rangeKey = _getDialogTimeCacheKey(visibleRange);
 			if (trackedList.dataset.penaRange !== rangeKey) { trackedList.dataset.penaRange = rangeKey; trackedList._penaLimit = 50; }
 			if (_dialogTimeTrackedExpanded) {
@@ -16577,8 +16612,13 @@ if (_presetChannel) {
 		const revision = _dialogTimeRangeRevisions.get(key) || 0;
 		const bootstrapCurrent = () => bootstrap && bootstrap === _dialogTimeBootstrapToken && bootstrap.active && bootstrap.scope === scope && _isDialogTimeFrameActive() &&
 			normalized.from === bootstrap.dateKey && normalized.to === bootstrap.dateKey && bootstrap.dateKey === _getDialogTimeTodayKey();
+		const visibleCurrent = () => {
+			const selected = _PENA_TIME_CONTROL.normalizeRange(_dialogTimeRange?.from, _dialogTimeRange?.to);
+			const from = _dialogTimeView === 'stats' ? _PENA_TIME_CONTROL.addDays(selected.to, -6) : selected.from;
+			return _dialogControlNativeWorkspaceTab === 'time' && normalized.from === from && normalized.to === selected.to;
+		};
 		const current = () => key === _getDialogTimeCacheKey(normalized) && scope === _getDialogTimeProjectScopeKey() &&
-			(_dialogControlNativeWorkspaceTab === 'time' || bootstrapCurrent()) && document.visibilityState !== 'hidden' && navigator.onLine !== false &&
+			(visibleCurrent() || bootstrapCurrent()) && document.visibilityState !== 'hidden' && navigator.onLine !== false &&
 			revision === (_dialogTimeRangeRevisions.get(key) || 0);
 		if (!current()) return cached?.data || null;
 		const taskIds = _getDialogTimeWorkingTaskIds(normalized);
@@ -16815,10 +16855,63 @@ if (_presetChannel) {
 		if (draft.taskId || draft.query || draft.hours || draft.minutes) {
 			_writeDialogTimeManualDraft({ ...draft, dateKey: _dialogTimeRange.from });
 		}
-		_syncDialogTimeUi(_dialogControlNativeSwitcherNode);
 		if (_dialogControlNativeWorkspaceTab !== 'time') return;
-		const visibleRange = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _dialogTimeRange;
-		_loadDialogTimeRange(visibleRange, { force }).catch(() => {});
+		_requestDialogTimeVisibleRange({ force });
+	}
+
+	function _requestDialogTimeVisibleRange({ force = false } = {}) {
+		const range = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
+		const panel = _dialogControlNativeSwitcherNode?.querySelector('.pena-native-time-panel');
+		const token = { scope:_getDialogTimeProjectScopeKey(), key:`${range.from}:${range.to}`, pending:true, error:'' };
+		if (panel) panel._penaTimeRangeLoad = token;
+		// Start the read before rendering: a presentation failure cannot swallow a date change.
+		const request = _loadDialogTimeRange(range, { force }).catch(error => {
+			token.error = _getDialogTimeFriendlyError(error);
+			return null;
+		}).finally(() => { token.pending = false; _queueDialogTimeUiSync(); });
+		_queueDialogTimeUiSync();
+		return request;
+	}
+
+	function _syncDialogTimeLoadingOverlay(panel, { record, range, initializing, catalogBusy, readError, manualRefreshing } = {}) {
+		const overlay = panel.querySelector('.pena-native-time-loading-overlay');
+		if (!overlay) return;
+		const token = panel._penaTimeRangeLoad;
+		const rangeOwner = token?.scope === _getDialogTimeProjectScopeKey() && token.key === `${range.from}:${range.to}` ? token : null;
+		// The completed read supersedes a migrated preview's selection marker.
+		const complete = _hasDialogTimeVerifiedData(record) && record.hasCompleteSnapshot === true && record.data?.coverage?.complete !== false;
+		const loading = !panel._penaTimeProjectSettings && (manualRefreshing || (!complete && (initializing || catalogBusy || rangeOwner?.pending || record?.status === 'loading')));
+		const allowIncomplete = panel._penaTimeIncompleteViewKey === `${_getDialogTimeProjectScopeKey()}:${range.from}:${range.to}`;
+		const blocked = !panel._penaTimeProjectSettings && (loading || (!complete && !allowIncomplete));
+		const wasBlocked = !overlay.hidden;
+		overlay.hidden = !blocked;
+		panel.classList.toggle('--read-blocked', blocked);
+		panel.setAttribute('aria-busy', loading ? 'true' : 'false');
+		for (const node of [panel.querySelector('.pena-native-time-panel-head'), panel.querySelector('.pena-native-time-scroll')]) if (node) node.inert = blocked;
+		if (!blocked) {
+			if (wasBlocked && overlay.contains(document.activeElement)) {
+				const previous = panel._penaTimeLoadingFocus;
+				(previous?.isConnected && !previous.closest('[inert]') ? previous : panel).focus({ preventScroll:true });
+			}
+			panel._penaTimeLoadingFocus = null;
+			return;
+		}
+		if (!wasBlocked && panel.contains(document.activeElement) && !overlay.contains(document.activeElement)) {
+			panel._penaTimeLoadingFocus = document.activeElement;
+			overlay.focus({ preventScroll:true });
+		}
+		const label = overlay.querySelector('.pena-native-time-loading-label');
+		label.textContent = loading ? (catalogBusy ? 'Загружаем задачи…' : 'Загружаем трудозатраты…') : 'Не удалось загрузить все данные';
+		const detail = overlay.querySelector('.pena-native-time-loading-detail');
+		const progress = record?.readProgress;
+		detail.textContent = loading
+			? (progress?.totalTasks > 0 ? `Проверено ${Math.min(progress.completedTasks || 0, progress.totalTasks)} из ${progress.totalTasks} задач` : 'Покажем итог после загрузки')
+			: (rangeOwner?.error || readError || (navigator.onLine === false ? 'Нет подключения к интернету' : 'Повторите загрузку выбранной даты'));
+		const bar = overlay.querySelector('.pena-native-time-loading-bar');
+		bar.hidden = !loading;
+		bar.removeAttribute('aria-valuenow');
+		overlay.querySelector('.pena-native-time-loading-retry').hidden = loading;
+		overlay.querySelector('.pena-native-time-loading-continue').hidden = loading;
 	}
 
 	function _createDialogControlPopoverClose(label = 'Закрыть панель') {
@@ -16880,7 +16973,7 @@ if (_presetChannel) {
 			}
 			if (event.key !== 'Tab') return;
 			const focusable = Array.from(panel.querySelectorAll('button:not([disabled]):not([hidden]),a[href],input:not([disabled]):not([hidden]),select:not([disabled]):not([hidden]),[tabindex]:not([tabindex="-1"])'))
-				.filter(node => node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden');
+				.filter(node => !node.closest('[inert]') && node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden');
 			if (!focusable.length) {
 				event.preventDefault();
 				panel.focus({ preventScroll: true });
@@ -16916,9 +17009,7 @@ if (_presetChannel) {
 				event.preventDefault();
 				event.stopPropagation();
 				_dialogTimeView = view;
-				const range = view === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
-				_syncDialogTimeUi(_dialogControlNativeSwitcherNode || panel.closest('.pena-native-folder-switcher'));
-				_loadDialogTimeRange(range).catch(() => {});
+				_requestDialogTimeVisibleRange();
 			});
 			viewTabs.appendChild(tab);
 		});
@@ -17375,6 +17466,31 @@ if (_presetChannel) {
 		scroll.className = 'pena-native-time-scroll';
 		scroll.append(summaryGroup, stats, body, tracker);
 		panel.append(panelHeader, scroll);
+		const loadingOverlay = document.createElement('div');
+		loadingOverlay.className = 'pena-native-time-loading-overlay';
+		loadingOverlay.hidden = true;
+		loadingOverlay.tabIndex = -1;
+		loadingOverlay.setAttribute('role', 'status');
+		loadingOverlay.setAttribute('aria-live', 'polite');
+		loadingOverlay.innerHTML = '<div class="pena-native-time-loading-card"><strong class="pena-native-time-loading-label"></strong><span class="pena-native-time-loading-detail"></span><div class="pena-native-time-loading-bar" role="progressbar" aria-label="Загрузка трудозатрат"><span></span></div><button type="button" class="pena-native-time-loading-retry">Повторить загрузку</button></div>';
+		const loadingClose = _createDialogControlPopoverClose('Закрыть учёт времени');
+		loadingClose.classList.add('pena-native-time-loading-close');
+		loadingOverlay.append(loadingClose);
+		loadingOverlay.querySelector('.pena-native-time-loading-retry').addEventListener('click', () => {
+			panel._penaTimeInitialization.error = '';
+			_requestDialogTimeVisibleRange({ force:true });
+		});
+		const continueWithoutTotal = document.createElement('button');
+		continueWithoutTotal.type = 'button';
+		continueWithoutTotal.className = 'pena-native-time-loading-continue';
+		continueWithoutTotal.textContent = 'Открыть без итога';
+		continueWithoutTotal.addEventListener('click', () => {
+			const range = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
+			panel._penaTimeIncompleteViewKey = `${_getDialogTimeProjectScopeKey()}:${range.from}:${range.to}`;
+			_queueDialogTimeUiSync();
+		});
+		loadingOverlay.querySelector('.pena-native-time-loading-card').append(continueWithoutTotal);
+		panel.append(loadingOverlay);
 		const restoredTrackerSearch = _getDialogTimeTaskSearchState('tracker');
 		if (restoredTrackerSearch.loading && restoredTrackerSearch.query.trim() && !restoredTrackerSearch.selectedTask) {
 			_scheduleDialogTimeManualSearch(restoredTrackerSearch.query, 'tracker');
@@ -17393,7 +17509,7 @@ if (_presetChannel) {
 			const range = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
 			if (_readDialogTimeProjectPreference()) {
 				_scheduleDialogTimeBootstrap();
-				_loadDialogTimeRange(range).catch(() => {});
+				_requestDialogTimeVisibleRange();
 			} else _openDialogTimeProjectSettings(panel);
 			_queueDialogTimeUiSync();
 		}).catch(error => {

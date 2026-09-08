@@ -32,11 +32,18 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm exec playwright install chromium
 
-      - name: Run all regressions
+      - name: Run release regression checks
         shell: pwsh
         env:
           PENA_TEST_FAIL_FAST: '1'
-        run: pnpm test
+        run: |
+          $profile = (Get-Content update.json -Raw | ConvertFrom-Json).verification_profile
+          if ($profile -eq 'time-focused') {
+            $env:PENA_TEST_PROFILE = 'time-focused'
+            $env:PENA_TEST_SUITES = (Get-Content tests/time-focused-suites.json -Raw | ConvertFrom-Json) -join ','
+          } elseif ($profile -and $profile -ne 'full') { throw "Unknown verification profile: $profile" }
+          pnpm test
+          exit $LASTEXITCODE
 
       - name: Verify project context
         shell: pwsh
@@ -241,12 +248,10 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' \
-            'Reads the current user elapsed journal in bounded pages where the portal supports it; unchanged views reuse the cache and changed tasks refresh individually.' \
-            'Preserves confirmed totals, contacts and the running timer when saving project selection. Qualified contact tasks can receive time outside selected projects after fresh access validation.' \
-            'Manual time entry waits for a busy accounting lock without losing the click or admitting duplicates; contacts during the wait remain pending.' \
-            'Revalidates a stale eligibility response once for all waiting actions. Deferred autofocus respects the duration field already selected by the user.' \
-            'Sorts contacts by pending contact count and avoids repeated journal reads during task search. Adds a separately prepared Chrome edition with explicit portal permissions.' \
-            'All 71 functional, concurrency, browser, layout and performance suites gate this release, including project-switch resets and a 4149-task journal fixture.' \
+            'Date changes cancel obsolete elapsed-read continuations; revisiting a loaded date reuses its verified cache.' \
+            'The time panel blurs and blocks incomplete results until loading finishes. Errors offer retry or an explicit continuation without a total, preserving access to projects and the timer.' \
+            'Contact task IDs are canonicalized; task links in message previews and arbitrary message numbers no longer determine the contacted task.' \
+            'This update uses the explicit time-focused verification profile: date navigation, loading recovery, contacts, elapsed readers and package integrity. It does not claim a full extension regression run.' \
             'Controlled tests are not a live Bitrix latency measurement. The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \
             'Includes Windows EXE and Universal macOS DMG for Intel and Apple Silicon.' \
             > release-notes.md

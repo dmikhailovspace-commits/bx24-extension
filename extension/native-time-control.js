@@ -193,9 +193,13 @@
 		};
 	}
 
+	function normalizeContactTaskId(value) {
+		const raw = String(value ?? '').trim();
+		return /^\d+$/.test(raw) ? raw.replace(/^0+/, '') : '';
+	}
+
 	function normalizeVisitedTask(task = {}) {
-		const rawTaskId = String(task.taskId ?? task.id ?? '').trim();
-		const taskId = /^\d+$/.test(rawTaskId) ? rawTaskId : '';
+		const taskId = normalizeContactTaskId(task.taskId ?? task.id);
 		const dialogId = String(task.dialogId || '').trim();
 		// Time can only be written to a Bitrix task. Legacy dialog-only activity
 		// is discarded here so ordinary chats never enter activity or history.
@@ -434,7 +438,8 @@
 	}
 
 	function markActivityAccounted(items = [], activityId = '', accountedAt = Date.now(), options = {}) {
-		const id = String(activityId || '');
+		const taskId = /^task:\d+$/.test(String(activityId || '')) ? normalizeContactTaskId(String(activityId).slice(5)) : '';
+		const id = taskId ? `task:${taskId}` : '';
 		const at = Math.max(0, Number(accountedAt) || Date.now());
 		const merged = mergeVisitedTasks(items);
 		if (!merged.some(item => item.activityId === id) && /^task:\d+$/.test(id)) {
@@ -459,12 +464,12 @@
 
 	function selectUntrackedVisits(visits = [], trackedTasks = [], { localReceipts = [] } = {}) {
 		const trackedById = new Map((Array.isArray(trackedTasks) ? trackedTasks : [])
-			.map(task => [String(task?.taskId || ''), task])
+			.map(task => [normalizeContactTaskId(task?.taskId), task])
 			.filter(([taskId]) => taskId));
 		return mergeVisitedTasks(visits).map(task => {
 			const tracked = trackedById.get(task.taskId);
 			const localEntries = new Map(task.accountedEntries.map(entry => [entry.id, entry.cutoffAt]));
-			for (const entry of localReceipts) if (String(entry.taskId) === task.taskId && !localEntries.has(String(entry.id))) localEntries.set(String(entry.id), Number(entry.cutoffAt) || 0);
+			for (const entry of localReceipts) if (normalizeContactTaskId(entry.taskId) === task.taskId && !localEntries.has(String(entry.id))) localEntries.set(String(entry.id), Number(entry.cutoffAt) || 0);
 			let cutoffAt = task.accountedAt;
 			for (const entry of tracked?.recordedEntries || []) {
 				cutoffAt = Math.max(cutoffAt, localEntries.get(String(entry.id)) || Number(entry.contactCutoffAt) || Number(entry.recordedAt) || 0);

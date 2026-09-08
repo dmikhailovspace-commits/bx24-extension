@@ -1,0 +1,13 @@
+[
+  "chrome-package-regression.mjs",
+  "chrome-portal-worker-regression.mjs",
+  "chrome-popup-regression.mjs",
+  "chrome-browser-regression.mjs",
+  "native-time-control.mjs",
+  "time-global-elapsed-regression.mjs",
+  "time-refresh-regression.mjs",
+  "time-contact-journal-regression.mjs",
+  "time-contact-followup-regression.mjs",
+  "time-date-navigation-regression.mjs",
+  "release-integrity.mjs"
+]

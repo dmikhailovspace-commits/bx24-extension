@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "7.5.123",
+  "version": "7.5.124",
   "release_date": "2026-09-08",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.123",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.123",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.124",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.124",
   "extension_files": [
-    "worker-v7_5_123.js",
+    "worker-v7_5_124.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,6 +33,7 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.123/extension/injected.js",
-  "changelog": "v7.5.123: removes the persistent time loading bar; preserves confirmed totals on background read failures; handles numeric Bitrix errors with a bounded compatibility probe; skips confirmed empty journals in fallback; retains actionable write errors"
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.124/extension/injected.js",
+  "changelog": "v7.5.124: cancels obsolete date reads; masks incomplete totals behind a blocking time-panel loader; preserves recovery and timer access after read errors; canonicalizes contact task IDs and excludes task links from message previews; focused time verification",
+  "verification_profile": "time-focused"
 }

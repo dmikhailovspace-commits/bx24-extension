@@ -10,9 +10,15 @@ const json = path => JSON.parse(read(path));
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const { files, manifest, sourceHashes } = chromeFiles();
 const expectedSuites = [...read('tests/run-all-regressions.mjs').toString().match(/const suites = \[([\s\S]*?)\];/)[1].matchAll(/'([^']+\.mjs)'/g)].map(match => match[1]).sort();
+const focused = process.argv.includes('--time-focused');
+const acceptedSuites = focused ? json('tests/time-focused-suites.json').sort() : expectedSuites;
 const full = json('tests/artifacts/regression-summary.json');
 assert.equal(full.state, 'passed', 'Full pnpm test gate must finish successfully');
-assert.deepEqual(full.suites.map(suite => suite.suite).sort(), expectedSuites, 'No selected/partial gate can certify a release');
+assert.deepEqual(full.suites.map(suite => suite.suite).sort(), acceptedSuites, 'Gate must match the explicit verification profile');
+if (focused) {
+  assert.equal(full.validationScope, 'time-focused');
+  assert.equal(json('update.json').verification_profile, 'time-focused');
+}
 assert.ok(full.suites.every(suite => suite.status === 'PASS'));
 assert.deepEqual(full.sourceSha256, sourceHashes, 'Desktop source changed since full gate');
 const directory = json('chrome-release/build-manifest.json');
@@ -54,7 +60,8 @@ for (const image of screenshots.screenshots) {
 const result = {
   status: 'PASS', version: manifest.version, checkedAt: new Date().toISOString(),
   zip: directory.zip, bytes: zip.length, sha256: hash(zip), files: files.size,
-  fullGate: { suites: full.suites.length, durationMs: full.durationMs, startedAt: full.startedAt, sourceSha256: full.sourceSha256, verificationSource: full.verificationSource || { kind: 'local' } },
+  verificationScope: focused ? 'time-focused' : 'full',
+  gate: { suites: full.suites.length, durationMs: full.durationMs, startedAt: full.startedAt, sourceSha256: full.sourceSha256, verificationSource: full.verificationSource || { kind: 'local' } },
   chrome: { workerScenarios: worker.phases.length, popupScenarios: popup.phases.length, browserScenarios: browser.phases.length },
   screenshots: screenshots.screenshots,
   limitations: { liveBitrixTested: false, nativeChromePermissionDialogTested: false, storeSubmitted: false },

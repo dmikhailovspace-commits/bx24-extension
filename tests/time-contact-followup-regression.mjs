@@ -52,6 +52,32 @@ check('a local immutable receipt wins over server creation time and duplicate ac
  const tracked=model.aggregateElapsedItems([{ID:'20',TASK_ID:'10',SECONDS:1800,CREATED_DATE:'2026-09-07T12:00:00+03:00',DATE_START:'2026-09-07T10:00:45+03:00'}]);
  assert.equal(model.selectUntrackedVisits(rows,tracked.tasks)[0]?.pendingContacts,1);assert.equal(rows[0].accountedAt,start+10000);return{pendingContacts:1,cutoffAt:rows[0].accountedAt};
 });
+check('legacy numeric task aliases become one contact row without merging same-name tasks',()=>{
+ const rows=model.mergeVisitedTasks([
+  {taskId:'0010',title:'Общий заголовок',visitedAt:start,lastQualifiedAt:start,visits:2},
+  {taskId:10,title:'Общий заголовок',visitedAt:start+30000,lastQualifiedAt:start+30000,visits:2},
+  {taskId:'11',title:'Общий заголовок',visitedAt:start,lastQualifiedAt:start,visits:1},
+  {taskId:'000',title:'Invalid',visitedAt:start,lastQualifiedAt:start,visits:99}
+ ]);
+ const result=model.selectUntrackedVisits(rows,[{taskId:10,seconds:1800}]);
+ assert.deepEqual(result.map(row=>[row.taskId,row.pendingContacts,row.trackedSeconds]),[['10',2,1800],['11',1,0]]);
+ assert.deepEqual(model.mergeVisitedTasks(rows),rows,'canonical migration must be idempotent');
+ return{rows:result.length,zeroIds:0,distinctSameNameTasks:2};
+});
+check('alias accounting receipt consumes one task and keeps subsequent contacts sorted by count',()=>{
+ let rows=event([], 'before',0);rows=model.markActivityAccounted(rows,'task:0010',start+10000,{itemId:'20'});
+ rows=event(rows,'after',40);rows=model.applyQualifiedContact(rows,{taskId:'11',eventId:'other',qualifiedAt:start+60000});
+ rows=model.applyQualifiedContact(rows,{taskId:'11',eventId:'other-2',qualifiedAt:start+90000});
+ const result=model.selectUntrackedVisits(rows,[{taskId:'0010',seconds:1800}]);
+ assert.deepEqual(result.map(row=>[row.taskId,row.pendingContacts,row.trackedSeconds]),[['11',2,0],['10',1,1800]]);
+ return{order:result.map(row=>row.taskId),pending:[2,1]};
+});
+check('replayed contact event under an alias cannot create a second task or increment visits',()=>{
+ let rows=event([], 'same',0);
+ rows=model.applyQualifiedContact(rows,{taskId:'0010',eventId:'same',qualifiedAt:start,reason:'message'});
+ assert.equal(rows.length,1);assert.equal(rows[0].visits,1);assert.equal(model.selectUntrackedVisits(rows)[0].pendingContacts,1);
+ return{rows:1,contacts:1};
+});
 mkdirSync('tests/artifacts',{recursive:true});
 writeFileSync(process.env.PENA_CONTACT_REPORT || 'tests/artifacts/time-contact-followup-report.json',JSON.stringify({phases},null,2));
 console.log(JSON.stringify(phases,null,2));
