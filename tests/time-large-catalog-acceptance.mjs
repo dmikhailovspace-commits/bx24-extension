@@ -17,7 +17,7 @@ function fixture(count=4149){
   _dialogTimeCache:new Map(),_dialogTimeInFlight:new Map(),_dialogTimeRangeRevisions:new Map(),_dialogTimeTaskRevisions:new Map(),
   _dialogTimeForcedRefreshes:new Map(),_dialogTimeRangeRechecks:new Map(),_dialogTimePanelRefreshes:new Map(),
   _dialogTimeCatalogCursor:999000,_dialogTimeCatalogScope:'portal:7',_DIALOG_TIME_LOGGED_TTL_MS:10000,_DIALOG_TIME_EMPTY_TTL_MS:120000,_DIALOG_TIME_FIRST_WAVE_SIZE:16,_DIALOG_TIME_WAVE_SIZE:50,
-  _getCurrentBitrixUserId:()=> '7',_getDialogNativeSharedAuditScopeKey:()=>s.scope,
+  _getCurrentBitrixUserId:()=> '7',_getDialogNativeSharedAuditScopeKey:()=>s.scope,_getDialogTimeIdentityScopeKey:()=>s.scope,
   // Configured, committed scope is the premise of this elapsed-policy oracle.
   // The mandatory settings/catalog gate has its own actual-helper acceptance suite.
   _getDialogTimeProjectScopeKey:()=>s.scope,_dialogTimeProjectTaskIds:new Set(ids),

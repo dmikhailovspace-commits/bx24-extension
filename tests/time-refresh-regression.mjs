@@ -29,7 +29,7 @@ function fixture(count = 2) {
   _dialogTimeAcknowledgedManualMemory:null, _dialogTimeAccountingRecoveryTimer:null, _dialogTimeAccountingRecoveryAttempt:0, _dialogTimeAccountingRecoveryPromise:null,
   _dialogTimeManualRetryConfirmKey:'', _dialogTimeTrackerRetryConfirmKey:'', _PENA_TIME_MANUAL_DRAFT_KEY:'manual', _PENA_TIME_TRACKER_KEY:'tracker', _dialogTimePortalUtcOffsetMinutes:0,
   _dialogTimeDeleteConfirmEntryId:'', _dialogTimeEditingEntryId:'',
-  _getCurrentBitrixUserId:()=> '7', _ensureCurrentBitrixUserId:async()=> '7', _getDialogNativeSharedAuditScopeKey:()=>state.scope,
+  _getCurrentBitrixUserId:()=> '7', _ensureCurrentBitrixUserId:async()=> '7', _getDialogNativeSharedAuditScopeKey:()=>state.scope,_getDialogTimeIdentityScopeKey:()=>state.scope,
   // CRUD/elapsed tests assume an explicitly configured scope. They do not certify
   // preference persistence or the initial catalog gate; the scope suite does that.
   _getDialogTimeProjectScopeKey:()=>state.scope,_isDialogTimeProjectTask:id=>state.taskIds.includes(String(id)),
@@ -234,7 +234,7 @@ try {
   class TitleDate extends Date { static now(){return state.clock;} }
   const api={Date:TitleDate,Promise,document:{visibilityState:'visible'},navigator:{onLine:true},_dialogControlNativeWorkspaceTab:'time',
    _dialogTimeTitleLoadPromise:null,_dialogTimeTitleLoadQueued:false,_dialogTimeTaskTitles:new Map(known?Array.from({length:50},(_,i)=>[String(i+1),'Task '+(i+1)]):[]),_dialogTimeTaskTitleAttempted:new Map(),
-   _getDialogNativeSharedAuditScopeKey:()=>state.scope,_getDialogTimeProjectScopeKey:()=>state.scope,_isDialogTimeProjectTask:()=>true,_readDialogTimeVisits:()=>[],_findDialogTimeTaskItem:()=>{state.nativeFinds++;return null;},_isDialogTimePlaceholderTaskTitle:(id,title)=>!title,
+   _getDialogNativeSharedAuditScopeKey:()=>state.scope,_getDialogTimeIdentityScopeKey:()=>state.scope,_getDialogTimeProjectScopeKey:()=>state.scope,_isDialogTimeProjectTask:()=>true,_readDialogTimeVisits:()=>[],_findDialogTimeTaskItem:()=>{state.nativeFinds++;return null;},_isDialogTimePlaceholderTaskTitle:(id,title)=>!title,
    _getFreshDialogTimeTaskEligibility:()=>null,_queueDialogTimeUiSync:()=>{},_sleepDialogControl:async()=>{},
    _rememberDialogTimeTaskEligibility:(id,data)=>{state.commits.push(id);api._dialogTimeTaskTitles.set(id,data.task.title);},
    _callBxRestPagesFast:async(jobs,timeout,options)=>{assert.equal(options.isCurrent(),true);state.batches.push(jobs.map(j=>j.params.taskId));if(state.gate)await state.gate.promise;

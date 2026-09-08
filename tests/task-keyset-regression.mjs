@@ -25,7 +25,7 @@ function setup({count=100,deleteAfterFirst=false,ignoreCursor=false,reverse=fals
  };
  context=vm.createContext({scope:'portal:7',Date,Map,Set,Promise,
   setTimeout:()=>1,clearTimeout:()=>{},
-  _getDialogNativeSharedAuditScopeKey:()=>context.scope,
+  _getDialogNativeSharedAuditScopeKey:()=>context.scope,_getDialogTimeIdentityScopeKey:()=>context.scope,
   // Pagination-only oracle: the user has saved project 10; actual preference
   // normalization, persistence and generation fencing have their own suite.
   _getDialogTimeProjectScopeKey:()=>context.scope,_getDialogTimeProjectFilter:()=>({GROUP_ID:['10']}),

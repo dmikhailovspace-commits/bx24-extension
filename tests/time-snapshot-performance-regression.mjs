@@ -20,7 +20,7 @@ function fixture(count=51){
   _dialogTimeCache:new Map(),_dialogTimeInFlight:new Map(),_dialogTimeRangeRevisions:new Map(),_dialogTimeTaskRevisions:new Map(),
   _dialogTimeForcedRefreshes:new Map(),_dialogTimeRangeRechecks:new Map(),_dialogTimePanelRefreshes:new Map(),
   _dialogTimeCatalogCursor:100,_dialogTimeCatalogScope:state.scope,_DIALOG_TIME_FIRST_WAVE_SIZE:16,_DIALOG_TIME_WAVE_SIZE:50,
-  _getCurrentBitrixUserId:()=>state.userId,_getDialogNativeSharedAuditScopeKey:()=>state.scope,_isDialogTimeFrameActive:()=>state.active&&c.document.visibilityState!=='hidden',
+  _getCurrentBitrixUserId:()=>state.userId,_getDialogNativeSharedAuditScopeKey:()=>state.scope,_getDialogTimeIdentityScopeKey:()=>state.scope,_isDialogTimeFrameActive:()=>state.active&&c.document.visibilityState!=='hidden',
   // These clock/CPU oracles start with a saved project choice; the separate
   // project-scope suite verifies actual persistence and catalog membership.
   _getDialogTimeProjectScopeKey:()=>state.scope,

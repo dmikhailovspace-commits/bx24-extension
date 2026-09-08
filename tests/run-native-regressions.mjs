@@ -1170,11 +1170,11 @@ try {
 	assert.equal(migratedSelfStorage.draft?.taskId, '303', `Legacy draft was not migrated: ${JSON.stringify(migratedSelfStorage)}`);
 	assert.notEqual(migratedSelfStorage.lease?.frameId, 'dead-frame', `A dead self lease was migrated: ${JSON.stringify(migratedSelfStorage)}`);
 
-	// A progressive first page is useful immediately; completeness belongs to
-	// the later keyset tail and its coalesced elapsed-range reconciliation.
+	// Project membership becomes authoritative only after the keyset tail.
+	// The first metadata page must not start elapsed reads or display a false zero.
 	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=tasks&taskCatalogRows=4&taskPageCap=5&taskDelay=350`);
-	activePhase = 'progressive time catalog: first page while tail response is held';
+	activePhase = 'atomic project catalog: first page while tail response is held';
 	await page.locator('.task-host .pena-native-time-button').waitFor({ state: 'visible' });
 	await page.evaluate(() => {
 		const original = window.BX.rest.callMethod;
@@ -1189,14 +1189,19 @@ try {
 		};
 	});
 	await page.locator('.task-host .pena-native-time-button').click();
-	await page.waitForFunction(() => window.delayedTimeCatalogTail.length > 0 &&
-		!document.querySelector('.pena-native-time-panel')?.classList.contains('--loading') &&
-		document.querySelector('.pena-native-time-total-value')?.textContent === '1 ч 30 мин', null, { timeout: 10000 });
-	const firstPageTimeTasks = await page.evaluate(() => [...new Set(window.timeRestCalls.map(params => String(params?.[0] || '')))]);
-	assert.ok(firstPageTimeTasks.includes('101') && firstPageTimeTasks.includes('102'),
-		`The first task page did not paint usable cached totals: ${JSON.stringify(firstPageTimeTasks)}`);
-	assert.equal(firstPageTimeTasks.includes('50000'), false, 'A held tail task appeared before its catalog response');
-	activePhase = 'progressive time catalog: released tail adds missing elapsed tasks';
+	await page.waitForFunction(() => window.delayedTimeCatalogTail.length > 0, null, { timeout: 10000 });
+	await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+	const heldProjectCatalog = await page.evaluate(() => ({
+		taskIds:[...new Set(window.timeRestCalls.map(params => String(params?.[0] || '')))],
+		total:document.querySelector('.pena-native-time-total-value')?.textContent,
+		state:document.querySelector('.pena-native-time-read-status')?.dataset.state,
+		label:document.querySelector('.pena-native-time-read-label')?.textContent
+	}));
+	assert.deepEqual(heldProjectCatalog.taskIds,[],`Incomplete project membership started elapsed reads: ${JSON.stringify(heldProjectCatalog)}`);
+	assert.equal(heldProjectCatalog.total,'—');
+	assert.equal(heldProjectCatalog.state,'loading');
+	assert.equal(heldProjectCatalog.label,'Загружаем список задач');
+	activePhase = 'atomic project catalog: released tail loads every selected task';
 	await page.evaluate(() => {
 		window.releaseTimeCatalogTail = true;
 		window.delayedTimeCatalogTail.splice(0).forEach(deliver => deliver());
@@ -1217,6 +1222,8 @@ try {
 		`Delayed task catalog did not load both pages: ${JSON.stringify(delayedCatalogLoad)}`);
 	assert.ok(delayedCatalogLoad.taskIds.includes('50000') && delayedCatalogLoad.taskIds.includes('102'),
 		`Elapsed totals did not reconcile after the catalog tail: ${JSON.stringify(delayedCatalogLoad)}`);
+	assert.deepEqual(delayedCatalogLoad.taskIds.slice().sort(),['101','102','303','404','405','406','50000','50001','50002','50003'].sort(),
+		`Completed project catalog omitted elapsed history: ${JSON.stringify(delayedCatalogLoad)}`);
 	await page.locator('.pena-native-time-panel').press('Escape');
 
 	// A cached Y/N flag expires. Stale N must be rechecked instead of permanently

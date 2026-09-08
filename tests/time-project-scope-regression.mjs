@@ -16,13 +16,13 @@ const task=(id,group='10')=>({ID:String(id),TITLE:'Task '+id,GROUP_ID:group,ALLO
 const report={sourceSha:createHash('sha256').update(source).digest('hex'),phases:[],limitations:'Production helpers in VM with controlled SDK/storage; no live portal, DOM settings clicks or physical device timing.'};
 async function phase(name,fn){try{report.phases.push({name,status:'PASS',evidence:await fn()});}catch(error){report.phases.push({name,status:'FAIL',error:error.stack});}}
 function fixture(storage=new Map()){
- const state={scope:'portal.test~7',now:1000000,storage,storageFailure:false,rows:[...Array.from({length:101},(_,i)=>task(i+1)),task(201,'20'),task(202,'20'),task(301,'0')],calls:[],elapsed:[],catalogHook:null,elapsedHook:null,ignoredFilter:false};
+ const state={scope:'portal.test~7',nativeScope:null,resolvedUser:null,now:1000000,storage,storageFailure:false,rows:[...Array.from({length:101},(_,i)=>task(i+1)),task(201,'20'),task(202,'20'),task(301,'0')],calls:[],elapsed:[],catalogHook:null,elapsedHook:null,ignoredFilter:false};
  class Clock extends Date{static now(){return state.now++;}}
  const range={from:'2026-09-07',to:'2026-09-07'};
  const c=vm.createContext({Date:Clock,Map,Set,Promise,clearTimeout:()=>{},setTimeout:fn=>{queueMicrotask(fn);return 0;},
-  document:{visibilityState:'visible'},navigator:{onLine:true},_PENA_TIME_CONTROL:model,
+  location:{get host(){return state.scope.split('~')[0];}},document:{visibilityState:'visible'},navigator:{onLine:true},_PENA_TIME_CONTROL:model,
   localStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>{if(state.storageFailure)throw new Error('storage denied');storage.set(key,value);}},
-  _getDialogNativeSharedAuditScopeKey:()=>state.scope,_getCurrentBitrixUserId:()=>state.scope.split('~').at(-1),_isDialogTimeFrameActive:()=>true,
+  _getDialogNativeSharedAuditScopeKey:()=>state.nativeScope??state.scope,_getCurrentBitrixUserId:()=>state.resolvedUser??state.scope.split('~').at(-1),_isDialogTimeFrameActive:()=>true,
   _dialogTimeProjectPreference:null,_dialogTimeProjectGeneration:0,_dialogTimeProjectTaskIds:new Set(),_dialogTimeProjectCatalogOwner:null,_dialogTimeProjectListOwner:null,
   _dialogTaskCatalogLastResult:null,_dialogTaskCatalogScopeKey:'',_dialogTaskCatalogFetchedAt:0,_dialogTaskCatalogSyncFlights:new Map(),
   _dialogTaskCatalogSyncPromise:null,_dialogTaskCatalogSyncScopeKey:'',_dialogTaskCatalogComplete:false,
@@ -60,7 +60,7 @@ function fixture(storage=new Map()){
    if(state.elapsedHook)await state.elapsedHook(requested);return result;
   }
  });
- const names=['_syncDialogTaskCatalog','_normalizeDialogTimeProjectPreference','_getDialogTimeProjectStorageKey','_readDialogTimeProjectPreference','_getDialogTimeProjectScopeKey','_getDialogTimeProjectFilter','_matchesDialogTimeProjectTask','_isDialogTimeProjectTask','_rememberDialogTimeProjectTask','_pruneDialogTimeProjectSnapshots','_saveDialogTimeProjectPreference','_getDialogTimeReusableNativeCatalog','_ensureDialogTimeProjectCatalog','_getDialogTaskKeysetCursor','_getDialogTimeWorkingTaskIds','_getDialogTimeCacheKey','_getDialogTimeRecord','_setDialogTimeCacheRecord','_hasDialogTimeVerifiedData','_loadDialogTimeRange','_scheduleDialogTimeBootstrap','_getDialogTimeLocalTaskSearchResults','_buildDialogTimeWriteFields','_applyDialogTimeOptimisticEntry'];
+ const names=['_getDialogTimeIdentityScopeKey','_syncDialogTaskCatalog','_normalizeDialogTimeProjectPreference','_getDialogTimeProjectStorageKey','_readDialogTimeProjectPreference','_getDialogTimeProjectScopeKey','_getDialogTimeProjectFilter','_matchesDialogTimeProjectTask','_isDialogTimeProjectTask','_rememberDialogTimeProjectTask','_pruneDialogTimeProjectSnapshots','_saveDialogTimeProjectPreference','_getDialogTimeReusableNativeCatalog','_ensureDialogTimeProjectCatalog','_getDialogTaskKeysetCursor','_getDialogTimeWorkingTaskIds','_getDialogTimeCacheKey','_getDialogTimeRecord','_setDialogTimeCacheRecord','_hasDialogTimeVerifiedData','_loadDialogTimeRange','_scheduleDialogTimeBootstrap','_getDialogTimeLocalTaskSearchResults','_buildDialogTimeWriteFields','_applyDialogTimeOptimisticEntry'];
  vm.runInContext(names.map(extract).join('\n'),c);
  return {state,c,range,save:value=>c._saveDialogTimeProjectPreference(value),load:()=>{const promise=c._loadDialogTimeRange(range);promise.catch(()=>{});return promise;},record:()=>c._getDialogTimeRecord(range)};
 }
@@ -69,6 +69,30 @@ await phase('unconfigured startup and direct range requests perform no catalog o
  const f=fixture();await f.c._scheduleDialogTimeBootstrap();await f.load();await f.load();
  assert.equal(f.state.calls.length,0);assert.equal(f.state.elapsed.length,0);assert.equal(f.record(),null);assert.equal(f.c._getDialogTimeProjectScopeKey(),'');
  return {catalogRequests:0,elapsedRequests:0};
+});
+await phase('resolved time identity loads selected and all tasks without a native Messenger user',async()=>{
+ for(const all of [false,true]){
+  const f=fixture();f.state.nativeScope='';f.state.resolvedUser='7';
+  f.save(all?{version:1,all:true,ids:[],includeUnassigned:true}:choice());
+  assert.equal(f.c._getDialogTimeProjectStorageKey(),'pena.timeProjects.v1.portal.test~7');
+  const gate=deferred();let held=false;f.state.catalogHook=async request=>{if(request.params.filter['>ID']===100){held=true;await gate.promise;}};
+  const read=f.load();await until(()=>held);assert.equal(f.state.elapsed.length,0);assert.equal(f.c._dialogTaskCatalogSyncFlights.size,0);
+  gate.resolve();await read;assert.equal(f.state.calls.length,3);assert.equal(f.state.elapsed.length,all?104:101);assert.equal(new Set(f.state.elapsed).size,all?104:101);
+  assert.equal(f.record().data.totalSeconds,all?6240:6060);assert.equal(f.c._dialogTaskCatalogLastResult,null);
+  const key=f.c._getDialogTimeProjectScopeKey();f.state.nativeScope='portal.test~7';await f.load();
+  assert.equal(f.c._getDialogTimeProjectScopeKey(),key);assert.equal(f.state.calls.length,3);assert.equal(f.state.elapsed.length,all?104:101);
+ }
+ return {nativeIdentityAbsent:true,selectedElapsed:101,allElapsed:104,earlyElapsed:0,lateNativeIdentityRereads:0};
+});
+await phase('unresolved time identity stays unconfigured and foreign native proof cannot certify a time catalog',async()=>{
+ const unresolved=fixture();unresolved.state.nativeScope='portal.test~99';unresolved.state.resolvedUser='';
+ assert.equal(unresolved.c._getDialogTimeProjectStorageKey(),'');assert.throws(()=>unresolved.save(choice()));await unresolved.load();assert.equal(unresolved.state.calls.length,0);
+ for(const all of [false,true]){
+  const f=fixture();f.state.nativeScope='portal.test~99';f.state.resolvedUser='7';f.save(all?{version:1,all:true,ids:[],includeUnassigned:true}:choice());
+  f.c._dialogTaskCatalogLastResult={complete:true,rows:[task(9999)],startedAt:999800};f.c._dialogTaskCatalogScopeKey=f.state.nativeScope;f.c._dialogTaskCatalogFetchedAt=999900;
+  await f.load();assert.equal(f.state.calls.length,3);assert.equal(f.state.elapsed.length,all?104:101);assert(!f.state.elapsed.includes('9999'));assert.equal(f.c._dialogTaskCatalogLastResult.rows[0].ID,'9999');
+ }
+ return {unknownIdentityRequests:0,foreignProofVariants:2,foreignTasksAccepted:0};
 });
 await phase('save persists before activation; reload preserves choice; failures and malformed data remain unconfigured',async()=>{
  const f=fixture();f.state.storageFailure=true;assert.throws(()=>f.save(choice()),/storage denied/);assert.equal(f.c._getDialogTimeProjectScopeKey(),'');await f.load();assert.equal(f.state.elapsed.length,0);

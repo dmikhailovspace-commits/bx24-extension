@@ -29,7 +29,7 @@ function fixture() {
     document: { visibilityState: 'visible' },
     _dialogTimeTrackerTick: null, _dialogControlNativeSwitcherNode: switcher, _dialogControlNativeWorkspaceTab: 'time',
     _readDialogTimeTracker: () => state.tracker,
-    _getDialogTimeTodayKey: () => state.day, _getDialogNativeSharedAuditScopeKey: () => state.scope,
+    _getDialogTimeTodayKey: () => state.day, _getDialogNativeSharedAuditScopeKey: () => state.scope,_getDialogTimeIdentityScopeKey:()=>state.scope,
     _queueDialogTimeUiSync: () => { state.syncs++; },
     setInterval: callback => { state.intervals++; state.tick = callback; return 1; },
     clearInterval: () => { state.clears++; state.tick = null; }

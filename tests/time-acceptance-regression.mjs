@@ -48,7 +48,7 @@ function loadFixture() {
     _isDialogTimeProjectTask: id => eligibility.has(String(id)),
     _ensureDialogTimeProjectCatalog: async () => true,
     _DIALOG_TIME_LOGGED_TTL_MS: 10000, _DIALOG_TIME_EMPTY_TTL_MS: 120000, _DIALOG_TIME_FIRST_WAVE_SIZE: 16, _DIALOG_TIME_WAVE_SIZE: 50,
-    _PENA_TIME_CACHE_TTL_MS: 120000, _getCurrentBitrixUserId: () => '7', _getDialogNativeSharedAuditScopeKey: () => state.scope,
+    _PENA_TIME_CACHE_TTL_MS: 120000, _getCurrentBitrixUserId: () => '7', _getDialogNativeSharedAuditScopeKey: () => state.scope,_getDialogTimeIdentityScopeKey:()=>state.scope,
     _dialogTimeTaskEligibility: eligibility, _dialogTimeTaskTitles: new Map([...eligibility.keys()].map(id => [id, `Task ${id}`])),
     _getDialogTimeTaskEligibilityForDisplay: id => eligibility.get(id) === true,
     _readDialogTimeVisits: () => [], _dialogTimeManualSelectedTask: null, _readDialogTimeTracker: () => null, _getActiveDialogTimeActivity: () => null,

@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.108';
+	window.__ANITREC_RUNNING__ = '7.5.109';
 
-	const VER = '7.5.108';
+	const VER = '7.5.109';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -4563,6 +4563,11 @@
 	let _dialogTimeProjectCatalogError = null;
 	let _dialogTimeProjectCatalogDirty = false;
 	let _dialogTimeProjectListOwner = null;
+	function _getDialogTimeIdentityScopeKey() {
+		const userId = String(_getCurrentBitrixUserId() || '').trim();
+		const portalHost = String(location.host || '').toLowerCase();
+		return portalHost && /^[1-9]\d*$/.test(userId) ? `${portalHost}~${userId}` : '';
+	}
 	function _normalizeDialogTimeProjectPreference(value) {
 		if (value?.version !== 1 || typeof value.all !== 'boolean' || !Array.isArray(value.ids)) return null;
 		const ids = [...new Set(value.ids.map(String).filter(id => /^[1-9]\d*$/.test(id)))].sort((a,b) => Number(a)-Number(b));
@@ -4571,7 +4576,7 @@
 		return { version:1, all:value.all, ids:value.all ? [] : ids, includeUnassigned };
 	}
 	function _getDialogTimeProjectStorageKey() {
-		const scope = _getDialogNativeSharedAuditScopeKey();
+		const scope = _getDialogTimeIdentityScopeKey();
 		return scope ? `pena.timeProjects.v1.${scope}` : '';
 	}
 	function _readDialogTimeProjectPreference() {
@@ -4585,7 +4590,7 @@
 	}
 	function _getDialogTimeProjectScopeKey() {
 		const preference = _readDialogTimeProjectPreference();
-		return preference ? `${_getDialogNativeSharedAuditScopeKey()}:projects:${preference.all ? '*' : preference.ids.join(',')}:${+preference.includeUnassigned}:g${_dialogTimeProjectGeneration}` : '';
+		return preference ? `${_getDialogTimeIdentityScopeKey()}:projects:${preference.all ? '*' : preference.ids.join(',')}:${+preference.includeUnassigned}:g${_dialogTimeProjectGeneration}` : '';
 	}
 	function _getDialogTimeProjectFilter() {
 		const preference = _readDialogTimeProjectPreference();
@@ -4652,6 +4657,8 @@
 	}
 	function _getDialogTimeReusableNativeCatalog() {
 		const result=_dialogTaskCatalogLastResult;
+		const nativeScope = _getDialogNativeSharedAuditScopeKey();
+		if (!nativeScope || nativeScope !== _getDialogTimeIdentityScopeKey()) return null;
 		if (_dialogTaskCatalogScopeKey !== _getDialogNativeSharedAuditScopeKey() || !result?.complete || result.headOnly || Date.now()-_dialogTaskCatalogFetchedAt>60000) return null;
 		if (!Array.isArray(result.rows) || result.rows.some(task => task.GROUP_ID == null && task.groupId == null && task.group?.id == null)) return null;
 		return result.rows;
@@ -4674,7 +4681,8 @@
 		const startedAt = Date.now();
 		const run = (async () => {
 			const preference=_readDialogTimeProjectPreference();
-			if (preference?.all && preference.includeUnassigned && !since) {
+			if (preference?.all && preference.includeUnassigned && !since &&
+				_getDialogNativeSharedAuditScopeKey() === _getDialogTimeIdentityScopeKey()) {
 				// An explicitly unfiltered full catalog has one transport owner in
 				// either startup order. Selected-project and delta reads stay scoped.
 				const reusable = !force && _getDialogTimeReusableNativeCatalog();
@@ -4746,10 +4754,10 @@
 		return run;
 	}
 	async function _loadDialogTimeProjects() {
-		const scope = _getDialogNativeSharedAuditScopeKey();
+		const scope = _getDialogTimeIdentityScopeKey();
 		if (_dialogTimeProjectListOwner?.scope === scope) return _dialogTimeProjectListOwner.promise;
 		const owner = { scope, promise:null };
-		const current = () => !!scope && scope === _getDialogNativeSharedAuditScopeKey();
+		const current = () => !!scope && scope === _getDialogTimeIdentityScopeKey();
 		owner.promise = (async () => {
 			const projects = new Map();
 			let start = 0;
@@ -4772,7 +4780,7 @@
 	function _openDialogTimeProjectSettings(panel) {
 		if (!panel || panel._penaTimeProjectSettings) return;
 		const previous = _readDialogTimeProjectPreference();
-		const scope = _getDialogNativeSharedAuditScopeKey();
+		const scope = _getDialogTimeIdentityScopeKey();
 		if (!scope) return;
 		const state = { scope, all:previous?.all === true, ids:new Set(previous?.ids || []), includeUnassigned:previous?.includeUnassigned === true, projects:[], loaded:false };
 		panel._penaTimeProjectSettings = state;
@@ -4821,7 +4829,7 @@
 		section.append(title,description,search,all,unassigned,status,list,footer);
 		updateSave();
 		save.addEventListener('click', () => {
-			if (scope !== _getDialogNativeSharedAuditScopeKey()) { status.textContent='Пользователь изменился. Откройте настройки заново.'; return; }
+			if (scope !== _getDialogTimeIdentityScopeKey()) { status.textContent='Пользователь изменился. Откройте настройки заново.'; return; }
 			try {
 				_saveDialogTimeProjectPreference({version:1,all:state.all,ids:[...state.ids],includeUnassigned:state.includeUnassigned});
 				close();
@@ -4833,7 +4841,7 @@
 		const load = () => {
 			status.textContent='Загружаем проекты…'; status.classList.remove('--error');
 			_loadDialogTimeProjects().then(projects => {
-				if (panel._penaTimeProjectSettings !== state || scope !== _getDialogNativeSharedAuditScopeKey()) return;
+				if (panel._penaTimeProjectSettings !== state || scope !== _getDialogTimeIdentityScopeKey()) return;
 				state.projects=projects; state.loaded=true;
 				// Retain saved inaccessible IDs visibly so opening settings cannot
 				// silently remove a previous selection.
@@ -4879,7 +4887,7 @@
 	}
 	function _publishDialogTimeTaskIndexRows(rows = []) {
 		let changed = false;
-		const scope = _getDialogNativeSharedAuditScopeKey();
+		const scope = _getDialogTimeIdentityScopeKey();
 		for (const task of Array.isArray(rows) ? rows : []) {
 			const taskId = String(task?.ID ?? task?.id ?? '').trim();
 			if (!/^\d+$/.test(taskId)) continue;
@@ -9268,14 +9276,14 @@ function _rememberTaskMetaForDialogControlItem(item, meta) {
 		const fresh = _getFreshDialogTimeTaskEligibility(id);
 		if (fresh != null && options.force !== true) return Promise.resolve(fresh);
 		if (_dialogTimeTaskEligibilityInFlight.has(id)) return _dialogTimeTaskEligibilityInFlight.get(id);
-		const scope = _getDialogNativeSharedAuditScopeKey();
+		const scope = _getDialogTimeIdentityScopeKey();
 		const projectScope = _getDialogTimeProjectScopeKey();
 		const revision = _dialogTimeTaskRevisions.get(id) || 0;
 		const request = _callBxRestMethod('tasks.task.get', {
 			taskId: id,
 			select: ['ID', 'TITLE', 'CHAT_ID', 'GROUP_ID', 'ALLOW_TIME_TRACKING']
 		}, options).then(data => {
-			if (scope !== _getDialogNativeSharedAuditScopeKey() || revision !== (_dialogTimeTaskRevisions.get(id) || 0)) return null;
+			if (scope !== _getDialogTimeIdentityScopeKey() || revision !== (_dialogTimeTaskRevisions.get(id) || 0)) return null;
 			const enabled = _rememberDialogTimeTaskEligibility(id, data, {projectScope});
 			return enabled == null ? null : enabled === true;
 		})
@@ -13987,9 +13995,9 @@ if (_presetChannel) {
 	}
 
 	async function _withDialogTimeTrackerLock(action) {
-		const scope = _getDialogNativeSharedAuditScopeKey();
+		const scope = _getDialogTimeIdentityScopeKey();
 		const run = () => {
-			if (scope !== _getDialogNativeSharedAuditScopeKey()) return false;
+			if (scope !== _getDialogTimeIdentityScopeKey()) return false;
 			// The other window can release its lock before our storage event arrives.
 			// Re-read persistent state under the lock instead of trusting the 500 ms cache.
 			return action(_readDialogTimeTracker({ fresh: true }));
@@ -14031,7 +14039,7 @@ if (_presetChannel) {
 		}
 		if (_dialogTimeTrackerTick) return;
 		let dayKey = _getDialogTimeTodayKey();
-		let scopeKey = _getDialogNativeSharedAuditScopeKey();
+		let scopeKey = _getDialogTimeIdentityScopeKey();
 		let trackerKey = `${tracker.taskId}:${tracker.startedAt}`;
 		_dialogTimeTrackerTick = setInterval(() => {
 			const currentTracker = _readDialogTimeTracker();
@@ -14043,7 +14051,7 @@ if (_presetChannel) {
 			}
 			if (document.visibilityState === 'hidden') return;
 			const nextDay = _getDialogTimeTodayKey();
-			const nextScope = _getDialogNativeSharedAuditScopeKey();
+			const nextScope = _getDialogTimeIdentityScopeKey();
 			const nextTracker = `${currentTracker.taskId}:${currentTracker.startedAt}`;
 			if (dayKey !== nextDay || scopeKey !== nextScope || trackerKey !== nextTracker) {
 				dayKey = nextDay;
@@ -14223,7 +14231,7 @@ if (_presetChannel) {
 			const value = JSON.parse(localStorage.getItem(key) || 'null') || {};
 			let pending = JSON.parse(localStorage.getItem(`${key}:write-intent`) || 'null');
 			const memory = _dialogTimeAcknowledgedManualMemory;
-			if (memory?.storageKey === key && memory.scope === _getDialogNativeSharedAuditScopeKey() &&
+			if (memory?.storageKey === key && memory.scope === _getDialogTimeIdentityScopeKey() &&
 				_getDialogTimeWriteIntentKey(pending) === _getDialogTimeWriteIntentKey(memory.intent)) pending = memory.intent;
 			return {
 				taskId: String(value.taskId || ''), title:String(value.title || ''), query:String(value.query || value.title || ''),
@@ -14260,14 +14268,14 @@ if (_presetChannel) {
 	}
 
 	async function _withDialogTimeManualWriteLock(action) {
-		const scope = _getDialogNativeSharedAuditScopeKey();
-		const run = () => scope === _getDialogNativeSharedAuditScopeKey() ? action() : undefined;
+		const scope = _getDialogTimeIdentityScopeKey();
+		const run = () => scope === _getDialogTimeIdentityScopeKey() ? action() : undefined;
 		if (navigator.locks?.request) return navigator.locks.request(`pena-time-manual:${scope}`, { ifAvailable:true }, lock => lock ? run() : undefined);
 		return run();
 	}
 
 	async function _finishDialogTimeAcknowledgedManualWrite() {
-		const scope = _getDialogNativeSharedAuditScopeKey();
+		const scope = _getDialogTimeIdentityScopeKey();
 		const storageKey = _getDialogTimeScopedStorageKey(_PENA_TIME_MANUAL_DRAFT_KEY);
 		const draft = _readDialogTimeManualDraft(), intent = draft.pendingWrite;
 		if (intent?.status !== 'acknowledged') return true;
@@ -14275,9 +14283,9 @@ if (_presetChannel) {
 		// Save the server ID before deleting the intent. Recovery can only write
 		// bookkeeping; an acknowledged operation can never become another ADD.
 		if (!_writeDialogTimeManualDraft({ ...draft, pendingWrite: intent }, { storageKey, resolvePendingKey: pendingKey, writeIntent: true })) return false;
-		if (scope !== _getDialogNativeSharedAuditScopeKey()) return false;
+		if (scope !== _getDialogTimeIdentityScopeKey()) return false;
 		if (!await _markDialogTimeTaskAccounted(intent.taskId, intent.contactCutoffAt || intent.attemptedAt, intent.dateKey, { itemId: intent.itemId })) return false;
-		if (scope !== _getDialogNativeSharedAuditScopeKey()) return false;
+		if (scope !== _getDialogTimeIdentityScopeKey()) return false;
 		if (!_writeDialogTimeManualDraft({ ..._readDialogTimeManualDraft(), pendingWrite: null }, { storageKey, resolvePendingKey: pendingKey, writeIntent: true })) return false;
 		if (_dialogTimeAcknowledgedManualMemory?.storageKey === storageKey && _getDialogTimeWriteIntentKey(_dialogTimeAcknowledgedManualMemory.intent) === pendingKey) _dialogTimeAcknowledgedManualMemory = null;
 		_queueDialogTimeUiSync();
@@ -14296,26 +14304,26 @@ if (_presetChannel) {
 
 	function _recoverDialogTimeContactAccounting() {
 		if (_dialogTimeAccountingRecoveryPromise) return _dialogTimeAccountingRecoveryPromise;
-		const scope = _getDialogNativeSharedAuditScopeKey();
+		const scope = _getDialogTimeIdentityScopeKey();
 		_dialogTimeAccountingRecoveryPromise = (async () => {
 			let complete = true;
 			if (_readDialogTimeManualDraft().pendingWrite?.status === 'acknowledged') {
 				const result = await _withDialogTimeManualWriteLock(_finishDialogTimeAcknowledgedManualWrite);
 				if (result !== true) complete = false;
 			}
-			if (scope !== _getDialogNativeSharedAuditScopeKey()) return false;
+			if (scope !== _getDialogTimeIdentityScopeKey()) return false;
 			const tracker = _readDialogTimeTracker();
 			if (tracker?.saveSegments?.some(segment => segment.status === 'saved' && !segment.contactsAccounted) || (tracker?.saveSegments?.length && tracker.saveSegments.every(segment => segment.status === 'saved'))) {
 				let entered = false;
 				await _withDialogTimeTrackerLock(async current => {
 					entered = true;
-					if (!current || scope !== _getDialogNativeSharedAuditScopeKey()) return;
+					if (!current || scope !== _getDialogTimeIdentityScopeKey()) return;
 					for (const segment of current.saveSegments || []) {
 						if (segment.status !== 'saved' || segment.contactsAccounted) continue;
 						segment.contactsAccounted = await _markDialogTimeTaskAccounted(current.taskId, segment.contactsCutoffAt || current.stoppedAt, segment.dateKey, { itemId: segment.itemId }) === true;
 						if (!segment.contactsAccounted) complete = false;
 					}
-					if (scope !== _getDialogNativeSharedAuditScopeKey()) { complete = false; return; }
+					if (scope !== _getDialogTimeIdentityScopeKey()) { complete = false; return; }
 					const settled = current.saveSegments.every(segment => segment.status === 'saved' && segment.contactsAccounted);
 					if (!_writeDialogTimeTracker(settled ? null : current)) complete = false;
 				});
@@ -14685,7 +14693,7 @@ if (_presetChannel) {
 		// Otherwise a late failure can repaint results for the previous query.
 		const token = ++state.token;
 		const scheduledQuery = state.query;
-		const scope = _getDialogNativeSharedAuditScopeKey();
+		const scope = _getDialogTimeIdentityScopeKey();
 		state.selectedTask = null;
 		state.loading = !!scheduledQuery.trim();
 		state.results = _getDialogTimeLocalTaskSearchResults(state.query);
@@ -14694,7 +14702,7 @@ if (_presetChannel) {
 		if (state.timer) clearTimeout(state.timer);
 		state.timer = setTimeout(() => {
 			state.timer = null;
-			if (scope !== _getDialogNativeSharedAuditScopeKey() || token !== state.token) return;
+			if (scope !== _getDialogTimeIdentityScopeKey() || token !== state.token) return;
 			_searchDialogTimeEligibleTasks(scheduledQuery, token, target).catch(() => {});
 		}, 240);
 		_renderDialogTimeManualSearch(undefined, target);
@@ -14751,11 +14759,11 @@ if (_presetChannel) {
 
 	async function _addDialogTimeManualEntry(task, hours, minutes, dateKey = _getDialogTimeSelectedRange()?.from) {
 		if (_dialogTimeActionInFlight) return;
-		const scope = _getDialogNativeSharedAuditScopeKey();
+		const scope = _getDialogTimeIdentityScopeKey();
 		await _withDialogTimeManualWriteLock(() => _commitDialogTimeManualEntry(task, hours, minutes, dateKey));
-		if (scope === _getDialogNativeSharedAuditScopeKey() && _readDialogTimeManualDraft().pendingWrite?.status === 'acknowledged') {
+		if (scope === _getDialogTimeIdentityScopeKey() && _readDialogTimeManualDraft().pendingWrite?.status === 'acknowledged') {
 			_recoverDialogTimeContactAccounting().then(ok => {
-				if (ok || scope !== _getDialogNativeSharedAuditScopeKey()) return;
+				if (ok || scope !== _getDialogTimeIdentityScopeKey()) return;
 				_showDialogDockToast('Время сохранено. Контакты ещё не отмечены.', 'warning');
 				_scheduleDialogTimeAccountingRecovery({ reset:true });
 			});
@@ -14765,7 +14773,7 @@ if (_presetChannel) {
 	async function _commitDialogTimeManualEntry(task, hours, minutes, dateKey = _getDialogTimeSelectedRange()?.from) {
 		if (_dialogTimeActionInFlight || !_PENA_TIME_CONTROL) return;
 		const projectScope = _getDialogTimeProjectScopeKey();
-		const scope = _getDialogNativeSharedAuditScopeKey();
+		const scope = _getDialogTimeIdentityScopeKey();
 		const storageKey = _getDialogTimeScopedStorageKey(_PENA_TIME_MANUAL_DRAFT_KEY);
 		const initialDraft = _readDialogTimeManualDraft();
 		const uncertain = initialDraft.pendingWrite;
@@ -14799,7 +14807,7 @@ if (_presetChannel) {
 		const draft = { ...initialDraft, taskId, title:intent.title, query:intent.title, hours:String(hours), minutes:String(minutes), dateKey, pendingWrite:intent };
 		try {
 			const eligibility = await _ensureDialogTimeTaskEligibility(taskId);
-			if (scope !== _getDialogNativeSharedAuditScopeKey()) return;
+			if (scope !== _getDialogTimeIdentityScopeKey()) return;
 			if (!uncertain && (projectScope !== _getDialogTimeProjectScopeKey() || !_isDialogTimeProjectTask(taskId))) { _dialogTimeManualError='Задача не входит в выбранные проекты'; return; }
 			if (eligibility !== true) {
 				_dialogTimeManualError = eligibility === false ? 'В задаче выключен учёт времени' : 'Не удалось подтвердить учёт времени в задаче';
@@ -14819,7 +14827,7 @@ if (_presetChannel) {
 			const sameProjectSelection = projectScope === _getDialogTimeProjectScopeKey();
 			const acknowledgedDraft = sameProjectSelection ? {taskId:'',title:'',query:'',hours:'',minutes:''} : _readDialogTimeManualDraft();
 			_writeDialogTimeManualDraft({ ...acknowledgedDraft, pendingWrite:acknowledged }, { storageKey, resolvePendingKey:_getDialogTimeWriteIntentKey(intent), writeIntent:true });
-			if (scope !== _getDialogNativeSharedAuditScopeKey()) return;
+			if (scope !== _getDialogTimeIdentityScopeKey()) return;
 			_invalidateDialogTimeCachesForDates(dateKey, { taskId, preserveTaskFreshness:true });
 			_applyDialogTimeOptimisticEntry(taskId, duration.seconds, dateKey, savedItemId, { contactCutoffAt:intent.contactCutoffAt });
 			if (sameProjectSelection) {
@@ -14840,7 +14848,7 @@ if (_presetChannel) {
 		} catch (error) {
 			const unknown = requestStarted && !saved && !_isDialogTimeDefiniteWriteFailure(error);
 			if (!saved) _writeDialogTimeManualDraft({ ...(projectScope === _getDialogTimeProjectScopeKey() ? draft : _readDialogTimeManualDraft()), pendingWrite: unknown ? { ...intent, status:'unknown' } : null }, { storageKey, resolvePendingKey:_getDialogTimeWriteIntentKey(intent), writeIntent:true });
-			if (scope === _getDialogNativeSharedAuditScopeKey()) {
+			if (scope === _getDialogTimeIdentityScopeKey()) {
 				if (saved) { _scheduleDialogTimeAccountingRecovery({ reset:true }); return; }
 				_dialogTimeManualError = unknown ? 'Ответ сервера не получен. Проверьте журнал задачи перед повторной записью.' :
 					(error?.code === 'TIME_WRITE_REJECTED' || error?.code === 'TIME_WRITE_STORAGE' ? error.message : _getDialogTimeFriendlyError(error, 'Не удалось сохранить время'));
@@ -14850,7 +14858,7 @@ if (_presetChannel) {
 			if (_dialogTimeActiveManualWriteIntent?.operationId === intent.operationId) _dialogTimeActiveManualWriteIntent = null;
 			_dialogTimeActionInFlight = false; _queueDialogTimeUiSync();
 		}
-		if (saved && scope === _getDialogNativeSharedAuditScopeKey()) {
+		if (saved && scope === _getDialogTimeIdentityScopeKey()) {
 			const visibleRange = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
 			_loadDialogTimeRange(visibleRange).catch(() => {});
 		}
@@ -14873,8 +14881,8 @@ if (_presetChannel) {
 			}, 3500);
 			return;
 		}
-		const scope = _getDialogNativeSharedAuditScopeKey();
-		const isCurrent = () => scope === _getDialogNativeSharedAuditScopeKey();
+		const scope = _getDialogTimeIdentityScopeKey();
+		const isCurrent = () => scope === _getDialogTimeIdentityScopeKey();
 		_dialogTimeActionInFlight = true;
 		_dialogTimeDeleteConfirmEntryId = '';
 		_queueDialogTimeUiSync();
@@ -14916,8 +14924,8 @@ if (_presetChannel) {
 			_showDialogDockToast('Запись недоступна для изменения', 'danger');
 			return;
 		}
-		const scope = _getDialogNativeSharedAuditScopeKey();
-		const isCurrent = () => scope === _getDialogNativeSharedAuditScopeKey();
+		const scope = _getDialogTimeIdentityScopeKey();
+		const isCurrent = () => scope === _getDialogTimeIdentityScopeKey();
 		_dialogTimeActionInFlight = true;
 		_queueDialogTimeUiSync();
 		try {
@@ -14961,14 +14969,14 @@ if (_presetChannel) {
 		if (!/^\d+$/.test(taskId)) return;
 		_dialogTimeActionInFlight = true;
 		_queueDialogTimeUiSync();
-		const startScope = _getDialogNativeSharedAuditScopeKey();
+		const startScope = _getDialogTimeIdentityScopeKey();
 		try {
 		if (await _ensureDialogTimeTaskEligibility(taskId) !== true) {
 			_showDialogDockToast('В задаче недоступен учёт времени', 'danger');
 			return;
 		}
 		await _withDialogTimeTrackerLock(async existing => {
-		if (existing || startScope !== _getDialogNativeSharedAuditScopeKey() || projectScope !== _getDialogTimeProjectScopeKey() || !_isDialogTimeProjectTask(taskId)) return;
+		if (existing || startScope !== _getDialogTimeIdentityScopeKey() || projectScope !== _getDialogTimeProjectScopeKey() || !_isDialogTimeProjectTask(taskId)) return;
 		const title = _getDialogTimeTaskTitle(taskId, task?.title);
 		_dialogTimeTrackerCancelConfirmTaskId = '';
 		const tracker = { taskId, title, dialogId: String(task?.dialogId || ''), startedAt: Date.now(), dateKey: _getDialogTimeTodayKey(), pendingSeconds: 0, error: '' };
@@ -15003,12 +15011,12 @@ if (_presetChannel) {
 		}
 		_dialogTimeActionInFlight = true;
 		_queueDialogTimeUiSync();
-		const scope = _getDialogNativeSharedAuditScopeKey();
+		const scope = _getDialogTimeIdentityScopeKey();
 		const storageKey = _getDialogTimeScopedStorageKey(_PENA_TIME_TRACKER_KEY);
 		const persist = value => _writeDialogTimeTracker(value, { storageKey });
 		let savedAny = false;
 		const save = async tracker => {
-			if (!tracker || `${tracker.taskId}:${tracker.startedAt}` !== identity || scope !== _getDialogNativeSharedAuditScopeKey()) return;
+			if (!tracker || `${tracker.taskId}:${tracker.startedAt}` !== identity || scope !== _getDialogTimeIdentityScopeKey()) return;
 			const stoppedAt = tracker.stoppedAt || (tracker.pendingSeconds > 0 ? tracker.startedAt + tracker.pendingSeconds * 1000 : Date.now());
 			const seconds = tracker.stoppedAt ? _getDialogTimeTrackerSeconds(tracker) : _getDialogTimeTrackerSeconds({ ...tracker, pendingSeconds: tracker.pendingSeconds || Math.max(0, Math.floor((stoppedAt - tracker.startedAt) / 1000)) });
 			if (!tracker.saveSegments?.length && seconds > 0 && !Number.isFinite(_dialogTimePortalUtcOffsetMinutes)) {
@@ -15016,7 +15024,7 @@ if (_presetChannel) {
 				if (!persist(frozen)) throw new Error('Не удалось сохранить остановленный таймер');
 				_ensureDialogTimeTrackerTick();
 				await _ensureDialogTimePortalDate().catch(() => {});
-				if (scope !== _getDialogNativeSharedAuditScopeKey()) return;
+				if (scope !== _getDialogTimeIdentityScopeKey()) return;
 				if (!Number.isFinite(_dialogTimePortalUtcOffsetMinutes)) {
 					frozen.error = 'Не удалось определить дату портала. Повторите сохранение.';
 					persist(frozen); _showDialogDockToast(frozen.error, 'danger'); return;
@@ -15042,7 +15050,7 @@ if (_presetChannel) {
 					if ((segment.status === 'unknown' || segment.status === 'sending') && !retryUnknown) {
 						throw Object.assign(new Error('Ответ сервера не получен. Проверьте журнал задачи перед повторной записью.'), { code: 'TIME_WRITE_UNKNOWN' });
 					}
-					if (scope !== _getDialogNativeSharedAuditScopeKey()) return;
+					if (scope !== _getDialogTimeIdentityScopeKey()) return;
 					segment.status = 'sending';
 					if (!persist(pending)) {
 						segment.status = 'pending';
@@ -15059,7 +15067,7 @@ if (_presetChannel) {
 					pending.pendingSeconds = segments.filter(item => item.status !== 'saved').reduce((sum, item) => sum + item.seconds, 0);
 					savedAny = true;
 					const persisted = persist(pending);
-					if (scope !== _getDialogNativeSharedAuditScopeKey()) return;
+					if (scope !== _getDialogTimeIdentityScopeKey()) return;
 					_invalidateDialogTimeCachesForDates(segment.dateKey, { taskId: pending.taskId });
 					_applyDialogTimeOptimisticEntry(pending.taskId, segment.seconds, segment.dateKey, itemId, { contactCutoffAt:segment.contactsCutoffAt || stoppedAt });
 					segment.contactsAccounted = await _markDialogTimeTaskAccounted(pending.taskId, segment.contactsCutoffAt || stoppedAt, segment.dateKey, { itemId }) === true;
@@ -15095,7 +15103,7 @@ if (_presetChannel) {
 			_dialogTimeActionInFlight = false;
 			_queueDialogTimeUiSync();
 		}
-		if (savedAny && scope === _getDialogNativeSharedAuditScopeKey()) {
+		if (savedAny && scope === _getDialogTimeIdentityScopeKey()) {
 			const visibleRange = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
 			_loadDialogTimeRange(visibleRange).catch(() => {});
 		}
@@ -15656,7 +15664,7 @@ if (_presetChannel) {
 				: (record?.error || (record?.updatedAt ? `Обновлено: ${new Date(record.updatedAt).toLocaleTimeString('ru')}` : ''));
 		}
 		const refresh = panel.querySelector('.pena-native-time-refresh');
-		const refreshScope = _getDialogNativeSharedAuditScopeKey();
+		const refreshScope = _getDialogTimeIdentityScopeKey();
 		const manualRefreshing = _dialogTimeManualRefreshToken?.scope === refreshScope;
 		if (refresh) {
 			refresh.disabled = manualRefreshing;
@@ -16570,12 +16578,12 @@ if (_presetChannel) {
 			const refreshView = _dialogTimeView;
 			let range = refreshView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
 			const correctInitialToday = !Number.isFinite(_dialogTimePortalUtcOffsetMinutes) && range.to === _getDialogTimeRange('today').to;
-			const scope = _getDialogNativeSharedAuditScopeKey();
+			const scope = _getDialogTimeIdentityScopeKey();
 			if (_dialogTimeManualRefreshToken?.scope === scope) return;
 			const token = { scope, rangeKey: `${range.from}:${range.to}` };
 			const ownsVisibleOutcome = () => {
 				const visibleRange = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
-				return scope === _getDialogNativeSharedAuditScopeKey() && panel.isConnected && _dialogControlNativeWorkspaceTab === 'time' &&
+				return scope === _getDialogTimeIdentityScopeKey() && panel.isConnected && _dialogControlNativeWorkspaceTab === 'time' &&
 					`${visibleRange.from}:${visibleRange.to}` === token.rangeKey;
 			};
 			_dialogTimeManualRefreshToken = token;
@@ -16587,14 +16595,14 @@ if (_presetChannel) {
 				if (!portalDate) throw Object.assign(new Error('Не удалось определить дату Битрикс24'), { code: 'PENA_TIME_INITIALIZATION' });
 				if (!userId) throw Object.assign(new Error('Не удалось определить текущего пользователя'), { code: 'PENA_TIME_INITIALIZATION' });
 				if (retryInitialization) retryInitialization.pending = false;
-				if (scope !== _getDialogNativeSharedAuditScopeKey()) return null;
+				if (scope !== _getDialogTimeIdentityScopeKey()) return null;
 				if (correctInitialToday) {
 					range = { from: refreshView === 'stats' ? _PENA_TIME_CONTROL.addDays(portalDate, -6) : portalDate, to: portalDate };
 					token.rangeKey = `${range.from}:${range.to}`;
 				}
 				return _refreshDialogTimePanel(range);
 			}).then(data => {
-				if (scope !== _getDialogNativeSharedAuditScopeKey() || !data) return;
+				if (scope !== _getDialogTimeIdentityScopeKey() || !data) return;
 				const visits = _readDialogTimeVisits(range.from);
 				visits.forEach(visit => {
 					const taskId = String(visit.taskId || '');
@@ -16608,7 +16616,7 @@ if (_presetChannel) {
 				const taskCount = visible?.taskCount || 0;
 				if (ownsVisibleOutcome()) _showDialogDockToast(`Обновлено · ${duration} · ${taskCount} ${_ruPlural(taskCount, 'задача', 'задачи', 'задач')}`, 'ok');
 			}).catch(error => {
-				if (scope !== _getDialogNativeSharedAuditScopeKey()) return;
+				if (scope !== _getDialogTimeIdentityScopeKey()) return;
 				const message = error?.code === 'PENA_TIME_INITIALIZATION' ? error.message : _getDialogTimeFriendlyError(error);
 				if (retryInitialization?.pending) retryInitialization.error = message;
 				_dialogTimeManualRefreshError = { ...token, message, failedAt: Date.now() };
