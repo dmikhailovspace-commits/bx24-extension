@@ -59,6 +59,22 @@ const instrumented = source.replace(anchor, `${anchor}
    });
    _syncDialogTimeUi(_dialogControlNativeSwitcherNode);
   },
+  unknownCatalog(ownerScope) {
+   const range=_getDialogTimeSelectedRange(),key=_getDialogTimeCacheKey(range);
+   const saved={record:_dialogTimeCache.get(key),owner:_dialogTimeProjectCatalogOwner};
+   const panel=_dialogControlNativeSwitcherNode.querySelector('.pena-native-time-panel'),initialization=panel._penaTimeInitialization;
+   _dialogTimeCache.delete(key);
+   _dialogTimeProjectCatalogOwner=ownerScope ? {scope:ownerScope==='current'?_getDialogTimeProjectScopeKey():'another-project-scope'} : null;
+   panel._penaTimeInitialization={pending:false,error:''};
+   try {
+    _syncDialogTimeUi(_dialogControlNativeSwitcherNode);
+    return {total:panel.querySelector('.pena-native-time-total-value').textContent,meta:panel.querySelector('.pena-native-time-meta').textContent,statusPresent:!!panel.querySelector('.pena-native-time-read-status'),recordPresent:!!this.record(),initializing:panel._penaTimeInitialization.pending};
+   } finally {
+    if(saved.record)_dialogTimeCache.set(key,saved.record);
+    _dialogTimeProjectCatalogOwner=saved.owner;panel._penaTimeInitialization=initialization;
+    _syncDialogTimeUi(_dialogControlNativeSwitcherNode);
+   }
+  },
   holdManual() {
    window.manualReadCalls = 0;
    _refreshDialogTimePanel = () => {
@@ -166,6 +182,13 @@ try {
   const failed = await snapshot(); assert.equal(failed.total,'0 мин'); assert.equal(failed.statusPresent,false); assert.doesNotMatch(failed.meta,/Не удалось/); assert.match(failed.metaTitle,/сохранённое время/);
   await page.evaluate(() => timeUiProbe.state({status:'ready',data:window.timeUiOriginalData,hasVerifiedData:true,hasCompleteSnapshot:true,error:'',updatedAt:Date.now()}));
   return {cold,unknownDays,zero,warm,failed};
+ });
+ await phase('catalog load without a read record stays loading and idle unknown never claims no entries',async()=>{
+  const states=await page.evaluate(()=>({loading:timeUiProbe.unknownCatalog('current'),idle:timeUiProbe.unknownCatalog(null),stale:timeUiProbe.unknownCatalog('stale')}));
+  for(const state of Object.values(states)){assert.equal(state.total,'—');assert.equal(state.statusPresent,false);assert.equal(state.recordPresent,false);assert.equal(state.initializing,false);assert.doesNotMatch(state.meta,/Записей пока нет/);}
+  assert.equal(states.loading.meta,'Загружаем время…');
+  assert.equal(states.idle.meta,'Итог ещё не загружен');assert.equal(states.stale.meta,'Итог ещё не загружен');
+  return states;
  });
  await phase('background validation preserves known figures and keeps both icons static', async () => {
   await page.evaluate(() => timeUiProbe.state({status:'loading',readProgress:{completedTasks:7,totalTasks:20}}));

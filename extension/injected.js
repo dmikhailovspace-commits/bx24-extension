@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.122';
+	window.__ANITREC_RUNNING__ = '7.5.123';
 
-	const VER = '7.5.122';
+	const VER = '7.5.123';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -16016,6 +16016,7 @@ if (_presetChannel) {
 			return value > 10 && value < 20 ? many : (last === 1 ? one : (last >= 2 && last <= 4 ? few : many));
 		};
 		const catalogIncomplete = !_dialogTimeCatalogCursor || _dialogTimeCatalogScope !== _getDialogTimeProjectScopeKey();
+		const catalogBusy = _dialogTimeProjectCatalogOwner?.scope === _getDialogTimeProjectScopeKey();
 		const refreshScope = _getDialogTimeIdentityScopeKey();
 		const rangeKey = `${visibleRange.from}:${visibleRange.to}`;
 		const manualReadError = _dialogTimeManualRefreshError?.scope === refreshScope && _dialogTimeManualRefreshError.rangeKey === rangeKey &&
@@ -16026,7 +16027,7 @@ if (_presetChannel) {
 		if (meta) {
 			meta.textContent = data
 				? `${incomplete ? 'Часть данных · ' : ''}${data.taskCount} ${plural(data.taskCount, 'задача', 'задачи', 'задач')} · ${data.entryCount} ${plural(data.entryCount, 'запись', 'записи', 'записей')}`
-				: (initializing || record?.status === 'loading' ? 'Загружаем время…' : (readError ? 'Не удалось загрузить время' : 'Записей пока нет'));
+				: (initializing || catalogBusy || record?.status === 'loading' ? 'Загружаем время…' : (readError ? 'Не удалось загрузить время' : 'Итог ещё не загружен'));
 			const coverage = data?.coverage;
 			meta.title = readError ? `${data ? 'Показано сохранённое время. ' : ''}${readError}. Нажмите «Обновить».`
 				: catalogIncomplete ? 'Список задач ещё загружается. Итог будет дополнен.'

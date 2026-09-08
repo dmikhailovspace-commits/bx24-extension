@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "7.5.122",
+  "version": "7.5.123",
   "release_date": "2026-09-08",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.122",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.122",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.123",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.123",
   "extension_files": [
-    "worker-v7_5_122.js",
+    "worker-v7_5_123.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,6 +33,6 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.122/extension/injected.js",
-  "changelog": "v7.5.122: removes the persistent time loading bar; preserves confirmed totals on background read failures; handles numeric Bitrix errors with a bounded compatibility probe; skips confirmed empty journals in fallback; retains actionable write errors"
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.123/extension/injected.js",
+  "changelog": "v7.5.123: removes the persistent time loading bar; preserves confirmed totals on background read failures; handles numeric Bitrix errors with a bounded compatibility probe; skips confirmed empty journals in fallback; retains actionable write errors"
 }
