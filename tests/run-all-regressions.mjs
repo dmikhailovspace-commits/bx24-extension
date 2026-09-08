@@ -62,6 +62,7 @@ const suites = [
   'time-functional-regression.mjs',
   'time-refresh-regression.mjs',
   'time-date-navigation-regression.mjs',
+  'time-user-calendar-regression.mjs',
   'time-snapshot-performance-regression.mjs',
 	'time-project-scope-regression.mjs',
 	'time-project-layout-regression.mjs',

@@ -560,7 +560,7 @@
       return success({});
     };
 
-    window.BX = { message(key) { return key === 'USER_ID' ? '7' : ''; }, rest: { callMethod(method, callParams, callback) {
+    window.BX = { message(key) { return key === 'USER_ID' ? '7' : ({ SERVER_TZ_OFFSET:'0', USER_TZ_OFFSET:'0', USER_TZ_AUTO:'N' }[key] || ''); }, rest: { callMethod(method, callParams, callback) {
       if (method === 'im.dialog.get') dialogDetailRequestsStarted += 1;
       const respond = () => callback(restResult(method, callParams));
       setTimeout(respond, method === 'im.dialog.get'

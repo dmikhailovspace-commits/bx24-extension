@@ -739,7 +739,7 @@
 	window.timeTaskSearchFailStarts = [];
 	window.timeTaskSearchFailureDelay = 0;
 	window.BX = {
-	  message(key) { return key === 'USER_ID' ? window.currentBitrixUserId : ''; },
+	  message(key) { return key === 'USER_ID' ? window.currentBitrixUserId : ({ SERVER_TZ_OFFSET:'10800', USER_TZ_OFFSET:'0', USER_TZ_AUTO:'N' }[key] || ''); },
 	  addCustomEvent(name, handler) {
 		const handlers = window.nativeCustomEventHandlers.get(name) || [];
 		handlers.push(handler);

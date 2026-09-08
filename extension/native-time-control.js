@@ -68,13 +68,54 @@
 		return Math.round((finish.getTime() - start.getTime()) / 86400000) + 1;
 	}
 
-	function buildElapsedRequestParams({ taskId, from, to, userId, page = 1, pageSize = DEFAULT_PAGE_SIZE } = {}) {
+	const calendarFormatters = new Map();
+	function calendarOffsetAt(at, { timeZone, utcOffsetMinutes } = {}) {
+		if (timeZone) {
+			let formatter = calendarFormatters.get(timeZone);
+			if (!formatter) {
+				formatter = new Intl.DateTimeFormat('en-CA', { timeZone, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit', hourCycle:'h23' });
+				if (calendarFormatters.size >= 8) calendarFormatters.clear();
+				calendarFormatters.set(timeZone, formatter);
+			}
+			const parts = Object.fromEntries(formatter.formatToParts(new Date(at)).map(part => [part.type, part.value]));
+			return (Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour, +parts.minute, +parts.second) - Math.floor(at / 1000) * 1000) / 60000;
+		}
+		return utcOffsetMinutes != null && Number.isFinite(Number(utcOffsetMinutes)) ? Number(utcOffsetMinutes) : null;
+	}
+
+	function calendarDateKey(at, zone = {}) {
+		const offset = calendarOffsetAt(at, zone);
+		return offset == null ? toDateKey(new Date(at)) : new Date(Number(at) + offset * 60000).toISOString().slice(0, 10);
+	}
+
+	function calendarDayBoundary(dateKey, zone = {}, hour = 0) {
+		const parts = String(dateKey).split('-').map(Number);
+		const wall = Date.UTC(parts[0], parts[1] - 1, parts[2], hour);
+		let at = wall;
+		for (let i = 0; i < 4; i++) {
+			const offset = calendarOffsetAt(at, zone);
+			if (offset == null) return `${dateKey}T${pad2(hour)}:00:00`;
+			const next = wall - offset * 60000;
+			if (next === at) break;
+			at = next;
+		}
+		return `${dateKey}T${pad2(hour)}:00:00${formatPortalOffset(calendarOffsetAt(at, zone))}`;
+	}
+
+	function calendarTimestamp(value, zone = {}) {
+		if (!zone?.timeZone && zone?.utcOffsetMinutes == null) return String(value || '');
+		if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(String(value))) return String(value || '');
+		const at = Date.parse(value), offset = Number.isFinite(at) ? calendarOffsetAt(at, zone) : null;
+		return offset == null ? String(value || '') : new Date(at + offset * 60000).toISOString().slice(0, 23) + formatPortalOffset(offset);
+	}
+
+	function buildElapsedRequestParams({ taskId, from, to, userId, page = 1, pageSize = DEFAULT_PAGE_SIZE, utcOffsetMinutes, timeZone } = {}) {
 		const normalizedTaskId = String(taskId || '').trim();
 		if (!/^\d+$/.test(normalizedTaskId)) throw new TypeError('taskId is required');
 		const range = normalizeRange(from, to);
 		const filter = {
-			'>=CREATED_DATE': `${range.from}T00:00:00`,
-			'<CREATED_DATE': `${addDays(range.to, 1)}T00:00:00`
+			'>=CREATED_DATE': calendarDayBoundary(range.from, { utcOffsetMinutes, timeZone }),
+			'<CREATED_DATE': calendarDayBoundary(addDays(range.to, 1), { utcOffsetMinutes, timeZone })
 		};
 		if (/^\d+$/.test(String(userId || ''))) filter.USER_ID = Number(userId);
 		return [
@@ -98,7 +139,7 @@
 		return match && parseDateKey(match[1]) ? match[1] : '';
 	}
 
-	function normalizeElapsedItem(item = {}) {
+	function normalizeElapsedItem(item = {}, zone = {}) {
 		const rawSeconds = item.SECONDS ?? item.seconds;
 		const rawMinutes = item.MINUTES ?? item.minutes;
 		const directSeconds = Number(rawSeconds);
@@ -106,7 +147,7 @@
 		const seconds = rawSeconds !== '' && rawSeconds != null && Number.isFinite(directSeconds) && directSeconds >= 0
 			? directSeconds
 			: (rawMinutes !== '' && rawMinutes != null && Number.isFinite(minutes) && minutes >= 0 ? minutes * 60 : 0);
-		const createdAt = String(item.CREATED_DATE ?? item.createdDate ?? item.createdAt ?? item.DATE_START ?? item.dateStart ?? '');
+		const createdAt = calendarTimestamp(item.CREATED_DATE ?? item.createdDate ?? item.createdAt ?? item.DATE_START ?? item.dateStart ?? '', zone);
 		const dateStart = String(item.DATE_START ?? item.dateStart ?? '');
 		const recordedAt = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(dateStart) ? Date.parse(dateStart) : NaN;
 		return {
@@ -123,6 +164,16 @@
 			commentText: String(item.COMMENT_TEXT ?? item.commentText ?? ''),
 			source: String(item.SOURCE ?? item.source ?? '')
 		};
+	}
+
+	function compareElapsedDates(left, right) {
+		const a = String(left || ''), b = String(right || '');
+		const absolute = /(?:Z|[+-]\d{2}:?\d{2})$/i;
+		if (absolute.test(a) && absolute.test(b)) {
+			const first = Date.parse(a), second = Date.parse(b);
+			if (Number.isFinite(first) && Number.isFinite(second)) return first - second;
+		}
+		return a.localeCompare(b);
 	}
 
 	function aggregateElapsedItems(items = []) {
@@ -143,10 +194,10 @@
 			task.entries += 1;
 			if (item.id) task.entryIds.push(item.id);
 			if (item.id) task.recordedEntries.push({ id: item.id, recordedAt: item.recordedAt, contactCutoffAt: item.contactCutoffAt });
-			if (item.createdAt && item.createdAt > task.lastTrackedAt) task.lastTrackedAt = item.createdAt;
+			if (item.createdAt && compareElapsedDates(item.createdAt, task.lastTrackedAt) > 0) task.lastTrackedAt = item.createdAt;
 			tasks.set(taskKey, task);
 		}
-		normalized.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')) || String(b.id || '').localeCompare(String(a.id || '')));
+		normalized.sort((a, b) => compareElapsedDates(b.createdAt, a.createdAt) || String(b.id || '').localeCompare(String(a.id || '')));
 		return {
 			items: normalized,
 			totalSeconds,
@@ -179,7 +230,7 @@
 		const added = (replacement.items || []).filter(entry => accepted.has(entry.taskId));
 		added.forEach(entry => adjust(entry, 1));
 		for (const task of replacement.tasks || []) if (accepted.has(task.taskId)) tasks.set(task.taskId, task);
-		const compare = (a,b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')) || String(b.id || '').localeCompare(String(a.id || ''));
+		const compare = (a,b) => compareElapsedDates(b.createdAt, a.createdAt) || String(b.id || '').localeCompare(String(a.id || ''));
 		const items = [];
 		let left = 0, right = 0;
 		while (left < kept.length && right < added.length) items.push(compare(kept[left], added[right]) <= 0 ? kept[left++] : added[right++]);
@@ -481,7 +532,7 @@
 			for (const entry of tracked?.recordedEntries || []) {
 				cutoffAt = Math.max(cutoffAt, localEntries.get(String(entry.id)) || Number(entry.contactCutoffAt) || Number(entry.recordedAt) || 0);
 			}
-			return { ...task, pendingContacts: countPendingContacts(task, cutoffAt), trackedSeconds: Math.max(0, Number(tracked?.seconds) || 0), contactCutoffAt: cutoffAt };
+			return { ...task, pendingContacts: countPendingContacts(task, cutoffAt), trackedSeconds: Math.max(0, Number(tracked?.seconds) || 0), trackedEntries: Math.max(0, Number(tracked?.entries) || 0), contactCutoffAt: cutoffAt };
 		}).filter(task => task.pendingContacts > 0).sort((a, b) =>
 			b.pendingContacts - a.pendingContacts ||
 			(Number(b.lastQualifiedAt) || Number(b.visitedAt) || 0) - (Number(a.lastQualifiedAt) || Number(a.visitedAt) || 0) ||
@@ -523,7 +574,7 @@
 		return `${offset < 0 ? '-' : '+'}${pad2(Math.floor(absolute / 60))}:${pad2(absolute % 60)}`;
 	}
 
-	function buildElapsedWriteFields({ seconds, dateKey, offsetMinutes, commentText = '', allowSubMinute = false } = {}) {
+	function buildElapsedWriteFields({ seconds, dateKey, offsetMinutes, timeZone, commentText = '', allowSubMinute = false } = {}) {
 		const normalizedSeconds = Math.floor(Number(seconds) || 0);
 		if (normalizedSeconds < (allowSubMinute ? 1 : 60)) throw new RangeError(allowSubMinute ? 'Нет прошедшего времени' : 'Укажите хотя бы одну минуту');
 		if (normalizedSeconds > 24 * 3600) throw new RangeError('За один раз можно добавить не больше 24 часов');
@@ -534,24 +585,25 @@
 		return {
 			SECONDS: normalizedSeconds,
 			COMMENT_TEXT: String(commentText || ''),
-			CREATED_DATE: `${normalizedDate}T12:00:00${formatPortalOffset(offsetMinutes)}`
+			CREATED_DATE: calendarDayBoundary(normalizedDate, { utcOffsetMinutes:offsetMinutes, timeZone }, 12)
 		};
 	}
 
-	function segmentTimerByPortalDay({ startedAt, stoppedAt, seconds, utcOffsetMinutes } = {}) {
+	function segmentTimerByPortalDay({ startedAt, stoppedAt, seconds, utcOffsetMinutes, timeZone } = {}) {
 		const start = Number(startedAt), stop = Number(stoppedAt);
 		if (!Number.isFinite(start) || !Number.isFinite(stop) || stop <= start) return [];
 		const total = Math.max(0, Math.floor(seconds == null ? (stop - start) / 1000 : Number(seconds) || 0));
-		if (!total) return [];
+		if (!Number.isFinite(total) || !total) return [];
 		const offset = Number.isFinite(Number(utcOffsetMinutes)) && utcOffsetMinutes != null ? Number(utcOffsetMinutes) : -new Date(start).getTimezoneOffset();
 		const segments = []; let cursor = start, assigned = 0;
 		while (cursor < stop) {
-			const portal = new Date(cursor + offset * 60000);
-			const dateKey = portal.toISOString().slice(0, 10);
-			const midnight = Date.UTC(portal.getUTCFullYear(), portal.getUTCMonth(), portal.getUTCDate() + 1) - offset * 60000;
+			const zone = { utcOffsetMinutes:offset, timeZone };
+			const dateKey = calendarDateKey(cursor, zone);
+			const midnight = Date.parse(calendarDayBoundary(addDays(dateKey, 1), zone));
 			const end = Math.min(stop, midnight);
 			const cumulative = end === stop ? total : Math.min(total, Math.floor((end - start) / 1000));
-			if (cumulative > assigned) segments.push({ dateKey, seconds: cumulative - assigned });
+			// Fall-back days can contain 25 hours; each native ADD is capped at 24.
+			for (let remaining = cumulative - assigned; remaining > 0; remaining -= 86400) segments.push({ dateKey, seconds:Math.min(86400, remaining) });
 			assigned = cumulative; cursor = end;
 		}
 		return segments;
@@ -564,6 +616,8 @@
 		from,
 		to,
 		userId,
+		utcOffsetMinutes,
+		timeZone,
 		pageSize = DEFAULT_PAGE_SIZE,
 		maxPages = DEFAULT_MAX_PAGES,
 		maxRangeDays = 366
@@ -596,6 +650,8 @@
 				taskId: job.taskId,
 				...range,
 				userId,
+				utcOffsetMinutes,
+				timeZone,
 				page: job.page,
 				pageSize: safePageSize
 			}));
@@ -618,7 +674,7 @@
 				if (job.page === 1) totals.set(job.taskId, expectedTotal);
 				let newItems = 0;
 				for (const raw of batch) {
-					const item = normalizeElapsedItem(raw);
+					const item = normalizeElapsedItem(raw, { utcOffsetMinutes, timeZone });
 					const amount = raw?.SECONDS ?? raw?.seconds ?? raw?.MINUTES ?? raw?.minutes;
 					if ((/^\d+$/.test(String(userId || '')) && !/^[1-9]\d*$/.test(item.userId)) ||
 						!item.dateKey || amount == null || String(amount).trim() === '' || !Number.isFinite(Number(amount)) || Number(amount) < 0) {
@@ -662,13 +718,13 @@
 	// tasks/classes/general/elapseditem.php has an explicit taskId === 0 global
 	// branch (observed in 23.675.0). Empty responses need independent evidence:
 	// older portals can silently interpret the sentinel as an ordinary task ID.
-	async function loadGlobalElapsedItems({ callPage, from, to, userId, knownItems = [], probeTaskId = '', supported = false, isCurrent = () => true, maxPages = 2000 } = {}) {
+	async function loadGlobalElapsedItems({ callPage, from, to, userId, utcOffsetMinutes, timeZone, knownItems = [], probeTaskId = '', supported = false, isCurrent = () => true, maxPages = 2000 } = {}) {
 		if (typeof callPage !== 'function') throw new TypeError('callPage is required');
 		if (!/^[1-9]\d*$/.test(String(userId || ''))) throw new TypeError('Current user ID is required');
 		const range = normalizeRange(from, to);
 		if (countRangeDays(range.from, range.to) > 366) throw new RangeError('Выберите период не больше 366 дней');
 		const select = ['ID','TASK_ID','USER_ID','SECONDS','MINUTES','CREATED_DATE','DATE_START','DATE_STOP','COMMENT_TEXT','SOURCE'];
-		const dateFilter = { USER_ID:Number(userId), '>=CREATED_DATE':`${range.from}T00:00:00`, '<CREATED_DATE':`${addDays(range.to, 1)}T00:00:00` };
+		const dateFilter = { USER_ID:Number(userId), '>=CREATED_DATE':calendarDayBoundary(range.from, { utcOffsetMinutes, timeZone }), '<CREATED_DATE':calendarDayBoundary(addDays(range.to, 1), { utcOffsetMinutes, timeZone }) };
 		const invalid = message => Object.assign(new Error(message), { code:'GLOBAL_TIME_RESPONSE_INVALID', globalFallback:true });
 		let pages = 0;
 		const request = async (filter, order = { ID:'ASC' }, size = 50, taskId = 0) => {
@@ -682,7 +738,7 @@
 			const rows = extractElapsedItems(payload);
 			if (rows.length > size) throw invalid('Битрикс24 проигнорировал размер страницы журнала');
 			const items = rows.map(raw => {
-				const item = normalizeElapsedItem(raw), seconds = raw?.SECONDS ?? raw?.seconds;
+				const item = normalizeElapsedItem(raw, { utcOffsetMinutes, timeZone }), seconds = raw?.SECONDS ?? raw?.seconds;
 				const created = raw?.CREATED_DATE ?? raw?.createdDate ?? raw?.createdAt;
 				if (!/^[1-9]\d*$/.test(item.id) || !Number.isSafeInteger(Number(item.id)) || !/^[1-9]\d*$/.test(item.taskId) || !Number.isSafeInteger(Number(item.taskId)) ||
 					item.userId !== String(userId) || !item.dateKey || !created || !Number.isFinite(Date.parse(created)) ||
@@ -850,6 +906,10 @@
 		normalizeRange,
 		getQuickRange,
 		countRangeDays,
+		calendarOffsetAt,
+		calendarDateKey,
+		calendarDayBoundary,
+		calendarTimestamp,
 		buildElapsedRequestParams,
 		extractElapsedItems,
 		normalizeElapsedItem,

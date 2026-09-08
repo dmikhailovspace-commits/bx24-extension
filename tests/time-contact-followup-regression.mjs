@@ -31,6 +31,18 @@ check('changing or deleting tracked time does not consume newer contacts or revi
  for(const tracked of [logged(1800),logged(900),[]])assert.equal(model.selectUntrackedVisits(rows,tracked)[0]?.pendingContacts,1);
  return{pendingContacts:1};
 });
+check('contact summary reports journal entries including zero time and changes independently of total seconds',()=>{
+ const visits=event([], 'new-contact',60);
+ const entry=(ID,SECONDS)=>({ID,TASK_ID:'10',SECONDS,CREATED_DATE:'2026-09-07T12:00:00+03:00'});
+ const first=model.aggregateElapsedItems([entry('1',3600),entry('2',900)]);
+ const before=model.selectUntrackedVisits(visits,first.tasks)[0];
+ assert.equal(before.trackedSeconds,4500);assert.equal(before.trackedEntries,2);
+ const split=model.aggregateElapsedItems([entry('1',3600),entry('2',450),entry('3',450),entry('4',0)]);
+ const after=model.selectUntrackedVisits(visits,split.tasks)[0];
+ assert.equal(after.trackedSeconds,4500);assert.equal(after.trackedEntries,4);assert.equal(after.pendingContacts,before.pendingContacts);
+ const removed=model.selectUntrackedVisits(visits,[])[0];assert.equal(removed.trackedEntries,0);assert.equal(removed.pendingContacts,1);
+ return{seconds:4500,beforeEntries:2,afterEntries:4,afterDeleteEntries:0};
+});
 check('touch deduplication and an out-of-order replay use the same qualified event count',()=>{
  let rows=event([], 'later',40);rows=event(rows,'earlier',0);rows=event(rows,'duplicate-touch',5);rows=model.markActivityAccounted(rows,'task:10',start+20000);
  rows=event(rows,'later','40');assert.equal(rows[0].visits,2);assert.equal(pending(rows)[0]?.pendingContacts,1);return{dayContacts:rows[0].visits,pendingContacts:1};

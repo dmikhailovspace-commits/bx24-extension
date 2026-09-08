@@ -135,10 +135,17 @@ try{
    const d=detail.getBoundingClientRect(),b=button.getBoundingClientRect(),s=section.getBoundingClientRect();
    return {text:detail.textContent,height:d.height,lineHeight:parseFloat(getComputedStyle(detail).lineHeight),detailRight:d.right,buttonLeft:b.left,sectionLeft:s.left,sectionRight:s.right,viewport:innerWidth};
   });
-  assert.match(layout.text,/^Учтено .+\n\+1 контакт после последней записи$/);assert(layout.height>=layout.lineHeight*2-1);assert(layout.detailRight<=layout.buttonLeft+1);assert(layout.sectionLeft>=0&&layout.sectionRight<=width);
+  assert.match(layout.text,/^Учтено 1 ч 10 мин · 2 записи\n\+1 контакт после последней записи$/);assert(layout.height>=layout.lineHeight*2-1);assert(layout.detailRight<=layout.buttonLeft+1);assert(layout.sectionLeft>=0&&layout.sectionRight<=width);
   report.snapshots.push({name:`contact-card-${width}px`,...layout});
   await page.locator('.pena-native-time-panel').screenshot({path:new URL(`./artifacts/time-contact-ack-${width}.png`,import.meta.url).pathname.replace(/^\/([A-Za-z]:)/,'$1')});
  }
  report.phases.push({name:'344px, 360px and 720px contact cards keep both detail lines and the action legible',status:'PASS'});
+ // A zero-second journal entry changes the count without changing total time
+ // or the contact cutoff. The live card must not retain its old render key.
+ await page.evaluate(()=>{const reference=window.timeAddedItems.find(item=>String(item.TASK_ID)==='101');window.timeAddedItems.push({...reference,ID:'900099',SECONDS:0,DATE_START:''});});
+ await page.locator('.pena-native-time-refresh').click();
+ await page.waitForFunction(()=>document.querySelector('.pena-native-time-suggestions .pena-native-time-task-detail')?.textContent==='Учтено 1 ч 10 мин · 3 записи\n+1 контакт после последней записи');
+ assert.equal((await snapshot('same-seconds-new-entry-count')).total,'1 ч 40 мин');
+ report.phases.push({name:'manual refresh updates entry count with unchanged seconds and contact count',status:'PASS'});
  console.log(JSON.stringify(report.phases));
 }catch(error){report.error=error.stack;await snapshot('failure').catch(e=>{report.snapshotError=e.message;});await page.screenshot({path:new URL('./artifacts/time-contact-ack-failure.png',import.meta.url).pathname.replace(/^\/([A-Za-z]:)/,'$1')}).catch(()=>{});throw error;}finally{report.pageErrors=errors;writeFileSync(new URL('./artifacts/time-contact-ack-acceptance.json',import.meta.url),JSON.stringify(report,null,2));await browser.close();await server.close();}

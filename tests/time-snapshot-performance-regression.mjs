@@ -13,8 +13,8 @@ const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {
 
 function fixture(count=51){
  const range={from:'2026-09-07',to:'2026-09-07'}, ids=Array.from({length:count},(_,i)=>String(i+1));
- const state={scope:'portal~7',userId:'7',active:true,today:range.from,calls:[],catalogCalls:0,hold:null,onPage:null};
- const c=vm.createContext({window:{},Date,setTimeout,clearTimeout,document:{visibilityState:'visible'},navigator:{onLine:true},
+ const state={scope:'portal~7',userId:'7',active:true,today:range.from,calls:[],catalogCalls:0,hold:null,onPage:null,clockOffset:0};
+ const c=vm.createContext({window:{},Date:class extends Date {static now(){return Date.now()+state.clockOffset;}},setTimeout:(fn,ms)=>{const timer=setTimeout(fn,ms);timer.unref();return timer;},clearTimeout,document:{visibilityState:'visible'},navigator:{onLine:true},
   _PENA_TIME_CONTROL:model,_dialogTimeRange:range,_dialogTimeView:'day',_dialogControlNativeWorkspaceTab:'',_dialogTimePortalDateKey:range.from,
   _dialogTimeBootstrapToken:null,_dialogTimeBootstrapPromise:null,_dialogTimeBootstrapSequence:0,
   _dialogTimeCache:new Map(),_dialogTimeInFlight:new Map(),_dialogTimeRangeRevisions:new Map(),_dialogTimeTaskRevisions:new Map(), _dialogTimeTaskLogEvidence:new Map(),
@@ -41,6 +41,11 @@ function fixture(count=51){
 function pendingClockFixture(){
  const result=fixture(),{c,state}=result,clock=deferred();
  c._dialogControlNativeWorkspaceTab='time';c._dialogTimePortalDateKey='';c._dialogTimePortalUtcOffsetMinutes=null;c._dialogTimePortalDatePromise=null;
+ // This fixture isolates the server-clock/owner fence. Browser profile and
+ // midnight timer behavior are covered by time-user-calendar-regression.
+ c._getDialogTimeCalendarZone=()=>({utcOffsetMinutes:0});
+ c._getDialogTimeCalendarZoneKey=()=> 'offset:0';
+ c._armDialogTimeDayBoundary=()=>{};
  c._dialogTimeRange=model.normalizeRange('2026-09-08','2026-09-08');
  c._PENA_TIME_CONTROL={...model,getQuickRange:(kind,base)=>model.getQuickRange(kind,base??'2026-09-08')};
  state.clockCalls=0;state.requestDays=[];
@@ -64,6 +69,7 @@ try {
   for(const stats of [false,true]){
    const {c,state,clock}=pendingClockFixture();c._dialogTimeView=stats?'stats':'day';
    const requested=stats?model.normalizeRange('2026-09-02','2026-09-08'):model.normalizeRange('2026-09-05','2026-09-05');
+   if(!stats)c._dialogTimeRange=requested;
    const read=c._loadDialogTimeRange(requested);assert.equal(state.calls.length,0);clock.resolve({data:'2026-09-07T22:00:00Z'});await read;
    assert.deepEqual([...new Set(state.requestDays)],[stats?'2026-09-01':'2026-09-05']);assert.equal(state.calls.length,51);
   }
@@ -132,7 +138,7 @@ try {
  await phase('hidden startup discards late rows and resumes unfinished work without accepting a partial snapshot',async()=>{
   const {c,state,range}=fixture();state.onPage=()=>{c.document.visibilityState='hidden';};await c._scheduleDialogTimeBootstrap(null);
   assert.equal(state.calls.length,16);assert.notEqual(c._getDialogTimeRecord(range)?.hasCompleteSnapshot,true);
-  state.onPage=null;c.document.visibilityState='visible';await c._scheduleDialogTimeBootstrap(null);
+  state.onPage=null;c.document.visibilityState='visible';state.clockOffset=Math.max(0,c._dialogTimeBootstrapToken.retryAt-Date.now());await c._scheduleDialogTimeBootstrap(null);
   assert.equal(c._getDialogTimeRecord(range).data.totalSeconds,3060);assert.equal(c._getDialogTimeRecord(range).hasCompleteSnapshot,true);
   return {discardedLateTaskResponses:16,resumedRequests:state.calls.length-16};
  });
@@ -156,7 +162,7 @@ try {
  await phase('unmounted Messenger stops its bootstrap owner and restores only unfinished work',async()=>{
   const {c,state,range}=fixture();state.onPage=()=>{state.active=false;};await c._scheduleDialogTimeBootstrap(null);
   assert.equal(state.calls.length,16);assert.notEqual(c._getDialogTimeRecord(range)?.hasCompleteSnapshot,true);
-  state.active=true;state.onPage=null;await c._scheduleDialogTimeBootstrap(null);
+  state.active=true;state.onPage=null;state.clockOffset=Math.max(0,c._dialogTimeBootstrapToken.retryAt-Date.now());await c._scheduleDialogTimeBootstrap(null);
   assert.equal(c._getDialogTimeRecord(range).data.totalSeconds,3060);assert.equal(state.calls.length,67);
  });
  await phase('new scope completes while old held answers cannot clear its bootstrap owner',async()=>{
@@ -167,14 +173,14 @@ try {
   assert.equal(c._dialogTimeCache.get('portal~7:'+range.from+':'+range.to)?.data,null);assert.equal(c._dialogTimeBootstrapToken.scope,state.scope);
   assert.equal(c._dialogTimeBootstrapToken.phase,'ready');assert.equal(c._dialogTimeInFlight.size,0);
  });
- for(const held of [false,true])await phase(held?'default wake waits for native guard and reuses today':'default native view starts metadata and today without inventing DOM proof',async()=>{
+ for(const held of [false,true])await phase(held?'default wake completes metadata and today while the native guard is held':'default native view starts metadata and today without inventing DOM proof',async()=>{
   const {c,state,range}=fixture(),guard=held?deferred():null;
   Object.assign(c,{isInternalChatsDOM:()=>true,findContainer:()=>({matches:()=>false}),findInternalScrollContainer:()=>({}),_getDialogNativeSourceGeneration:()=>1,
    _dialogNativeAttemptStates:new Map(),_dialogControlNeedsCompleteNativeMaterialization:()=>false,_refreshDialogNativeVisibleWindow:()=>{},_setDialogNativeAttemptState:()=>{},_publishDialogRecentSyncState:()=>{},_dialogNativeOriginalScrollPromise:guard?.promise||null});
   c._dialogTimeCatalogCursor=0;vm.runInContext(extract('_runDialogWakeReconcile'),c);
   await c._runDialogWakeReconcile('periodic-freshness',{metadataOnly:true});
-  if(held){assert.equal(state.catalogCalls,0);assert.equal(state.calls.length,0);guard.resolve();}
   await c._dialogTimeBootstrapPromise;assert.equal(state.catalogCalls,1);assert.equal(state.calls.length,51);assert.equal(c._getDialogTimeRecord(range).hasCompleteSnapshot,true);
+  if(held)guard.resolve();
   await c._runDialogWakeReconcile('focus-freshness',{metadataOnly:true});await c._dialogTimeBootstrapPromise;
   assert.equal(state.catalogCalls,1);assert.equal(state.calls.length,51);return{catalogs:1,elapsed:51,repeated:0};
  });

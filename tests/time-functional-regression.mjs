@@ -162,6 +162,11 @@ try {
   await page.evaluate(()=>window.timeProbe.projectCatalog({delta:true}));
   const deltaWatermark=await page.evaluate(()=>Date.parse(window.catalogProbeCalls.at(-1).filter['>=CHANGED_DATE']));
   assert.ok(deltaWatermark>deltaStartedAt-65000&&deltaWatermark<=deltaStartedAt,'Project delta did not use the completed request-start watermark');
+  // This fixture invokes only the catalog half of the shared load owner.
+  // Finish its elapsed half before interacting: replacing the working set
+  // correctly keeps the panel inert until that new set has a complete snapshot.
+  await page.evaluate(()=>window.timeProbe.load());
+  await page.waitForFunction(()=>!document.querySelector('.pena-native-time-scroll')?.inert);
   await page.locator('.pena-native-time-tracker-search').fill('Каталог');
   await page.locator('#pena-time-tracker-task-option-92124').waitFor();
   assert.equal(await page.locator('#pena-time-tracker-task-option-92000').count(),0);
@@ -200,7 +205,8 @@ try {
   assert.ok(tasks.includes('5') && tasks.includes('6'));
   assert.equal(await page.evaluate(()=>window.workingSetReads),3,'40 concurrent refreshes need only one read per new working set');
   // Restore the real fixture catalog so subsequent write tests have confirmed project membership.
-  await page.evaluate(async()=>{window.BX.rest.callMethod=window.catalogProbeOriginal;await window.timeProbe.refresh();});
+  await page.evaluate(async()=>{window.BX.rest.callMethod=window.catalogProbeOriginal;await window.timeProbe.refresh();await window.timeProbe.load();});
+  await page.waitForFunction(()=>!document.querySelector('.pena-native-time-scroll')?.inert);
  });
  await phase('obsolete search stops eligibility fan-out',async()=>{
   await page.evaluate(()=>{
@@ -239,6 +245,7 @@ try {
   assert.equal(enabled,1,'Cached N lost the newly enabled contact');
  });
  await phase('hidden time is excluded from contact qualification',async()=>{
+  await page.locator('.pena-native-time-header-actions > .pena-native-popover-close').click();
   const r=await page.evaluate(()=>{
    window.timeProbe.stage({taskId:'101',dialogId:'chat101'});
    const entry=window.timeProbe.pending('101');entry.durationQualified=false;entry.qualify=false;entry.startedAt=Date.now()-20000;
@@ -255,6 +262,7 @@ try {
    return {hiddenQualified,whileHidden,resumedQualified,afterMinute,visibleMs:entry.visibleMs};
   });
   assert.equal(r.hiddenQualified,false);assert.equal(r.whileHidden,false);assert.equal(r.resumedQualified,false);assert.equal(r.afterMinute,true);
+  await page.locator('.pena-native-time-button').click();
  });
  await phase('uncertain manual write survives form changes and reload without an automatic duplicate',async()=>{
   await page.evaluate(()=>{

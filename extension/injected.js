@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.127';
+	window.__ANITREC_RUNNING__ = '7.5.128';
 
-	const VER = '7.5.127';
+	const VER = '7.5.128';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -13583,8 +13583,64 @@ if (_presetChannel) {
 		});
 	}
 
+	function _getDialogTimeCalendarZone(at = Date.now()) {
+		// USER_TZ_OFFSET is the user-to-server difference, in seconds; it is
+		// not a UTC offset. Automatic profiles follow the browser's IANA zone.
+		for (const bx of [window.BX, _getSafeTopWindow()?.BX].filter(Boolean)) {
+			try {
+				const auto = bx.message?.('USER_TZ_AUTO');
+				const server = bx.message?.('SERVER_TZ_OFFSET'), user = bx.message?.('USER_TZ_OFFSET');
+				if (auto !== 'Y' && server !== '' && server != null && user !== '' && user != null && Number.isFinite(Number(server)) && Number.isFinite(Number(user))) {
+					const utcOffsetMinutes = (Number(server) + Number(user)) / 60;
+					if (Math.abs(utcOffsetMinutes) <= 840) return { utcOffsetMinutes };
+				}
+			} catch {}
+		}
+		let cached = _getDialogTimeCalendarZone.browser;
+		if (!cached || Date.now() < cached.checkedAt || Date.now() - cached.checkedAt > 60000) {
+			let timeZone = '';
+			try { timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch {}
+			cached = _getDialogTimeCalendarZone.browser = { timeZone, checkedAt:Date.now() };
+		}
+		const timeZone = cached.timeZone;
+		return { utcOffsetMinutes:-new Date(at).getTimezoneOffset(), ...(timeZone ? { timeZone } : {}) };
+	}
+
+	function _getDialogTimeCalendarNow() {
+		const clock = _ensureDialogTimePortalDate.clock;
+		return clock ? clock.at + Date.now() - clock.receivedAt : Date.now();
+	}
+
+	function _getDialogTimeCalendarZoneKey() {
+		const zone = _getDialogTimeCalendarZone();
+		return zone.timeZone || `offset:${zone.utcOffsetMinutes}`;
+	}
+
+	function _armDialogTimeDayBoundary() {
+		clearTimeout(_armDialogTimeDayBoundary.timer);
+		if (!_dialogTimePortalDateKey || !_PENA_TIME_CONTROL?.calendarDayBoundary) return;
+		if (!_armDialogTimeDayBoundary.bound) {
+			_armDialogTimeDayBoundary.bound = true;
+			const resume = () => {
+				if (document.visibilityState === 'hidden' || !_isDialogTimeFrameActive()) return;
+				_getDialogTimeCalendarZone.browser = null;
+				if (_syncDialogTimePortalDay()) _scheduleDialogTimeBootstrap();
+			};
+			window.addEventListener('focus', resume);
+			document.addEventListener('visibilitychange', resume);
+		}
+		const now = _getDialogTimeCalendarNow(), zone = _getDialogTimeCalendarZone(now);
+		const next = Date.parse(_PENA_TIME_CONTROL.calendarDayBoundary(_PENA_TIME_CONTROL.addDays(_PENA_TIME_CONTROL.calendarDateKey(now, zone), 1), zone));
+		_armDialogTimeDayBoundary.timer = setTimeout(() => {
+			_armDialogTimeDayBoundary.timer = null;
+			if (_syncDialogTimePortalDay()) _scheduleDialogTimeBootstrap();
+			else _armDialogTimeDayBoundary();
+		}, Math.max(100, Math.min(2147483647, next - now + 25)));
+	}
+
 	function _getDialogTimeRange(kind = 'today') {
-		return _PENA_TIME_CONTROL?.getQuickRange?.(kind, _dialogTimePortalDateKey || new Date()) || _dialogTimeRange;
+		const current = _PENA_TIME_CONTROL?.calendarDateKey?.(_getDialogTimeCalendarNow(), _getDialogTimeCalendarZone()) || _dialogTimePortalDateKey || new Date();
+		return _PENA_TIME_CONTROL?.getQuickRange?.(kind, current) || _dialogTimeRange;
 	}
 
 	function _getDialogTimeSelectedRange() {
@@ -13619,24 +13675,28 @@ if (_presetChannel) {
 	}
 
 	async function _ensureDialogTimePortalDate() {
-		if ((_dialogTimePortalDateKey && Number.isFinite(_dialogTimePortalUtcOffsetMinutes)) || !_PENA_TIME_CONTROL) return _dialogTimePortalDateKey;
+		if (!_PENA_TIME_CONTROL) return _dialogTimePortalDateKey;
+		if (_dialogTimePortalDateKey && Number.isFinite(_dialogTimePortalUtcOffsetMinutes)) {
+			_syncDialogTimePortalDay();
+			return _dialogTimePortalDateKey;
+		}
 		if (_dialogTimePortalDatePromise) return _dialogTimePortalDatePromise;
 		const localToday = _PENA_TIME_CONTROL.getQuickRange('today');
 		_dialogTimePortalDatePromise = _callBxRestPageWithTimeout('server.time', {}, 8000).then(response => {
 			const rawServerTime = String(response?.data || '');
 			const match = /^(\d{4}-\d{2}-\d{2})/.exec(rawServerTime);
 			if (!match || !_PENA_TIME_CONTROL.parseDateKey(match[1])) return '';
-			const offsetMatch = /([+-])(\d{2}):?(\d{2})$/.exec(rawServerTime);
-			if (offsetMatch) {
-				const minutes = Number(offsetMatch[2]) * 60 + Number(offsetMatch[3]);
-				_dialogTimePortalUtcOffsetMinutes = (offsetMatch[1] === '-' ? -1 : 1) * minutes;
-			} else if (/z$/i.test(rawServerTime)) {
-				_dialogTimePortalUtcOffsetMinutes = 0;
-			}
-			_dialogTimePortalDateKey = match[1];
+			const at = Date.parse(rawServerTime);
+			if (!Number.isFinite(at) || !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(rawServerTime)) return '';
+			const zone = _getDialogTimeCalendarZone(at);
+			_ensureDialogTimePortalDate.clock = { at, receivedAt:Date.now() };
+			_dialogTimePortalUtcOffsetMinutes = _PENA_TIME_CONTROL.calendarOffsetAt(at, zone);
+			_dialogTimePortalDateKey = _PENA_TIME_CONTROL.calendarDateKey(at, zone);
+			_syncDialogTimePortalDay.zoneKey = _getDialogTimeCalendarZoneKey();
 			if (_dialogTimeRange.from === localToday.from && _dialogTimeRange.to === localToday.to) {
 				_dialogTimeRange = _PENA_TIME_CONTROL.getQuickRange('today', _dialogTimePortalDateKey);
 			}
+			_armDialogTimeDayBoundary();
 			return _dialogTimePortalDateKey;
 		}).catch(() => '').finally(() => {
 			_dialogTimePortalDatePromise = null;
@@ -13646,14 +13706,18 @@ if (_presetChannel) {
 
 	function _syncDialogTimePortalDay() {
 		if (!_PENA_TIME_CONTROL || !_dialogTimePortalDateKey) return false;
-		let nextKey = '';
-		if (Number.isFinite(_dialogTimePortalUtcOffsetMinutes)) {
-			const clock = new Date(Date.now() + Number(_dialogTimePortalUtcOffsetMinutes) * 60000);
-			nextKey = `${clock.getUTCFullYear()}-${String(clock.getUTCMonth() + 1).padStart(2, '0')}-${String(clock.getUTCDate()).padStart(2, '0')}`;
-		} else {
-			nextKey = _PENA_TIME_CONTROL.toDateKey?.(new Date()) || '';
+		const now = _getDialogTimeCalendarNow(), zone = _getDialogTimeCalendarZone(now);
+		const nextKey = _PENA_TIME_CONTROL.calendarDateKey(now, zone);
+		_dialogTimePortalUtcOffsetMinutes = _PENA_TIME_CONTROL.calendarOffsetAt(now, zone);
+		const zoneKey = _getDialogTimeCalendarZoneKey();
+		const zoneChanged = !!_syncDialogTimePortalDay.zoneKey && _syncDialogTimePortalDay.zoneKey !== zoneKey;
+		_syncDialogTimePortalDay.zoneKey = zoneKey;
+		if (!nextKey || (nextKey === _dialogTimePortalDateKey && !zoneChanged)) return false;
+		if (zoneChanged) {
+			// Old-zone snapshots have different day membership; later optimistic
+			// writes must not amend them and make them look current on a return.
+			for (const key of _dialogTimeCache.keys()) if (!key.endsWith(`:tz=${zoneKey}`)) _dialogTimeCache.delete(key);
 		}
-		if (!nextKey || nextKey === _dialogTimePortalDateKey) return false;
 		const previousKey = _dialogTimePortalDateKey;
 		const followsToday = _dialogTimeRange?.from === previousKey && _dialogTimeRange?.to === previousKey;
 		const previous = _readDialogTimeVisits(previousKey);
@@ -13662,8 +13726,9 @@ if (_presetChannel) {
 			_writeDialogTimeVisits(current => _PENA_TIME_CONTROL.closeActivitySession(current), previousKey, { lease: dayLease });
 		}
 		_dialogTimePortalDateKey = nextKey;
+		_armDialogTimeDayBoundary();
 		if (followsToday) _dialogTimeRange = _PENA_TIME_CONTROL.getQuickRange('today', nextKey);
-		if (followsToday && _dialogControlNativeWorkspaceTab === 'time') {
+		if ((followsToday || zoneChanged) && _dialogControlNativeWorkspaceTab === 'time') {
 			const visibleRange = (_dialogTimeView === 'stats' || _dialogTimeView === 'stats30') ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
 			_loadDialogTimeRange(visibleRange).catch(() => {});
 		}
@@ -13673,7 +13738,8 @@ if (_presetChannel) {
 
 	function _getDialogTimeCacheKey(range = _dialogTimeRange) {
 		const normalized = _PENA_TIME_CONTROL?.normalizeRange?.(range?.from, range?.to) || range || {};
-		return `${_getDialogTimeProjectScopeKey() || 'unconfigured'}:${normalized.from || ''}:${normalized.to || ''}`;
+		const zone = typeof _getDialogTimeCalendarZoneKey === 'function' ? `:tz=${_getDialogTimeCalendarZoneKey()}` : '';
+		return `${_getDialogTimeProjectScopeKey() || 'unconfigured'}:${normalized.from || ''}:${normalized.to || ''}${zone}`;
 	}
 
 	function _getDialogTimeRecord(range = _dialogTimeRange) {
@@ -13710,6 +13776,7 @@ if (_presetChannel) {
 			seconds,
 			dateKey,
 			offsetMinutes: _dialogTimePortalUtcOffsetMinutes,
+			timeZone: typeof _getDialogTimeCalendarZone === 'function' ? _getDialogTimeCalendarZone().timeZone : undefined,
 			commentText,
 			allowSubMinute: options.allowSubMinute === true
 		}) || { SECONDS: seconds, COMMENT_TEXT: String(commentText || ''), CREATED_DATE: `${dateKey}T12:00:00` };
@@ -13977,8 +14044,24 @@ if (_presetChannel) {
 	}
 
 	function _getDialogTimeContactDateKey(at) {
-		if (Number.isFinite(_dialogTimePortalUtcOffsetMinutes)) return new Date(at + _dialogTimePortalUtcOffsetMinutes * 60000).toISOString().slice(0, 10);
+		if (Number.isFinite(_dialogTimePortalUtcOffsetMinutes)) return _PENA_TIME_CONTROL.calendarDateKey(at, _getDialogTimeCalendarZone(at));
 		return _PENA_TIME_CONTROL.toDateKey(new Date(at));
+	}
+
+	function _isDialogTimeSystemMessage(message = {}, params = {}) {
+		const affirmative = value => (Array.isArray(value) ? value : [value]).some(item => item === true || item === 1 || /^(?:y|yes|true|1)$/i.test(String(item || '')));
+		for (const data of [message, message.params, message.PARAMS, params, params.params, params.PARAMS]) {
+			if (!data || typeof data !== 'object') continue;
+			if (['system', 'SYSTEM', 'isSystem', 'is_system', 'IS_SYSTEM', 'isSystemMessage', 'IS_SYSTEM_MESSAGE'].some(key => affirmative(data[key]))) return true;
+			// Older task-chat notifications carry a system CSS class even when the
+			// initiating employee remains their author. Never inspect message text.
+			const rawClasses = data.CLASS || data.class || '';
+			const classes = Array.isArray(rawClasses) ? rawClasses.join(' ') : String(rawClasses);
+			if (/(?:^|\s)bx-messenger-content-item-system(?:\s|$)/i.test(classes)) return true;
+			const component = String(data.COMPONENT_ID || data.componentId || data.component_id || '');
+			if (/^(?:SystemMessage|ChatSystemMessage)$/i.test(component)) return true;
+		}
+		return false;
 	}
 
 	function _getDialogTimeMessageContactIdentity(message, params, dialogId, messageId, now = Date.now()) {
@@ -14095,7 +14178,20 @@ if (_presetChannel) {
 		return navigator.locks.request(`${_PENA_TIME_CONTACT_OUTBOX_KEY}.${event.userId}`, commit);
 	}
 
+	function _pauseDialogTimeDurationForPanel(now = Date.now()) {
+		const entry = _dialogTimePendingActivities.get(_dialogTimePendingActiveId);
+		if (!entry?.active) return;
+		entry.visibleMs = (entry.visibleMs || 0) + Math.max(0, now - entry.startedAt);
+		entry.active = false;
+		entry.paused = true;
+		clearTimeout(_dialogTimeQualificationTimer);
+	}
+
 	function _qualifyPendingDialogTimeDuration(entry, now = Date.now()) {
+		if (_dialogControlNativeWorkspaceTab === 'time') {
+			_pauseDialogTimeDurationForPanel(now);
+			return false;
+		}
 		if (!entry || entry.durationQualified || !entry.active) return false;
 		if (Math.max(0, Number(entry.visibleMs) || 0) + Math.max(0, Number(now) - Number(entry.startedAt || now)) < _getDialogTimePendingQualificationMs()) return false;
 		// Saving time covers the task session already open at submission. Merely
@@ -14130,6 +14226,12 @@ if (_presetChannel) {
 	}
 
 	function _stageDialogTimeActivity(activity = {}, options = {}) {
+		// Time bookkeeping is not a visit to the task visible behind the modal.
+		// Real outgoing messages still pass through, including another open frame.
+		if (_dialogControlNativeWorkspaceTab === 'time' && options.qualify !== true) {
+			_pauseDialogTimeDurationForPanel();
+			return false;
+		}
 		const taskId = String(activity.taskId || '').trim();
 		if (!/^\d+$/.test(taskId)) return false;
 		const now = Date.now();
@@ -15429,7 +15531,7 @@ if (_presetChannel) {
 				}
 			}
 			const segments = tracker.saveSegments?.length ? tracker.saveSegments.map(segment => ({ ...segment })) :
-				_PENA_TIME_CONTROL.segmentTimerByPortalDay({ startedAt: tracker.startedAt, stoppedAt, seconds, utcOffsetMinutes: _dialogTimePortalUtcOffsetMinutes }).map(segment => ({ ...segment, status: 'pending', itemId: '', contactsCutoffAt:stoppedAt, contactsAccounted:false }));
+				_PENA_TIME_CONTROL.segmentTimerByPortalDay({ startedAt: tracker.startedAt, stoppedAt, seconds, utcOffsetMinutes: _dialogTimePortalUtcOffsetMinutes, timeZone:typeof _getDialogTimeCalendarZone === 'function' ? _getDialogTimeCalendarZone().timeZone : undefined }).map(segment => ({ ...segment, status: 'pending', itemId: '', contactsCutoffAt:stoppedAt, contactsAccounted:false }));
 			if (!segments.length) {
 				if (!persist(null)) throw new Error('Не удалось сохранить состояние таймера');
 				_ensureDialogTimeTrackerTick();
@@ -15663,6 +15765,10 @@ if (_presetChannel) {
 			_scheduleDialogTimeDeferredFlush(0);
 		}
 		if (_syncDialogTimePortalDay()) _scheduleDialogTimeBootstrap();
+		if (_dialogControlNativeWorkspaceTab === 'time') {
+			_pauseDialogTimeDurationForPanel();
+			return;
+		}
 		const activity = _getActiveDialogTimeActivity();
 		if (!activity) {
 			const pending = _dialogTimePendingActivities.get(_dialogTimePendingActiveId);
@@ -15746,7 +15852,7 @@ if (_presetChannel) {
 			].filter(Boolean).join(' ') : '';
 			const sendButton = !!button && /(?:^|[\s_-])(?:send|отправ[а-яё]*)(?:[\s_-]|$)/i.test(signature);
 			if (!enterInComposer && !sendButton) return;
-			if (!_isDialogTimeLocalCoordinator() || _currentPanelMode !== 'tasks') return;
+			if (!_isDialogTimeLocalCoordinator()) return;
 			_dialogTimeOutgoingIntentAt = Date.now();
 		};
 		document.addEventListener('pointerdown', markOutgoingIntent, true);
@@ -15754,7 +15860,15 @@ if (_presetChannel) {
 		document.addEventListener('click', event => {
 			if (!_isDialogTimeLocalCoordinator()) return;
 			const target = event.target instanceof Element ? event.target : null;
-			if (!target || target.closest?.('.pena-native-time-panel')) return;
+			if (!target) return;
+			if (target.closest?.('[data-pena-workspace-tab="time"],.pena-native-time-panel')) {
+				// Capture runs before the workspace button opens the modal, so only
+				// actual task time before this click contributes to the paused session.
+				const pending = _dialogTimePendingActivities.get(_dialogTimePendingActiveId);
+				if (_dialogControlNativeWorkspaceTab !== 'time') _qualifyPendingDialogTimeDuration(pending);
+				_pauseDialogTimeDurationForPanel();
+				return;
+			}
 			if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
 			if (target.closest?.('button,input,select,textarea,[contenteditable="true"],.pena-native-folder-switcher')) return;
 			const row = getChatItemElement(target);
@@ -15900,9 +16014,12 @@ if (_presetChannel) {
 				const captureOutgoingTaskMessage = (...eventArgs) => {
 					const command = String(eventArgs[0]?.command || eventArgs[0] || '');
 					if (!/message/i.test(command) || /delete|update|read|reaction/i.test(command)) return;
-					if (!_isDialogTimeFrameActive() || _currentPanelMode !== 'tasks') return;
+					// Task side panels can stay open while the main list shows Chats.
+					// The task mapping below, not the selected list tab, proves eligibility.
+					if (!_isDialogTimeFrameActive()) return;
 					const params = eventArgs[0]?.params || eventArgs[1] || {};
 					const message = params?.message || params?.MESSAGE || params || {};
+					if (_isDialogTimeSystemMessage(message, params)) return;
 					const authorId = String(
 						message?.author_id ?? message?.authorId ?? message?.sender_id ?? message?.senderId ??
 						params?.author_id ?? params?.authorId ?? params?.sender_id ?? params?.senderId ?? ''
@@ -16039,8 +16156,9 @@ if (_presetChannel) {
 			try {
 				const raw = localStorage.getItem(storageKey);
 				const saved = raw && raw.length <= 524288 ? JSON.parse(raw) : null;
-				const savedToday = Number.isFinite(saved?.offset) && Math.abs(saved.offset) <= 840 ? new Date(Date.now() + saved.offset * 60000).toISOString().slice(0,10) : '';
-				if (saved?.version === 1 && saved.scope === fingerprint && saved.day === today.from && saved.day === savedToday && Number.isFinite(saved.savedAt) && saved.savedAt > Date.now() - 86400000 && saved.savedAt <= Date.now() &&
+				const zone = _getDialogTimeCalendarZone(), zoneKey = zone.timeZone || `offset:${zone.utcOffsetMinutes}`;
+				const savedToday = _PENA_TIME_CONTROL.calendarDateKey(_getDialogTimeCalendarNow(), zone);
+				if (saved?.version === 1 && saved.calendar === 'user-v1' && saved.zone === zoneKey && Number.isFinite(saved.offset) && saved.offset === _PENA_TIME_CONTROL.calendarOffsetAt(saved.savedAt, zone) && saved.scope === fingerprint && saved.day === today.from && saved.day === savedToday && Number.isFinite(saved.savedAt) && saved.savedAt > Date.now() - 86400000 && saved.savedAt <= Date.now() &&
 					Array.isArray(saved.items) && saved.items.length <= 2000 && new Set(saved.items.map(item => String(item?.id))).size === saved.items.length && !_getDialogTimeRecord(today)?.data &&
 					saved.items.every(item => /^[1-9]\d*$/.test(String(item.id)) && /^[1-9]\d*$/.test(String(item.taskId)) &&
 						item.userId === String(_getCurrentBitrixUserId()) && item.dateKey === today.from && _PENA_TIME_CONTROL.normalizeElapsedItem(item).dateKey === today.from && Number.isFinite(item.seconds) && item.seconds >= 0)) {
@@ -16067,7 +16185,8 @@ if (_presetChannel) {
 			if (!latest?.hasCompleteSnapshot || latest.status !== 'ready' || latest.error || !Array.isArray(latest.data?.items) || latest.data.items.length > 2000 ||
 				!Number.isFinite(_dialogTimePortalUtcOffsetMinutes) || Math.abs(_dialogTimePortalUtcOffsetMinutes) > 840) return;
 			try {
-				const payload = JSON.stringify({ version:1, scope:fingerprint, day:today.from, offset:_dialogTimePortalUtcOffsetMinutes, savedAt:Date.now(), items:latest.data.items });
+				const zone = _getDialogTimeCalendarZone();
+				const payload = JSON.stringify({ version:1, calendar:'user-v1', zone:zone.timeZone || `offset:${zone.utcOffsetMinutes}`, scope:fingerprint, day:today.from, offset:_dialogTimePortalUtcOffsetMinutes, savedAt:Date.now(), items:latest.data.items });
 				if (payload.length > 524288) { _dialogTimeTodayPreviewRetry = { key:readKey, at:Date.now() + 15000 }; return; }
 				localStorage.setItem(storageKey, payload);
 				_dialogTimeTodayPreviewWriteKey = keyFor(latest);
@@ -16359,13 +16478,13 @@ if (_presetChannel) {
 		const suggestionsSection = panel.querySelector('.pena-native-time-suggestions');
 		if (suggestionsSection) suggestionsSection.hidden = (_dialogTimeView === 'stats' || _dialogTimeView === 'stats30');
 		if (suggestionsList) {
-			const suggestionsKey = `${_dialogTimeActionInFlight ? 'busy' : 'ready'}:${suggestions.map(task => `${task.activityId || task.taskId}:${task.taskId ? _getDialogTimeTaskTitle(task.taskId, task.title) : task.title}:${task.pendingContacts}:${task.trackedSeconds}:${task.trackedKnown}:${task.contactCutoffAt}`).join('|')}`;
+			const suggestionsKey = `${_dialogTimeActionInFlight ? 'busy' : 'ready'}:${suggestions.map(task => `${task.activityId || task.taskId}:${task.taskId ? _getDialogTimeTaskTitle(task.taskId, task.title) : task.title}:${task.pendingContacts}:${task.trackedSeconds}:${task.trackedEntries}:${task.trackedKnown}:${task.contactCutoffAt}`).join('|')}`;
 			if (suggestionsList.dataset.penaRenderKey !== suggestionsKey) {
 				suggestionsList.replaceChildren(...(suggestions.length
 					? suggestions.map(task => createTaskRow(task, {
 						activityAction: true,
-						detail: task.trackedSeconds > 0 || task.contactCutoffAt > 0
-							? `Учтено ${task.trackedKnown ? _PENA_TIME_CONTROL.formatDuration(task.trackedSeconds) : '—'}\n+${task.pendingContacts} ${plural(task.pendingContacts, 'контакт', 'контакта', 'контактов')} после последней записи`
+						detail: task.trackedEntries > 0 || task.trackedSeconds > 0 || task.contactCutoffAt > 0
+							? `Учтено ${task.trackedKnown ? _PENA_TIME_CONTROL.formatDuration(task.trackedSeconds) : '—'} · ${task.trackedKnown ? `${task.trackedEntries} ${plural(task.trackedEntries, 'запись', 'записи', 'записей')}` : 'записи —'}\n+${task.pendingContacts} ${plural(task.pendingContacts, 'контакт', 'контакта', 'контактов')} после последней записи`
 							: `${task.pendingContacts} ${plural(task.pendingContacts, 'контакт', 'контакта', 'контактов')}`
 					}))
 					: [Object.assign(document.createElement('div'), {
@@ -16600,7 +16719,8 @@ if (_presetChannel) {
 		}
 		const scope = _getDialogTimeProjectScopeKey();
 		if (!scope) return Promise.resolve(null);
-		if (_dialogTimeBootstrapPromise && _dialogTimeBootstrapToken?.scope === scope) {
+		const calendarZone = typeof _getDialogTimeCalendarZoneKey === 'function' ? _getDialogTimeCalendarZoneKey() : '';
+		if (_dialogTimeBootstrapPromise && _dialogTimeBootstrapToken?.scope === scope && (_dialogTimeBootstrapToken.calendarZone || '') === calendarZone) {
 			// A midnight wake must not disappear into yesterday's cancelling read.
 			// Wait for that owner, then start one coalesced cycle for the new day.
 			if (_dialogTimeBootstrapToken.dateKey && _dialogTimeBootstrapToken.dateKey !== _getDialogTimeTodayKey()) {
@@ -16609,12 +16729,14 @@ if (_presetChannel) {
 			return _dialogTimeBootstrapPromise;
 		}
 		const previous = _dialogTimeBootstrapToken;
-		const sameDay = previous?.scope === scope && (!previous.dateKey || previous.dateKey === _getDialogTimeTodayKey());
+		const sameDay = previous?.scope === scope && (previous.calendarZone || '') === calendarZone && (!previous.dateKey || previous.dateKey === _getDialogTimeTodayKey());
 		if (sameDay && previous.retryAt > Date.now()) return Promise.resolve(null);
 		if (previous?.retryTimer) clearTimeout(previous.retryTimer);
-		const token = { id:++_dialogTimeBootstrapSequence, scope, active:true, phase:'catalog', dateKey:'', startedAt:Date.now(), finishedAt:0, retryAt:0, retryCount:sameDay && previous.phase !== 'ready' ? (previous.retryCount || 0) + 1 : 0, completedTasks:0, totalTasks:0, elapsedPages:0, error:'' };
+		const token = { id:++_dialogTimeBootstrapSequence, scope, calendarZone, active:true, phase:'catalog', dateKey:'', startedAt:Date.now(), finishedAt:0, retryAt:0, retryCount:sameDay && previous.phase !== 'ready' ? (previous.retryCount || 0) + 1 : 0, completedTasks:0, totalTasks:0, elapsedPages:0, error:'' };
 		_dialogTimeBootstrapToken = token;
-		const current = () => token === _dialogTimeBootstrapToken && scope === _getDialogTimeProjectScopeKey() && _isDialogTimeFrameActive() && document.visibilityState !== 'hidden' && navigator.onLine !== false;
+		const current = () => token === _dialogTimeBootstrapToken && scope === _getDialogTimeProjectScopeKey() &&
+			calendarZone === (typeof _getDialogTimeCalendarZoneKey === 'function' ? _getDialogTimeCalendarZoneKey() : '') &&
+			_isDialogTimeFrameActive() && document.visibilityState !== 'hidden' && navigator.onLine !== false;
 		const run = (async () => {
 			try {
 				// Metadata and today's journal share the project owner, not the physical
@@ -16842,7 +16964,7 @@ if (_presetChannel) {
 				let dispatchedAt = 0;
 				let globalData;
 				try {
-					globalData = await _PENA_TIME_CONTROL.loadGlobalElapsedItems({ ...normalized, userId, knownItems:cached?.data?.items || [], supported:globalCapability?.supported === true, isCurrent:current,
+					globalData = await _PENA_TIME_CONTROL.loadGlobalElapsedItems({ ...normalized, ...(typeof _getDialogTimeCalendarZone === 'function' ? _getDialogTimeCalendarZone() : {}), userId, knownItems:cached?.data?.items || [], supported:globalCapability?.supported === true, isCurrent:current,
 						probeTaskId:(cached?.data?.items || []).find(item => workingTaskIdSet.has(String(item.taskId)))?.taskId || taskIds[0],
 						callPage:async params => {
 							const startedAt = Date.now();
@@ -16904,6 +17026,7 @@ if (_presetChannel) {
 				const dispatchedAt = new Map();
 				const batch = await _PENA_TIME_CONTROL.loadElapsedItems({
 					from: normalized.from, to: normalized.to, userId, taskIds: wave,
+					...(typeof _getDialogTimeCalendarZone === 'function' ? _getDialogTimeCalendarZone() : {}),
 					callPages: async params => {
 						const rememberDispatch = responses => {
 							params.forEach((request, index) => {

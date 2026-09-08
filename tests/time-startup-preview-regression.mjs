@@ -87,10 +87,10 @@ try{
   await waitSaved(page);initialSaved=await saved(page);assert.equal(initialSaved.offset,180);assert.equal(initialSaved.day,'2026-09-08');assert(initialSaved.items.every(item=>item.userId==='7'));
   return s;
  });
- await phase('reload restores confirmed cached total while the new catalog is held',async()=>{
+ await phase('reload restores cached data internally and hides totals until the new catalog is complete',async()=>{
   await page.goto(url('&previewHold=1'));await held(page);
   await page.waitForFunction(()=>startupPreviewProbe.snapshot().restored,null,{timeout:5000});await paint(page);const s=await state(page);
-  assert.equal(s.seconds,5400);assert.equal(s.verified,true);assert.equal(s.complete,false);assert.deepEqual(s.elapsed,[]);assert.match(s.toolbar,/1:30/);assert.equal(s.panelOpen,false);
+  assert.equal(s.seconds,5400);assert.equal(s.verified,true);assert.equal(s.complete,false);assert.deepEqual(s.elapsed,[]);assert.doesNotMatch(s.toolbar,/1:30/);assert.match(s.toolbar,/…|--:--/);assert.equal(s.panelOpen,false);
   await page.screenshot({path:resolve(root,'tests/artifacts/time-startup-preview-restored.png')});return s;
  });
  await phase('released catalog replaces preview with the current backend amount',async()=>{
@@ -126,7 +126,8 @@ try{
    const stored=await saved(midnight);assert.equal(stored.day,'2026-09-09');assert.equal(stored.offset,180);
    await midnight.goto(url('&previewHold=1'));await held(midnight);
    await midnight.waitForFunction(()=>startupPreviewProbe.snapshot().restored,null,{timeout:5000});await paint(midnight);const s=await state(midnight);
-   assert.equal(s.range.from,'2026-09-09');assert.equal(s.seconds,5400);assert.equal(s.complete,false);assert.deepEqual(s.elapsed,[]);assert.match(s.toolbar,/1:30/);return s;
+   assert.equal(s.range.from,'2026-09-09');assert.equal(s.seconds,5400);assert.equal(s.complete,false);assert.deepEqual(s.elapsed,[]);assert.doesNotMatch(s.toolbar,/1:30/);assert.match(s.toolbar,/…|--:--/);
+   await midnight.evaluate(()=>releasePreviewCatalog());await ready(midnight,5400);const confirmed=await state(midnight);assert.match(confirmed.toolbar,/1:30/);return{preview:s,confirmed};
   }finally{await midnight.close();}
  });
  assert.deepEqual(errors.flat(),[]);console.log(`PASS time startup preview: ${phases.length} phases`);

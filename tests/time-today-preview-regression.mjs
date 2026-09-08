@@ -17,6 +17,7 @@ function fixture(storage=new Map()){
   setTimeout:(fn,ms)=>{assert.equal(ms,250);const id=++state.sequence;state.timers.set(id,fn);return id;},clearTimeout:id=>state.timers.delete(id),
   document:{visibilityState:'visible'},navigator:{onLine:true},_PENA_TIME_CONTROL:model,
   _dialogTimeTodayPreviewReadKey:'',_dialogTimeTodayPreviewWriteKey:'',_dialogTimeTodayPreviewTimer:null,_dialogTimeTodayPreviewPendingKey:'',_dialogTimeTodayPreviewRetry:null,_dialogTimePortalUtcOffsetMinutes:0,
+  _getDialogTimeCalendarZone:()=>({utcOffsetMinutes:0}),_getDialogTimeCalendarNow:()=>state.now,
   _getDialogTimeProjectScopeKey:scope,_getDialogTimeIdentityScopeKey:()=>state.identity,_getCurrentBitrixUserId:()=>state.identity.split('~')[1],_getDialogTimeTodayKey:()=>state.day,
   _dialogTimeRange:today,_dialogTimePortalDateKey:today.from,_dialogTimeView:'day',_dialogControlNativeWorkspaceTab:'time',
   _dialogTimeCache:new Map(),_dialogTimeInFlight:new Map(),_dialogTimeForcedRefreshes:new Map(),_dialogTimeRangeRechecks:new Map(),_dialogTimePanelRefreshes:new Map(),
@@ -31,7 +32,7 @@ function fixture(storage=new Map()){
  vm.runInContext(['_syncDialogTimeTodayPreview','_getDialogTimeWorkingTaskIds','_getDialogTimeCacheKey','_getDialogTimeRecord','_setDialogTimeCacheRecord','_hasDialogTimeVerifiedData','_loadDialogTimeRange'].map(extract).join('\n'),c);
  const record=()=>c._getDialogTimeRecord(today);
  const seed=(items=[item()],extra={})=>c._setDialogTimeCacheRecord(c._getDialogTimeCacheKey(today),{data:model.aggregateElapsedItems(items),range:today,status:'ready',hasVerifiedData:true,hasCompleteSnapshot:true,updatedAt:state.now,taskFreshness:{'1':{at:state.now,revision:0}},...extra});
- const payload=()=>({version:1,scope:scope().replace(/:g\d+$/,''),day:state.day,offset:0,savedAt:state.now,items:[item()]});
+ const payload=()=>({version:1,calendar:'user-v1',zone:'offset:0',scope:scope().replace(/:g\d+$/,''),day:state.day,offset:0,savedAt:state.now,items:[item()]});
  return {state,c,today,record,seed,payload,sync:()=>c._syncDialogTimeTodayPreview(today),flush:()=>{const jobs=[...state.timers.values()];state.timers.clear();jobs.forEach(fn=>fn());},saveRaw:value=>storage.set(`pena.timeToday.v1.${state.identity}`,typeof value==='string'?value:JSON.stringify(value))};
 }
 await phase('confirmed preview writes later and restores immediately without certifying freshness; real reads replace it',async()=>{

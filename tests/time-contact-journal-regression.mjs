@@ -11,7 +11,7 @@ function extract(name) {
  const tail = source.slice(begin + 1); const next = tail.slice(1).search(/\n\t(?:async )?function /);
  return next < 0 ? tail : tail.slice(0, next + 1);
 }
-const names = ['_readDialogTimeVisits','_getDialogTimeMessageContactIdentity','_getDialogTimePendingQualificationMs','_syncDialogTimePendingLease','_qualifyPendingDialogTimeDuration','_stageDialogTimeActivity','_flushDialogTimePendingActivities','_getDialogTimeContactDateKey','_queueDialogTimeContactEvent','_journalDialogTimeContactEvents','_readDialogTimeContactEvents','_commitDialogTimeContactEvent','_reportDialogTimeContactError','_writeDialogTimeVisits'];
+const names = ['_pauseDialogTimeDurationForPanel','_isDialogTimeSystemMessage','_readDialogTimeVisits','_getDialogTimeMessageContactIdentity','_getDialogTimePendingQualificationMs','_syncDialogTimePendingLease','_qualifyPendingDialogTimeDuration','_stageDialogTimeActivity','_flushDialogTimePendingActivities','_getDialogTimeContactDateKey','_queueDialogTimeContactEvent','_journalDialogTimeContactEvents','_readDialogTimeContactEvents','_commitDialogTimeContactEvent','_reportDialogTimeContactError','_writeDialogTimeVisits'];
 function createLocks(){let tail=Promise.resolve();return{request(_name,callback){const next=tail.then(callback);tail=next.catch(()=>{});return next;}};}
 function frame({ storage = new Map(), locks = createLocks(), id = 'frame1' } = {}) {
  let now = Date.parse('2026-09-06T20:59:00Z'), user = '7', resolver, delay = false, failWrite = false, failAck = false, eligibility = true, portalOffset = 180, portalFail = false, portalCalls = 0;
@@ -25,6 +25,7 @@ function frame({ storage = new Map(), locks = createLocks(), id = 'frame1' } = {
  _dialogTimePortalUtcOffsetMinutes:180, _dialogTimeFrameId:id, _dialogTimeTaskTitles:new Map(),
  _getCurrentBitrixUserId:()=>user, _ensureCurrentBitrixUserId:async()=>user,
  _getDialogTimeTodayKey:()=>new Date(now+180*60000).toISOString().slice(0,10),
+ _getDialogTimeCalendarZone:()=>({utcOffsetMinutes:ctx._dialogTimePortalUtcOffsetMinutes}),
  _getDialogTimeScopedStorageKey:(prefix,date='')=>`${prefix}.${user}${date?'.'+date:''}`,
  _isDialogTimeLocalCoordinator:()=>true, _isDialogTimeFrameActive:()=>true,
  _getActiveDialogTimeActivity:()=>({taskId:'101'}), normId:x=>String(x||''),
@@ -40,10 +41,52 @@ function frame({ storage = new Map(), locks = createLocks(), id = 'frame1' } = {
  _persistDialogTimeActivity:(entry,opts)=>{writes.push({taskId:entry.taskId,qualify:opts.qualify,at:now});return true;},
  _removeDialogTimeActivity:()=>{}
  });
- vm.runInContext(`const _dialogTimePendingActivities=new Map(); const _dialogTimeContactEvents=new Map(); let _dialogTimeContactEventSequence=0; let _dialogTimeContactJournalTimer=null; let _dialogTimeContactRetryAttempt=0; let _dialogTimeContactLastError=''; let _dialogTimeContactRecoveryScope=''; let _dialogTimeLeaseHeartbeatTimer=null; let _dialogTimePendingActiveId=''; let _dialogTimeQualificationTimer=null; let _dialogTimeDeferredFlushPromise=null; let _dialogControlNativeWorkspaceTab='time'; ${names.map(extract).join('\n')}\n globalThis.probe={stage:_stageDialogTimeActivity,flush:_flushDialogTimePendingActivities,pending:_dialogTimePendingActivities, events:_dialogTimeContactEvents,write:_writeDialogTimeVisits,qualify:_qualifyPendingDialogTimeDuration,messageIdentity:_getDialogTimeMessageContactIdentity};`,ctx);
+ vm.runInContext(`const _dialogTimePendingActivities=new Map(); const _dialogTimeContactEvents=new Map(); let _dialogTimeContactEventSequence=0; let _dialogTimeContactJournalTimer=null; let _dialogTimeContactRetryAttempt=0; let _dialogTimeContactLastError=''; let _dialogTimeContactRecoveryScope=''; let _dialogTimeLeaseHeartbeatTimer=null; let _dialogTimePendingActiveId=''; let _dialogTimeQualificationTimer=null; let _dialogTimeDeferredFlushPromise=null; let _dialogControlNativeWorkspaceTab=''; ${names.map(extract).join('\n')}\n globalThis.probe={stage:_stageDialogTimeActivity,flush:_flushDialogTimePendingActivities,pending:_dialogTimePendingActivities, events:_dialogTimeContactEvents,write:_writeDialogTimeVisits,qualify:_qualifyPendingDialogTimeDuration,messageIdentity:_getDialogTimeMessageContactIdentity,panel:open=>{if(open)_pauseDialogTimeDurationForPanel();_dialogControlNativeWorkspaceTab=open?'time':'';}};`,ctx);
  return { ...ctx.probe, storage,writes,warnings,titles:ctx._dialogTimeTaskTitles, tick:ms=>{now+=ms;}, setUser:id=>{user=id;}, eligibility:value=>{eligibility=value;}, delay:()=>{delay=true;}, resolve:()=>{delay=false;resolver?.(eligibility);}, failWrite:value=>{failWrite=value;},failAck:value=>{failAck=value;}, unknownPortal:(offset,fail=false)=>{ctx._dialogTimePortalUtcOffsetMinutes=null;portalOffset=offset;portalFail=fail;},portalCalls:()=>portalCalls, total:()=>[...storage].filter(([k])=>k.startsWith('pena.timeVisitedTasks.v1.')).flatMap(([,v])=>JSON.parse(v)).reduce((n,x)=>n+x.visits,0) };
 }
 const scenarios = [];
+await check('time panel pauses task duration during backdated bookkeeping and preserves real outgoing messages',async()=>{
+ const f=frame();f.tick(-120000);f.stage({taskId:'101'});f.tick(20000);f.panel(true);
+ f.tick(180000);assert.equal(f.qualify(f.pending.get('task:101')),false);await f.flush();assert.equal(f.total(),0);
+ assert.equal(f.stage({taskId:'102'}),false,'searching bookkeeping tasks cannot open contact sessions');
+ f.stage({taskId:'102'},{qualify:true});await f.flush();assert.equal(f.total(),1,'real outgoing message remains a contact while time panel is open');
+ f.panel(false);f.stage({taskId:'101'});f.tick(61000);assert.equal(f.qualify(f.pending.get('task:101')),true);await f.flush();assert.equal(f.total(),2);
+ return{panelDurationContacts:0,messageDuringPanel:1,resumedTaskVisit:1};
+});
+await check('pausing a short visit preserves only its pre-panel visible duration',async()=>{
+ const f=frame();f.tick(-120000);f.stage({taskId:'101'});f.tick(20000);f.panel(true);f.tick(120000);f.panel(false);f.stage({taskId:'101'});
+ f.tick(39000);assert.equal(f.qualify(f.pending.get('task:101')),false);f.tick(1000);assert.equal(f.qualify(f.pending.get('task:101')),true);await f.flush();
+ assert.equal(f.total(),1);return{visibleBeforePanel:20,hiddenInPanel:120,visibleAfterPanel:40,contacts:1};
+});
+await check('structured system notifications from the employee cannot qualify a contact; real time-related text and attachments can',()=>{
+ const start=source.indexOf('const captureOutgoingTaskMessage = (...eventArgs) => {');
+ const end=source.indexOf("BXNS.addCustomEvent('onPullEvent-im', captureOutgoingTaskMessage);",start);
+ const contacts=[];let metaReads=0;
+ const ctx=vm.createContext({Date,Map,String,Number,Array,normId:x=>String(x||''),_isDialogTimeFrameActive:()=>true,_currentPanelMode:'tasks',_getCurrentBitrixUserId:()=> '7',_dialogTimeOutgoingIntentAt:Date.now(),_dialogTimeOutgoingPullSeen:new Map(),
+  _getDialogRecentMeta:()=>{metaReads++;return{taskId:'101',isTask:true}},_getActiveDialogTimeActivity:()=>({taskId:'101',dialogId:'chat101'}),_dialogTimePendingActivities:new Map(),_dialogTimeTaskIdsByChatDialogId:new Map([['chat101','101']]),_dialogTimeTaskTitles:new Map(),_rememberDialogTimeTaskChat:()=>{},_rememberTaskChatDialogVisit:(dialogId,title,taskId,options)=>contacts.push({taskId,...options})});
+ vm.runInContext(extract('_isDialogTimeSystemMessage')+extract('_getDialogTimeMessageContactIdentity')+source.slice(start,end)+'\nglobalThis.capture=captureOutgoingTaskMessage;',ctx);
+ let id=900;const emit=(extra={},outer={})=>ctx.capture('messageAdd',{...outer,message:{id:String(++id),author_id:'7',dialog_id:'chat101',...extra}});
+ for(const system of [{system:true},{SYSTEM:'Y'},{isSystem:1},{is_system:'true'},{params:{SYSTEM:['Y']}},{PARAMS:{CLASS:'bx-messenger-content-item-system'}},{params:{componentId:'SystemMessage'}}])emit(system);
+ emit({}, {SYSTEM:'Y'});emit({}, {PARAMS:{IS_SYSTEM:true}});
+ assert.equal(contacts.length,0);assert.equal(metaReads,0,'system events do not even resolve tasks or schedule eligibility work');
+ emit({system:false,text:'Я добавил 30 минут за позавчера'});
+ emit({SYSTEM:'N',params:{FILE_ID:['51']}});
+ emit({params:{COMPONENT_ID:'CustomUserCard'},text:'Проверь вложение'});
+ assert.equal(contacts.length,3);return{systemEventsIgnored:9,realMessages:3,systemMetadataReads:0};
+});
+await check('task messages with a proven mapping qualify while the main list shows Chats; ordinary and incoming messages do not',()=>{
+ const start=source.indexOf('const captureOutgoingTaskMessage = (...eventArgs) => {');
+ const end=source.indexOf("BXNS.addCustomEvent('onPullEvent-im', captureOutgoingTaskMessage);",start);
+ const contacts=[];let coordinator=true;
+ const ctx=vm.createContext({Date,Map,String,Number,Array,normId:x=>String(x||''),_isDialogTimeFrameActive:()=>coordinator,_currentPanelMode:'chats',_getCurrentBitrixUserId:()=> '7',_dialogTimeOutgoingIntentAt:Date.now(),_dialogTimeOutgoingPullSeen:new Map(),
+  _getDialogRecentMeta:()=>null,_getActiveDialogTimeActivity:()=>null,_dialogTimePendingActivities:new Map(),_dialogTimeTaskIdsByChatDialogId:new Map([['chat101','101']]),_dialogTimeTaskTitles:new Map(),_rememberDialogTimeTaskChat:()=>{},_rememberTaskChatDialogVisit:(dialogId,title,taskId,options)=>contacts.push({taskId,...options}),
+  _getDialogControlItemsForMode:()=>[],findChatElementById:()=>null,_extractTaskIdFromTaskUrl:()=>'',_isDialogControlFolder:()=>false});
+ vm.runInContext(extract('_isDialogTimeSystemMessage')+extract('_getDialogTimeMessageContactIdentity')+source.slice(start,end)+'\nglobalThis.capture=captureOutgoingTaskMessage;',ctx);
+ let id=1000;const emit=(extra={})=>ctx.capture('messageAdd',{message:{id:String(++id),author_id:'7',dialog_id:'chat101',...extra}});
+ emit();emit({author_id:'8'});emit({dialog_id:'chat909'});emit({system:true});coordinator=false;emit();
+ assert.equal(contacts.length,1);assert.equal(contacts[0].taskId,'101');assert.equal(contacts[0].qualify,true);
+ return{mappedTaskMessages:1,ordinaryChats:0,incomingMessages:0,systemMessages:0,foreignFrameMessages:0};
+});
 await check('replayed message after ACK and frame reload retains one durable contact; new message remains pending',async()=>{
  const f=frame(),day='2026-09-06',at=Date.parse('2026-09-06T20:59:00Z');
  const identity=f.messageIdentity({date:at/1000},{},'chat101','501',at);
@@ -103,7 +146,7 @@ await check('foreign side panel cannot suppress native task lookup for an outgoi
  let reads=0,contact=null;const context=vm.createContext({Date,Map,String,Number,normId:x=>String(x||''),_isDialogTimeFrameActive:()=>true,_currentPanelMode:'tasks',_getCurrentBitrixUserId:()=> '7',_dialogTimeOutgoingIntentAt:0,_dialogTimeOutgoingPullSeen:new Map(),_getDialogRecentMeta:()=>null,
   _getActiveDialogTimeActivity:()=>({taskId:'405',dialogId:'chat405',title:'Задача 405'}),_dialogTimePendingActivities:new Map(),_dialogTimeTaskIdsByChatDialogId:new Map(),_dialogTimeTaskTitles:new Map([['5','Задача 5']]),
   _getDialogControlItemsForMode:()=>{reads++;return[{id:'chat5',taskId:'5',title:'Чат 5'}]},_isDialogControlFolder:()=>false,_rememberDialogTimeTaskChat:()=>{},_rememberTaskChatDialogVisit:(dialogId,title,taskId)=>{contact={dialogId,title,taskId}}});
- vm.runInContext(extract('_getDialogTimeMessageContactIdentity')+source.slice(start,end)+"\ncaptureOutgoingTaskMessage('message',{message:{author_id:'7',dialog_id:'chat5',id:'msg-contact-title'}});",context);
+ vm.runInContext(extract('_isDialogTimeSystemMessage')+extract('_getDialogTimeMessageContactIdentity')+source.slice(start,end)+"\ncaptureOutgoingTaskMessage('message',{message:{author_id:'7',dialog_id:'chat5',id:'msg-contact-title'}});",context);
  assert.equal(reads,1);assert.deepEqual(contact,{dialogId:'chat5',taskId:'5',title:'Задача 5'});return{nativeTaskLookups:reads,contact};
 });
 await check('legacy ledger taskId/id aliases persist as one canonical row without losing accounting metadata',async()=>{
@@ -154,8 +197,9 @@ if(!process.env.PENA_CONTACT_SKIP_BROWSER) await check('Chromium two pages: real
   await page.addScriptTag({content:fs.readFileSync(new URL('../extension/native-time-control.js',import.meta.url),'utf8')});
   await page.addScriptTag({content:`const _PENA_TIME_CONTROL=window.__PENA_TIME_CONTROL__,_PENA_TIME_VISITS_KEY='pena.timeVisitedTasks.v1',_PENA_TIME_CONTACT_OUTBOX_KEY='pena.timeContactOutbox.v1',_PENA_TIME_ACTIVITY_LEASE_KEY='pena.timeActivityOwner.v1',_PENA_TIME_ACTIVITY_LEASE_STALE_MS=15000;
    const _dialogTimeFrameId=${JSON.stringify(id)},_dialogTimePortalUtcOffsetMinutes=180,_dialogTimePendingActivities=new Map(),_dialogTimeContactEvents=new Map(),_dialogTimeTaskTitles=new Map();
-   let _dialogTimeContactEventSequence=0,_dialogTimeContactJournalTimer=null,_dialogTimeContactRetryAttempt=0,_dialogTimeContactLastError='',_dialogTimeContactRecoveryScope='',_dialogTimeLeaseHeartbeatTimer=null,_dialogTimePendingActiveId='',_dialogTimeQualificationTimer=null,_dialogTimeDeferredFlushPromise=null,_dialogControlNativeWorkspaceTab='time',_dialogTimeOwnedActivityId='';
+   let _dialogTimeContactEventSequence=0,_dialogTimeContactJournalTimer=null,_dialogTimeContactRetryAttempt=0,_dialogTimeContactLastError='',_dialogTimeContactRecoveryScope='',_dialogTimeLeaseHeartbeatTimer=null,_dialogTimePendingActiveId='',_dialogTimeQualificationTimer=null,_dialogTimeDeferredFlushPromise=null,_dialogControlNativeWorkspaceTab='',_dialogTimeOwnedActivityId='';
    function _getCurrentBitrixUserId(){return '7'} function _isDialogTimeLocalCoordinator(){return true} function _isDialogTimeFrameActive(){return true}
+   function _getDialogTimeCalendarZone(){return {utcOffsetMinutes:_dialogTimePortalUtcOffsetMinutes}}
    function _getActiveDialogTimeActivity(){return null} function normId(x){return String(x||'')} function _ensureDialogTimeTaskEligibility(){return Promise.resolve(true)}
    function _scheduleDialogTimeDeferredFlush(){} function _queueDialogTimeUiSync(){} function _invalidateDialogTimeTaskSnapshot(){}
    ${[...names,...extra].map(extract).join('\n')}

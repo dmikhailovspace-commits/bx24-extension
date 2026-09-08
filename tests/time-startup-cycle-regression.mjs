@@ -45,7 +45,7 @@ fixture=fixture.replace(apiAnchor,`
         return success(rows.slice(start,start+size),{total:rows.length,next:start+size<rows.length?start+size:null});
       }
 `+apiAnchor);
-const lateAnchor="    window.BX = { message(key) { return key === 'USER_ID' ? '7' : ''; }, rest: { callMethod(method, callParams, callback) {";
+const lateAnchor="    window.BX = { message(key) { return key === 'USER_ID' ? '7' : ({ SERVER_TZ_OFFSET:'0', USER_TZ_OFFSET:'0', USER_TZ_AUTO:'N' }[key] || ''); }, rest: { callMethod(method, callParams, callback) {";
 assert.equal(fixture.split(lateAnchor).length,2);
 fixture=fixture.replace(lateAnchor,`
     window.startupCycleLateSnapshot=()=>{
@@ -70,7 +70,7 @@ fixture=fixture.replace(scriptAnchor,`<script>
    patch:async()=>({ok:true}),commit:async()=>({ok:true})
   };
   const original=BX.rest.callMethod;
-  BX.message=key=>key==='USER_ID'&&mode==='early'?'7':'';
+  BX.message=key=>key==='USER_ID'?(mode==='early'?'7':''):({ SERVER_TZ_OFFSET:'0', USER_TZ_OFFSET:'0', USER_TZ_AUTO:'N' }[key]||'');
   BX.rest.callMethod=function(method,params,callback){
    state.calls.push({method,params,at:performance.now()});
    if(method==='server.time'&&clockFailure&&state.calls.filter(call=>call.method==='server.time').length===1){
