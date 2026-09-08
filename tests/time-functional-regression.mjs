@@ -5,7 +5,7 @@ import { startHarnessServer, collectPageErrors } from './lib/harness-server.mjs'
 const require = createRequire(import.meta.url), { chromium } = require('playwright');
 const server = await startHarnessServer(), browser = await chromium.launch({headless:true});
 const page = await browser.newPage({viewport:{width:1000,height:800},timezoneId:process.env.PENA_TEST_BROWSER_TIMEZONE || undefined});
-const errors = collectPageErrors(page), phases=[];
+const errors = collectPageErrors(page), phases=[];let windowCatalogBoundary=null;
 const phase = async (name, fn) => { const at=Date.now(); try { await fn(); phases.push({name,status:'PASS',ms:Date.now()-at}); } catch(e) { phases.push({name,status:'FAIL',ms:Date.now()-at,error:e.message}); throw e; } };
 const source=readFileSync(new URL('../extension/injected.js',import.meta.url),'utf8').replace(
  '\tconst _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;',
@@ -18,6 +18,7 @@ const source=readFileSync(new URL('../extension/injected.js',import.meta.url),'u
  pending: id => _dialogTimePendingActivities.get('task:'+id),
  refresh: (force = true) => _refreshDialogTimeTaskCatalog({force}),
  projectCatalog: options => _ensureDialogTimeProjectCatalog(options),
+ readWork: () => ({changedTaskTimers:_dialogTimeChangedTaskTimers.size,elapsedTimer:!!_dialogTimeElapsedEventTimer,elapsedReads:_dialogTimeInFlight.size,titleRead:!!_dialogTimeTitleLoadPromise,titleQueued:_dialogTimeTitleLoadQueued,eligibilityReads:_dialogTimeTaskEligibilityInFlight.size,projectCatalog:!!_dialogTimeProjectCatalogOwner}),
  eligibility: id => _getFreshDialogTimeTaskEligibility(id),
  flush: () => _flushDialogTimePendingActivities(),
  visits: () => _readDialogTimeVisits(),
@@ -27,7 +28,7 @@ const source=readFileSync(new URL('../extension/injected.js',import.meta.url),'u
  load: () => _loadDialogTimeRange(_getDialogTimeSelectedRange(), {force:true})
  };`).replace(
  '\tasync function _loadDialogTimeRange(range = _dialogTimeRange, { force = false, bootstrap = null } = {}) {',
- '\tasync function _loadDialogTimeRange(range = _dialogTimeRange, { force = false, bootstrap = null } = {}) {\n window.timeRangeLoadStarts = (window.timeRangeLoadStarts || 0) + 1;'
+ '\tasync function _loadDialogTimeRange(range = _dialogTimeRange, { force = false, bootstrap = null } = {}) {\n window.timeRangeLoadStarts = (window.timeRangeLoadStarts || 0) + 1; (window.timeRangeLoadTrace ||= []).push({at:Date.now(),stack:new Error().stack});'
  );
 await page.route('**/extension/injected.js*',route=>route.fulfill({status:200,contentType:'application/javascript',body:source}));
 try {
@@ -100,7 +101,7 @@ try {
   await page.evaluate(()=>{
    const original=window.BX.rest.callMethod;
    window.BX.rest.callMethod=function(method,params,cb){
-    if(method==='tasks.task.get' && String(params.taskId)==='90901')return cb({error:()=>null,data:()=>({task:{id:'90901',title:'Без чата уникальная',allowTimeTracking:window.timeTaskEligibilityOverrides['90901']||'Y'}})});
+    if(method==='tasks.task.get' && String(params.taskId)==='90901')return cb({error:()=>null,data:()=>({task:{id:'90901',title:'Без чата уникальная',groupId:'1',allowTimeTracking:window.timeTaskEligibilityOverrides['90901']||'Y'}})});
     return original.apply(this,arguments);
    };
    window.timeTaskEligibilityOverrides['90901']='N';
@@ -111,7 +112,18 @@ try {
   await page.evaluate(()=>{window.timeTaskEligibilityOverrides['90901']='Y';(window.nativeCustomEventHandlers.get('onPullEvent-tasks')||[]).forEach(fn=>fn('task_update',{TASK_ID:'90901'}));});
   await page.locator('#pena-time-task-option-90901').waitFor();
  });
+ // Exercise the boundary with a real deferred task event, so phase isolation
+ // cannot accidentally pass only when the preceding UI wait happened to be slow.
+ await page.evaluate(()=>(window.nativeCustomEventHandlers.get('onPullEvent-tasks')||[]).forEach(fn=>fn('task_update',{TASK_ID:'90901'})));
+ await page.waitForFunction(()=>window.timeProbe.readWork().elapsedTimer===true);
  await phase('all catalog pages and incremental watermark',async()=>{
+  windowCatalogBoundary = await page.evaluate(()=>({pending:window.timeProbe.readWork(),start:window.timeRangeLoadStarts||0}));
+  // Do not attribute an older task event's 100ms refresh to the catalog pages.
+  // Wait for real owners, including chained title/eligibility work, before
+  // replacing the SDK fixture and taking the exact-zero baseline.
+  await page.waitForFunction(()=>Object.values(window.timeProbe.readWork()).every(value=>!value),null,{timeout:15000});
+  windowCatalogBoundary.idle = await page.evaluate(()=>window.timeProbe.readWork());
+  assert.ok(Object.values(windowCatalogBoundary.idle).every(value=>!value));
   await page.evaluate(()=>{
    window.catalogProbeCalls=[];
    const original=window.BX.rest.callMethod;window.catalogProbeOriginal=original;
@@ -131,7 +143,9 @@ try {
   await page.waitForFunction(()=>timeProbe.eligibility('92124')===true);
   assert.deepEqual(await page.evaluate(()=>window.catalogProbeCalls.map(c=>c.start)),[0,0,0]);
   assert.deepEqual(await page.evaluate(()=>window.catalogProbeCalls.map(c=>c.filter['>ID'])),[0,92049,92099]);
-  assert.equal((await page.evaluate(()=>window.timeRangeLoadStarts))-loadStarts,0,'Project metadata publication must not launch an elapsed crawl from each catalog page');
+  const catalogTrace=await page.evaluate(start=>window.timeRangeLoadTrace.slice(start),loadStarts);
+  writeFileSync(new URL('./artifacts/time-functional-catalog-boundary.json',import.meta.url),JSON.stringify({boundary:windowCatalogBoundary,catalogTrace},null,2));
+  assert.equal((await page.evaluate(()=>window.timeRangeLoadStarts))-loadStarts,0,'Project metadata publication must not launch an elapsed crawl from each catalog page: '+JSON.stringify({boundary:windowCatalogBoundary,catalogTrace}));
   assert.ok(await page.evaluate(()=>{const pref=JSON.parse(localStorage.getItem(`pena.timeProjects.v1.${location.host.toLowerCase()}~7`));return pref.all&&pref.includeUnassigned&&window.catalogProbeCalls.every(call=>call.select.includes('GROUP_ID')&&call.filter.GROUP_ID==null&&call.filter['>GROUP_ID']==null);}), 'Explicit all+unassigned catalog must return verifiable GROUP_ID without excluding projects');
   const deltaStartedAt=await page.evaluate(()=>Date.now());
   await page.evaluate(()=>window.timeProbe.projectCatalog({delta:true}));

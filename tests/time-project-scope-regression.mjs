@@ -109,6 +109,7 @@ await phase('explicit all and unassigned policies have distinct membership and p
 await phase('manual full replacement removes moved tasks from membership and cached totals',async()=>{
  const f=fixture();f.save(choice());await f.load();f.state.rows=f.state.rows.map(row=>row.ID==='1'?{...row,GROUP_ID:'20'}:row).filter(row=>row.ID!=='2');const before=f.state.calls.length;
  await f.c._ensureDialogTimeProjectCatalog({force:true});assert(!f.c._dialogTimeProjectTaskIds.has('1'));assert(!f.c._dialogTimeProjectTaskIds.has('2'));assert.equal(f.record().data.totalSeconds,5940);
+ assert.deepEqual(JSON.parse(JSON.stringify(f.record().data.coverage)),{checkedTasks:99,totalTasks:99,complete:true},'Removed members must not leave an obsolete progress count');
  assert(f.state.calls.slice(before).every(call=>!call.params.filter['>=CHANGED_DATE']));return {remainingMembers:99,visibleSeconds:5940};
 });
 await phase('confirmed write for the previous selection cannot add a foreign task to current totals',async()=>{

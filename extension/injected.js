@@ -4619,14 +4619,16 @@
 	}
 	function _pruneDialogTimeProjectSnapshots() {
 		const scope = _getDialogTimeProjectScopeKey();
-		for (const [key, record] of _dialogTimeCache) {
+		for (const [key, record] of Array.from(_dialogTimeCache)) {
 			if (!key.startsWith(`${scope}:`) || !record.data?.items) continue;
 			const items=record.data.items.filter(item => _dialogTimeProjectTaskIds.has(String(item.taskId)));
 			const taskFreshness=Object.fromEntries(Object.entries(record.taskFreshness || {}).filter(([id]) => _dialogTimeProjectTaskIds.has(id)));
 			if (items.length === record.data.items.length && Object.keys(taskFreshness).length===Object.keys(record.taskFreshness || {}).length) continue;
 			_dialogTimeRangeRevisions.set(key,(_dialogTimeRangeRevisions.get(key)||0)+1);
-			const data={ ...record.data, ..._PENA_TIME_CONTROL.aggregateElapsedItems(items), totalAvailable:items.length };
-			_setDialogTimeCacheRecord(key,{...record,data,taskFreshness});
+			const checkedTasks=Array.from(_dialogTimeProjectTaskIds).filter(id => taskFreshness[id] && !taskFreshness[id].unavailable && taskFreshness[id].revision===(_dialogTimeTaskRevisions.get(id)||0)).length;
+			const complete=checkedTasks===_dialogTimeProjectTaskIds.size;
+			const data={ ...record.data, ..._PENA_TIME_CONTROL.aggregateElapsedItems(items), totalAvailable:items.length, coverage:{checkedTasks,totalTasks:_dialogTimeProjectTaskIds.size,complete} };
+			_setDialogTimeCacheRecord(key,{...record,data,taskFreshness,hasCompleteSnapshot:complete});
 		}
 	}
 	function _saveDialogTimeProjectPreference(value) {
