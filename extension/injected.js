@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.115';
+	window.__ANITREC_RUNNING__ = '7.5.116';
 
-	const VER = '7.5.115';
+	const VER = '7.5.116';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -14524,10 +14524,10 @@ if (_presetChannel) {
 		} catch { return false; }
 	}
 
-	async function _withDialogTimeManualWriteLock(action) {
+	async function _withDialogTimeManualWriteLock(action, { wait = false } = {}) {
 		const scope = _getDialogTimeIdentityScopeKey();
 		const run = () => scope === _getDialogTimeIdentityScopeKey() ? action() : undefined;
-		if (navigator.locks?.request) return navigator.locks.request(`pena-time-manual:${scope}`, { ifAvailable:true }, lock => lock ? run() : undefined);
+		if (navigator.locks?.request) return navigator.locks.request(`pena-time-manual:${scope}`, { ifAvailable:!wait }, lock => lock ? run() : undefined);
 		return run();
 	}
 
@@ -15020,7 +15020,21 @@ if (_presetChannel) {
 	async function _addDialogTimeManualEntry(task, hours, minutes, dateKey = _getDialogTimeSelectedRange()?.from) {
 		if (_dialogTimeActionInFlight) return;
 		const scope = _getDialogTimeIdentityScopeKey();
-		await _withDialogTimeManualWriteLock(() => _commitDialogTimeManualEntry(task, hours, minutes, dateKey));
+		const projectScope = _getDialogTimeProjectScopeKey();
+		// Admit the user action before awaiting a cross-frame lock. A background
+		// accounting owner must not silently drop this click or admit a duplicate.
+		const contactCutoffAt = Date.now();
+		_dialogTimeActionInFlight = true;
+		_queueDialogTimeUiSync();
+		try {
+			await _withDialogTimeManualWriteLock(() => {
+				if (scope !== _getDialogTimeIdentityScopeKey() || projectScope !== _getDialogTimeProjectScopeKey()) return;
+				return _commitDialogTimeManualEntry(task, hours, minutes, dateKey, { admitted:true, contactCutoffAt });
+			}, { wait:true });
+		} finally {
+			_dialogTimeActionInFlight = false;
+			_queueDialogTimeUiSync();
+		}
 		if (scope === _getDialogTimeIdentityScopeKey() && _readDialogTimeManualDraft().pendingWrite?.status === 'acknowledged') {
 			_recoverDialogTimeContactAccounting().then(ok => {
 				if (ok || scope !== _getDialogTimeIdentityScopeKey()) return;
@@ -15030,8 +15044,8 @@ if (_presetChannel) {
 		}
 	}
 
-	async function _commitDialogTimeManualEntry(task, hours, minutes, dateKey = _getDialogTimeSelectedRange()?.from) {
-		if (_dialogTimeActionInFlight || !_PENA_TIME_CONTROL) return;
+	async function _commitDialogTimeManualEntry(task, hours, minutes, dateKey = _getDialogTimeSelectedRange()?.from, options = {}) {
+		if ((_dialogTimeActionInFlight && options.admitted !== true) || !_PENA_TIME_CONTROL) return;
 		const projectScope = _getDialogTimeProjectScopeKey();
 		const scope = _getDialogTimeIdentityScopeKey();
 		const storageKey = _getDialogTimeScopedStorageKey(_PENA_TIME_MANUAL_DRAFT_KEY);
@@ -15063,7 +15077,7 @@ if (_presetChannel) {
 		_dialogTimeManualError = '';
 		_queueDialogTimeUiSync();
 		let saved = false, requestStarted = false, savedItemId = '';
-		const intent = { operationId: globalThis.crypto?.randomUUID?.() || `${Date.now()}:${Math.random()}`, status:'sending', taskId, title:String(task?.title || initialDraft.title || ''), seconds:duration.seconds, dateKey, scope, attemptedAt:Date.now(), contactCutoffAt: uncertain?.contactCutoffAt || uncertain?.attemptedAt || Date.now() };
+		const intent = { operationId: globalThis.crypto?.randomUUID?.() || `${Date.now()}:${Math.random()}`, status:'sending', taskId, title:String(task?.title || initialDraft.title || ''), seconds:duration.seconds, dateKey, scope, attemptedAt:Date.now(), contactCutoffAt: uncertain?.contactCutoffAt || uncertain?.attemptedAt || options.contactCutoffAt || Date.now() };
 		const draft = { ...initialDraft, taskId, title:intent.title, query:intent.title, hours:String(hours), minutes:String(minutes), dateKey, pendingWrite:intent };
 		try {
 			const eligibility = await _ensureDialogTimeTaskEligibility(taskId, {force:true});
@@ -15100,7 +15114,7 @@ if (_presetChannel) {
 				if (minutesInput) minutesInput.value = '';
 			}
 			_showDialogDockToast(`Добавлено: ${_PENA_TIME_CONTROL.formatDuration(duration.seconds)}`, 'ok');
-			_dialogTimeActionInFlight = false;
+			if (options.admitted !== true) _dialogTimeActionInFlight = false;
 			_queueDialogTimeUiSync();
 			// Bookkeeping retains the ACK intent; if storage is unavailable, its
 			// in-memory witness retries persistence. Recovery never repeats ADD.
@@ -15116,7 +15130,8 @@ if (_presetChannel) {
 			}
 		} finally {
 			if (_dialogTimeActiveManualWriteIntent?.operationId === intent.operationId) _dialogTimeActiveManualWriteIntent = null;
-			_dialogTimeActionInFlight = false; _queueDialogTimeUiSync();
+			if (options.admitted !== true) _dialogTimeActionInFlight = false;
+			_queueDialogTimeUiSync();
 		}
 		if (saved && scope === _getDialogTimeIdentityScopeKey()) {
 			const visibleRange = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();

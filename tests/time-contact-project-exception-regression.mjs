@@ -14,9 +14,9 @@ function extract(name) {
  return source.slice(start,next?start+1+next.index:undefined);
 }
 function fixture(storage=new Map()) {
- const s={user:'7',portal:'portal.test',configured:true,reads:0,eligibility:true,checks:[],writes:[],draft:{},tracker:null,hold:null};
+ const s={user:'7',portal:'portal.test',configured:true,reads:0,eligibility:true,checks:[],writes:[],draft:{},tracker:null,hold:null,clock:at,finishCalls:0};
  const key=(prefix,date='')=>s.user?`${s.portal}:${prefix}.${s.user}.${date}`:'';
- const a={Date,Map,Set,Promise,Number,String,Math,Array,JSON,setTimeout:()=>0,clearTimeout:()=>{},
+ const a={Date:class extends Date {static now(){return s.clock;}},Map,Set,Promise,Number,String,Math,Array,JSON,setTimeout:()=>0,clearTimeout:()=>{},
   _PENA_TIME_CONTROL:model,_PENA_TIME_VISITS_KEY:'visits',_PENA_TIME_MANUAL_DRAFT_KEY:'manual',
   localStorage:{getItem:k=>{s.reads++;return storage.get(k)||null;}},
   _getDialogTimeScopedStorageKey:key,_getDialogTimeIdentityScopeKey:()=>s.user?`${s.portal}~${s.user}`:'',
@@ -34,7 +34,9 @@ function fixture(storage=new Map()) {
   _dialogTimeActiveManualWriteIntent:null,_dialogTimeAcknowledgedManualMemory:null,
   _dialogTimeManualSearchQuery:'',_dialogTimeManualSearchResults:[],_dialogControlNativeSwitcherNode:null,_dialogTimeView:'day',
   _queueDialogTimeUiSync:()=>{},_showDialogDockToast:()=>{},_scheduleDialogTimeAccountingRecovery:()=>{},
-  _finishDialogTimeAcknowledgedManualWrite:async()=>true,
+  navigator:{locks:{request:async(_name,options,action)=>{s.lockOptions=options;if(s.lockHold)await s.lockHold;return action({});}}},
+  _recoverDialogTimeContactAccounting:async()=>true,
+  _finishDialogTimeAcknowledgedManualWrite:async()=>{s.finishCalls++;return s.finishGate||true;},
   _ensureDialogTimeTaskEligibility:async(id,options)=>{s.checks.push({id,options});if(s.hold)await s.hold;return s.eligibility;},
   _writeDialogTimeManualDraft:draft=>{s.draft=structuredClone(draft);return true;},_getDialogTimeWriteIntentKey:()=>'',
   _callBxRestMethod:async(method,params)=>{s.writes.push({method,params});return '901';},
@@ -45,7 +47,7 @@ function fixture(storage=new Map()) {
   _rememberDialogTimeTaskVisit:()=>{},_ensureDialogTimeTrackerTick:()=>{},_dialogTimeTrackerCancelConfirmTaskId:'',
  };
  vm.createContext(a);
- const names=['_readDialogTimeVisits','_isDialogTimeProjectTask','_getDialogTimeContactExceptionTaskIds','_getDialogTimeWritableTaskIds','_isDialogTimeWritableTask','_getDialogTimeWorkingTaskIds','_getDialogTimeLocalTaskSearchResults','_getDialogTimeTaskCandidates','_commitDialogTimeManualEntry','_startDialogTimeTracker'];
+ const names=['_readDialogTimeVisits','_isDialogTimeProjectTask','_getDialogTimeContactExceptionTaskIds','_getDialogTimeWritableTaskIds','_isDialogTimeWritableTask','_getDialogTimeWorkingTaskIds','_getDialogTimeLocalTaskSearchResults','_getDialogTimeTaskCandidates','_withDialogTimeManualWriteLock','_addDialogTimeManualEntry','_commitDialogTimeManualEntry','_startDialogTimeTracker'];
  vm.runInContext(names.map(extract).join('\n'),a);
  return {a,s,storage,visits:(rows,date=day)=>storage.set(key('visits',date),JSON.stringify(rows))};
 }
@@ -114,12 +116,48 @@ try {
    await a._startDialogTimeTracker({taskId:'5'});assert.equal(!!s.tracker,qualified&&eligible);assert.equal(s.checks[0].options.force,true);
   }
  });
+ await phase('two queued ADD calls are admitted once and validate only after the lock',async()=>{
+  const {a,s,visits}=fixture();visits([contact(5)]);let release;s.lockHold=new Promise(r=>release=r);
+  const first=a._addDialogTimeManualEntry({taskId:'5'},0,10,day),second=a._addDialogTimeManualEntry({taskId:'5'},0,10,day);
+  assert.equal(a._dialogTimeActionInFlight,true);assert.equal(s.checks.length,0);assert.equal(s.writes.length,0);assert.equal(s.lockOptions.ifAvailable,false);
+  release();await Promise.all([first,second]);assert.equal(s.checks.length,1);assert.equal(s.writes.length,1);assert.equal(a._dialogTimeActionInFlight,false);
+ });
+ await phase('queued ADD is cancelled when user or portal changes before lock acquisition',async()=>{
+  for(const changed of ['user','portal']){
+   const {a,s,visits}=fixture();visits([contact(5)]);let release;s.lockHold=new Promise(r=>release=r);
+   const work=a._addDialogTimeManualEntry({taskId:'5'},0,10,day);s[changed]=changed==='user'?'8':'other.test';release();await work;
+   assert.equal(s.checks.length,0);assert.equal(s.writes.length,0);assert.equal(a._dialogTimeActionInFlight,false);
+  }
+ });
+ await phase('contacts qualified while ADD waits remain pending after the accepted write',async()=>{
+  const {a,s,visits}=fixture();visits([contact(5,1,at-20000)]);let release;s.lockHold=new Promise(r=>release=r);
+  const work=a._addDialogTimeManualEntry({taskId:'5'},0,10,day);
+  const during=model.applyQualifiedContact(a._readDialogTimeVisits(day),{eventId:'during-lock',taskId:'5',qualifiedAt:at+1000,reason:'message'});
+  visits(during);s.clock=at+5000;release();await work;
+  assert.equal(s.writes.length,1);assert.equal(s.draft.pendingWrite.contactCutoffAt,at);
+  const accounted=model.markActivityAccounted(during,'task:5',s.draft.pendingWrite.contactCutoffAt,{itemId:'901'});
+  const remaining=model.selectUntrackedVisits(accounted);assert.equal(remaining.length,1);assert.equal(remaining[0].pendingContacts,1);
+  return {clickedAt:at,lockGrantedAt:at+5000,cutoffAt:s.draft.pendingWrite.contactCutoffAt,remainingContacts:1};
+ });
+ await phase('acknowledged metadata recovery retains busy admission and cannot enqueue a second user operation',async()=>{
+  const {a,s}=fixture();s.draft={pendingWrite:{status:'acknowledged',taskId:'5',dateKey:day,seconds:600,itemId:'901'}};
+  let release;s.finishGate=new Promise(r=>release=r);const first=a._addDialogTimeManualEntry({taskId:'5'},0,10,day);
+  for(let i=0;i<10&&!s.finishCalls;i++)await Promise.resolve();assert.equal(s.finishCalls,1);assert.equal(a._dialogTimeActionInFlight,true);
+  const second=a._addDialogTimeManualEntry({taskId:'5'},0,10,day);assert.equal(s.finishCalls,1);release(true);await Promise.all([first,second]);
+  assert.equal(s.finishCalls,1);assert.equal(s.writes.length,0);assert.equal(s.checks.length,0);assert.equal(a._dialogTimeActionInFlight,false);
+ });
  if(process.env.PENA_CONTACT_EXCEPTION_VM_ONLY!=='1') {
   await phase('Chromium: foreign-project contact enables the real form, revalidates permission, preserves ACK and reload totals',async()=>{
    const {chromium}=await import('playwright');
    const {startHarnessServer,collectPageErrors}=await import('./lib/harness-server.mjs');
    const server=await startHarnessServer(),browser=await chromium.launch({headless:true});
    const page=await browser.newPage({viewport:{width:1000,height:800}}),errors=collectPageErrors(page);
+   if(Number(process.env.PENA_CONTACT_EXCEPTION_CPU)>1) {
+    const cdp=await page.context().newCDPSession(page);await cdp.send('Emulation.setCPUThrottlingRate',{rate:Number(process.env.PENA_CONTACT_EXCEPTION_CPU)});
+    report.cpuThrottle=Number(process.env.PENA_CONTACT_EXCEPTION_CPU);
+   }
+   const snapshots=[];
+   const snapshot=async label=>{const state=await page.evaluate(()=>window.contactExceptionProbe?.snapshot());snapshots.push({label,...state});return state;};
    try {
     const anchor='\tconst _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;';
     assert.equal(source.split(anchor).length,2);
@@ -131,7 +169,16 @@ try {
       working:()=>_getDialogTimeWorkingTaskIds(_getDialogTimeSelectedRange()),
       sync:()=>_syncDialogTimeUi(_dialogControlNativeSwitcherNode),
       prepare:task=>_prepareDialogTimeManualEntry(task),
+      saveProjects:value=>_saveDialogTimeProjectPreference(value),
+      busy:()=>_dialogTimeActionInFlight,
       reloadRange:()=>_loadDialogTimeRange(_getDialogTimeSelectedRange(),{force:true}),
+      snapshot:()=>({record:_getDialogTimeRecord(_getDialogTimeSelectedRange()),range:_getDialogTimeSelectedRange(),
+       selected:_dialogTimeManualSelectedTask,error:_dialogTimeManualError,inFlight:_dialogTimeActionInFlight,draft:_readDialogTimeManualDraft(),
+       visits:_readDialogTimeVisits(_getDialogTimeSelectedRange().from),working:_getDialogTimeWorkingTaskIds(_getDialogTimeSelectedRange()),
+       revisions:[..._dialogTimeTaskRevisions],eligibility:[..._dialogTimeTaskEligibility],eligibilityInFlight:[..._dialogTimeTaskEligibilityInFlight.keys()],
+       addCalls:window.timeAddCalls,backend:window.timeAddedItems,readCalls:window.timeRestCalls,taskGetCalls:window.nativeRestCalls?.filter(call=>call.method==='tasks.task.get'),rest:window.__PENA_REST_DIAGNOSTICS__?.snapshot(),
+       trace:window.contactExceptionTrace||[],ui:{submitDisabled:document.querySelector('.pena-native-time-manual-submit')?.disabled,
+        minutes:document.querySelector('.pena-native-time-manual-minutes')?.value,total:document.querySelector('.pena-native-time-total-value')?.textContent}}),
      };`);
     const fixtureHtml=readFileSync(new URL('./native-consistency-harness.html',import.meta.url),'utf8')
      .replace('{ version:1, all:true, ids:[], includeUnassigned:true }','{ version:1, all:false, ids:["1"], includeUnassigned:false }')
@@ -143,8 +190,11 @@ try {
     await page.waitForFunction(()=>window.contactExceptionProbe.record()?.hasCompleteSnapshot && window.contactExceptionProbe.record()?.data?.totalSeconds===5400);
     await page.evaluate(()=>{
      window.contactExtraCatalogCalls=0;
+     window.contactExceptionTrace=[];
      const method=BX.rest.callMethod,batch=BX24.callBatch;
-     BX.rest.callMethod=function(name,...args){if(name==='tasks.task.list')window.contactExtraCatalogCalls++;return method.call(this,name,...args);};
+     BX.rest.callMethod=function(name,...args){if(name==='tasks.task.list')window.contactExtraCatalogCalls++;
+      if(['tasks.task.get','task.elapseditem.add'].includes(name))window.contactExceptionTrace.push({event:'dispatch',at:performance.now(),method:name,params:args[0],fixtureFlag:window.timeTaskEligibilityOverrides['5']});
+      return method.call(this,name,...args);};
      BX24.callBatch=function(calls,...args){window.contactExtraCatalogCalls+=Object.values(calls).filter(call=>call?.method==='tasks.task.list').length;return batch.call(this,calls,...args);};
      window.dispatchNativeTaskMessage('chat5');
     });
@@ -154,13 +204,29 @@ try {
     await minutes.fill('10');
     assert.equal(await submit.isEnabled(),true,'Qualified foreign contact must not have a gray submit button');
     assert.equal(await page.evaluate(()=>window.contactExceptionProbe.project('5')),false);
+    await snapshot('before-N-submit');
     await page.evaluate(()=>{window.timeTaskEligibilityOverrides['5']='N';});
     await submit.click();
     await page.waitForFunction(()=>document.querySelector('.pena-native-time-manual-error')?.textContent.includes('выключен'));
     assert.equal(await page.evaluate(()=>window.timeAddCalls.length),0,'Fresh N must block actual ADD');
+    await snapshot('after-N-rejection');
     await page.evaluate(()=>{window.timeTaskEligibilityOverrides['5']='Y';});
-    await submit.click();
-    await page.waitForFunction(()=>window.timeAddCalls.length===1 && window.contactExceptionProbe.record()?.data?.totalSeconds===6000);
+    const holdManualLock=async()=>{
+     await page.evaluate(()=>{window.contactTestLockHeld=false;navigator.locks.request(`pena-time-manual:${location.host.toLowerCase()}~7`,async()=>{window.contactTestLockHeld=true;await new Promise(resolve=>{window.contactTestLockRelease=resolve;});});});
+     await page.waitForFunction(()=>window.contactTestLockHeld===true);
+    };
+    await phase('Chromium: queued ADD remains busy and two clicks produce one fresh validation and one write',async()=>{
+     await holdManualLock();const before=await snapshot('before-held-Y-submit');
+     await submit.dblclick({delay:30});
+     const queued=await snapshot('queued-Y-doubleclick');
+     assert.equal(queued.inFlight,true);assert.equal(queued.ui.submitDisabled,true);assert.equal(queued.addCalls.length,0);
+     assert.equal(queued.trace.filter(x=>x.method==='tasks.task.get').length,before.trace.filter(x=>x.method==='tasks.task.get').length,'Queued writes must validate after acquiring the lock');
+     await page.evaluate(()=>window.contactTestLockRelease());
+     await page.waitForFunction(()=>window.timeAddCalls.length===1 && window.contactExceptionProbe.record()?.data?.totalSeconds===6000);
+     const finished=await snapshot('held-Y-accepted');
+     assert.equal(finished.trace.filter(x=>x.method==='tasks.task.get'&&x.fixtureFlag==='Y').length,1);
+     return {queuedBusy:true,writesBeforeUnlock:0,acceptedWrites:1};
+    });
     await page.evaluate(()=>window.contactExceptionProbe.reloadRange());
     assert.equal(await page.evaluate(()=>window.contactExceptionProbe.record()?.data?.totalSeconds),6000,'Reconciliation must retain foreign contact time');
     assert.equal(await page.evaluate(()=>window.contactExceptionProbe.project('5')),false);
@@ -197,8 +263,28 @@ try {
     await page.evaluate(()=>{window.contactHeldRefresh.active=false;for(const fn of window.contactHeldRefresh.callbacks.splice(0))fn();});
     await page.waitForFunction(()=>window.contactExceptionProbe.record()?.hasCompleteSnapshot && window.contactExceptionProbe.record()?.data?.totalSeconds===6000);
     assert.deepEqual(await page.evaluate(()=>window.contactExceptionProbe.visits()),visitsBeforeSave);
+    await phase('Chromium: changing project selection cancels a queued ADD before validation or mutation',async()=>{
+     await page.evaluate(()=>window.contactExceptionProbe.prepare({taskId:'5',title:'Задача 5'}));await minutes.fill('10');
+     await holdManualLock();const before=await snapshot('before-project-change-queue');
+     await submit.click();assert.equal(await page.evaluate(()=>window.contactExceptionProbe.busy()),true);
+     // This is the production preference writer used by the actual Settings
+     // form and a concurrent-frame selection update; no state flag is forged.
+     await page.evaluate(()=>window.contactExceptionProbe.saveProjects({version:1,all:false,ids:['1'],includeUnassigned:false}));
+     await page.evaluate(()=>window.contactTestLockRelease());
+     await page.waitForFunction(()=>!window.contactExceptionProbe.busy());
+     const after=await snapshot('queued-project-change-cancelled');
+     assert.equal(after.addCalls.length,before.addCalls.length);
+     assert.equal(after.taskGetCalls.length,before.taskGetCalls.length);
+     return {extraWrites:0,extraEligibilityReads:0};
+    });
     assert.deepEqual(errors,[]);
+    report.browserSnapshots=snapshots;
     return {initialSeconds:5400,acceptedSeconds:6000,reloadedSeconds:6000,pendingSaveAllSeconds:6000,finalSaveAllSeconds:6000,addCalls:1,additionalCatalogRequestsBeforeSettings:0};
+   } catch(error) {
+    await snapshot('failure').catch(e=>snapshots.push({label:'snapshot-failed',error:e.message}));
+    report.browserSnapshots=snapshots;report.browserErrors=errors;
+    await page.screenshot({path:new URL('./artifacts/time-contact-project-exception-failure.png',import.meta.url).pathname.replace(/^\/([A-Za-z]:)/,'$1')}).catch(()=>{});
+    throw error;
    } finally {await browser.close();await server.close();}
   });
  }
