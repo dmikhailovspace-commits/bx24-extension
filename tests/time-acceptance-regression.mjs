@@ -38,7 +38,7 @@ function loadFixture() {
   const eligibility = new Map(Array.from({ length: 41 }, (_, i) => [String(i + 1), i !== 40]));
   const context = vm.createContext({ Date: Clock, document: { visibilityState: 'visible' }, navigator: { onLine: true },
     _PENA_TIME_CONTROL: time, _dialogTimeRange: range, _dialogTimePortalDateKey: range.from, _dialogTimeView: 'day', _dialogControlNativeWorkspaceTab: 'time',
-    _dialogTimeCache: new Map(), _dialogTimeInFlight: new Map(), _dialogTimeRangeRevisions: new Map(), _dialogTimeTaskRevisions: new Map(),
+    _dialogTimeCache: new Map(), _dialogTimeInFlight: new Map(), _dialogTimeRangeRevisions: new Map(), _dialogTimeTaskRevisions: new Map(), _dialogTimeTaskLogEvidence:new Map(),
     _dialogTimeForcedRefreshes: new Map(), _dialogTimeRangeRechecks: new Map(), _dialogTimePanelRefreshes: new Map(),
     // This low-level elapsed oracle starts after project selection and catalog commit.
     // Actual first-run/settings gates are covered by time-project-scope-regression.

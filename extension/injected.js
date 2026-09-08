@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.109';
+	window.__ANITREC_RUNNING__ = '7.5.110';
 
-	const VER = '7.5.109';
+	const VER = '7.5.110';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -1507,7 +1507,7 @@
 		if (!jobs.length) return [];
 		// This helper is exclusively for read pagination. A transport fallback must
 		// never accidentally replay a mutation added by a future caller.
-		if (jobs.some(job => !['im.recent.list', 'task.elapseditem.getlist'].includes(job.method))) {
+		if (jobs.some(job => !['im.recent.list', 'task.elapseditem.getlist', 'tasks.task.list'].includes(job.method))) {
 			throw Object.assign(new Error('Batch pagination requires an approved read method'), { code: 'BATCH_READ_ONLY' });
 		}
 		if (jobs.length > 50) {
@@ -4679,6 +4679,7 @@
 		_queueDialogTimeUiSync();
 		const since = delta && _dialogTimeCatalogScope === scope ? _dialogTimeCatalogCursor : 0;
 		const startedAt = Date.now();
+		const evidence = { scope:_getDialogTimeIdentityScopeKey(), revisions:new Map(_dialogTimeTaskRevisions), at:startedAt };
 		const run = (async () => {
 			const preference=_readDialogTimeProjectPreference();
 			if (preference?.all && preference.includeUnassigned && !since &&
@@ -4712,10 +4713,11 @@
 			}
 			const rows = [];
 			let afterId = 0;
+			const filter = { ..._getDialogTimeProjectFilter(), ...(since ? { '>=CHANGED_DATE':new Date(since - 60000).toISOString() } : {}) };
+			const select = ['ID','TITLE','CHAT_ID','GROUP_ID','ALLOW_TIME_TRACKING','CHANGED_DATE','TIME_SPENT_IN_LOGS'];
 			while (current()) {
 				const page = await _callBxRestPageWithTimeout('tasks.task.list', {
-					filter:{ ..._getDialogTimeProjectFilter(), '>ID':afterId, ...(since ? { '>=CHANGED_DATE':new Date(since - 60000).toISOString() } : {}) },
-					select:['ID','TITLE','CHAT_ID','GROUP_ID','ALLOW_TIME_TRACKING','CHANGED_DATE'], order:{ID:'asc'}, start:0
+					filter:{ ...filter, '>ID':afterId }, select, order:{ID:'asc'}, start:0
 				}, 12000, { isCurrent:current });
 				if (!current()) return false;
 				const batch = _extractDialogTaskCatalogRows(page.data);
@@ -4725,8 +4727,17 @@
 				if (batch.some(task => !_matchesDialogTimeProjectTask(task))) throw new Error('Битрикс24 вернул задачи вне выбранных проектов');
 				rows.push(...batch);
 				const root = page.data?.result || page.data || {};
-				const tail = root.hasMore === false || root.hasMorePages === false || !batch.length ||
+				let tail = root.hasMore === false || root.hasMorePages === false || !batch.length ||
 					(!(page.next != null && page.next > 0) && root.hasMore !== true && root.hasMorePages !== true && batch.length < 50);
+				if (!tail && !since && afterId === 0 && Number(page.total) >= 500 &&
+					batch.every(task => Object.prototype.hasOwnProperty.call(task, 'TIME_SPENT_IN_LOGS') || Object.prototype.hasOwnProperty.call(task, 'timeSpentInLogs'))) {
+					const partitioned = await _loadDialogTaskCatalogPartitionTail({ page, firstRows:batch, afterId:nextId, filter, select, isCurrent:current });
+					if (!current()) return false;
+					if (partitioned) {
+						if (partitioned.rows.some(task => !_matchesDialogTimeProjectTask(task))) throw new Error('Битрикс24 вернул задачи вне выбранных проектов');
+						rows.push(...partitioned.rows); tail = true;
+					}
+				}
 				if (tail) {
 					const ids = since ? new Set(_dialogTimeProjectTaskIds) : new Set();
 					rows.forEach(task => ids.add(String(task.ID ?? task.id)));
@@ -4735,7 +4746,7 @@
 					_dialogTimeCatalogCursor = startedAt;
 					_dialogTimeProjectCatalogDirty = false;
 					_pruneDialogTimeProjectSnapshots();
-					_publishDialogTimeTaskIndexRows(rows);
+					_publishDialogTimeTaskIndexRows(rows, evidence);
 					_queueDialogTimeUiSync();
 					return true;
 				}
@@ -4789,8 +4800,10 @@
 		if (!section) { section=document.createElement('section'); section.className='pena-native-time-project-settings'; panel.querySelector('.pena-native-time-scroll').prepend(section); }
 		section.hidden = false;
 		section.replaceChildren();
-		const title = document.createElement('h3'); title.className='pena-native-time-project-title'; title.textContent=previous ? 'Проекты для учёта времени' : 'Сначала выберите проекты';
-		const description = document.createElement('p'); description.className='pena-native-time-project-description'; description.textContent='Загружаем задачи и трудозатраты только из выбранных проектов и рабочих групп. Выбор сохранится для вашего пользователя.';
+		const title = document.createElement('h3'); title.className='pena-native-time-project-title'; title.textContent=previous ? 'Проекты для учёта времени' : 'Выберите проекты';
+		const description = document.createElement('p'); description.className='pena-native-time-project-description'; description.textContent='Считаем время по выбранным проектам и рабочим группам. Выбор можно изменить позже.';
+		const heading=document.createElement('header'); heading.className='pena-native-time-project-heading'; heading.append(title,description);
+		const choices=document.createElement('div'); choices.className='pena-native-time-project-choices';
 		const search = document.createElement('input'); search.type='search'; search.className='pena-native-time-project-search'; search.placeholder='Найти проект'; search.setAttribute('aria-label','Найти проект');
 		const makeCheck = (labelText, className, checked, onChange) => {
 			const label=document.createElement('label'); label.className=className;
@@ -4800,16 +4813,23 @@
 		};
 		const status=document.createElement('p'); status.className='pena-native-time-project-status'; status.setAttribute('role','status'); status.textContent='Загружаем проекты…';
 		const list=document.createElement('div'); list.className='pena-native-time-project-list';
-		const footer=document.createElement('div'); footer.className='pena-native-time-project-footer';
+		const empty=document.createElement('p'); empty.className='pena-native-time-project-empty'; empty.textContent='Проекты не найдены'; empty.hidden=true;
+		const selectionCount=document.createElement('span'); selectionCount.className='pena-native-time-project-count'; selectionCount.setAttribute('aria-live','polite');
+		const footer=document.createElement('footer'); footer.className='pena-native-time-project-footer';
 		const save=document.createElement('button'); save.type='button'; save.className='pena-native-time-project-save'; save.textContent=previous ? 'Сохранить' : 'Начать учёт';
 		const cancel=document.createElement('button'); cancel.type='button'; cancel.className='pena-native-time-project-cancel'; cancel.textContent='Отмена'; cancel.hidden=!previous;
 		const close = () => { panel._penaTimeProjectSettings=null; panel.classList.remove('--project-settings'); section.hidden=true; _queueDialogTimeUiSync(); };
 		cancel.addEventListener('click',close);
-		const updateSave = () => { save.disabled=!state.loaded || (!state.all && !state.ids.size && !state.includeUnassigned); };
+		const updateSave = () => {
+			save.disabled=!state.loaded || (!state.all && !state.ids.size && !state.includeUnassigned);
+			selectionCount.textContent=state.all ? 'Все проекты' : `Выбрано: ${state.ids.size + +state.includeUnassigned}`;
+		};
 		const renderList = () => {
 			const query=search.value.trim().toLocaleLowerCase('ru');
 			list.replaceChildren();
-			for (const project of state.projects.filter(project => !query || project.name.toLocaleLowerCase('ru').includes(query))) {
+			const matching=state.projects.filter(project => !query || project.name.toLocaleLowerCase('ru').includes(query));
+			empty.hidden=!state.loaded || !state.projects.length || matching.length>0;
+			for (const project of matching) {
 				const option=makeCheck(project.name,'pena-native-time-project-option',state.all || state.ids.has(project.id),checked => {
 					if (state.all) { state.all=false; state.ids=new Set(state.projects.map(item => item.id)); }
 					if (checked) state.ids.add(project.id); else state.ids.delete(project.id);
@@ -4825,31 +4845,32 @@
 		const unassigned=makeCheck('Задачи без проекта','pena-native-time-project-option',state.includeUnassigned,checked => {state.includeUnassigned=checked; updateSave();});
 		unassigned.querySelector('input').dataset.projectId='0';
 		search.addEventListener('input',renderList);
-		footer.append(cancel,save);
-		section.append(title,description,search,all,unassigned,status,list,footer);
+		footer.append(selectionCount,cancel,save);
+		choices.append(all,unassigned,status,list,empty);
+		section.append(heading,search,choices,footer);
 		updateSave();
 		save.addEventListener('click', () => {
-			if (scope !== _getDialogTimeIdentityScopeKey()) { status.textContent='Пользователь изменился. Откройте настройки заново.'; return; }
+			if (scope !== _getDialogTimeIdentityScopeKey()) { status.hidden=false; status.classList.add('--error'); status.textContent='Пользователь изменился. Откройте настройки заново.'; return; }
 			try {
 				_saveDialogTimeProjectPreference({version:1,all:state.all,ids:[...state.ids],includeUnassigned:state.includeUnassigned});
 				close();
 				_scheduleDialogTimeBootstrap();
 				const range=_dialogTimeView==='stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
 				_loadDialogTimeRange(range).catch(() => {});
-			} catch { status.classList.add('--error'); status.textContent='Не удалось сохранить выбор. Повторите.'; }
+			} catch { status.hidden=false; status.classList.add('--error'); status.textContent='Не удалось сохранить выбор. Повторите.'; }
 		});
 		const load = () => {
-			status.textContent='Загружаем проекты…'; status.classList.remove('--error');
+			status.hidden=false; status.textContent='Загружаем проекты…'; status.classList.remove('--error');
 			_loadDialogTimeProjects().then(projects => {
 				if (panel._penaTimeProjectSettings !== state || scope !== _getDialogTimeIdentityScopeKey()) return;
 				state.projects=projects; state.loaded=true;
 				// Retain saved inaccessible IDs visibly so opening settings cannot
 				// silently remove a previous selection.
 				for (const id of state.ids) if (!projects.some(project => project.id===id)) projects.push({id,name:`Проект #${id} (сейчас недоступен)`});
-				status.textContent=projects.length ? '' : 'Доступных проектов нет'; renderList(); updateSave();
+				status.textContent=projects.length ? '' : 'Доступных проектов нет. Можно учитывать задачи без проекта.'; status.hidden=projects.length>0; renderList(); updateSave();
 			}).catch(() => {
 				if (panel._penaTimeProjectSettings !== state) return;
-				status.classList.add('--error'); status.textContent='Не удалось загрузить проекты. ';
+				status.hidden=false; status.classList.add('--error'); status.textContent='Не удалось загрузить проекты. ';
 				const retry=document.createElement('button'); retry.type='button'; retry.textContent='Повторить'; retry.addEventListener('click',load); status.append(retry);
 			});
 		};
@@ -4885,7 +4906,7 @@
 		_dialogTimeCatalogPromise = run;
 		return run;
 	}
-	function _publishDialogTimeTaskIndexRows(rows = []) {
+	function _publishDialogTimeTaskIndexRows(rows = [], evidence = null) {
 		let changed = false;
 		const scope = _getDialogTimeIdentityScopeKey();
 		for (const task of Array.isArray(rows) ? rows : []) {
@@ -4898,6 +4919,28 @@
 					_dialogTimeTaskRevisions.set(taskId, (_dialogTimeTaskRevisions.get(taskId) || 0) + 1);
 				}
 				_dialogTimeTaskChangedAt.set(taskId, { scope, at: changedAt });
+			}
+			if (evidence?.scope === scope && evidence.revisions instanceof Map &&
+				(evidence.revisions.get(taskId) || 0) === (_dialogTimeTaskRevisions.get(taskId) || 0)) {
+				// SQL SUM without any elapsed rows is null. Numeric zero can still
+				// contain zero-duration entries: those must retain their journal IDs.
+				const field = Object.prototype.hasOwnProperty.call(task, 'TIME_SPENT_IN_LOGS') ? 'TIME_SPENT_IN_LOGS' : 'timeSpentInLogs';
+				if (Object.prototype.hasOwnProperty.call(task, field) && task[field] === null) {
+					_dialogTimeTaskLogEvidence.set(taskId, { scope, at:evidence.at, revision:evidence.revisions.get(taskId) || 0 });
+				} else if (Object.prototype.hasOwnProperty.call(task, field) &&
+					(typeof task[field] === 'number' || (typeof task[field] === 'string' && /^\d+$/.test(task[field]))) &&
+					Number.isFinite(Number(task[field])) && Number(task[field]) >= 0) {
+					const previousProof = _dialogTimeTaskLogEvidence.get(taskId);
+					const revision = _dialogTimeTaskRevisions.get(taskId) || 0;
+					// A real journal total, including zero-duration entries, contradicts
+					// a previously used null proof even if CHANGED_DATE has not advanced.
+					if (previousProof?.scope === scope && previousProof.revision === revision &&
+						Array.from(_dialogTimeCache.values()).some(record => record?.taskFreshness?.[taskId]?.revision === revision &&
+							record.taskFreshness[taskId].at === previousProof.at)) {
+						_dialogTimeTaskRevisions.set(taskId, revision + 1);
+					}
+					_dialogTimeTaskLogEvidence.delete(taskId);
+				}
 			}
 			const title = String(task?.TITLE ?? task?.title ?? '').replace(/\s+/g, ' ').trim();
 			const enabled = _readDialogTaskTimeTrackingFlag(task);
@@ -4959,6 +5002,38 @@
 		return merged;
 	}
 
+	async function _loadDialogTaskCatalogPartitionTail({ page, firstRows, afterId, filter = {}, select, isCurrent, maxPages = 2000 }) {
+		// Keep older/partial SDK shapes on the established serial path. Large
+		// catalogs with the selected computed field can use the bounded batch owner.
+		if (!(Number(page?.total) >= 500) || !firstRows?.length ||
+			!firstRows.every(row => Object.prototype.hasOwnProperty.call(row, 'TIME_SPENT_IN_LOGS') || Object.prototype.hasOwnProperty.call(row, 'timeSpentInLogs')) ||
+			typeof _PENA_TIME_CONTROL?.loadTaskCatalogPartitions !== 'function') return null;
+		const topWin = _getSafeTopWindow();
+		if (![window.BX?.rest, topWin?.BX?.rest, window.BX24, topWin?.BX24].some(client => typeof client?.callBatch === 'function')) return null;
+		if (!isCurrent()) throw Object.assign(new Error('Task catalog superseded'), { code:'STALE_REQUEST' });
+		const highPage = await _callBxRestPageWithTimeout('tasks.task.list', {
+			filter:{ ...filter, '>ID':afterId }, select:['ID'], order:{ID:'desc'}, start:0
+		}, 12000, {isCurrent});
+		if (!isCurrent()) throw Object.assign(new Error('Task catalog superseded'), { code:'STALE_REQUEST' });
+		const highRows = _extractDialogTaskCatalogRows(highPage?.data);
+		// An empty or reordered high-watermark response is not proof of a full
+		// tail. Resume the existing serial empty-quorum path when no ID remains.
+		if (!highRows.length) return null;
+		let previous = Infinity;
+		for (const row of highRows) {
+			const id = Number(row?.ID ?? row?.id);
+			if (!Number.isSafeInteger(id) || id <= afterId || id >= previous) throw new Error('Битрикс24 нарушил верхнюю границу списка задач');
+			previous = id;
+		}
+		const upperId = Number(highRows[0].ID ?? highRows[0].id);
+		const result = await _PENA_TIME_CONTROL.loadTaskCatalogPartitions({
+			afterId, upperId, filter, select, isCurrent, maxPages:Math.max(0, maxPages - 1),
+			callPages:jobs => _callBxRestPagesFast(jobs, 12000, {isCurrent})
+		});
+		if (!isCurrent()) throw Object.assign(new Error('Task catalog superseded'), { code:'STALE_REQUEST' });
+		return { rows:result.rows, pages:result.pages + 1 };
+	}
+
 	async function _syncDialogTaskCatalog(options = {}) {
 		const scopeKey = _getDialogNativeSharedAuditScopeKey();
 		const current = () => !!scopeKey && scopeKey === _getDialogNativeSharedAuditScopeKey() &&
@@ -4975,8 +5050,9 @@
 				: { count: _getDialogRecentUniqueMeta().filter(meta => meta.isTask === true).length, complete: true, cached: true, rows: [] };
 		}
 		const syncStartedAt = Date.now();
+		const evidence = { scope:scopeKey, revisions:new Map(_dialogTimeTaskRevisions), at:syncStartedAt };
 		const syncPromise = (async () => {
-			const select = ['ID', 'TITLE', 'CHAT_ID', 'GROUP_ID', 'ALLOW_TIME_TRACKING', 'ACTIVITY_DATE', 'CHANGED_DATE'];
+			const select = ['ID', 'TITLE', 'CHAT_ID', 'GROUP_ID', 'ALLOW_TIME_TRACKING', 'ACTIVITY_DATE', 'CHANGED_DATE', 'TIME_SPENT_IN_LOGS'];
 			const maxPages = headOnly
 				? Math.max(1, Math.min(4, Number(options.maxPages) || 1))
 				: _DIALOG_TASK_CATALOG_MAX_PAGES;
@@ -5007,7 +5083,7 @@
 				// Time tracking has its own lightweight index. Publish every successful
 				// page immediately instead of waiting for the unrelated recent-dialog
 				// catalog to finish or fail.
-				_publishDialogTimeTaskIndexRows(batch);
+				_publishDialogTimeTaskIndexRows(batch, evidence);
 				pages += 1;
 				if (page?.total != null && Number.isFinite(Number(page.total)) && Number(page.total) >= 0) {
 					total = Math.max(0, Number(page.total));
@@ -5043,6 +5119,14 @@
 					complete = paginationChainValid;
 					break;
 				}
+				if (!headOnly && firstWindow && Number(page.total) >= 500 &&
+					batch.every(task => Object.prototype.hasOwnProperty.call(task, 'TIME_SPENT_IN_LOGS') || Object.prototype.hasOwnProperty.call(task, 'timeSpentInLogs'))) {
+					const partitioned = await _loadDialogTaskCatalogPartitionTail({ page, firstRows:batch, afterId:nextId, select, isCurrent:current, maxPages:maxPages-pages });
+					if (partitioned) {
+						rows.push(...partitioned.rows); pages += partitioned.pages; complete = true;
+						break;
+					}
+				}
 				if (headOnly) start = explicitNext ?? (start + _DIALOG_TASK_CATALOG_PAGE_SIZE);
 				else afterId = nextId;
 				await new Promise(resolve => setTimeout(resolve, _DIALOG_RECENT_PAGE_DELAY_MS));
@@ -5056,7 +5140,7 @@
 			if (!current()) {
 				return { count: 0, tasks: 0, pages, complete: false, discarded: true, reason: 'task-catalog-fenced', rows: [] };
 			}
-			_publishDialogTimeTaskIndexRows(uniqueRows);
+			_publishDialogTimeTaskIndexRows(uniqueRows, evidence);
 			const merged = options.deferMerge === true ? 0 : _mergeDialogTaskCatalogRows(uniqueRows);
 			// A lightweight head refresh enriches recent tasks but must neither erase
 			// an older complete index nor claim that the whole task catalog was read.
@@ -9759,6 +9843,7 @@ let _dialogControlTitleLastSyncAt = 0;
 	const _dialogTimeTaskTitleAttempted = new Map();
 	const _dialogTimeTaskEligibility = new Map();
 	const _dialogTimeTaskRevisions = new Map();
+	const _dialogTimeTaskLogEvidence = new Map();
 	const _dialogTimeTaskChangedAt = new Map();
 	const _dialogTimeChangedTaskTimers = new Map();
 	const _dialogTimeTaskEligibilityCheckedAt = new Map();
@@ -12101,26 +12186,66 @@ if (_presetChannel) {
 		return _normalizeDialogControlColor(folder?.color);
 	}
 
-	function _makeUnusedDialogControlColor() {
-		const items = _getDialogControlItems();
-		const used = new Set(items
-			.filter(item => !_isDialogControlFolder(item))
-			.map(item => _getDialogControlAssignedColor(item, items))
-			.filter(Boolean));
-		for (let attempt = 0; attempt < 720; attempt += 1) {
-			let random = Math.random();
-			try {
-				const value = new Uint32Array(1);
-				crypto.getRandomValues(value);
-				random = value[0] / 0xffffffff;
-			} catch {}
-			const hue = Math.round((random * 360 + attempt * 137.508) % 360);
-			const saturation = 0.62 + ((attempt % 5) * 0.04);
-			const value = 0.78 + ((attempt % 4) * 0.035);
-			const color = _hsvToHex(hue, saturation, value).toLowerCase();
-			if (!used.has(color)) return color;
+	function _getDialogControlColorLab(color) {
+		const rgb = _hexToRgb(color);
+		if (!rgb) return null;
+		const linear = value => { const v=value/255; return v<=0.04045 ? v/12.92 : ((v+0.055)/1.055)**2.4; };
+		const r=linear(rgb.r), g=linear(rgb.g), b=linear(rgb.b);
+		// Bjorn Ottosson's public-domain Oklab transform:
+		// https://bottosson.github.io/posts/oklab/#converting-from-linear-srgb-to-oklab
+		const l=Math.cbrt(.4122214708*r+.5363325363*g+.0514459929*b);
+		const m=Math.cbrt(.2119034982*r+.6806995451*g+.1073969566*b);
+		const s=Math.cbrt(.0883024619*r+.2817188376*g+.6299787005*b);
+		return [.2104542553*l+.7936177850*m-.0040720468*s,1.9779984951*l-2.4285922050*m+.4505937099*s,.0259040371*l+.7827717662*m-.8086757660*s];
+	}
+
+	function _makeUnusedDialogControlColor(currentColor = '') {
+		// Empty folders and the inactive chat/task mode also reserve their colors.
+		// Read each mode once; inherited colors already occur on their folder.
+		const used=new Set(_getDialogControlColors());
+		for (const mode of ['chats','tasks']) {
+			for (const item of _getDialogControlItemsForMode(mode)) {
+				const color=_normalizeDialogControlColor(item.color);
+				if (color) used.add(color);
+			}
 		}
-		return '#4d9dff';
+		const current=_normalizeDialogControlColor(currentColor);
+		if (current) used.add(current);
+		const currentLab=_getDialogControlColorLab(current);
+		const occupied=[...used].map(_getDialogControlColorLab).filter(Boolean);
+		const distance=(a,b)=>(a[0]-b[0])**2+(a[1]-b[1])**2+(a[2]-b[2])**2;
+		const cells=occupied.length>64 ? new Map() : null;
+		if (cells) for (const lab of occupied) {
+			const key=lab.map(v=>Math.floor(v/.05)).join(',');
+			const bucket=cells.get(key);
+			if (bucket) bucket.push(lab); else cells.set(key,[lab]);
+		}
+		let random=Math.random();
+		try { const value=new Uint32Array(1); crypto.getRandomValues(value); random=value[0]/0x100000000; } catch {}
+		let best='', bestDistance=-1;
+		// Bounded farthest-color search. Never fall back to an assigned preset.
+		for (let attempt=0;attempt<512;attempt++) {
+			const color=_hsvToHex((random*360+attempt*137.508)%360,.55+(attempt%6)*.07,.68+(Math.floor(attempt/6)%6)*.058).toLowerCase();
+			if (used.has(color)) continue;
+			const lab=_getDialogControlColorLab(color);
+			if (currentLab && distance(lab,currentLab)<.12**2) continue;
+			// A nearby occupied color proves this candidate cannot beat the current
+			// best. Dense catalogs avoid scanning thousands of assignments per hue.
+			if (cells && bestDistance>=0 && bestDistance<=.15**2) {
+				const radius=Math.ceil(Math.sqrt(bestDistance)/.05);
+				const [cx,cy,cz]=lab.map(v=>Math.floor(v/.05));
+				let blocked=false;
+				nearby: for(let x=cx-radius;x<=cx+radius;x++)for(let y=cy-radius;y<=cy+radius;y++)for(let z=cz-radius;z<=cz+radius;z++){
+					const bucket=cells.get(`${x},${y},${z}`);
+					if(bucket?.some(other=>distance(lab,other)<=bestDistance)){blocked=true;break nearby;}
+				}
+				if (blocked) continue;
+			}
+			let nearest=Infinity;
+			for (const other of occupied) { nearest=Math.min(nearest,distance(lab,other)); if (nearest<=bestDistance) break; }
+			if (nearest>bestDistance) { best=color; bestDistance=nearest; }
+		}
+		return best;
 	}
 
 	function _stopDialogControlColorEyedropper(message = '', options = {}) {
@@ -13384,6 +13509,13 @@ if (_presetChannel) {
 	function _invalidateDialogTimeCachesForDates(...dateKeys) {
 		const options = dateKeys.at(-1);
 		const taskId = String(options?.taskId || '');
+		const previousTaskRevision = _dialogTimeTaskRevisions.get(taskId) || 0;
+		if (taskId) {
+			// An acknowledged write must also fence a catalog/elapsed response
+			// captured before that write; deleting its current proof is insufficient.
+			_dialogTimeTaskRevisions.set(taskId, previousTaskRevision + 1);
+			_dialogTimeTaskLogEvidence.delete(taskId);
+		}
 		const dates = dateKeys.map(value => String(value || '')).filter(value => _PENA_TIME_CONTROL?.parseDateKey?.(value));
 		if (!dates.length) return;
 		for (const [key, record] of Array.from(_dialogTimeCache)) {
@@ -13397,7 +13529,8 @@ if (_presetChannel) {
 			// An acknowledged ADD patches a complete snapshot. Only explicit task
 			// invalidation, not elapsed wall-clock time, makes that snapshot dirty.
 			const preserve = options?.preserveTaskFreshness === true && record.data && existing && !existing.unavailable &&
-				existing.revision === (_dialogTimeTaskRevisions.get(taskId) || 0);
+				existing.revision === previousTaskRevision;
+			if (taskId && preserve) taskFreshness[taskId] = { ...existing, revision:previousTaskRevision + 1 };
 			if (taskId && !preserve) delete taskFreshness[taskId];
 			_setDialogTimeCacheRecord(key, { ...record, taskFreshness: taskId ? taskFreshness : {}, updatedAt: 0, failedAt: 0, error: '' });
 		}
@@ -14711,6 +14844,7 @@ if (_presetChannel) {
 
 	function _applyDialogTimeOptimisticEntry(taskId, seconds, dateKey, itemId = '', options = {}) {
 		if (!_PENA_TIME_CONTROL?.aggregateElapsedItems) return;
+		_dialogTimeTaskLogEvidence.delete(String(taskId));
 		if (!_isDialogTimeProjectTask(taskId)) return;
 		const day = _PENA_TIME_CONTROL.normalizeRange(dateKey, dateKey);
 		const createdAt = _buildDialogTimeWriteFields(seconds, dateKey, '', { allowSubMinute: true }).CREATED_DATE;
@@ -15218,9 +15352,9 @@ if (_presetChannel) {
 
 	function _syncActiveDialogTimeActivity() {
 		if (!_getCurrentBitrixUserId()) {
-			if (_dialogControlNativeWorkspaceTab === 'time') {
+			if (_isDialogTimeFrameActive() && document.visibilityState !== 'hidden' && navigator.onLine !== false) {
 				_ensureCurrentBitrixUserId()
-					.then(() => _syncActiveDialogTimeActivity())
+					.then(userId => { if (userId) _syncActiveDialogTimeActivity(); })
 					.catch(() => {});
 			}
 			return;
@@ -15232,10 +15366,13 @@ if (_presetChannel) {
 		}
 		const contactScope = String(_getCurrentBitrixUserId() || '');
 		if (_dialogTimeContactRecoveryScope !== contactScope) {
+			// Start the same shared owner when Messenger becomes usable. The toolbar
+			// total must not depend on opening the time panel or finishing DOM paging.
+			_scheduleDialogTimeBootstrap();
 			_dialogTimeContactRecoveryScope = contactScope;
 			_scheduleDialogTimeDeferredFlush(0);
 		}
-		_syncDialogTimePortalDay();
+		if (_syncDialogTimePortalDay()) _scheduleDialogTimeBootstrap();
 		const activity = _getActiveDialogTimeActivity();
 		if (!activity) {
 			const pending = _dialogTimePendingActivities.get(_dialogTimePendingActiveId);
@@ -15433,6 +15570,8 @@ if (_presetChannel) {
 					if (_dialogControlNativeWorkspaceTab !== 'time' && !_dialogTimePendingActivities.has('task:' + id) && !_isDialogTimeProjectTask(id)) return;
 					_dialogTimeTaskRevisions.set(id, (_dialogTimeTaskRevisions.get(id) || 0) + 1);
 					_dialogTimeTaskEligibilityCheckedAt.delete(id);
+					if (_dialogControlNativeWorkspaceTab !== 'time' && document.visibilityState !== 'hidden' &&
+						_getDialogTimeRecord(_getDialogTimeRange('today'))?.hasCompleteSnapshot) _scheduleDialogTimeElapsedRefresh();
 					// Every cached task receives portal-wide Pull updates, including changes
 					// made by other users. A closed panel only needs invalidation: contact
 					// qualification always makes its own fresh eligibility request.
@@ -15573,7 +15712,7 @@ if (_presetChannel) {
 					else _dialogTimeCoordinatorRuntimeSync?.();
 				}, 60000);
 			}
-			setTimeout(_captureActiveDialogTimeActivity, 500);
+			setTimeout(() => { _captureActiveDialogTimeActivity(); _syncActiveDialogTimeActivity(); }, 500);
 			return true;
 		};
 		_dialogTimeCoordinatorRuntimeSync = syncCoordinatorRuntime;
@@ -15589,9 +15728,63 @@ if (_presetChannel) {
 		});
 	}
 
+	let _dialogTimeTodayPreviewReadKey = '';
+	let _dialogTimeTodayPreviewWriteKey = '';
+	let _dialogTimeTodayPreviewTimer = null;
+	let _dialogTimeTodayPreviewPendingKey = '';
+	let _dialogTimeTodayPreviewRetry = null;
+	function _syncDialogTimeTodayPreview(today) {
+		const scope = _getDialogTimeProjectScopeKey();
+		if (!scope) return;
+		const fingerprint = scope.replace(/:g\d+$/, '');
+		const storageKey = `pena.timeToday.v1.${_getDialogTimeIdentityScopeKey()}`;
+		const readKey = `${scope}:${today.from}`;
+		if (_dialogTimeTodayPreviewReadKey !== readKey) {
+			_dialogTimeTodayPreviewReadKey = readKey;
+			try {
+				const raw = localStorage.getItem(storageKey);
+				const saved = raw && raw.length <= 524288 ? JSON.parse(raw) : null;
+				const savedToday = Number.isFinite(saved?.offset) && Math.abs(saved.offset) <= 840 ? new Date(Date.now() + saved.offset * 60000).toISOString().slice(0,10) : '';
+				if (saved?.version === 1 && saved.scope === fingerprint && saved.day === today.from && saved.day === savedToday && Number.isFinite(saved.savedAt) && saved.savedAt > Date.now() - 86400000 && saved.savedAt <= Date.now() &&
+					Array.isArray(saved.items) && saved.items.length <= 2000 && new Set(saved.items.map(item => String(item?.id))).size === saved.items.length && !_getDialogTimeRecord(today)?.data &&
+					saved.items.every(item => /^[1-9]\d*$/.test(String(item.id)) && /^[1-9]\d*$/.test(String(item.taskId)) &&
+						item.userId === String(_getCurrentBitrixUserId()) && item.dateKey === today.from && _PENA_TIME_CONTROL.normalizeElapsedItem(item).dateKey === today.from && Number.isFinite(item.seconds) && item.seconds >= 0)) {
+					const data = { ..._PENA_TIME_CONTROL.aggregateElapsedItems(saved.items), range:today };
+					_setDialogTimeCacheRecord(_getDialogTimeCacheKey(today), { range:today, data, status:'ready', restored:true, restoredAt:saved.savedAt,
+						hasVerifiedData:true, hasCompleteSnapshot:false, taskFreshness:{}, updatedAt:saved.savedAt });
+				}
+			} catch {}
+		}
+		const record = _getDialogTimeRecord(today);
+		if (!record?.hasCompleteSnapshot || record.status !== 'ready' || record.error || !Array.isArray(record.data?.items) || record.data.items.length > 2000) return;
+		const keyFor = value => `${readKey}:${value.updatedAt}:${value.data.totalSeconds}:${value.data.entryCount}`;
+		if (_dialogTimeTodayPreviewWriteKey === keyFor(record)) return;
+		if (_dialogTimeTodayPreviewRetry?.key === readKey && Date.now() < _dialogTimeTodayPreviewRetry.at) return;
+		// Repeated UI syncs update the pending snapshot, not its deadline.
+		if (_dialogTimeTodayPreviewTimer && _dialogTimeTodayPreviewPendingKey === readKey) return;
+		if (_dialogTimeTodayPreviewTimer) clearTimeout(_dialogTimeTodayPreviewTimer);
+		_dialogTimeTodayPreviewPendingKey = readKey;
+		_dialogTimeTodayPreviewTimer = setTimeout(() => {
+			_dialogTimeTodayPreviewTimer = null;
+			_dialogTimeTodayPreviewPendingKey = '';
+			if (scope !== _getDialogTimeProjectScopeKey() || today.from !== _getDialogTimeTodayKey()) return;
+			const latest = _getDialogTimeRecord(today);
+			if (!latest?.hasCompleteSnapshot || latest.status !== 'ready' || latest.error || !Array.isArray(latest.data?.items) || latest.data.items.length > 2000 ||
+				!Number.isFinite(_dialogTimePortalUtcOffsetMinutes) || Math.abs(_dialogTimePortalUtcOffsetMinutes) > 840) return;
+			try {
+				const payload = JSON.stringify({ version:1, scope:fingerprint, day:today.from, offset:_dialogTimePortalUtcOffsetMinutes, savedAt:Date.now(), items:latest.data.items });
+				if (payload.length > 524288) { _dialogTimeTodayPreviewRetry = { key:readKey, at:Date.now() + 15000 }; return; }
+				localStorage.setItem(storageKey, payload);
+				_dialogTimeTodayPreviewWriteKey = keyFor(latest);
+				_dialogTimeTodayPreviewRetry = null;
+			} catch { _dialogTimeTodayPreviewRetry = { key:readKey, at:Date.now() + 15000 }; }
+		}, 250);
+	}
+
 	function _syncDialogTimeUi(switcher) {
 		if (!switcher || !_PENA_TIME_CONTROL) return;
 		const today = _getDialogTimeRange('today');
+		_syncDialogTimeTodayPreview(today);
 		const todayRecord = _getDialogTimeRecord(today);
 		const rawTodayData = _hasDialogTimeVerifiedData(todayRecord) ? todayRecord.data : null;
 		const visibleTodayData = _filterDialogTimeDataByEligibility(rawTodayData);
@@ -15599,13 +15792,14 @@ if (_presetChannel) {
 		const timeButton = switcher.querySelector('.pena-native-time-button');
 		const timeButtonLabel = timeButton?.querySelector('.pena-native-time-button-label');
 		if (timeButtonLabel) {
+			const initializingToday = _dialogTimeBootstrapToken?.active && _dialogTimeBootstrapToken.scope === _getDialogTimeProjectScopeKey();
 			const compact = tracker
 				? _PENA_TIME_CONTROL.formatDurationCompact(_getDialogTimeTrackerSeconds(tracker))
 				: (visibleTodayData
 					? _PENA_TIME_CONTROL.formatDurationCompact(visibleTodayData.totalSeconds)
-					: (todayRecord?.status === 'loading' ? '…' : '--:--'));
-			const label = tracker ? `Сейчас ${compact}` : `Сегодня ${compact}`;
-			const title = todayRecord?.error || 'Затраченное время за сегодня';
+					: (todayRecord?.status === 'loading' || initializingToday ? '…' : '--:--'));
+			const label = tracker ? `Сейчас ${compact}` : (!_getDialogTimeProjectScopeKey() ? 'Учёт времени' : `Сегодня ${compact}`);
+			const title = todayRecord?.error || (todayRecord?.restored && !todayRecord.hasCompleteSnapshot ? 'Сохранённое время за сегодня. Проверяем актуальность.' : 'Затраченное время за сегодня');
 			if (timeButtonLabel.textContent !== label) timeButtonLabel.textContent = label;
 			if (timeButton.title !== title) timeButton.title = title;
 			timeButton.classList.toggle('--loading', todayRecord?.status === 'loading');
@@ -16130,13 +16324,14 @@ if (_presetChannel) {
 			try {
 				// Native wake may carry its visual-guard promise. Respect that boundary
 				// without treating its global task metadata as selected-project proof.
+				const portalClock = _ensureDialogTimePortalDate().then(day => { if (current()) _queueDialogTimeUiSync(); return day; });
 				if (taskCatalogOutcomePromise) await taskCatalogOutcomePromise.catch(() => null);
 				if (!current()) return null;
 				// Time has an independent project scope. Native dialog metadata cannot
 				// grant completeness or invalidate a committed time snapshot.
 				const hasProjectCatalog = _dialogTimeCatalogScope === scope && _dialogTimeCatalogCursor > 0;
 				if (!await _ensureDialogTimeProjectCatalog({ delta:hasProjectCatalog && (_dialogTimeProjectCatalogDirty || (!!taskCatalogOutcomePromise && Date.now()-_dialogTimeCatalogCursor>60000)) }) || !current()) { token.phase='paused'; return null; }
-				await _ensureDialogTimePortalDate();
+				await portalClock;
 				if (!current()) return null;
 				_syncDialogTimePortalDay();
 				token.dateKey = _getDialogTimeTodayKey();
@@ -16246,13 +16441,22 @@ if (_presetChannel) {
 		const taskIdsKey = taskIds.slice().sort((a, b) => Number(a) - Number(b)).join(',');
 		const now = Date.now();
 		const freshness = { ...(cached?.taskFreshness || {}) };
+		const emptyLogs = new Set();
+		const identity = _getDialogTimeIdentityScopeKey();
+		for (const id of taskIds) {
+			const proof = _dialogTimeTaskLogEvidence.get(id);
+			if (proof?.scope === identity && proof.revision === (_dialogTimeTaskRevisions.get(id) || 0) && now >= proof.at && now - proof.at < 60000) {
+				emptyLogs.add(id);
+				freshness[id] = { at:proof.at, revision:proof.revision };
+			}
+		}
 		const needsRead = id => {
 			const entry = freshness[id];
 			// A portal-wide pass can itself exceed any short TTL. Expiring its first
 			// pages while reading its tail causes endless full sweeps on large portals.
 			// Pull/CHANGED_DATE revisions, new tasks, local writes and manual refresh
 			// are the authoritative reasons to revisit an already checked task.
-			return force || !entry || entry.revision !== (_dialogTimeTaskRevisions.get(id) || 0);
+			return !emptyLogs.has(id) && (force || !entry || entry.revision !== (_dialogTimeTaskRevisions.get(id) || 0));
 		};
 		const pendingIds = taskIds.filter(needsRead);
 		const hasCompleteCoverage = () => _dialogTimeCatalogCursor > 0 && _dialogTimeCatalogScope === scope &&
@@ -16291,7 +16495,7 @@ if (_presetChannel) {
 		const newEvidenceAfterFailure = cached?.failedTaskRevisions && pendingIds.some(id =>
 			cached.failedTaskRevisions[id] !== (_dialogTimeTaskRevisions.get(id) || 0));
 		if (!force && cached?.error && !newEvidenceAfterFailure && now - (cached.failedAt || 0) < 15000) return cached.data || null;
-		if (!pendingIds.length && cached?.data) return cached.data;
+		if (!pendingIds.length && cached?.data && !emptyLogs.size) return cached.data;
 		// Capture before dispatch: a task event arriving during a failed request
 		// is new evidence, but repeated reads of the same failed revision back off.
 		const attemptTaskRevisions = Object.fromEntries(pendingIds.map(id => [id, _dialogTimeTaskRevisions.get(id) || 0]));
@@ -16303,6 +16507,14 @@ if (_presetChannel) {
 		const request = (async () => {
 			let data = cached?.data || { ..._PENA_TIME_CONTROL.aggregateElapsedItems([]), range: normalized, pages: 0, totalAvailable: 0,
 				coverage: { checkedTasks:0, totalTasks:taskIds.length, complete:verifiedEmptyCatalog } };
+			if (emptyLogs.size) {
+				data = { ..._PENA_TIME_CONTROL.replaceElapsedTasks(data, _PENA_TIME_CONTROL.aggregateElapsedItems([]), emptyLogs), range:normalized, pages:0 };
+				base.hasVerifiedData = true;
+				const checkedTasks = taskIds.filter(id => freshness[id] && !freshness[id].unavailable && freshness[id].revision === (_dialogTimeTaskRevisions.get(id) || 0)).length;
+				const complete = hasCompleteCoverage();
+				base.hasCompleteSnapshot ||= complete;
+				data.coverage = { checkedTasks, totalTasks:taskIds.length, complete };
+			}
 			let offset = 0;
 			let pages = 0;
 			while (offset < pendingIds.length && current()) {
@@ -20879,7 +21091,8 @@ if (_presetChannel) {
 			randomColor.addEventListener('click', (ev) => {
 				ev.preventDefault();
 				ev.stopPropagation();
-				const color = _makeUnusedDialogControlColor();
+				const color = _makeUnusedDialogControlColor(draftColor);
+				if (!color) { _showDialogDockToast('Не удалось подобрать свободный цвет', 'danger'); return; }
 				setDraftFromColor(color);
 				commitColor(color);
 			});
@@ -25681,7 +25894,8 @@ if (_presetChannel) {
 			randomColor.addEventListener('click', (e) => {
 				e.preventDefault();
 				e.stopPropagation();
-				const color = _makeUnusedDialogControlColor();
+				const color = _makeUnusedDialogControlColor(draftColor);
+				if (!color) { _showDialogDockToast('Не удалось подобрать свободный цвет', 'danger'); return; }
 				applyDraft(color);
 				commitColor(color);
 			});
@@ -27126,12 +27340,12 @@ html.pena-dialog-color-eyedropper,html.pena-dialog-color-eyedropper *{cursor:cro
 .dialog-control-drag-preview-title{color:#fff;font-weight:800}
 .dialog-control-drag-preview-subtitle{color:rgba(214,226,241,.72);font-size:10px;font-weight:600}
 .dialog-control-drag-preview-badge{width:24px;height:24px;border-radius:999px;background:#4d9dff;color:#fff;display:grid;place-items:center;font-size:11px;font-weight:900;box-shadow:0 0 0 2px rgba(12,16,24,.96),0 6px 12px rgba(0,0,0,.32)}
-.dialog-control-palette{position:fixed;z-index:2147483647;width:min(246px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.28) rgba(255,255,255,.06);display:grid;grid-template-columns:28px minmax(0,1fr);grid-auto-rows:min-content;gap:7px;padding:10px 28px 10px 10px;border:1px solid rgba(255,255,255,.16);border-radius:10px;background:radial-gradient(circle at 20% 0%,rgba(77,157,255,.12),transparent 42%),linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));box-shadow:0 18px 42px rgba(0,0,0,.46),0 1px 0 rgba(255,255,255,.04) inset;box-sizing:border-box;opacity:0;visibility:hidden;pointer-events:none;transform:translateY(-8px) scale(.94);transform-origin:top right;transition:opacity .18s ease,transform .18s ease,visibility 0s linear .18s}
+.dialog-control-palette{position:fixed;z-index:2147483647;width:min(246px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.28) rgba(255,255,255,.06);display:grid;grid-template-columns:28px minmax(0,1fr);grid-auto-rows:min-content;gap:7px;padding:10px 28px 10px 10px;border:1px solid rgba(255,255,255,.16);border-radius:10px;background:radial-gradient(circle at 20% 0%,rgba(77,157,255,.12),transparent 42%),linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));box-shadow:0 18px 42px rgba(0,0,0,.46),0 1px 0 rgba(255,255,255,.04) inset;box-sizing:border-box;opacity:0;visibility:hidden;pointer-events:none;transform:translateY(-8px);transform-origin:top right;transition:opacity .18s ease,transform .18s ease,visibility 0s linear .18s}
 .dialog-control-palette::-webkit-scrollbar{width:5px}
 .dialog-control-palette::-webkit-scrollbar-track{background:rgba(255,255,255,.06);border-radius:10px}
 .dialog-control-palette::-webkit-scrollbar-thumb{background:rgba(255,255,255,.28);border-radius:10px}
-.dialog-control-palette.--open{opacity:1;visibility:visible;pointer-events:auto;transform:translateY(0) scale(1);transition:opacity .18s ease,transform .18s ease,visibility 0s}
-.dialog-control-palette.--closing{opacity:0;visibility:visible;pointer-events:none;transform:translateY(-8px) scale(.94)}
+.dialog-control-palette.--open{opacity:1;visibility:visible;pointer-events:auto;transform:translateY(0);transition:opacity .18s ease,transform .18s ease,visibility 0s}
+.dialog-control-palette.--closing{opacity:0;visibility:visible;pointer-events:none;transform:translateY(-8px)}
 .dialog-control-palette.--confirming{overflow:hidden}
 .dialog-control-preview{grid-column:1;grid-row:1 / span 2;width:28px;height:auto;min-width:28px;min-height:109px;align-self:stretch;border:1px solid rgba(255,255,255,.18);border-radius:8px;background:var(--dialog-chip-color,#4d9dff);box-shadow:0 0 0 1px rgba(0,0,0,.36) inset;box-sizing:border-box}
 .dialog-control-mini-picker{--picker-hue-color:#4d9dff;grid-column:2;grid-row:1;position:relative;width:100%;height:88px;min-height:88px;align-self:start;min-width:0;border:1px solid rgba(255,255,255,.18);border-radius:8px;background:rgba(8,12,18,.82);box-shadow:0 0 0 1px rgba(0,0,0,.38) inset;overflow:hidden;cursor:crosshair;touch-action:none;box-sizing:border-box}

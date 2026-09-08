@@ -619,12 +619,12 @@ html.pena-dialog-color-eyedropper,html.pena-dialog-color-eyedropper *{cursor:cro
 .dialog-control-drag-preview-title{color:#fff;font-weight:800}
 .dialog-control-drag-preview-subtitle{color:rgba(214,226,241,.72);font-size:10px;font-weight:600}
 .dialog-control-drag-preview-badge{width:24px;height:24px;border-radius:999px;background:#4d9dff;color:#fff;display:grid;place-items:center;font-size:11px;font-weight:900;box-shadow:0 0 0 2px rgba(12,16,24,.96),0 6px 12px rgba(0,0,0,.32)}
-.dialog-control-palette{position:fixed;z-index:2147483647;width:min(246px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.28) rgba(255,255,255,.06);display:grid;grid-template-columns:28px minmax(0,1fr);grid-auto-rows:min-content;gap:7px;padding:10px 28px 10px 10px;border:1px solid rgba(255,255,255,.16);border-radius:10px;background:radial-gradient(circle at 20% 0%,rgba(77,157,255,.12),transparent 42%),linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));box-shadow:0 18px 42px rgba(0,0,0,.46),0 1px 0 rgba(255,255,255,.04) inset;box-sizing:border-box;opacity:0;visibility:hidden;pointer-events:none;transform:translateY(-8px) scale(.94);transform-origin:top right;transition:opacity .18s ease,transform .18s ease,visibility 0s linear .18s}
+.dialog-control-palette{position:fixed;z-index:2147483647;width:min(246px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.28) rgba(255,255,255,.06);display:grid;grid-template-columns:28px minmax(0,1fr);grid-auto-rows:min-content;gap:7px;padding:10px 28px 10px 10px;border:1px solid rgba(255,255,255,.16);border-radius:10px;background:radial-gradient(circle at 20% 0%,rgba(77,157,255,.12),transparent 42%),linear-gradient(180deg,rgba(22,29,40,.98),rgba(12,16,24,.98));box-shadow:0 18px 42px rgba(0,0,0,.46),0 1px 0 rgba(255,255,255,.04) inset;box-sizing:border-box;opacity:0;visibility:hidden;pointer-events:none;transform:translateY(-8px);transform-origin:top right;transition:opacity .18s ease,transform .18s ease,visibility 0s linear .18s}
 .dialog-control-palette::-webkit-scrollbar{width:5px}
 .dialog-control-palette::-webkit-scrollbar-track{background:rgba(255,255,255,.06);border-radius:10px}
 .dialog-control-palette::-webkit-scrollbar-thumb{background:rgba(255,255,255,.28);border-radius:10px}
-.dialog-control-palette.--open{opacity:1;visibility:visible;pointer-events:auto;transform:translateY(0) scale(1);transition:opacity .18s ease,transform .18s ease,visibility 0s}
-.dialog-control-palette.--closing{opacity:0;visibility:visible;pointer-events:none;transform:translateY(-8px) scale(.94)}
+.dialog-control-palette.--open{opacity:1;visibility:visible;pointer-events:auto;transform:translateY(0);transition:opacity .18s ease,transform .18s ease,visibility 0s}
+.dialog-control-palette.--closing{opacity:0;visibility:visible;pointer-events:none;transform:translateY(-8px)}
 .dialog-control-palette.--confirming{overflow:hidden}
 .dialog-control-preview{grid-column:1;grid-row:1 / span 2;width:28px;height:auto;min-width:28px;min-height:109px;align-self:stretch;border:1px solid rgba(255,255,255,.18);border-radius:8px;background:var(--dialog-chip-color,#4d9dff);box-shadow:0 0 0 1px rgba(0,0,0,.36) inset;box-sizing:border-box}
 .dialog-control-mini-picker{--picker-hue-color:#4d9dff;grid-column:2;grid-row:1;position:relative;width:100%;height:88px;min-height:88px;align-self:start;min-width:0;border:1px solid rgba(255,255,255,.18);border-radius:8px;background:rgba(8,12,18,.82);box-shadow:0 0 0 1px rgba(0,0,0,.38) inset;overflow:hidden;cursor:crosshair;touch-action:none;box-sizing:border-box}
@@ -812,28 +812,35 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 .pena-native-time-project-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;flex:0 0 auto;height:32px;padding:0 8px;border:1px solid #d7dfeb;border-radius:8px;background:#fff;color:#526178;font:700 11px/30px var(--pena-time-ui);cursor:pointer}
 .pena-native-time-project-button:hover,.pena-native-time-project-button[aria-expanded="true"]{border-color:#a8bdef;background:#edf3ff;color:#2854d7}
 .pena-native-time-project-button svg{display:block;flex:0 0 14px;width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-.pena-native-time-project-settings{display:grid;gap:16px;min-width:0;padding:16px;border:1px solid #d7dfeb;border-radius:8px;background:#fff;box-sizing:border-box}
+.pena-native-time-project-settings{display:grid;gap:12px;min-width:0;padding:12px;border:1px solid #d7dfeb;border-radius:8px;background:#fff;box-sizing:border-box}
 .pena-native-time-project-settings[hidden]{display:none!important}
+.pena-native-time-panel.pena-native-command-popover.--project-settings{width:min(640px,calc(100vw - 32px));height:auto;max-height:min(720px,calc(100dvh - 32px))}
 .pena-native-time-panel.--project-settings .pena-native-time-scroll > :not(.pena-native-time-project-settings),.pena-native-time-panel.--project-settings .pena-native-time-view-tabs{display:none!important}
+.pena-native-time-project-heading{display:grid;gap:4px;min-width:0}
+.pena-native-time-project-choices{display:grid;gap:2px;min-width:0}
 .pena-native-time-project-title{margin:0;color:#142039;font:720 16px/22px var(--pena-time-ui);overflow-wrap:anywhere}
 .pena-native-time-project-description{margin:0;color:#68778d;font:500 12px/18px var(--pena-time-ui);overflow-wrap:anywhere}
 .pena-native-time-project-search{display:block;min-width:0;width:100%;height:32px;padding:0 8px;border:1px solid #d7dfeb;border-radius:8px;background:#fff;color:#25334a;font:600 12px/30px var(--pena-time-ui);outline:0}
 .pena-native-time-project-search:focus{border-color:#7293f3;box-shadow:0 0 0 2px rgba(49,95,232,.09)}
-.pena-native-time-project-all,.pena-native-time-project-option{display:grid;grid-template-columns:16px minmax(0,1fr);align-items:center;gap:8px;min-width:0;min-height:40px;padding:8px;border-radius:6px;color:#25334a;font:600 12px/18px var(--pena-time-ui);cursor:pointer;box-sizing:border-box}
+.pena-native-time-project-all,.pena-native-time-project-option{display:grid;grid-template-columns:16px minmax(0,1fr);align-items:center;gap:8px;min-width:0;min-height:36px;padding:8px;border-radius:6px;color:#25334a;font:600 12px/18px var(--pena-time-ui);cursor:pointer;box-sizing:border-box}
 .pena-native-time-project-all{border:1px solid #dfe5ed;background:#f7f9fc}
-.pena-native-time-project-list{display:grid;gap:4px;min-width:0}
+.pena-native-time-project-list{display:grid;gap:2px;min-width:0}
 .pena-native-time-project-option:hover{background:#f1f5ff}
 .pena-native-time-project-option:has(input:checked){background:#edf3ff}
 .pena-native-time-project-option:has(input:disabled),.pena-native-time-project-all:has(input:disabled){color:#8491a4;cursor:default}
 .pena-native-time-project-settings input[type="checkbox"]{display:block;appearance:auto;width:16px;height:16px;margin:0;padding:0;accent-color:#315fe8;cursor:inherit}
 .pena-native-time-project-settings input[type="checkbox"]:focus-visible{outline:2px solid rgba(49,95,232,.72);outline-offset:3px}
 .pena-native-time-project-name{min-width:0;overflow-wrap:anywhere}
-.pena-native-time-project-status{margin:0;min-width:0;color:#68778d;font:500 12px/18px var(--pena-time-ui);overflow-wrap:anywhere}
+.pena-native-time-project-status{margin:0;padding:8px;min-width:0;color:#68778d;font:500 12px/18px var(--pena-time-ui);overflow-wrap:anywhere}
 .pena-native-time-project-status.--error{color:#a13b3b}
 .pena-native-time-project-status[hidden]{display:none!important}
-.pena-native-time-project-footer{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:8px;min-width:0;padding-top:16px;border-top:1px solid #e2e7ee}
+.pena-native-time-project-empty{margin:0;padding:8px;color:#68778d;font:500 12px/18px var(--pena-time-ui)}
+.pena-native-time-project-empty[hidden]{display:none!important}
+.pena-native-time-project-count{flex:1 0 auto;color:#68778d;font:500 11px/16px var(--pena-time-ui);font-variant-numeric:tabular-nums}
+.pena-native-time-project-footer{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:8px;min-width:0;padding-top:12px;border-top:1px solid #e2e7ee}
 .pena-native-time-project-save,.pena-native-time-project-cancel{display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:0 12px;border:1px solid #d7dfeb;border-radius:8px;background:#fff;color:#526178;font:700 12px/30px var(--pena-time-ui);cursor:pointer}
 .pena-native-time-project-save{border-color:#315fe8;background:#315fe8;color:#fff}
+.pena-native-time-project-save:focus-visible,.pena-native-time-project-cancel:focus-visible,.pena-native-time-project-status > button:focus-visible{outline:2px solid #7293f3;outline-offset:2px}
 .pena-native-time-project-save:hover{border-color:#244ed0;background:#244ed0}
 .pena-native-time-project-cancel:hover{background:#f1f4f8}
 .pena-native-time-project-cancel[hidden]{display:none!important}
@@ -1015,6 +1022,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
   .pena-native-time-project-button{width:32px;padding:0}
   .pena-native-time-project-button span{display:none}
   .pena-native-time-project-settings{gap:12px;padding:12px}
+  .pena-native-time-panel.pena-native-command-popover.--project-settings{width:min(520px,calc(100vw - 16px));height:auto;max-height:calc(100dvh - 16px)}
   .pena-native-time-date-input{min-width:0;flex:1}
   .pena-native-time-date-today{display:none}
   .pena-native-time-stats-row{grid-template-columns:minmax(0,1fr) auto;gap:8px}

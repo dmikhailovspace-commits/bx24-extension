@@ -644,6 +644,48 @@
 		return { ...aggregateElapsedItems(inRange), range, pages, totalAvailable };
 	}
 
+	// Parallel, disjoint ID ranges retain keyset safety without serial network
+	// round trips. The high watermark belongs to this read; later IDs are picked
+	// up by the next delta whose cursor is the start of the full read.
+	async function loadTaskCatalogPartitions({ afterId, upperId, filter = {}, select, callPages, isCurrent = () => true, maxPages = 2000 } = {}) {
+		if (!Number.isSafeInteger(afterId) || !Number.isSafeInteger(upperId) || afterId < 0 || upperId < afterId) throw new TypeError('Invalid task ID bounds');
+		let pending = upperId > afterId ? [{ after: afterId, upper: upperId, empty: false }] : [];
+		const rows = []; let pages = 0;
+		while (pending.length) {
+			if (!isCurrent()) throw Object.assign(new Error('Task catalog superseded'), { code:'STALE_REQUEST' });
+			while (pending.length < 16) {
+				let index = -1, width = 1;
+				pending.forEach((job, i) => { if (!job.empty && job.upper - job.after > width) { index = i; width = job.upper - job.after; } });
+				if (index < 0) break;
+				const job = pending[index], mid = job.after + Math.floor(width / 2);
+				pending.splice(index, 1, { after:job.after, upper:mid, empty:false }, { after:mid, upper:job.upper, empty:false });
+			}
+			const wave = pending.splice(0, 16);
+			if (pages + wave.length > maxPages) throw new Error('Слишком большой список задач');
+			const responses = await callPages(wave.map(job => ({ method:'tasks.task.list', params:{ filter:{ ...filter, '>ID':job.after, '<=ID':job.upper }, select, order:{ ID:'asc' }, start:0 } })));
+			if (!isCurrent()) throw Object.assign(new Error('Task catalog superseded'), { code:'STALE_REQUEST' });
+			if (!Array.isArray(responses) || responses.length !== wave.length || wave.some((_,i) => !responses[i] || responses[i].error || responses[i].partial || responses[i].complete === false)) throw new Error('Неполный пакет задач');
+			responses.forEach((page, index) => {
+				const job = wave[index], payload = page?.data?.result ?? page?.data;
+				const batch = Array.isArray(payload) ? payload : payload?.tasks ?? payload?.items;
+				if (!Array.isArray(batch)) throw new Error('Некорректная страница задач');
+				let cursor = job.after;
+				for (const row of batch) {
+					const id = Number(row?.ID ?? row?.id);
+					if (!Number.isSafeInteger(id) || id <= cursor || id > job.upper) throw new Error('Битрикс24 нарушил границы списка задач');
+					cursor = id;
+				}
+				rows.push(...batch); pages++;
+				if (!batch.length) { if (!job.empty) pending.push({ ...job, empty:true }); return; }
+				const more = page.next != null && page.next !== false || payload?.hasMore === true || payload?.hasMorePages === true;
+				const noMore = payload?.hasMore === false || payload?.hasMorePages === false;
+				if (cursor < job.upper && !noMore && (more || batch.length >= 50)) pending.push({ after:cursor, upper:job.upper, empty:false });
+			});
+		}
+		rows.sort((a,b) => Number(a.ID ?? a.id) - Number(b.ID ?? b.id));
+		return { rows, pages };
+	}
+
 	// Shared by all extension REST producers. Diagnostics contain timings and method
 	// names only; never task titles, messages, parameters or tokens.
 	function createRequestQueue({ concurrency = 2, spacingMs = 80, timeoutMs = 12000, cooldownMs = 15000, burst = 16, refillMs = 500 } = {}) {
@@ -725,6 +767,7 @@
 		normalizeManualDuration,
 		formatPortalOffset,
 		buildElapsedWriteFields,
+		loadTaskCatalogPartitions,
 		loadElapsedItems
 	});
 });

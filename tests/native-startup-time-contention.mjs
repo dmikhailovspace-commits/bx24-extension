@@ -15,7 +15,9 @@ const label=process.env.PENA_STARTUP_LABEL||'current';
 const cpu=Number(process.env.PENA_STARTUP_CPU||4);
 const limit=Number(process.env.PENA_STARTUP_LIMIT||180000);
 const membership=process.env.PENA_STARTUP_TASK_MEMBERSHIP==='1';
+const logMetadata=process.env.PENA_STARTUP_LOG_METADATA==='1';
 const raw=readFileSync(resolve(extension,'injected.js'),'utf8');
+const optimized=logMetadata&&raw.includes('function _loadDialogTaskCatalogPartitionTail(');
 const report={label,protocol:2,source:{sha256:createHash('sha256').update(raw).digest('hex')},configuration:{tasks:4149,physicalChats:108,physicalTaskChats:92,cpu,httpMs:80,httpLanes:4,guardSampler:false,productionFlags:true},phases:[],
  limitations:['Real Chromium and local HTTP with a controlled SDK dataset, not the authenticated desktop portal.','Input field above the controlled modal models shared event-loop/HTTP contention; it is not a Bitrix modal usability assertion.','All task titles are populated; every thirteenth task and final task has an own-user elapsed row. Two RAFs measure paint opportunity, not physical display.']};
 const server=await startHarnessServer();
@@ -32,7 +34,7 @@ function installProbe(){
  for(const proto of [Document.prototype,Element.prototype])for(const name of ['querySelector','querySelectorAll']){const old=proto[name];proto[name]=function(...args){if(scope)scope.queries++;return old.apply(this,args);};}
  let previous=0;const frame=now=>{if(p.stopped)return;if(previous&&p.frames.length<20000)p.frames.push(now-previous);previous=now;requestAnimationFrame(frame);};requestAnimationFrame(frame);
  new PerformanceObserver(list=>{p.longtasks.push(...list.getEntries().map(e=>({at:e.startTime,ms:e.duration,phase:p.phase})));}).observe({entryTypes:['longtask']});
- const summary=call=>({method:call.method,after:Number(call.params?.filter?.['>ID']||0),delta:Boolean(call.params?.filter?.['>=CHANGED_DATE']),start:Number(call.params?.start||0),select:call.params?.select?.join('|')||'',projectFilter:call.params?.filter?.GROUP_ID ?? call.params?.filter?.['>GROUP_ID'],taskId:call.method==='task.elapseditem.getlist'?String(call.params?.[0]):undefined,
+ const summary=call=>({method:call.method,after:Number(call.params?.filter?.['>ID']||0),upper:call.params?.filter?.['<=ID'],order:call.params?.order?.ID,delta:Boolean(call.params?.filter?.['>=CHANGED_DATE']),start:Number(call.params?.start||0),select:call.params?.select?.join('|')||'',projectFilter:call.params?.filter?.GROUP_ID ?? call.params?.filter?.['>GROUP_ID'],taskId:call.method==='task.elapseditem.getlist'?String(call.params?.[0]):undefined,
    dateFrom:call.method==='task.elapseditem.getlist'?String(call.params?.[2]?.['>=CREATED_DATE']||''):undefined,dateTo:call.method==='task.elapseditem.getlist'?String(call.params?.[2]?.['<CREATED_DATE']||call.params?.[2]?.['<=CREATED_DATE']||''):undefined});
  const one=BX.rest.callMethod;
  BX.rest.callMethod=function(method,params,cb){p.rest.push({at:performance.now(),phase:p.phase,...summary({method,params})});fetch('/__latency?kind=extension').then(()=>one.call(this,method,params,cb)).catch(e=>p.errors.push(String(e)));};
@@ -54,6 +56,7 @@ fixture=fixture.replace('    const success = (data, options = {}) => ({',`
     const selectedProjectOnly=params.get('selectedProjects')==='1';
     if(selectedProjectOnly)localStorage.setItem(timeProjectPreferenceKey,JSON.stringify({version:1,all:false,ids:['1'],includeUnassigned:false}));
     const elapsedIds=new Set(taskEntries.filter((task,index)=>index%13===0||index===4148).map(task=>task.id));
+    if(${logMetadata})taskEntries.forEach(task=>{task.timeSpentInLogs=elapsedIds.has(task.id)?'60':null;});
     window.startupExpected={tasks:taskEntries.length,entries:elapsedIds.size,seconds:elapsedIds.size*60};
     const success = (data, options = {}) => ({`);
 const from=fixture.indexOf("      if (method === 'tasks.task.list') {"),to=fixture.indexOf("      if (method === 'tasks.task.get')",from);
@@ -70,8 +73,9 @@ fixture=fixture.slice(0,from)+`
       }
       if(method==='tasks.task.list'){
         const after=Number(callParams.filter?.['>ID']||0),changed=String(callParams.filter?.['>=CHANGED_DATE']||'');
-        let entries=taskEntries.map(window.timeFixtureTaskGroup).filter(task=>window.timeFixtureMatchesGroup(task,callParams.filter)&&Number(task.id)>after&&(!changed||Date.parse(task.changedDate)>=Date.parse(changed)));
+        let entries=taskEntries.map(window.timeFixtureTaskGroup).filter(task=>window.timeFixtureMatchesGroup(task,callParams.filter)&&Number(task.id)>after&&(!changed||Date.parse(task.changedDate)>=Date.parse(changed))&&(callParams.filter?.['<=ID']==null||Number(task.id)<=Number(callParams.filter['<=ID'])));
         if(callParams.order?.ID==='asc')entries=entries.slice().sort((a,b)=>Number(a.id)-Number(b.id));
+        if(callParams.order?.ID==='desc')entries=entries.slice().sort((a,b)=>Number(b.id)-Number(a.id));
         const start=Math.max(0,Number(callParams.start)||0),page=entries.slice(start,start+50);
         return success({tasks:page},{next:start+page.length<entries.length?start+page.length:null,total:entries.length});
       }
@@ -89,9 +93,9 @@ const stats=values=>{const v=values.slice().sort((a,b)=>a-b);return{count:v.leng
 const commands = snapshot => snapshot.rest.flatMap(call=>call.commands||[call]);
 const counts = snapshot => {
  const all=commands(snapshot),elapsed=all.filter(call=>call.method==='task.elapseditem.getlist'),catalog=all.filter(call=>call.method==='tasks.task.list'&&!call.delta);
- return {elapsed:elapsed.length,uniqueElapsed:new Set(elapsed.map(call=>call.taskId)).size,fullPages:catalog.length,fullHeads:catalog.filter(call=>!call.after&&!call.start).length};
+ return {elapsed:elapsed.length,uniqueElapsed:new Set(elapsed.map(call=>call.taskId)).size,fullPages:catalog.length,fullHeads:catalog.filter(call=>!call.after&&!call.start&&call.order!=='desc').length};
 };
-const exactRead = snapshot => {const count=counts(snapshot);return count.elapsed===4149&&count.uniqueElapsed===4149&&count.fullPages===83&&count.fullHeads===1;};
+const exactRead = snapshot => {const count=counts(snapshot);return count.elapsed===(optimized?321:4149)&&count.uniqueElapsed===(optimized?321:4149)&&(optimized?count.fullPages<250:count.fullPages===83)&&count.fullHeads===1;};
 try{
  if(!membership){const off=await browser.newPage({viewport:{width:1100,height:800}});
  await(await off.context().newCDPSession(off)).send('Emulation.setCPUThrottlingRate',{rate:cpu});
@@ -124,14 +128,18 @@ try{
    done=await page.evaluate(()=>{const r=startupProbe.record();return r.complete&&r.taskTitles===4149&&r.entries===startupExpected.entries&&window.__resumeHarness.ready('chats');});
    if(done)break;
  }
- report.initial=await page.evaluate(()=>startupProbe.snapshot());report.initialBrowserMetrics=(await cdp.send('Performance.getMetrics')).metrics;report.expected=await page.evaluate(()=>startupExpected);report.pageErrors=errors;
+ // Export only a small checkpoint while frame/CPU collection is active. A full
+ // diagnostic snapshot crosses CDP with megabytes of native state and otherwise
+ // measures the test's own serialization pause as extension frame contention.
+ const checkpoint=()=>({commandCount:startupProbe.rest.reduce((sum,c)=>sum+(c.commands?.length||1),0),record:startupProbe.record(),visible:{statusHidden:document.querySelector('.pena-native-time-read-status')?.hidden}});
+ report.initial=await page.evaluate(checkpoint);report.initialBrowserMetrics=(await cdp.send('Performance.getMetrics')).metrics;report.expected=await page.evaluate(()=>startupExpected);report.pageErrors=errors;
  report.phases.push({name:'integrated-first-open-complete',status:done?'PASS':'FAIL'});
  if(done){
    await page.evaluate(()=>startupProbe.phase='warm-reopen');
    await page.locator('.pena-native-time-header-actions > .pena-native-popover-close').click();
    await page.locator('.pena-native-time-button').click();
    for(let i=0;i<20;i++){await page.locator('#startup-native-input').press('b');await page.waitForTimeout(150);}
-   report.warm=await page.evaluate(()=>startupProbe.snapshot());
+   report.warm=await page.evaluate(checkpoint);
  }
  await page.waitForTimeout(250);
  report.final=await page.evaluate(()=>{startupProbe.stopped=true;return startupProbe.snapshot();});report.browserMetrics=(await cdp.send('Performance.getMetrics')).metrics;
@@ -139,7 +147,7 @@ try{
  report.budgets=evaluateStartupTimeBudget(report.final,report.off,report.browserMetrics);
  report.requestCounts={earlyOpen:counts(report.final)};
  report.phases.push({name:'early open reads all tasks exactly once through one full task catalog',status:exactRead(report.final)?'PASS':'FAIL'});
- const warmExtra=report.warm?commands(report.warm).slice(commands(report.initial).length):[];
+ const warmExtra=report.warm?commands(report.final).slice(report.initial.commandCount,report.warm.commandCount):[];
  report.phases.push({name:'warm reopen has complete cached totals, no elapsed rereads and no full catalog',status:done&&report.warm.record.seconds===19260&&report.warm.visible.statusHidden===true&&!warmExtra.some(c=>c.method==='task.elapseditem.getlist'||c.method==='tasks.task.list'&&!c.delta)?'PASS':'FAIL'});
  report.phases.push({name:'native physical source remains exactly 108 chats and one materialization pass',status:report.final.native.modes.chats.sourceComplete&&report.final.native.status.modeStates.chats.materialization.nativePassCount===1?'PASS':'FAIL'});
  report.phases.push({name:'paired native interaction and browser CPU budgets',status:report.budgets.every(b=>b.pass)?'PASS':'FAIL'});
@@ -197,7 +205,7 @@ try{
  const selectedCalls=commands(report.selected),selectedElapsed=selectedCalls.filter(call=>call.method==='task.elapseditem.getlist');
  const selectedCatalog=selectedCalls.filter(call=>call.method==='tasks.task.list'&&Array.isArray(call.projectFilter));
  report.projectSavings={allElapsed:report.requestCounts.closed.elapsed,selectedElapsed:selectedElapsed.length,elapsedReduction:report.requestCounts.closed.elapsed/selectedElapsed.length,allMs:report.closed.elapsedMs,selectedMs:report.selected.elapsedMs,selectedErrors};
- report.phases.push({name:'selected project reads 149 tasks once instead of 4149, in three scoped catalog pages',status:selectedElapsed.length===149&&new Set(selectedElapsed.map(call=>call.taskId)).size===149&&selectedCatalog.length===3&&selectedCatalog.every(call=>JSON.stringify(call.projectFilter)==='["1"]')&&report.selected.record.seconds===720&&selectedErrors.length===0?'PASS':'FAIL'});
+ report.phases.push({name:'selected project reads its 149-task catalog once and skips only proven empty logs',status:selectedElapsed.length===(optimized?12:149)&&new Set(selectedElapsed.map(call=>call.taskId)).size===(optimized?12:149)&&selectedCatalog.length===3&&selectedCatalog.every(call=>JSON.stringify(call.projectFilter)==='["1"]')&&report.selected.record.seconds===720&&selectedErrors.length===0?'PASS':'FAIL'});
  const selectedBefore=selectedElapsed.length;
  await page.locator('.pena-native-time-button').click();await page.waitForTimeout(350);
  const selectedAfter=await page.evaluate(()=>startupProbe.snapshot());

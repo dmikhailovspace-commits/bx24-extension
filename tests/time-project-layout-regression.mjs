@@ -46,14 +46,15 @@ try{
    const scroll=node.querySelector('.pena-native-time-scroll');
    const option=node.querySelector('.pena-native-time-project-option');
    const checkbox=option.querySelector('input');
-   return{panel:box(node),scroll:box(scroll),scrollWidth:scroll.scrollWidth,clientWidth:scroll.clientWidth,
+   return{panel:box(node),scroll:box(scroll),section:box(scroll.querySelector('.pena-native-time-project-settings')),scrollHeight:scroll.scrollHeight,clientHeight:scroll.clientHeight,scrollWidth:scroll.scrollWidth,clientWidth:scroll.clientWidth,
     hiddenNormal:[...scroll.children].filter(n=>!n.classList.contains('pena-native-time-project-settings')).every(n=>getComputedStyle(n).display==='none'),
     tabsHidden:getComputedStyle(node.querySelector('.pena-native-time-view-tabs')).display==='none',
     checkbox:box(checkbox),option:box(option),
     scrollOwners:[...node.querySelectorAll('*')].filter(n=>n.getClientRects().length&&/^(auto|scroll)$/.test(getComputedStyle(n).overflowY)).map(n=>n.className)};
   });
-  assert.equal(layout.panel.width,viewport.width<=680?Math.min(520,viewport.width-16):Math.min(960,viewport.width-32));
-  assert.equal(layout.panel.height,viewport.width<=680?viewport.height-16:Math.min(720,viewport.height-32));
+  assert.equal(layout.panel.width,viewport.width<=680?Math.min(520,viewport.width-16):Math.min(640,viewport.width-32));
+  assert(layout.panel.height>0&&layout.panel.height<=(viewport.width<=680?viewport.height-16:Math.min(720,viewport.height-32)));
+  if(layout.scrollHeight<=layout.clientHeight)assert(layout.panel.bottom-layout.section.bottom<=(viewport.width<=680?9:17),'Settings leave a blank lower region');
   assert.ok(layout.panel.x>=8&&layout.panel.y>=8&&layout.panel.right<=viewport.width-8&&layout.panel.bottom<=viewport.height-8);
   assert.ok(layout.scrollWidth<=layout.clientWidth+1,'Project names caused horizontal overflow');
   assert.equal(layout.hiddenNormal,true);assert.equal(layout.tabsHidden,true);
@@ -69,6 +70,7 @@ try{
   report.push({viewport,status:'PASS',layout});
  }
  await page.locator('.pena-native-time-project-list').evaluate((list,names)=>{for(let i=0;i<80;i++){const label=list.firstElementChild.cloneNode(true);label.querySelector('span').textContent=`Проект ${i} — ${names[1]}`;list.append(label);}},names);
+ const large=await panel.evaluate(n=>{const r=n.getBoundingClientRect(),s=n.querySelector('.pena-native-time-scroll');return{height:r.height,scrollHeight:s.scrollHeight,clientHeight:s.clientHeight};});assert.equal(large.height,468);assert(large.scrollHeight>large.clientHeight);
  await page.locator('.pena-native-time-project-save').scrollIntoViewIfNeeded();
  assert.equal(await page.locator('.pena-native-time-project-save').isVisible(),true);
  await page.locator('.pena-native-time-project-status').evaluate(n=>{n.hidden=false;n.classList.add('--error');n.textContent='Не удалось загрузить проекты. Повторите попытку.';});
@@ -77,6 +79,7 @@ try{
  await panel.evaluate(n=>{n.classList.remove('--project-settings');n.querySelector('.pena-native-time-project-settings').hidden=true;});
  assert.equal(await page.locator('.pena-native-time-project-settings').isVisible(),false);
  assert.equal(await page.locator('.pena-native-time-summary').isVisible(),true);
+ const main=await panel.boundingBox();assert.equal(main.width,960);assert.equal(main.height,468);
  writeFileSync(join(artifacts,'time-project-layout-report.json'),JSON.stringify({cases:report,nativeCheckboxKeyboard:true,largeListReachable:true},null,2));
  console.log(`PASS project layout: ${report.length} viewports, native checkbox keyboard, single scroll owner, large list and mode visibility`);
 }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}

@@ -17,7 +17,7 @@ function fixture(count=51){
  const c=vm.createContext({window:{},Date,setTimeout,clearTimeout,document:{visibilityState:'visible'},navigator:{onLine:true},
   _PENA_TIME_CONTROL:model,_dialogTimeRange:range,_dialogTimeView:'day',_dialogControlNativeWorkspaceTab:'',_dialogTimePortalDateKey:range.from,
   _dialogTimeBootstrapToken:null,_dialogTimeBootstrapPromise:null,_dialogTimeBootstrapSequence:0,
-  _dialogTimeCache:new Map(),_dialogTimeInFlight:new Map(),_dialogTimeRangeRevisions:new Map(),_dialogTimeTaskRevisions:new Map(),
+  _dialogTimeCache:new Map(),_dialogTimeInFlight:new Map(),_dialogTimeRangeRevisions:new Map(),_dialogTimeTaskRevisions:new Map(), _dialogTimeTaskLogEvidence:new Map(),
   _dialogTimeForcedRefreshes:new Map(),_dialogTimeRangeRechecks:new Map(),_dialogTimePanelRefreshes:new Map(),
   _dialogTimeCatalogCursor:100,_dialogTimeCatalogScope:state.scope,_DIALOG_TIME_FIRST_WAVE_SIZE:16,_DIALOG_TIME_WAVE_SIZE:50,
   _getCurrentBitrixUserId:()=>state.userId,_getDialogNativeSharedAuditScopeKey:()=>state.scope,_getDialogTimeIdentityScopeKey:()=>state.scope,_isDialogTimeFrameActive:()=>state.active&&c.document.visibilityState!=='hidden',
