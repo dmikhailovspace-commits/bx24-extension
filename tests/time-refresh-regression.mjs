@@ -86,6 +86,37 @@ const entry=(id,task,seconds,date='2026-09-07')=>({ID:String(id),TASK_ID:String(
 const phases=[];
 async function phase(name,fn) { const at=performance.now(); try { const metrics=await fn(); phases.push({name,status:'PASS',ms:performance.now()-at,...metrics}); } catch(e) { phases.push({name,status:'FAIL',ms:performance.now()-at,error:e.stack}); throw e; } }
 try {
+ await phase('eligibility owner replaces one stale revision for all forced waiters; revocation and caller fences remain strict',async()=>{
+  const setup=()=>{
+   const state={scope:'portal~7',project:'portal~7:projects:1:g1',calls:[],commits:[],current:true};
+   const api={_dialogTimeTaskRevisions:new Map(),_dialogTimeTaskEligibilityInFlight:new Map(),_getFreshDialogTimeTaskEligibility:()=>null,
+    _getDialogTimeIdentityScopeKey:()=>state.scope,_getDialogTimeProjectScopeKey:()=>state.project,_queueDialogTimeUiSync:()=>{},
+    _callBxRestMethod:()=>{const gate=deferred();state.calls.push(gate);return gate.promise;},
+    _rememberDialogTimeTaskEligibility:(_id,data)=>{state.commits.push(data);return data?.flag??null;}};
+   vm.createContext(api);vm.runInContext(extract('_ensureDialogTimeTaskEligibility'),api);return{state,api};
+  };
+  const tick=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};
+  for(const enabled of [true,false]){
+   const {state,api}=setup();const first=api._ensureDialogTimeTaskEligibility('101');api._dialogTimeTaskRevisions.set('101',1);
+   const waiters=Array.from({length:20},()=>api._ensureDialogTimeTaskEligibility('101',{force:true}));state.calls[0].resolve({flag:true});await tick();
+   assert.equal(state.calls.length,2,'A stale joined GET must be replaced once, not returned as unknown or retried per waiter');assert.equal(state.commits.length,0);
+   state.calls[1].resolve({flag:enabled});assert.deepEqual(await Promise.all([first,...waiters]),Array(21).fill(enabled));assert.equal(state.commits.length,1);assert.equal(api._dialogTimeTaskEligibilityInFlight.size,0);
+  }
+  for(const kind of ['project','cancel','missing','network','storm']){
+   const {state,api}=setup();const read=api._ensureDialogTimeTaskEligibility('101',{isCurrent:()=>state.current});
+   if(kind==='project')state.project='portal~7:projects:2:g2';if(kind==='cancel')state.current=false;
+   if(kind==='network')state.calls[0].reject(new Error('network'));else{
+    if(['project','cancel','storm'].includes(kind))api._dialogTimeTaskRevisions.set('101',1);
+    state.calls[0].resolve(kind==='missing'?{}:{flag:true});
+   }
+   if(kind==='storm'){await tick();assert.equal(state.calls.length,2);api._dialogTimeTaskRevisions.set('101',2);state.calls[1].resolve({flag:true});}
+   assert.equal(await read,null,kind);assert.equal(state.calls.length,kind==='storm'?2:1,kind);
+  }
+  const {state,api}=setup();const old=api._ensureDialogTimeTaskEligibility('101');state.scope='portal~8';state.project='portal~8:projects:1:g1';
+  const current=api._ensureDialogTimeTaskEligibility('101',{force:true});assert.equal(state.calls.length,2);state.calls[0].resolve({flag:true});assert.equal(await old,null);
+  assert.equal(api._dialogTimeTaskEligibilityInFlight.get('101'),current,'Old finally must not clear the new identity owner');state.calls[1].resolve({flag:false});assert.equal(await current,false);assert.equal(state.commits.length,1);
+  return{forcedWaiters:20,replacementGets:1,totalGetsPerOwner:2,revokedResult:false,projectCancelMissingNetworkRetries:0};
+ });
  await phase('confirmed add retains the existing day and overlapping week immediately',async()=>{
   const {state,api}=fixture();state.seed([entry(1,1,3600),entry(2,2,1800)]);
   const week=model.normalizeRange('2026-09-01','2026-09-07');

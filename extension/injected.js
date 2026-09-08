@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.118';
+	window.__ANITREC_RUNNING__ = '7.5.119';
 
-	const VER = '7.5.118';
+	const VER = '7.5.119';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -9446,27 +9446,41 @@ function _rememberTaskMetaForDialogControlItem(item, meta) {
 	function _ensureDialogTimeTaskEligibility(taskId, options = {}) {
 		const id = String(taskId || '').trim();
 		if (!/^\d+$/.test(id)) return Promise.resolve(false);
-		const fresh = _getFreshDialogTimeTaskEligibility(id);
-		if (fresh != null && options.force !== true) return Promise.resolve(fresh);
-		if (_dialogTimeTaskEligibilityInFlight.has(id)) return _dialogTimeTaskEligibilityInFlight.get(id);
 		const scope = _getDialogTimeIdentityScopeKey();
 		const projectScope = _getDialogTimeProjectScopeKey();
-		const revision = _dialogTimeTaskRevisions.get(id) || 0;
-		const request = _callBxRestMethod('tasks.task.get', {
-			taskId: id,
-			select: ['ID', 'TITLE', 'CHAT_ID', 'GROUP_ID', 'ALLOW_TIME_TRACKING']
-		}, options).then(data => {
-			if (scope !== _getDialogTimeIdentityScopeKey() || revision !== (_dialogTimeTaskRevisions.get(id) || 0)) return null;
-			const enabled = _rememberDialogTimeTaskEligibility(id, data, {projectScope});
-			return enabled == null ? null : enabled === true;
-		})
+		const isCurrent = () => scope === _getDialogTimeIdentityScopeKey() && projectScope === _getDialogTimeProjectScopeKey() &&
+			(typeof options.isCurrent !== 'function' || options.isCurrent());
+		if (!isCurrent()) return Promise.resolve(null);
+		const fresh = _getFreshDialogTimeTaskEligibility(id);
+		if (fresh != null && options.force !== true) return Promise.resolve(fresh);
+		const running = _dialogTimeTaskEligibilityInFlight.get(id);
+		if (running?.identityScope === scope && running?.projectScope === projectScope) return running.then(value => isCurrent() ? value : null);
+		const request = (async () => {
+			// A qualified contact can invalidate a GET already joined by Add/Start.
+			// Replace that stale read once inside its shared owner, never per waiter.
+			for (let attempt = 0; attempt < 2; attempt++) {
+				if (!isCurrent()) return null;
+				const revision = _dialogTimeTaskRevisions.get(id) || 0;
+				const data = await _callBxRestMethod('tasks.task.get', {
+					taskId: id,
+					select: ['ID', 'TITLE', 'CHAT_ID', 'GROUP_ID', 'ALLOW_TIME_TRACKING']
+				}, options);
+				if (!isCurrent()) return null;
+				if (revision !== (_dialogTimeTaskRevisions.get(id) || 0)) continue;
+				const enabled = _rememberDialogTimeTaskEligibility(id, data, {projectScope});
+				return enabled == null ? null : enabled === true;
+			}
+			return null;
+		})()
 			// Network/permission transport errors are not an explicit ALLOW_TIME_TRACKING=N.
 			// Keep already collected work and retry instead of deleting it.
 			.catch(() => null)
 			.finally(() => {
-				_dialogTimeTaskEligibilityInFlight.delete(id);
-				_queueDialogTimeUiSync();
+				if (_dialogTimeTaskEligibilityInFlight.get(id) === request) _dialogTimeTaskEligibilityInFlight.delete(id);
+				if (isCurrent()) _queueDialogTimeUiSync();
 			});
+		request.identityScope = scope;
+		request.projectScope = projectScope;
 		_dialogTimeTaskEligibilityInFlight.set(id, request);
 		return request;
 	}

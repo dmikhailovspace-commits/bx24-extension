@@ -9,6 +9,8 @@ const anchor='\tconst _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
 assert.equal(raw.split(anchor).length,2);
 const source=raw.replace(anchor,anchor+`
  window.contactAckProbe={
+  ensure:()=>_ensureDialogTimeTaskEligibility('101',{force:true}),
+  observeEligibility:()=>{const original=_ensureDialogTimeTaskEligibility;window.ackEligibilityEntries=[];_ensureDialogTimeTaskEligibility=function(id,options){window.ackEligibilityEntries.push({id:String(id),force:options?.force===true,busy:_dialogTimeActionInFlight,at:Date.now()});return original.apply(this,arguments);};},
   prepare:()=>_prepareDialogTimeManualEntry({taskId:'101',title:'Task 101'}),
   draft:()=>_readDialogTimeManualDraft(),range:()=>_getDialogTimeSelectedRange(),
   record:()=>_getDialogTimeRecord(_getDialogTimeSelectedRange()),
@@ -17,6 +19,7 @@ const source=raw.replace(anchor,anchor+`
   state:()=>({busy:_dialogTimeActionInFlight,scope:_getDialogTimeIdentityScopeKey(),projectScope:_getDialogTimeProjectScopeKey(),
    recovery:{active:!!_dialogTimeAccountingRecoveryPromise,timer:!!_dialogTimeAccountingRecoveryTimer,attempt:_dialogTimeAccountingRecoveryAttempt},
    activeIntent:_dialogTimeActiveManualWriteIntent,selected:_dialogTimeManualSelectedTask,error:_dialogTimeManualError,
+   taskRevisions:[..._dialogTimeTaskRevisions],eligibility:[..._dialogTimeTaskEligibility],eligibilityInFlight:[..._dialogTimeTaskEligibilityInFlight.keys()],eligibilityEntries:window.ackEligibilityEntries||[],
    rangeReads:[..._dialogTimeInFlight.keys()],rechecks:[..._dialogTimeRangeRechecks.keys()],elapsedDiagnostics:window.__PENA_TIME_LOAD_DIAGNOSTICS__?.snapshot()}),
   contact:async(id,at)=>{
    const event={eventId:id,userId:String(_getCurrentBitrixUserId()),taskId:'101',dialogId:'101',title:'Task 101',qualifiedAt:at,dateKey:_getDialogTimeTodayKey(),reason:'message'};
@@ -58,9 +61,37 @@ try{
  await page.route('**/extension/injected.js*',route=>route.fulfill({contentType:'application/javascript',body:source}));
  await page.goto(server.baseUrl+'/tests/native-consistency-harness.html?mode=tasks');await page.locator('.pena-native-time-button').waitFor();await installServer(true);
  await page.locator('.pena-native-time-button').click();await page.waitForFunction(()=>window.contactAckProbe.record()?.data?.totalSeconds===5400);
+ // A real contact may commit while an older metadata permission request is
+ // still running. The user must get a fresh successor, not a stale null result.
+ await page.evaluate(()=>{
+  window.contactAckProbe.observeEligibility();
+  window.ackEligibilityTrace=[];window.ackEligibilityHeld=[];const original=BX.rest.callMethod;
+  BX.rest.callMethod=function(method,params,callback){
+   if(method!=='tasks.task.get'||String(params.taskId)!=='101'||!params.select?.includes('ALLOW_TIME_TRACKING'))return original.apply(this,arguments);
+   const number=window.ackEligibilityTrace.length+1;
+   window.ackEligibilityTrace.push({number,at:Date.now(),params,state:window.contactAckProbe.state()});
+   return original.call(this,method,params,result=>{
+    const done=()=>callback(result);
+    if(number===1)window.ackEligibilityHeld.push(done);else done();
+   });
+  };
+  window.ackOldEligibility=window.contactAckProbe.ensure();
+ });
+ await page.waitForFunction(()=>window.ackEligibilityHeld.length===1);
+ const beforeContact=await snapshot('eligibility-get-held-before-contact');
  assert.equal(await page.evaluate(()=>window.contactAckProbe.contact('independent-before',Date.now()-60000)),true);
+ const afterContact=await snapshot('contact-revision-advanced-during-get');
+ assert.equal(new Map(afterContact.state.taskRevisions).get('101'),(new Map(beforeContact.state.taskRevisions).get('101')||0)+1);
  await page.evaluate(()=>window.contactAckProbe.prepare());await page.locator('.pena-native-time-manual-minutes').fill('10');await page.locator('.pena-native-time-manual-submit').click();
+ await page.waitForFunction(()=>window.contactAckProbe.state().busy);
+ await page.waitForFunction(()=>window.ackEligibilityEntries.some(entry=>entry.id==='101'&&entry.force&&entry.busy));
+ assert.equal(await page.evaluate(()=>Number(localStorage.getItem('test:ack-server-adds')||0)),0);
+ await page.evaluate(()=>window.ackEligibilityHeld.shift()());
  await page.waitForFunction(()=>window.ackCallbacks.length===1);
+ report.eligibilityTrace=await page.evaluate(()=>window.ackEligibilityTrace);
+ assert.equal(report.eligibilityTrace.length,2,'Superseded permission read must have exactly one fresh successor');
+ assert.equal(await page.evaluate(()=>Number(localStorage.getItem('test:ack-server-adds')||0)),1);
+ report.phases.push({name:'contact revision during held permission GET triggers one fresh successor and one manual ADD',status:'PASS'});
  const intent=await page.evaluate(()=>window.contactAckProbe.draft().pendingWrite);assert.equal(intent.status,'sending');
  await page.evaluate(async attemptedAt=>{
   const now=Date.now.bind(Date),offset=Math.max(6000,attemptedAt+6000-now());Date.now=()=>now()+offset;

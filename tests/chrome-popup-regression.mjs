@@ -22,7 +22,7 @@ async function fixture(config = {}) {
     document.addEventListener('click', event => { s.lastClickTrusted = event.isTrusted; }, true);
     window.chrome = {
       runtime: {
-        getManifest: () => ({ version: '7.5.118' }),
+        getManifest: () => ({ version: '7.5.119' }),
         sendMessage: async message => {
           s.calls.push({ method: 'sync', message });
           if (s.syncFailures > 0) { s.syncFailures--; return { ok: false, error: 'Fixture worker failure' }; }
