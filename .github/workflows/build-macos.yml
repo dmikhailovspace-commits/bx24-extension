@@ -244,6 +244,7 @@ jobs:
             'Reads the current user elapsed journal in bounded pages where the portal supports it; unchanged views reuse the cache and changed tasks refresh individually.' \
             'Preserves confirmed totals, contacts and the running timer when saving project selection. Qualified contact tasks can receive time outside selected projects after fresh access validation.' \
             'Manual time entry waits for a busy accounting lock without losing the click or admitting duplicates; contacts during the wait remain pending.' \
+            'Revalidates a stale eligibility response once for all waiting actions. Deferred autofocus respects the duration field already selected by the user.' \
             'Sorts contacts by pending contact count and avoids repeated journal reads during task search. Adds a separately prepared Chrome edition with explicit portal permissions.' \
             'All 71 functional, concurrency, browser, layout and performance suites gate this release, including project-switch resets and a 4149-task journal fixture.' \
             'Controlled tests are not a live Bitrix latency measurement. The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \

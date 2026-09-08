@@ -178,7 +178,7 @@ try {
        revisions:[..._dialogTimeTaskRevisions],eligibility:[..._dialogTimeTaskEligibility],eligibilityInFlight:[..._dialogTimeTaskEligibilityInFlight.keys()],
        addCalls:window.timeAddCalls,backend:window.timeAddedItems,readCalls:window.timeRestCalls,taskGetCalls:window.nativeRestCalls?.filter(call=>call.method==='tasks.task.get'),rest:window.__PENA_REST_DIAGNOSTICS__?.snapshot(),
        trace:window.contactExceptionTrace||[],ui:{submitDisabled:document.querySelector('.pena-native-time-manual-submit')?.disabled,
-        minutes:document.querySelector('.pena-native-time-manual-minutes')?.value,total:document.querySelector('.pena-native-time-total-value')?.textContent}}),
+        hours:document.querySelector('.pena-native-time-manual-hours')?.value,minutes:document.querySelector('.pena-native-time-manual-minutes')?.value,activeElement:document.activeElement?.className,total:document.querySelector('.pena-native-time-total-value')?.textContent}}),
      };`);
     const fixtureHtml=readFileSync(new URL('./native-consistency-harness.html',import.meta.url),'utf8')
      .replace('{ version:1, all:true, ids:[], includeUnassigned:true }','{ version:1, all:false, ids:["1"], includeUnassigned:false }')
@@ -201,11 +201,17 @@ try {
     await page.waitForFunction(()=>window.contactExceptionProbe.visits().some(visit=>visit.taskId==='5'&&visit.visits>0&&visit.lastQualifiedAt>0));
     await page.locator('.pena-native-time-suggestions-list button').filter({hasText:'Добавить'}).first().click();
     const minutes=page.locator('.pena-native-time-manual-minutes'),submit=page.locator('.pena-native-time-manual-submit');
+    const assertTenMinutes=async label=>{
+     const state=await snapshot(label);
+     assert.deepEqual({hours:Number(state.ui.hours),minutes:state.ui.minutes},{hours:0,minutes:'10'},'The actual form must contain 0 hours and 10 minutes; deferred focus must not redirect typing');
+    };
     await minutes.fill('10');
+    await assertTenMinutes('immediately-after-first-minutes-fill');
     assert.equal(await submit.isEnabled(),true,'Qualified foreign contact must not have a gray submit button');
     assert.equal(await page.evaluate(()=>window.contactExceptionProbe.project('5')),false);
     await snapshot('before-N-submit');
     await page.evaluate(()=>{window.timeTaskEligibilityOverrides['5']='N';});
+    await assertTenMinutes('immediately-before-N-submit');
     await submit.click();
     await page.waitForFunction(()=>document.querySelector('.pena-native-time-manual-error')?.textContent.includes('выключен'));
     assert.equal(await page.evaluate(()=>window.timeAddCalls.length),0,'Fresh N must block actual ADD');
@@ -217,6 +223,7 @@ try {
     };
     await phase('Chromium: queued ADD remains busy and two clicks produce one fresh validation and one write',async()=>{
      await holdManualLock();const before=await snapshot('before-held-Y-submit');
+     await assertTenMinutes('immediately-before-Y-doubleclick');
      await submit.dblclick({delay:30});
      const queued=await snapshot('queued-Y-doubleclick');
      assert.equal(queued.inFlight,true);assert.equal(queued.ui.submitDisabled,true);assert.equal(queued.addCalls.length,0);
@@ -265,7 +272,9 @@ try {
     assert.deepEqual(await page.evaluate(()=>window.contactExceptionProbe.visits()),visitsBeforeSave);
     await phase('Chromium: changing project selection cancels a queued ADD before validation or mutation',async()=>{
      await page.evaluate(()=>window.contactExceptionProbe.prepare({taskId:'5',title:'Задача 5'}));await minutes.fill('10');
+     await assertTenMinutes('immediately-after-queued-minutes-fill');
      await holdManualLock();const before=await snapshot('before-project-change-queue');
+     await assertTenMinutes('immediately-before-project-change-submit');
      await submit.click();assert.equal(await page.evaluate(()=>window.contactExceptionProbe.busy()),true);
      // This is the production preference writer used by the actual Settings
      // form and a concurrent-frame selection update; no state flag is forged.

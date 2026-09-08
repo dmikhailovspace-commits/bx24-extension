@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "7.5.119",
+  "version": "7.5.120",
   "release_date": "2026-09-08",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.119",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.119",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.120",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.120",
   "extension_files": [
-    "worker-v7_5_119.js",
+    "worker-v7_5_120.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,6 +33,6 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.119/extension/injected.js",
-  "changelog": "v7.5.119: reads the current user's elapsed journal in bounded pages; preserves totals, contacts and timers when changing projects; permits qualified contact tasks outside selected projects with fresh write validation; sorts contacts by pending count; adds a separately packaged Chrome edition"
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.120/extension/injected.js",
+  "changelog": "v7.5.120: reads the current user's elapsed journal in bounded pages; preserves totals, contacts and timers when changing projects; permits qualified contact tasks outside selected projects with fresh write validation; sorts contacts by pending count; adds a separately packaged Chrome edition"
 }

@@ -10,7 +10,16 @@ assert.equal(source.split(anchor).length, 2);
 const instrumented = source.replace(anchor, `${anchor}
  window.timeUiProbe = {
   record: () => _getDialogTimeRecord(_getDialogTimeSelectedRange()),
-  idle: () => !_dialogTimeCatalogPromise && !_dialogTimeInFlight.size,
+ idle: () => !_dialogTimeCatalogPromise && !_dialogTimeInFlight.size,
+ holdPrepare(taskId='101') {
+  window.timeUiHeldPrepareFrames=[];
+  const request=window.requestAnimationFrame;
+  window.requestAnimationFrame=callback=>{window.timeUiHeldPrepareFrames.push(callback);return -window.timeUiHeldPrepareFrames.length;};
+  try { _prepareDialogTimeManualEntry({taskId,title:'Задача '+taskId}); }
+  finally { window.requestAnimationFrame=request; }
+ },
+ releasePrepare() { for(const callback of window.timeUiHeldPrepareFrames.splice(0))callback(performance.now()); },
+ selectManual(taskId) { _selectDialogTimeManualTask({taskId,title:'Задача '+taskId},_dialogControlNativeSwitcherNode.querySelector('.pena-native-time-panel')); },
   seedHistory(count, dateKey = _getDialogTimeSelectedRange().from) {
    const range=_PENA_TIME_CONTROL.normalizeRange(dateKey,dateKey),today=_getDialogTimeTodayKey();
    const base=dateKey===today?90000:80000;
@@ -103,6 +112,41 @@ try {
  await page.locator('.pena-native-time-button').click();
  await page.waitForFunction(() => document.querySelector('.pena-native-time-total-value')?.textContent === '1 ч 30 мин');
  await page.waitForFunction(() => timeUiProbe.idle() && timeUiProbe.record()?.hasCompleteSnapshot === true);
+ await phase('queued manual autofocus preserves explicit minutes input and ordinary default still focuses hours',async()=>{
+  const hours=page.locator('.pena-native-time-manual-hours'),minutes=page.locator('.pena-native-time-manual-minutes');
+  await page.evaluate(()=>{document.activeElement?.blur();timeUiProbe.holdPrepare();});
+  await minutes.focus();await page.keyboard.type('10');
+  await page.evaluate(()=>timeUiProbe.releasePrepare());await page.keyboard.type('1');
+  const preserved=await page.evaluate(()=>({hours:document.querySelector('.pena-native-time-manual-hours').value,minutes:document.querySelector('.pena-native-time-manual-minutes').value,active:document.activeElement?.className}));
+  assert.equal(preserved.hours,'');assert.equal(preserved.minutes,'101');assert.match(preserved.active,/manual-minutes/);
+  await page.evaluate(()=>{document.activeElement?.blur();timeUiProbe.holdPrepare();timeUiProbe.releasePrepare();});
+  assert.equal(await hours.evaluate(node=>document.activeElement===node),true,'Default prepare must focus hours when the user has not changed focus');
+  return preserved;
+ });
+ await phase('queued manual autofocus cancels on another control, replaced task, closed or detached panel',async()=>{
+  const outcomes=[];
+  for(const mode of ['control','task','closed','detached','replaced']){
+   await page.evaluate(mode=>{
+    document.activeElement?.blur();timeUiProbe.holdPrepare();
+    const panel=document.querySelector('.pena-native-time-panel'),hours=panel.querySelector('.pena-native-time-manual-hours');
+    let focusCalls=0;const focus=hours.focus;hours.focus=function(...args){focusCalls++;return focus.apply(this,args);};
+    let replacement;
+    if(mode==='control')panel.querySelector('.pena-native-time-refresh').focus();
+    if(mode==='task')timeUiProbe.selectManual('102');
+    if(mode==='closed')panel.querySelector('.pena-native-popover-close').click();
+    if(mode==='detached'){window.timeUiDetachedParent=panel.parentNode;panel.remove();}
+    if(mode==='replaced'){replacement=panel.cloneNode(true);panel.replaceWith(replacement);}
+    timeUiProbe.releasePrepare();
+    window.timeUiFocusOutcome={mode,focusCalls,active:document.activeElement?.className};
+    hours.focus=focus;
+    if(mode==='closed')document.querySelector('.pena-native-time-button').click();
+    if(mode==='detached')window.timeUiDetachedParent.append(panel);
+    if(mode==='replaced')replacement.replaceWith(panel);
+   },mode);
+   const result=await page.evaluate(()=>window.timeUiFocusOutcome);assert.equal(result.focusCalls,0,mode);outcomes.push(result);
+  }
+  return outcomes;
+ });
  await page.evaluate(() => { window.timeUiOriginalData=timeUiProbe.record().data; timeUiProbe.state({status:'ready',error:'',updatedAt:Date.now()}); });
  const ready = await snapshot();
  await phase('unverified bootstrap aggregate is unknown in every view, confirmed zero stays visible', async () => {

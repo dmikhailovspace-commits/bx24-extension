@@ -34,6 +34,7 @@ async function snapshot(name){await page.evaluate(()=>new Promise(r=>requestAnim
  state:window.contactAckProbe.state(),locks:await navigator.locks.query(),rest:window.__PENA_REST_DIAGNOSTICS__?.snapshot(),
  submit:(()=>{const node=document.querySelector('.pena-native-time-manual-submit'),ancestors=[];for(let parent=node?.parentElement;parent;parent=parent.parentElement)if(parent.inert||parent.hasAttribute('aria-disabled')||parent.hasAttribute('disabled'))ancestors.push({tag:parent.tagName,className:parent.className,inert:parent.inert,ariaDisabled:parent.getAttribute('aria-disabled'),disabled:parent.getAttribute('disabled')});return{text:node?.textContent,disabled:node?.disabled,matchesDisabled:node?.matches(':disabled'),ancestors};})(),
  addCalls:Number(localStorage.getItem('test:ack-server-adds')||0),
+ form:{hours:document.querySelector('.pena-native-time-manual-hours')?.value,minutes:document.querySelector('.pena-native-time-manual-minutes')?.value,activeElement:document.activeElement?.className},
  contactText:document.querySelector('.pena-native-time-suggestions')?.textContent,
  total:document.querySelector('.pena-native-time-total-value')?.textContent,
  toasts:[...document.querySelectorAll('.pena-native-toast.--show')].map(n=>({text:n.textContent,tone:n.className}))
@@ -82,7 +83,10 @@ try{
  assert.equal(await page.evaluate(()=>window.contactAckProbe.contact('independent-before',Date.now()-60000)),true);
  const afterContact=await snapshot('contact-revision-advanced-during-get');
  assert.equal(new Map(afterContact.state.taskRevisions).get('101'),(new Map(beforeContact.state.taskRevisions).get('101')||0)+1);
- await page.evaluate(()=>window.contactAckProbe.prepare());await page.locator('.pena-native-time-manual-minutes').fill('10');await page.locator('.pena-native-time-manual-submit').click();
+ await page.evaluate(()=>window.contactAckProbe.prepare());await page.locator('.pena-native-time-manual-minutes').fill('10');
+ const form=await page.evaluate(()=>({hours:document.querySelector('.pena-native-time-manual-hours').value,minutes:document.querySelector('.pena-native-time-manual-minutes').value}));
+ assert.deepEqual({hours:Number(form.hours),minutes:form.minutes},{hours:0,minutes:'10'},'Actual inputs must preserve 10 minutes after prepare; delayed focus cannot redirect typing');
+ await page.locator('.pena-native-time-manual-submit').click();
  await page.waitForFunction(()=>window.contactAckProbe.state().busy);
  await page.waitForFunction(()=>window.ackEligibilityEntries.some(entry=>entry.id==='101'&&entry.force&&entry.busy));
  assert.equal(await page.evaluate(()=>Number(localStorage.getItem('test:ack-server-adds')||0)),0);

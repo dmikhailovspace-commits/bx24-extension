@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.119';
+	window.__ANITREC_RUNNING__ = '7.5.120';
 
-	const VER = '7.5.119';
+	const VER = '7.5.120';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -14647,8 +14647,18 @@ if (_presetChannel) {
 			minutes: '',
 			dateKey: _getDialogTimeSelectedRange()?.from || _getDialogTimeTodayKey()
 		});
+		const focusOrigin = document.activeElement;
+		const selectedTask = _dialogTimeManualSelectedTask;
 		_queueDialogTimeUiSync();
-		requestAnimationFrame(() => hours?.focus?.({ preventScroll: true }));
+		requestAnimationFrame(() => {
+			// This is only the default focus after choosing a task. A user's later
+			// focus choice must win even when rendering was delayed by the host app.
+			if (document.activeElement !== focusOrigin || _dialogTimeManualSelectedTask !== selectedTask ||
+				_dialogControlNativeWorkspaceTab !== 'time' || !panel.isConnected || panel.hidden ||
+				_dialogControlNativeSwitcherNode?.querySelector('.pena-native-time-panel') !== panel ||
+				!hours?.isConnected || panel.querySelector('.pena-native-time-manual-hours') !== hours) return;
+			hours.focus({ preventScroll: true });
+		});
 	}
 
 	function _setDialogTimeFullTaskTitle(node, value, actionLabel = '') {
