@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.120';
+	window.__ANITREC_RUNNING__ = '7.5.121';
 
-	const VER = '7.5.120';
+	const VER = '7.5.121';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -16016,62 +16016,32 @@ if (_presetChannel) {
 			return value > 10 && value < 20 ? many : (last === 1 ? one : (last >= 2 && last <= 4 ? few : many));
 		};
 		const catalogIncomplete = !_dialogTimeCatalogCursor || _dialogTimeCatalogScope !== _getDialogTimeProjectScopeKey();
+		const refreshScope = _getDialogTimeIdentityScopeKey();
+		const rangeKey = `${visibleRange.from}:${visibleRange.to}`;
+		const manualReadError = _dialogTimeManualRefreshError?.scope === refreshScope && _dialogTimeManualRefreshError.rangeKey === rangeKey &&
+			!(record?.updatedAt > _dialogTimeManualRefreshError.failedAt) ? _dialogTimeManualRefreshError.message : '';
+		const readError = initializationError || record?.error || manualReadError;
+		const incomplete = !!data && (catalogIncomplete || record?.hasCompleteSnapshot !== true || data.coverage?.complete === false);
 		const meta = panel.querySelector('.pena-native-time-meta');
 		if (meta) {
 			meta.textContent = data
-				? `${data.taskCount} ${plural(data.taskCount, 'задача', 'задачи', 'задач')} · ${data.entryCount} ${plural(data.entryCount, 'запись', 'записи', 'записей')}`
-				: (initializing || record?.status === 'loading' ? 'Собираем данные…' : (record?.error || initializationError ? 'Не удалось обновить данные' : 'Записей пока нет'));
+				? `${incomplete ? 'Часть данных · ' : ''}${data.taskCount} ${plural(data.taskCount, 'задача', 'задачи', 'задач')} · ${data.entryCount} ${plural(data.entryCount, 'запись', 'записи', 'записей')}`
+				: (initializing || record?.status === 'loading' ? 'Загружаем время…' : (readError ? 'Не удалось загрузить время' : 'Записей пока нет'));
 			const coverage = data?.coverage;
-			meta.title = catalogIncomplete ? 'Список задач ещё загружается. Итог будет дополнен.' : coverage && (!coverage.complete || record?.status === 'loading')
-				? `Проверено задач: ${coverage.checkedTasks} из ${coverage.totalTasks}. Данные обновляются.`
-				: (record?.error || (record?.updatedAt ? `Обновлено: ${new Date(record.updatedAt).toLocaleTimeString('ru')}` : ''));
+			meta.title = readError ? `${data ? 'Показано сохранённое время. ' : ''}${readError}. Нажмите «Обновить».`
+				: catalogIncomplete ? 'Список задач ещё загружается. Итог будет дополнен.'
+				: incomplete && coverage ? `Проверено задач: ${coverage.checkedTasks} из ${coverage.totalTasks}. Итог будет дополнен.`
+				: (record?.updatedAt ? `Обновлено: ${new Date(record.updatedAt).toLocaleTimeString('ru')}` : '');
 		}
 		const refresh = panel.querySelector('.pena-native-time-refresh');
-		const refreshScope = _getDialogTimeIdentityScopeKey();
 		const manualRefreshing = _dialogTimeManualRefreshToken?.scope === refreshScope;
 		if (refresh) {
 			refresh.disabled = manualRefreshing;
 			refresh.classList.remove('--loading');
-			refresh.title = _dialogTimeView === 'stats' ? 'Обновить статистику за 7 дней' : 'Обновить выбранную дату';
-			refresh.setAttribute('aria-label', refresh.title);
-		}
-		const status = panel.querySelector('.pena-native-time-read-status');
-		if (status) {
-			const rangeKey = `${visibleRange.from}:${visibleRange.to}`;
-			const manualError = _dialogTimeManualRefreshError?.scope === refreshScope && _dialogTimeManualRefreshError.rangeKey === rangeKey &&
-				!(record?.updatedAt > _dialogTimeManualRefreshError.failedAt)
-				? _dialogTimeManualRefreshError.message : '';
-			const error = initializationError || record?.error || manualError;
-			const catalogBusy = !!_dialogTimeProjectCatalogOwner && _dialogTimeProjectCatalogOwner.scope === _getDialogTimeProjectScopeKey();
-			const busy = initializing || record?.status === 'loading' || catalogBusy || (manualRefreshing && _dialogTimeManualRefreshToken.rangeKey === rangeKey);
-			const coverage = data?.coverage;
-			const readProgress = record?.status === 'loading' ? record?.readProgress : null;
-			const incomplete = catalogIncomplete || coverage?.complete === false;
-			const manualForRange = manualRefreshing && _dialogTimeManualRefreshToken.rangeKey === rangeKey;
-			const bulkUpdate = readProgress?.totalTasks > _DIALOG_TIME_WAVE_SIZE;
-			// A known complete snapshot remains usable during a targeted background
-			// check. Only initial coverage, an explicit refresh or an error needs UI.
-			const needsAttention = !!error || initializing || !data || record?.hasCompleteSnapshot !== true || manualForRange || bulkUpdate;
-			const state = error ? 'error' : busy ? 'loading' : incomplete ? 'partial' : 'ready';
-			const initialCatalog = catalogIncomplete && record?.hasCompleteSnapshot !== true;
-			const label = error ? 'Не удалось обновить данные' : initializing ? 'Подключаемся к Битрикс24' : initialCatalog ? 'Загружаем список задач' : busy ? (record?.hasCompleteSnapshot !== true ? 'Считаем время' : bulkUpdate && !manualForRange ? 'Обновляем изменённые задачи' : 'Проверяем актуальность')
-				: incomplete ? 'Данные проверены не полностью' : 'Данные обновлены';
-			const detail = error ? error : initialCatalog ? `Найдено задач: ${_dialogTimeTaskTitles.size}` : busy && readProgress?.totalTasks > 0
-				? `${readProgress.completedTasks} из ${readProgress.totalTasks} ${readProgress.totalTasks % 10 === 1 && readProgress.totalTasks % 100 !== 11 ? 'задачи' : 'задач'}`
-				: record?.updatedAt ? new Date(record.updatedAt).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' }) : '';
-			const labelNode = status.querySelector('.pena-native-time-read-label');
-			const detailNode = status.querySelector('.pena-native-time-read-detail');
-			if (labelNode.textContent !== label) labelNode.textContent = label;
-			if (detailNode.textContent !== detail) detailNode.textContent = detail;
-			status.hidden = !needsAttention;
-			status.dataset.state = state;
-			status.dataset.indeterminate = state === 'loading' && (initialCatalog || !readProgress?.totalTasks) ? 'true' : 'false';
-			status.title = error ? `${error}${data ? '. Показаны сохранённые данные.' : ''}` : label;
-			status.setAttribute('aria-busy', busy && !error ? 'true' : 'false');
-			status.setAttribute('aria-live', needsAttention && (initializing || manualForRange || error) ? 'polite' : 'off');
-			const progress = status.querySelector('.pena-native-time-read-progress');
-			const percent = busy ? (readProgress?.totalTasks > 0 ? Math.max(0, Math.min(100, Math.round(readProgress.completedTasks / readProgress.totalTasks * 100))) : 0) : (state === 'ready' ? 100 : 0);
-			progress.style.setProperty('--pena-time-read-progress', `${percent}%`);
+			const action = _dialogTimeView === 'stats' ? 'Обновить статистику за 7 дней' : 'Обновить выбранную дату';
+			refresh.title = manualRefreshing ? 'Обновляем время…' : readError ? `${action}. ${data ? 'Показано сохранённое время. ' : ''}${readError}` : action;
+			refresh.setAttribute('aria-label', action);
+			refresh.setAttribute('aria-busy', manualRefreshing ? 'true' : 'false');
 		}
 		const body = panel.querySelector('.pena-native-time-body');
 		if (body) body.hidden = _dialogTimeView === 'stats';
@@ -16622,9 +16592,10 @@ if (_presetChannel) {
 		if (globalTransport) globalTransport.capabilities ||= new Map();
 		const globalCapability = globalTransport?.capabilities.get(identity);
 		const tryGlobal = !!globalTransport && taskIds.length > 0 && (force || (!cached?.hasCompleteSnapshot && !cached?.globalSnapshotRead)) && globalCapability?.supported !== false;
-		for (const id of taskIds) {
+		const collectEmptyLogEvidence = () => { for (const id of taskIds) {
 			const proof = _dialogTimeTaskLogEvidence.get(id);
-			if (!tryGlobal && proof?.scope === identity && proof.revision === (_dialogTimeTaskRevisions.get(id) || 0) && now >= proof.at && now - proof.at < 60000) {
+			const proofNow = Date.now();
+			if (proof?.scope === identity && proof.revision === (_dialogTimeTaskRevisions.get(id) || 0) && proofNow >= proof.at && proofNow - proof.at < 60000) {
 				// A saved preview may restore rows after the catalog supplied null.
 				// Recheck at consumption as well as publication; never erase that preview.
 				if (knownLoggedTaskIds.has(id)) {
@@ -16635,7 +16606,8 @@ if (_presetChannel) {
 				emptyLogs.add(id);
 				freshness[id] = { at:proof.at, revision:proof.revision };
 			}
-		}
+		} };
+		if (!tryGlobal) collectEmptyLogEvidence();
 		const needsRead = id => {
 			const entry = freshness[id];
 			// A portal-wide pass can itself exceed any short TTL. Expiring its first
@@ -16644,7 +16616,7 @@ if (_presetChannel) {
 			// are the authoritative reasons to revisit an already checked task.
 			return !emptyLogs.has(id) && (force || !entry || entry.revision !== (_dialogTimeTaskRevisions.get(id) || 0));
 		};
-		const pendingIds = taskIds.filter(needsRead);
+		let pendingIds = taskIds.filter(needsRead);
 		const hasCompleteCoverage = () => _dialogTimeCatalogCursor > 0 && _dialogTimeCatalogScope === scope &&
 			_getDialogTimeWorkingTaskIds(normalized).every(id => freshness[id] && !freshness[id].unavailable &&
 				freshness[id].revision === (_dialogTimeTaskRevisions.get(id) || 0));
@@ -16690,19 +16662,21 @@ if (_presetChannel) {
 			readRevision: revision, readScope:scope, readForce:force, readProgress: { completedTasks:0, totalTasks:pendingIds.length } };
 		_setDialogTimeCacheRecord(key, base);
 		_queueDialogTimeUiSync();
+		const diagnostics = { strategy:tryGlobal ? 'global' : (cached?.hasCompleteSnapshot && !force ? 'point' : 'legacy'), tasks:taskIds.length, pendingTasks:pendingIds.length, pages:0, attemptedGlobalPages:0, fallbackReason:globalCapability?.reason || '', from:normalized.from, to:normalized.to, startedAt:Date.now(), state:'loading', errorCode:'' };
+		if (globalTransport) globalTransport.diagnostics = diagnostics;
 		const request = (async () => {
 			let data = cached?.data || { ..._PENA_TIME_CONTROL.aggregateElapsedItems([]), range: normalized, pages: 0, totalAvailable: 0,
 				coverage: { checkedTasks:0, totalTasks:taskIds.length, complete:verifiedEmptyCatalog } };
-			const diagnostics = { strategy:tryGlobal ? 'global' : (cached?.hasCompleteSnapshot && !force ? 'point' : 'legacy'), tasks:taskIds.length, pendingTasks:pendingIds.length, pages:0, fallbackReason:globalCapability?.reason || '', from:normalized.from, to:normalized.to };
-			if (globalTransport) globalTransport.diagnostics = diagnostics;
 			if (tryGlobal) {
 				const taskRevisions = new Map(taskIds.map(id => [id, _dialogTimeTaskRevisions.get(id) || 0]));
 				let dispatchedAt = 0;
 				let globalData;
 				try {
 					globalData = await _PENA_TIME_CONTROL.loadGlobalElapsedItems({ ...normalized, userId, knownItems:cached?.data?.items || [], supported:globalCapability?.supported === true, isCurrent:current,
+						probeTaskId:(cached?.data?.items || []).find(item => workingTaskIdSet.has(String(item.taskId)))?.taskId || taskIds[0],
 						callPage:async params => {
 							const startedAt = Date.now();
+							diagnostics.attemptedGlobalPages++;
 							const response = await globalTransport(params, { isCurrent:current });
 							diagnostics.pages++;
 							const at = Number(response?.requestedAt) || startedAt;
@@ -16735,6 +16709,12 @@ if (_presetChannel) {
 					return data;
 				}
 				diagnostics.strategy = 'legacy'; diagnostics.fallbackReason = globalData.reason;
+				// A rejected global capability must not discard the catalog's scoped
+				// empty-log evidence and turn fallback into thousands of empty reads.
+				collectEmptyLogEvidence();
+				pendingIds = taskIds.filter(needsRead);
+				diagnostics.pendingTasks = pendingIds.length;
+				base.readProgress = { completedTasks:0, totalTasks:pendingIds.length };
 			}
 			if (emptyLogs.size) {
 				data = { ..._PENA_TIME_CONTROL.replaceElapsedTasks(data, _PENA_TIME_CONTROL.aggregateElapsedItems([]), emptyLogs), range:normalized, pages:0 };
@@ -16802,10 +16782,14 @@ if (_presetChannel) {
 			return data;
 		})().catch(error => {
 			if (!current()) return _dialogTimeCache.get(key)?.data || null;
+			diagnostics.state = 'error';
+			diagnostics.errorCode = String(error?.code || 'TIME_READ_FAILED');
 			const latest = _dialogTimeCache.get(key) || base;
-			_setDialogTimeCacheRecord(key, { ...latest, status: 'error', error: _getDialogTimeFriendlyError(error), failedAt: Date.now(), failedTaskRevisions:attemptTaskRevisions });
+			_setDialogTimeCacheRecord(key, { ...latest, status: 'error', error: _getDialogTimeFriendlyError(error), errorCode:diagnostics.errorCode, failedAt: Date.now(), failedTaskRevisions:attemptTaskRevisions });
 			throw error;
 		}).finally(() => {
+			diagnostics.durationMs = Math.max(0, Date.now() - diagnostics.startedAt);
+			if (diagnostics.state === 'loading') diagnostics.state = current() ? 'ready' : 'superseded';
 			_dialogTimeInFlight.delete(key);
 			const latest = _dialogTimeCache.get(key);
 			if (!current() && latest?.status === 'loading' && latest.readRevision === revision) _setDialogTimeCacheRecord(key, { ...latest, status: 'ready' });
@@ -17073,14 +17057,9 @@ if (_presetChannel) {
 		summaryActions.className = 'pena-native-time-summary-actions';
 		summaryActions.append(refresh);
 		summary.append(summaryText, dateControls, summaryActions);
-		const readStatus = document.createElement('div');
-		readStatus.className = 'pena-native-time-read-status';
-		readStatus.setAttribute('role', 'status');
-		readStatus.setAttribute('aria-live', 'polite');
-		readStatus.innerHTML = '<span class="pena-native-time-read-label"></span><span class="pena-native-time-read-detail"></span><span class="pena-native-time-read-progress" aria-hidden="true"></span>';
 		const summaryGroup = document.createElement('div');
 		summaryGroup.className = 'pena-native-time-summary-group';
-		summaryGroup.append(summary, readStatus);
+		summaryGroup.append(summary);
 
 		const tracker = document.createElement('section');
 		tracker.className = 'pena-native-time-tracker';

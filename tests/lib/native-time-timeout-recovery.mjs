@@ -28,7 +28,8 @@ export async function verifyTimeTimeoutRecovery(page, timePanel, mode) {
   const panel = document.querySelector('.pena-native-time-panel');
   const refresh = panel?.querySelector('.pena-native-time-refresh');
   const diagnostics = window.__PENA_REST_DIAGNOSTICS__?.snapshot();
-  if (panel?.querySelector('.pena-native-time-read-status')?.dataset.state !== 'ready' ||
+  if (!panel || panel.querySelector('.pena-native-time-total-value')?.textContent === '—' ||
+      /Часть данных/.test(panel.querySelector('.pena-native-time-meta')?.textContent || '') ||
       panel.classList.contains('--loading') || !refresh || refresh.disabled ||
       !diagnostics || diagnostics.active !== 0 || diagnostics.queued !== 0 || diagnostics.cooldownMs > 0) return false;
   const before = diagnostics.samples.filter(sample => sample.method === 'batch:task.elapseditem.getlist').length;

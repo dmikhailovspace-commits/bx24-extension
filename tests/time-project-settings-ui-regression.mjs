@@ -11,7 +11,7 @@ const preference=()=>page.evaluate(()=>JSON.parse(localStorage.getItem(`pena.tim
 const project=id=>page.locator(`.pena-native-time-project-settings input[data-project-id="${id}"]`);
 const openSettings=async()=>{await page.locator('.pena-native-time-project-button').click();await project('1').waitFor({state:'visible'});};
 const save=async()=>{await page.locator('.pena-native-time-project-save').click();await page.locator('.pena-native-time-project-settings').waitFor({state:'hidden'});};
-const settled=async(expectedTotal)=>page.waitForFunction(expected=>document.querySelector('.pena-native-time-read-status')?.dataset.state==='ready'&&document.querySelector('.pena-native-time-total-value')?.textContent===expected,expectedTotal,{timeout:15000});
+const settled=async(expectedTotal)=>page.waitForFunction(expected=>!!document.querySelector('.pena-native-time-panel')&&!document.querySelector('.pena-native-time-panel').classList.contains('--loading')&&!/Часть данных/.test(document.querySelector('.pena-native-time-meta')?.textContent||'')&&document.querySelector('.pena-native-time-total-value')?.textContent===expected,expectedTotal,{timeout:15000});
 const timeIds=()=>page.evaluate(()=>window.timeRestCalls.map(params=>String(params[0])));
 const artifacts=new URL('./artifacts/',import.meta.url);mkdirSync(artifacts,{recursive:true});
 try{

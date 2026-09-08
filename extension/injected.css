@@ -883,18 +883,6 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 .pena-native-time-refresh:disabled{cursor:default;opacity:.65}
 .pena-native-time-refresh svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:2.15;stroke-linecap:round;stroke-linejoin:round}
 .pena-native-time-summary-group{display:grid;gap:8px;min-width:0}
-.pena-native-time-read-status{position:relative;display:flex;align-items:center;gap:8px;height:24px;min-height:24px;padding:0 2px 5px;color:#66758b;font:500 11px/16px var(--pena-time-ui);box-sizing:border-box}
-.pena-native-time-read-status[hidden]{display:none}
-.pena-native-time-read-label{flex:0 0 auto}
-.pena-native-time-read-detail{min-width:0;margin-left:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
-.pena-native-time-read-progress{position:absolute;inset:auto 0 0;height:2px;overflow:hidden;border-radius:2px;background:#e3e9f1}
-.pena-native-time-read-progress::after{content:"";display:block;width:var(--pena-time-read-progress,0%);height:100%;background:#6888d9;transition:width .15s ease}
-.pena-native-time-read-status[data-indeterminate="true"] .pena-native-time-read-progress::after{width:28%;animation:pena-time-read-pending 1.25s ease-in-out infinite;transition:none}
-@keyframes pena-time-read-pending{from{transform:translateX(-100%)}to{transform:translateX(360%)}}
-@media(prefers-reduced-motion:reduce){.pena-native-time-read-status[data-indeterminate="true"] .pena-native-time-read-progress::after{animation:none;transform:none}}
-.pena-native-time-read-status[data-state="ready"] .pena-native-time-read-progress::after{background:#b1c2d7}
-.pena-native-time-read-status[data-state="error"],.pena-native-time-read-status[data-state="partial"]{color:#8b641d}
-.pena-native-time-read-status[data-state="error"] .pena-native-time-read-progress::after,.pena-native-time-read-status[data-state="partial"] .pena-native-time-read-progress::after{background:#c8a35e}
 .pena-native-time-body{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:16px;min-height:0}
 .pena-native-time-body[hidden],.pena-native-time-manual-block[hidden],.pena-native-time-tracker[hidden],.pena-native-time-stats[hidden]{display:none!important}
 .pena-native-time-column{display:grid;align-content:start;gap:16px;min-width:0}

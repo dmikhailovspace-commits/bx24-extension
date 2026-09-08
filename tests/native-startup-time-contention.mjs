@@ -72,7 +72,7 @@ function installProbe(){
  const box=document.createElement('div');box.style.cssText='position:fixed;left:800px;top:10px;width:250px;z-index:2147483647;background:white';box.innerHTML='<input id="startup-native-input" placeholder="Native message"><span id="startup-native-result"></span>';document.body.append(box);
  const input=box.querySelector('input');input.addEventListener('input',async event=>{const at=event.timeStamp,handler=performance.now(),phase=p.phase;const response=await fetch('/__latency?kind=native-input');await response.json();const complete=performance.now();box.querySelector('span').textContent=input.value;await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));p.samples.push({phase,handler:handler-at,http:complete-at,paint:performance.now()-at,trusted:event.isTrusted});});
  p.snapshot=()=>({elapsedMs:performance.now()-p.startedAt,phase:p.phase,work:p.work,rest:p.rest,frames:p.frames,longtasks:p.longtasks,samples:p.samples,observers:p.observers,errors:p.errors,
-  record:p.record?.(),native:window.__resumeHarness.state(),queue:window.__PENA_REST_DIAGNOSTICS__?.snapshot(),bootstrap:window.__PENA_TIME_LOAD_DIAGNOSTICS__?.snapshot(),visible:{toolbar:document.querySelector('.pena-native-time-button-label')?.textContent,total:document.querySelector('.pena-native-time-total-value')?.textContent,status:document.querySelector('.pena-native-time-read-status')?.textContent,statusHidden:document.querySelector('.pena-native-time-read-status')?.hidden,selectOptions:document.querySelectorAll('.pena-native-time-panel option').length}});
+  record:p.record?.(),native:window.__resumeHarness.state(),queue:window.__PENA_REST_DIAGNOSTICS__?.snapshot(),bootstrap:window.__PENA_TIME_LOAD_DIAGNOSTICS__?.snapshot(),visible:{toolbar:document.querySelector('.pena-native-time-button-label')?.textContent,total:document.querySelector('.pena-native-time-total-value')?.textContent,meta:document.querySelector('.pena-native-time-meta')?.textContent,statusPresent:!!document.querySelector('.pena-native-time-read-status'),selectOptions:document.querySelectorAll('.pena-native-time-panel option').length}});
 }
 let fixture=readFileSync(resolve(root,'tests/native-resume-recovery-harness.html'),'utf8');
 assert.equal(fixture.split('setInterval(sampleGuard, 16);').length-1,1);
@@ -158,7 +158,7 @@ try{
  // Export only a small checkpoint while frame/CPU collection is active. A full
  // diagnostic snapshot crosses CDP with megabytes of native state and otherwise
  // measures the test's own serialization pause as extension frame contention.
- const checkpoint=()=>({commandCount:startupProbe.rest.reduce((sum,c)=>sum+(c.commands?.length||1),0),record:startupProbe.record(),visible:{statusHidden:document.querySelector('.pena-native-time-read-status')?.hidden}});
+ const checkpoint=()=>({commandCount:startupProbe.rest.reduce((sum,c)=>sum+(c.commands?.length||1),0),record:startupProbe.record(),visible:{statusPresent:!!document.querySelector('.pena-native-time-read-status')}});
  report.initial=await page.evaluate(checkpoint);report.initialBrowserMetrics=(await cdp.send('Performance.getMetrics')).metrics;report.expected=await page.evaluate(()=>startupExpected);report.pageErrors=errors;
  report.phases.push({name:'integrated-first-open-complete',status:done?'PASS':'FAIL'});
  if(done){
@@ -175,7 +175,7 @@ try{
  report.requestCounts={earlyOpen:counts(report.final)};
  report.phases.push({name:'early open loads the complete own-day journal once through one full task catalog',status:exactRead(report.final)?'PASS':'FAIL'});
  const warmExtra=report.warm?commands(report.final).slice(report.initial.commandCount,report.warm.commandCount):[];
- report.phases.push({name:'warm reopen has complete cached totals, no elapsed rereads and no full catalog',status:done&&report.warm.record.seconds===19260&&report.warm.visible.statusHidden===true&&!warmExtra.some(c=>c.method==='task.elapseditem.getlist'||c.method==='tasks.task.list'&&!c.delta)?'PASS':'FAIL'});
+ report.phases.push({name:'warm reopen has complete cached totals, no elapsed rereads and no full catalog',status:done&&report.warm.record.seconds===19260&&report.warm.visible.statusPresent===false&&!warmExtra.some(c=>c.method==='task.elapseditem.getlist'||c.method==='tasks.task.list'&&!c.delta)?'PASS':'FAIL'});
  report.phases.push({name:'native physical source remains exactly 108 chats and one materialization pass',status:report.final.native.modes.chats.sourceComplete&&report.final.native.status.modeStates.chats.materialization.nativePassCount===1?'PASS':'FAIL'});
  report.phases.push({name:'paired native interaction and browser CPU budgets',status:report.budgets.every(b=>b.pass)?'PASS':'FAIL'});
  assert(report.final.samples.length>=20&&report.off.samples.length===20&&report.final.samples.every(s=>s.trusted),'Real trusted input samples must complete in both arms');
@@ -236,7 +236,7 @@ try{
  const selectedBefore=selectedElapsed.length;
  await page.locator('.pena-native-time-button').click();await page.waitForTimeout(350);
  const selectedAfter=await page.evaluate(()=>startupProbe.snapshot());
- report.phases.push({name:'selected project first panel open keeps the automatic initial total without recount',status:commands(selectedAfter).filter(call=>call.method==='task.elapseditem.getlist').length===selectedBefore&&selectedAfter.record.seconds===720&&selectedAfter.visible.statusHidden?'PASS':'FAIL'});
+ report.phases.push({name:'selected project first panel open keeps the automatic initial total without recount',status:commands(selectedAfter).filter(call=>call.method==='task.elapseditem.getlist').length===selectedBefore&&selectedAfter.record.seconds===720&&selectedAfter.visible.statusPresent===false?'PASS':'FAIL'});
  if(globalJournal){
   await page.close();page=await browser.newPage({viewport:{width:1100,height:800}});const fallbackErrors=collectPageErrors(page);
   await(await page.context().newCDPSession(page)).send('Emulation.setCPUThrottlingRate',{rate:cpu});

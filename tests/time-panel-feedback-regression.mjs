@@ -78,12 +78,12 @@ try {
   f.snapshot=()=>{
    const panel=document.querySelector('.pena-native-time-panel'),record=window.feedbackProbe.record();
    const manualError=panel?.querySelector('.pena-native-time-manual-error'),refresh=panel?.querySelector('.pena-native-time-refresh');
-   const status=panel?.querySelector('.pena-native-time-read-status,[role="status"]');
+   const status=panel?.querySelector('.pena-native-time-read-status');
    return {active:window.feedbackProbe.active(),range:window.feedbackProbe.range(),cacheStatus:record?.status,error:record?.error||'',
     seconds:record?.data?.totalSeconds??null,entries:record?.data?.entryCount??null,total:panel?.querySelector('.pena-native-time-total-value')?.textContent,
     coverage:record?.data?.coverage??null,readProgress:record?.readProgress??null,deliveredReads:f.deliveredReads,
     manualError:manualError&&!manualError.hidden?manualError.textContent:'',submit:panel?.querySelector('.pena-native-time-manual-submit')?.textContent,
-    statusText:status?.textContent||'',statusHidden:status?.hidden??null,
+    statusPresent:!!status,meta:panel?.querySelector('.pena-native-time-meta')?.textContent,metaTitle:panel?.querySelector('.pena-native-time-meta')?.title,refreshBusy:refresh?.getAttribute('aria-busy'),
     refreshDisabled:refresh?.disabled,refreshAnimation:refresh?.querySelector('svg')?getComputedStyle(refresh.querySelector('svg')).animationName:'',
     refreshTitle:refresh?.title||'',readCalls:f.readCalls,readTaskIds:f.readTaskIds.slice(),task101Reads:f.readTaskIds.filter(id=>id==='101').length,addCalls:f.addCalls,heldReads:f.heldReads.length,
     toastLog:f.toastLog.slice(),toasts:[...document.querySelectorAll('.pena-native-toast')].map(node=>({text:node.textContent,className:node.className}))};
@@ -97,7 +97,7 @@ try {
   assert.equal(first.error,'');assert.equal(first.manualError,'');assert.equal(first.deliveredReads,0);assert.equal(first.cacheStatus,'loading');
   // An internal aggregate([]) may contain numeric zero. It is not evidence
   // that this user's selected range has no entries before any response.
-  assert.equal(first.total,'—');assert.match(first.statusText,/Загружаем список задач|Считаем время/);
+  assert.equal(first.total,'—');assert.match(first.meta,/Загружаем время/);assert.equal(first.statusPresent,false);
  });
  await page.evaluate(()=>window.feedback.heldReads.shift()());
  await page.waitForFunction(()=>window.feedbackProbe.record()?.status==='ready'&&window.feedbackProbe.record()?.data?.coverage?.complete===true);
@@ -110,12 +110,12 @@ try {
  await page.evaluate(()=>window.feedback.releaseReads('pass'));
  await page.waitForFunction(()=>window.feedbackProbe.record()?.status==='ready'&&window.feedbackProbe.record()?.data?.totalSeconds===5400);
  const ready=await snapshot('first-open-ready');
- await phase('a complete ready snapshot does not reserve a loading status row',()=>assert.equal(ready.statusHidden,true));
+ await phase('a complete ready snapshot does not reserve a loading status row',()=>assert.equal(ready.statusPresent,false));
 
  await phase('background timeout and a queued manual successor retain distinct outcomes',async()=>{
   await page.waitForFunction(()=>{
    const queue=window.__PENA_REST_DIAGNOSTICS__?.snapshot();
-   return document.querySelector('.pena-native-time-read-status')?.dataset.state==='ready'&&queue?.active===0&&queue?.queued===0;
+   return window.feedbackProbe.record()?.status==='ready'&&window.feedbackProbe.record()?.hasCompleteSnapshot===true&&queue?.active===0&&queue?.queued===0;
   });
   await page.evaluate(()=>{window.feedback.readMode='hold';window.feedbackProbe.dirty('101');window.feedbackProbe.load().catch(()=>{});});
   await page.waitForFunction(()=>window.feedback.heldReads.length>0);
@@ -175,7 +175,7 @@ try {
  await page.waitForTimeout(100);
  const rereadFailure=await snapshot('successful-add-failed-reread');
  await phase('reread failure preserves confirmed ADD and does not become a write error',()=>{
-  assert.equal(rereadFailure.seconds,6000);assert.equal(rereadFailure.entries,3);assert.equal(rereadFailure.manualError,'');assert.equal(rereadFailure.addCalls,1);
+  assert.equal(rereadFailure.seconds,6000);assert.equal(rereadFailure.entries,3);assert.equal(rereadFailure.manualError,'');assert.equal(rereadFailure.addCalls,1);assert.equal(rereadFailure.statusPresent,false);assert.doesNotMatch(rereadFailure.meta,/Не удалось/);assert.match(rereadFailure.metaTitle,/сохранённое время/);
  });
 
  await page.evaluate(()=>{window.feedback.readMode='pass';window.feedback.hideAdded=true;window.feedbackProbe.load(true).catch(()=>{});});
@@ -207,7 +207,7 @@ try {
  const background=await snapshot('cached-background-refresh');
  await phase('background refresh preserves cache and keeps refresh icon static',()=>{
   assert.equal(background.seconds,6000);assert.equal(background.refreshAnimation,'none');assert.equal(background.refreshDisabled,false);
-  assert.equal(background.statusHidden,true);assert.match(background.statusText,/загруз|провер|обнов|собир/i);
+  assert.equal(background.statusPresent,false);assert.equal(background.refreshBusy,'false');assert.doesNotMatch(background.meta,/загруз|провер|обнов|Не удалось/i);
  });
  await page.evaluate(()=>window.feedback.releaseReads('pass'));
  await page.waitForFunction(()=>window.feedbackProbe.record()?.status==='ready');
@@ -215,7 +215,7 @@ try {
  await page.locator('.pena-native-time-refresh').click();
  await page.waitForFunction(()=>window.feedback.heldReads.length>0);
  const manualRefresh=await snapshot('manual-refresh-pending');
- await phase('manual refresh shares the same stable cached total',()=>{assert.equal(manualRefresh.seconds,6000);assert.equal(manualRefresh.refreshAnimation,'none');assert.equal(manualRefresh.refreshDisabled,true);assert.equal(manualRefresh.statusHidden,false);});
+ await phase('manual refresh shares the same stable cached total',()=>{assert.equal(manualRefresh.seconds,6000);assert.equal(manualRefresh.refreshAnimation,'none');assert.equal(manualRefresh.refreshDisabled,true);assert.equal(manualRefresh.statusPresent,false);assert.equal(manualRefresh.refreshBusy,'true');});
 
  const today=await page.evaluate(()=>window.feedbackProbe.range().from);
  await page.locator('.pena-native-time-date-prev').count().then(async count=>{
@@ -235,7 +235,7 @@ try {
  const closing=await snapshot('manual-refresh-before-close');
  await phase('refresh keeps a previously verified zero while new responses are held',()=>{
   assert.equal(closing.seconds,0);assert.equal(closing.total,'0 мин');assert.equal(closing.readProgress.completedTasks,0);assert(closing.coverage.checkedTasks>0);
-  assert.match(closing.statusText,/Проверяем актуальность/);
+  assert.equal(closing.statusPresent,false);assert.equal(closing.refreshBusy,'true');
  });
  await page.locator('.pena-native-time-header-actions > .pena-native-popover-close').click();
  await page.evaluate(()=>window.feedback.releaseReads('fail'));
@@ -273,10 +273,10 @@ try {
    await cold.locator('.pena-native-time-panel').waitFor();await cold.waitForTimeout(150);
    const failed=await cold.evaluate(()=>{
     const status=document.querySelector('.pena-native-time-read-status');
-    return {state:status?.dataset.state,text:status?.textContent,hidden:status?.hidden,readCount:window.timeRestCalls.length};
+    return {statusPresent:!!status,meta:document.querySelector('.pena-native-time-meta')?.textContent,total:document.querySelector('.pena-native-time-total-value')?.textContent,readCount:window.timeRestCalls.length};
    });
    report.snapshots.push({name:'cold-server-time-error',...failed});
-   assert.equal(failed.state,'error');assert.equal(failed.hidden,false);assert.equal(failed.readCount,0);
+   assert.equal(failed.statusPresent,false);assert.match(failed.meta,/Не удалось загрузить время/);assert.equal(failed.total,'—');assert.equal(failed.readCount,0);
    await cold.evaluate(()=>{window.feedbackFailTime=false;});
    await cold.locator('.pena-native-time-refresh').click();
    await cold.waitForFunction(()=>window.feedbackProbe.record()?.data?.totalSeconds===5400);

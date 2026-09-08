@@ -1280,13 +1280,13 @@ try {
 	const heldProjectCatalog = await page.evaluate(() => ({
 		taskIds:[...new Set(window.timeRestCalls.map(params => String(params?.[0] || '')))],
 		total:document.querySelector('.pena-native-time-total-value')?.textContent,
-		state:document.querySelector('.pena-native-time-read-status')?.dataset.state,
-		label:document.querySelector('.pena-native-time-read-label')?.textContent
+		statusPresent:!!document.querySelector('.pena-native-time-read-status'),
+		label:document.querySelector('.pena-native-time-meta')?.textContent
 	}));
 	assert.deepEqual(heldProjectCatalog.taskIds,[],`Incomplete project membership started elapsed reads: ${JSON.stringify(heldProjectCatalog)}`);
 	assert.equal(heldProjectCatalog.total,'—');
-	assert.equal(heldProjectCatalog.state,'loading');
-	assert.equal(heldProjectCatalog.label,'Загружаем список задач');
+	assert.equal(heldProjectCatalog.statusPresent,false);
+	assert.equal(heldProjectCatalog.label,'Загружаем время…');
 	activePhase = 'atomic project catalog: released tail loads every selected task';
 	await page.evaluate(() => {
 		window.releaseTimeCatalogTail = true;

@@ -99,8 +99,7 @@ const snapshot = () => page.evaluate(() => {
   entries: panel.querySelectorAll('.pena-native-time-entry-row').length,
   disabled: refresh.disabled, animation: getComputedStyle(icon).animationName,
   clockAnimation: getComputedStyle(document.querySelector('.pena-native-time-button > svg')).animationName,
-  state: status.dataset.state, label: status.textContent, statusHidden:status.hidden, statusHeight: status.getBoundingClientRect().height,
-  progressAnimation: getComputedStyle(status.querySelector('.pena-native-time-read-progress'),'::after').animationName,
+  statusPresent: !!status, meta:panel.querySelector('.pena-native-time-meta').textContent, metaTitle:panel.querySelector('.pena-native-time-meta').title, refreshTitle:refresh.title, busy:refresh.getAttribute('aria-busy'),
   bodyTop: body.top, iconCenterX: iconBox.x+iconBox.width/2-buttonBox.x-buttonBox.width/2,
   iconCenterY: iconBox.y+iconBox.height/2-buttonBox.y-buttonBox.height/2,
   rotation: icon.querySelectorAll('path')[1]?.getAttribute('transform')
@@ -155,16 +154,16 @@ try {
   assert.equal(cold.total,'—','an empty bootstrap aggregate is not a checked zero');
   assert.equal(cold.compactTotal,'Сегодня …');
   assert.equal(cold.historyTotal,'—'); assert.equal(cold.historyLabel,'Записи · …');
-  assert.match(cold.label,/Считаем время/); assert.match(cold.label,/0 из 30 задач/);
+  assert.equal(cold.statusPresent,false); assert.match(cold.meta,/Загружаем время/);
   await page.evaluate(() => timeUiProbe.emptyState(false,'loading','stats'));
   const unknownDays = await page.locator('.pena-native-time-stats-duration').allTextContents();
   assert.equal(unknownDays.length,7); assert.ok(unknownDays.every(value=>value==='—'),'unverified stats days must not fabricate zeroes');
   await page.evaluate(() => timeUiProbe.emptyState(true,'ready'));
-  const zero = await snapshot(); assert.equal(zero.total,'0 мин'); assert.equal(zero.historyLabel,'Записи · 0'); assert.match(zero.compactTotal,/Сегодня 0:00/); assert.equal(zero.statusHidden,true);
+  const zero = await snapshot(); assert.equal(zero.total,'0 мин'); assert.equal(zero.historyLabel,'Записи · 0'); assert.match(zero.compactTotal,/Сегодня 0:00/); assert.equal(zero.statusPresent,false);
   await page.evaluate(() => timeUiProbe.emptyState(true,'loading'));
-  const warm = await snapshot(); assert.equal(warm.total,'0 мин'); assert.equal(warm.compactTotal,zero.compactTotal); assert.equal(warm.statusHidden,true);
+  const warm = await snapshot(); assert.equal(warm.total,'0 мин'); assert.equal(warm.compactTotal,zero.compactTotal); assert.equal(warm.statusPresent,false);
   await page.evaluate(() => timeUiProbe.emptyState(true,'error'));
-  const failed = await snapshot(); assert.equal(failed.total,'0 мин'); assert.equal(failed.state,'error'); assert.equal(failed.statusHidden,false);
+  const failed = await snapshot(); assert.equal(failed.total,'0 мин'); assert.equal(failed.statusPresent,false); assert.doesNotMatch(failed.meta,/Не удалось/); assert.match(failed.metaTitle,/сохранённое время/);
   await page.evaluate(() => timeUiProbe.state({status:'ready',data:window.timeUiOriginalData,hasVerifiedData:true,hasCompleteSnapshot:true,error:'',updatedAt:Date.now()}));
   return {cold,unknownDays,zero,warm,failed};
  });
@@ -173,50 +172,50 @@ try {
   const state = await snapshot();
   assert.equal(state.total,ready.total); assert.equal(state.entries,ready.entries);
   assert.equal(state.disabled,false); assert.equal(state.animation,'none'); assert.equal(state.clockAnimation,'none');
-  assert.equal(state.state,'loading'); assert.match(state.label,/Проверяем актуальность/);
-  assert.equal(state.bodyTop,ready.bodyTop); assert.equal(state.statusHeight,0); assert.equal(state.statusHidden,true);
+  assert.equal(state.statusPresent,false); assert.equal(state.busy,'false');
+  assert.equal(state.bodyTop,ready.bodyTop);
   assert.ok(Math.abs(state.iconCenterX)<0.5 && Math.abs(state.iconCenterY)<0.5);
   assert.equal(state.rotation,'rotate(180 12 12)');
-  assert.equal(state.progressAnimation,'none');
   await page.waitForTimeout(180);
   await page.locator('.pena-native-time-panel').screenshot({path:'tests/artifacts/time-panel-background.png'});
   return state;
  });
- await phase('a real bulk change reveals progress while single-batch updates remain quiet', async () => {
+ await phase('large background reads stay quiet and do not shift the panel', async () => {
   await page.evaluate(() => timeUiProbe.state({status:'loading',hasCompleteSnapshot:true,readProgress:{completedTasks:0,totalTasks:50}}));
-  assert.equal((await snapshot()).statusHidden,true);
-  await page.evaluate(() => timeUiProbe.state({readProgress:{completedTasks:16,totalTasks:51}}));
-  const bulk = await snapshot(); assert.equal(bulk.statusHidden,false); assert.equal(bulk.statusHeight,24);
-  assert.match(bulk.label,/Обновляем изменённые задачи/); assert.match(bulk.label,/16 из 51 задачи/); assert.equal(bulk.total,ready.total);
-  await page.evaluate(() => timeUiProbe.state({status:'ready',readProgress:{completedTasks:51,totalTasks:51}}));
-  assert.equal((await snapshot()).statusHidden,true);
+  assert.equal((await snapshot()).statusPresent,false);
+  await page.evaluate(() => timeUiProbe.state({readProgress:{completedTasks:366,totalTasks:4149}}));
+  const bulk = await snapshot(); assert.equal(bulk.statusPresent,false); assert.equal(bulk.bodyTop,ready.bodyTop);
+  assert.equal(bulk.total,ready.total); assert.equal(bulk.busy,'false'); assert.doesNotMatch(bulk.meta,/загруз|провер|обнов|Не удалось/i);
+  await page.evaluate(() => timeUiProbe.state({status:'ready',readProgress:{completedTasks:4149,totalTasks:4149}}));
   return bulk;
  });
- await phase('cold coverage and errors reveal status; completed idle view releases its space', async () => {
-  assert.equal(ready.statusHidden,true); assert.equal(ready.statusHeight,0);
+ await phase('unknown and partial totals remain honest without a status bar; cached failure is quiet', async () => {
+  assert.equal(ready.statusPresent,false);
   await page.evaluate(() => timeUiProbe.state({status:'loading',data:null,hasCompleteSnapshot:false,error:''}));
-  const cold = await snapshot(); assert.equal(cold.total,'—'); assert.match(cold.label,/Считаем время/); assert.equal(cold.statusHeight,24); assert.ok(cold.bodyTop>ready.bodyTop);
+  const cold = await snapshot(); assert.equal(cold.total,'—'); assert.match(cold.meta,/Загружаем время/); assert.equal(cold.statusPresent,false); assert.equal(cold.bodyTop,ready.bodyTop);
   await page.evaluate(() => timeUiProbe.state({status:'loading',data:{...window.timeUiOriginalData,coverage:{checkedTasks:366,totalTasks:4149,complete:false}},hasCompleteSnapshot:false,readProgress:{completedTasks:366,totalTasks:4149}}));
-  const partial = await snapshot(); assert.equal(partial.statusHidden,false); assert.match(partial.label,/366 из 4149 задач/); assert.equal(partial.total,ready.total);
+  const partial = await snapshot(); assert.equal(partial.statusPresent,false); assert.match(partial.meta,/Часть данных/); assert.match(partial.metaTitle,/366 из 4149/); assert.equal(partial.total,ready.total);
   await page.evaluate(() => timeUiProbe.state({status:'error',data:window.timeUiOriginalData,hasCompleteSnapshot:true,error:'Сеть недоступна'}));
   const failed = await snapshot(); assert.equal(failed.total,ready.total); assert.equal(failed.entries,ready.entries);
-  assert.equal(failed.state,'error'); assert.match(failed.label,/Сеть недоступна/); assert.equal(failed.bodyTop,cold.bodyTop); assert.equal(failed.disabled,false);
-  return {cold,partial,failed};
+  assert.equal(failed.statusPresent,false); assert.doesNotMatch(failed.meta,/Не удалось|Сеть недоступна|Часть данных/); assert.match(failed.metaTitle,/сохранённое время/); assert.equal(failed.bodyTop,cold.bodyTop); assert.equal(failed.disabled,false);
+  await page.evaluate(() => timeUiProbe.state({status:'error',data:null,hasVerifiedData:false,hasCompleteSnapshot:false,error:'Сеть недоступна'}));
+  const unavailable=await snapshot(); assert.equal(unavailable.total,'—'); assert.match(unavailable.meta,/Не удалось загрузить время/); assert.equal(unavailable.statusPresent,false);
+  await page.evaluate(() => timeUiProbe.state({data:window.timeUiOriginalData,hasVerifiedData:true,hasCompleteSnapshot:true}));
+  return {cold,partial,failed,unavailable};
  });
- await phase('manual refresh owns its disabled state and reports a real failure separately', async () => {
+ await phase('manual refresh owns busy and reports actionable failure through a toast only', async () => {
   await page.evaluate(() => { timeUiProbe.state({status:'ready',error:''}); timeUiProbe.holdManual(); });
   await page.locator('.pena-native-time-refresh').click();
-  const pending = await snapshot(); assert.equal(pending.disabled,true); assert.equal(pending.animation,'none'); assert.equal(pending.total,ready.total); assert.equal(pending.statusHidden,false);
-  assert.equal(pending.progressAnimation,'pena-time-read-pending');
-  await page.emulateMedia({reducedMotion:'reduce'});assert.equal((await snapshot()).progressAnimation,'none');await page.emulateMedia({reducedMotion:'no-preference'});
+  const pending = await snapshot(); assert.equal(pending.disabled,true); assert.equal(pending.busy,'true'); assert.equal(pending.animation,'none'); assert.equal(pending.total,ready.total); assert.equal(pending.statusPresent,false);
   await page.evaluate(() => document.querySelector('.pena-native-time-refresh').dispatchEvent(new MouseEvent('click',{bubbles:true})));
   assert.equal(await page.evaluate(() => manualReadCalls),1);
   await page.evaluate(() => rejectManual());
   await page.waitForFunction(() => !document.querySelector('.pena-native-time-refresh').disabled);
-  const failed = await snapshot(); assert.equal(failed.state,'error'); assert.match(failed.label,/Не удалось получить затраченное время/); assert.equal(failed.total,ready.total);
+  const failed = await snapshot(); assert.equal(failed.statusPresent,false); assert.equal(failed.busy,'false'); assert.match(failed.refreshTitle,/Не удалось получить затраченное время/); assert.equal(failed.total,ready.total);
+  await page.locator('.pena-native-toast.--danger.--show').filter({hasText:'Не удалось получить затраченное время'}).waitFor({state:'visible'});
   await page.locator('.pena-native-time-refresh').click(); await page.evaluate(() => resolveManual());
   await page.waitForFunction(() => !document.querySelector('.pena-native-time-refresh').disabled);
-  const recovered = await snapshot(); assert.notEqual(recovered.state,'error'); assert.equal(recovered.statusHidden,true);
+  const recovered = await snapshot(); assert.doesNotMatch(recovered.refreshTitle,/Не удалось/); assert.equal(recovered.statusPresent,false);
   return {pending,failed,recovered};
  });
  await phase('a live sending intent is neutral while an uncertain intent remains actionable', async () => {
@@ -228,15 +227,15 @@ try {
   assert.equal(await page.locator('.pena-native-time-manual-error').isVisible(),true);
   assert.equal(await page.locator('.pena-native-time-manual-recovery').isVisible(),true);
  });
- await phase('narrow layout keeps the compact status and refresh icon inside the panel', async () => {
+ await phase('narrow layout keeps summary and refresh inside the panel without a status bar', async () => {
   await page.setViewportSize({width:360,height:800});
   await page.evaluate(() => timeUiProbe.state({status:'loading',hasCompleteSnapshot:false,error:'',readProgress:{completedTasks:7,totalTasks:20}}));
   const result = await page.evaluate(() => {
-   const panel=document.querySelector('.pena-native-time-panel'), status=panel.querySelector('.pena-native-time-read-status'), refresh=panel.querySelector('.pena-native-time-refresh');
-   const p=panel.getBoundingClientRect(),s=status.getBoundingClientRect(),r=refresh.getBoundingClientRect();
-   return {panelWidth:p.width,statusInside:s.left>=p.left&&s.right<=p.right,refreshInside:r.left>=p.left&&r.right<=p.right,statusHeight:s.height};
+   const panel=document.querySelector('.pena-native-time-panel'), meta=panel.querySelector('.pena-native-time-meta'), refresh=panel.querySelector('.pena-native-time-refresh');
+   const p=panel.getBoundingClientRect(),s=meta.getBoundingClientRect(),r=refresh.getBoundingClientRect();
+   return {panelWidth:p.width,metaInside:s.left>=p.left&&s.right<=p.right,refreshInside:r.left>=p.left&&r.right<=p.right,statusPresent:!!panel.querySelector('.pena-native-time-read-status')};
   });
-  assert.equal(result.statusInside,true); assert.equal(result.refreshInside,true); assert.equal(result.statusHeight,24);
+  assert.equal(result.metaInside,true); assert.equal(result.refreshInside,true); assert.equal(result.statusPresent,false);
   await page.waitForTimeout(180);
   await page.locator('.pena-native-time-panel').screenshot({path:'tests/artifacts/time-panel-background-360.png'});
   return result;

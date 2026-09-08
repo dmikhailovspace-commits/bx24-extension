@@ -650,7 +650,7 @@
 	// tasks/classes/general/elapseditem.php has an explicit taskId === 0 global
 	// branch (observed in 23.675.0). Empty responses need independent evidence:
 	// older portals can silently interpret the sentinel as an ordinary task ID.
-	async function loadGlobalElapsedItems({ callPage, from, to, userId, knownItems = [], supported = false, isCurrent = () => true, maxPages = 2000 } = {}) {
+	async function loadGlobalElapsedItems({ callPage, from, to, userId, knownItems = [], probeTaskId = '', supported = false, isCurrent = () => true, maxPages = 2000 } = {}) {
 		if (typeof callPage !== 'function') throw new TypeError('callPage is required');
 		if (!/^[1-9]\d*$/.test(String(userId || ''))) throw new TypeError('Current user ID is required');
 		const range = normalizeRange(from, to);
@@ -659,9 +659,9 @@
 		const dateFilter = { USER_ID:Number(userId), '>=CREATED_DATE':`${range.from}T00:00:00`, '<CREATED_DATE':`${addDays(range.to, 1)}T00:00:00` };
 		const invalid = message => Object.assign(new Error(message), { code:'GLOBAL_TIME_RESPONSE_INVALID', globalFallback:true });
 		let pages = 0;
-		const request = async (filter, order = { ID:'ASC' }, size = 50) => {
+		const request = async (filter, order = { ID:'ASC' }, size = 50, taskId = 0) => {
 			if (!isCurrent()) throw Object.assign(new Error('Request superseded'), { code:'SUPERSEDED' });
-			const response = await callPage([0, order, filter, select, { NAV_PARAMS:{ nPageSize:size, iNumPage:1 } }]);
+			const response = await callPage([taskId, order, filter, select, { NAV_PARAMS:{ nPageSize:size, iNumPage:1 } }]);
 			if (!isCurrent()) throw Object.assign(new Error('Request superseded'), { code:'SUPERSEDED' });
 			pages++;
 			if (response?.error || response?.partial || response?.complete === false) throw Object.assign(new Error('Битрикс24 вернул неполный общий журнал'), { code:response?.error?.code || 'GLOBAL_TIME_RESPONSE_INCOMPLETE' });
@@ -706,8 +706,30 @@
 			throw invalid('Превышен предел страниц общего журнала');
 		} catch (error) {
 			// Network/quota failures must not fan out into a portal-wide legacy scan.
-			const detail = `${error?.code || ''} ${error?.message || ''}`;
-			if (/UNKNOWN_METHOD|METHOD_NOT_FOUND|ERROR_METHOD_NOT_FOUND|WRONG_ARGUMENTS|INVALID_PARAMETERS|ERROR_ARGUMENT|TASK_NOT_FOUND|ACTION_NOT_ALLOWED/.test(detail) && !/TIMEOUT|QUERY_LIMIT|OPERATION_TIME_LIMIT|429/.test(detail)) return { supported:false, reason:'unsupported', pages };
+			const detail = `${error?.code || ''} ${error?.message || ''} ${error?.description || ''}`.toUpperCase();
+			if (/TIMEOUT|QUERY_LIMIT|OPERATION_TIME_LIMIT|OVERLOAD|429|NETWORK|CONNECTION|INTERNAL_SERVER|SERVICE_UNAVAILABLE|SUPERSEDED|STALE_REQUEST/.test(detail)) throw error;
+			// Some portals reject the undocumented zero task sentinel with the same
+			// numeric/core errors used for real access failures. A successful ordinary
+			// task read distinguishes sentinel incompatibility from a broken method.
+			// This one-page probe never supplies totals or freshness, including []:
+			// the bounded legacy reader must still establish complete task coverage.
+			const ambiguous = /(?:^|[^A-Z0-9_])(?:0X000001|0X000004|0X000100|0X100002|ERROR_CORE|ACTION_NOT_ALLOWED|ACCESS_DENIED)(?:$|[^A-Z0-9_])/.test(detail);
+			if (ambiguous) {
+				if (pages > 0) throw error;
+				const id = Number(probeTaskId);
+				if (!/^[1-9]\d*$/.test(String(probeTaskId)) || !Number.isSafeInteger(id)) throw error;
+				try {
+					const probe = await request(dateFilter, { ID:'ASC' }, 1, id);
+					if (probe.items.some(item => item.taskId !== String(id) || item.dateKey < range.from || item.dateKey > range.to)) throw error;
+				} catch (probeError) {
+					if (probeError?.code === 'SUPERSEDED' || probeError?.code === 'STALE_REQUEST') throw probeError;
+					// Do not leak a validation error's globalFallback flag: a failed probe
+					// is never permission to dispatch thousands of per-task requests.
+					throw error;
+				}
+				return { supported:false, reason:'unsupported-confirmed-by-task', pages };
+			}
+			if (/UNKNOWN_METHOD|METHOD_NOT_FOUND|ERROR_METHOD_NOT_FOUND|WRONG_ARGUMENTS|INVALID_PARAMETERS|ERROR_ARGUMENT|TASK_NOT_FOUND/.test(detail)) return { supported:false, reason:'unsupported', pages };
 			throw error;
 		}
 	}

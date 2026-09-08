@@ -19,6 +19,7 @@ function backend(rows=rows321()) {
   const [taskId,order,filter,,nav]=params;state.calls.push(structuredClone(params));
   if(state.hook)await state.hook(params);
   if(taskId===0&&state.mode==='unsupported')throw Object.assign(new Error('Task not found'),{code:'TASK_NOT_FOUND'});
+  if(taskId===0&&state.mode==='numeric-unsupported')throw Object.assign(new Error('0x000100'),{code:'0x000100'});
   if(taskId===0&&state.mode==='timeout')throw Object.assign(new Error('Timeout'),{code:'TIMEOUT'});
   if(taskId===0&&state.mode==='silent-empty')return{data:[],total:0,next:null};
   let selected=state.rows.filter(row=>(!taskId||String(taskId)===row.TASK_ID)&&String(filter.USER_ID)===row.USER_ID&&
@@ -85,6 +86,76 @@ await phase('definite unsupported permits fallback; quota and timeout never fan 
  const f=backend();f.state.mode='unsupported';assert.equal((await model.loadGlobalElapsedItems({callPage:f.call,...range,userId:7})).reason,'unsupported');
  f.state.mode='timeout';await assert.rejects(model.loadGlobalElapsedItems({callPage:f.call,...range,userId:7}),e=>e.code==='TIMEOUT');
  const integrated=fixture();integrated.api.state.mode='timeout';await assert.rejects(integrated.load(),e=>e.code==='TIMEOUT');assert.equal(integrated.api.state.calls.length,1);assert.equal(integrated.state.pointCalls.length,0);assert.equal(integrated.record().hasCompleteSnapshot,false);
+ const coldDiagnostics=integrated.c._callDialogTimeGlobalElapsedPage.diagnostics;
+ assert.equal(coldDiagnostics.attemptedGlobalPages,1);assert.equal(coldDiagnostics.errorCode,'TIMEOUT');assert.equal(coldDiagnostics.state,'error');assert.ok(coldDiagnostics.durationMs>=0);assert.equal(integrated.record().errorCode,'TIMEOUT');
+ const saved=fixture(3);saved.api.state.rows=[raw(1),raw(2),raw(3)];await saved.load();saved.api.state.mode='timeout';
+ await assert.rejects(saved.load({force:true}),e=>e.code==='TIMEOUT');assert.equal(saved.record().data.totalSeconds,180);assert.equal(saved.record().hasVerifiedData,true);
+ const diagnostics=saved.c._callDialogTimeGlobalElapsedPage.diagnostics;
+ assert.equal(diagnostics.attemptedGlobalPages,1);assert.equal(diagnostics.errorCode,'TIMEOUT');assert.equal(diagnostics.state,'error');assert.equal(saved.state.pointCalls.length,0);
+});
+await phase('numeric/core sentinel refusal requires one validated ordinary-task probe',async()=>{
+ const codes=['0x000001','0x000004','0x000100','0x100002','ERROR_CORE','ACTION_NOT_ALLOWED','ACCESS_DENIED'];
+ for(const code of codes)for(const empty of [false,true]){
+  const calls=[];const result=await model.loadGlobalElapsedItems({...range,userId:7,probeTaskId:'2',callPage:async p=>{
+   calls.push(p);if(p[0]===0)throw Object.assign(new Error(code),{code});
+   return{data:empty?[]:[raw(2)],total:empty?0:1,next:null};
+  }});
+  assert.equal(result.supported,false);assert.equal(result.reason,'unsupported-confirmed-by-task');assert.equal(result.items,undefined,'Probe is not a time snapshot');
+  assert.deepEqual(calls.map(p=>p[0]),[0,2]);assert.equal(calls[1][4].NAV_PARAMS.nPageSize,1);assert.equal(calls[1][2].USER_ID,7);
+  assert.equal(calls[1][2]['>=CREATED_DATE'],range.from+'T00:00:00');
+ }
+ return{codes:codes.length,probeRequestsPerRefusal:1,probeCanConfirmSnapshot:false};
+});
+await phase('failed, foreign, malformed or superseded probes never authorize legacy fanout',async()=>{
+ const variants=[{data:[raw(2,99)]},{data:[raw(2,2,8)]},{data:[raw(2,2,7,'2026-09-07')]},{data:[{...raw(2),SECONDS:null}]},{data:[],partial:true},{data:[],complete:false},{data:[],error:{code:'ACCESS_DENIED'}},{data:[raw(1),raw(2)]},{throwCode:'TIMEOUT'},{throwCode:'QUERY_LIMIT_EXCEEDED'},{throwCode:'ACCESS_DENIED'},{throwCode:'0x000004'}];
+ for(const variant of variants){
+  const calls=[];await assert.rejects(model.loadGlobalElapsedItems({...range,userId:7,probeTaskId:2,callPage:async p=>{
+   calls.push(p);if(p[0]===0)throw Object.assign(new Error('Invalid parameters'),{code:'0x000100'});
+   if(variant.throwCode)throw Object.assign(new Error(variant.throwCode),{code:variant.throwCode});return variant;
+  }}),e=>e.code==='0x000100'&&!e.globalFallback);assert.deepEqual(calls.map(p=>p[0]),[0,2]);
+ }
+ for(const code of ['TIMEOUT','QUERY_LIMIT_EXCEEDED','OPERATION_TIME_LIMIT','OVERLOAD_LIMIT','INTERNAL_SERVER_ERROR','0x000040']){
+  let calls=0;await assert.rejects(model.loadGlobalElapsedItems({...range,userId:7,probeTaskId:2,callPage:async()=>{calls++;throw Object.assign(new Error(code),{code});}}),e=>e.code===code);assert.equal(calls,1);
+ }
+ for(const probeTaskId of ['',0,-1,'9007199254740993']){
+  let calls=0;await assert.rejects(model.loadGlobalElapsedItems({...range,userId:7,probeTaskId,callPage:async()=>{calls++;throw Object.assign(new Error('0x000100'),{code:'0x000100'});}}),e=>e.code==='0x000100');assert.equal(calls,1);
+ }
+ let current=true,calls=0;await assert.rejects(model.loadGlobalElapsedItems({...range,userId:7,probeTaskId:2,isCurrent:()=>current,callPage:async p=>{calls++;if(p[0]===0)throw Object.assign(new Error('0x000100'),{code:'0x000100'});current=false;return{data:[]};}}),e=>e.code==='SUPERSEDED');assert.equal(calls,2);
+ const partialCalls=[];await assert.rejects(model.loadGlobalElapsedItems({...range,userId:7,probeTaskId:2,callPage:async p=>{partialCalls.push(p);if(partialCalls.length===1)return{data:Array.from({length:50},(_,i)=>raw(i+1)),total:51};throw Object.assign(new Error('ERROR_CORE'),{code:'ERROR_CORE'});}}),e=>e.code==='ERROR_CORE');assert.ok(partialCalls.every(p=>p[0]===0),'Later-page errors must not trigger a capability probe');
+ return{failedProbeVariants:variants.length,pressureOrUnknownNoProbe:6,invalidProbeIds:4};
+});
+await phase('numeric unsupported fallback reuses safe empty-log proofs and reads only logged task',async()=>{
+ const f=fixture(100);f.api.state.rows=[raw(1)];f.api.state.mode='numeric-unsupported';
+ for(let id=2;id<=100;id++)f.c._dialogTimeTaskLogEvidence.set(String(id),{scope:f.state.identity,revision:0,at:Date.now()});
+ const data=await f.load();assert.equal(data.totalSeconds,60);assert.equal(data.entryCount,1);assert.equal(f.record().hasCompleteSnapshot,true);
+ assert.deepEqual(f.state.pointCalls,[1]);assert.deepEqual(f.api.state.calls.map(p=>p[0]),[0,1,1]);
+ const before=f.api.state.calls.length;await f.load();assert.equal(f.api.state.calls.length,before);assert.equal(f.c._callDialogTimeGlobalElapsedPage.diagnostics.fallbackReason,'unsupported-confirmed-by-task');
+ for(const kind of ['invalidated','foreign','expired','future']){
+  const held=fixture(4),gate=deferred();held.api.state.rows=[raw(1),raw(2)];held.api.state.mode='numeric-unsupported';
+  for(let id=2;id<=4;id++)held.c._dialogTimeTaskLogEvidence.set(String(id),{scope:held.state.identity,revision:0,at:Date.now()});
+  held.api.state.hook=async p=>{if(p[0]===1&&p[4].NAV_PARAMS.nPageSize===1)await gate.promise;};
+  const load=held.load();await until(()=>held.api.state.calls.length===2);
+  const proof=held.c._dialogTimeTaskLogEvidence.get('2');
+  if(kind==='invalidated')held.c._dialogTimeTaskRevisions.set('2',1);
+  if(kind==='foreign')proof.scope='other~9';
+  if(kind==='expired')proof.at=Date.now()-60001;
+  if(kind==='future')proof.at=Date.now()+60000;
+  gate.resolve();await load;assert.deepEqual(held.state.pointCalls,[1,2],kind+' evidence must be rejected after probe wait');assert.equal(held.record().data.totalSeconds,120);assert.equal(held.record().data.coverage.complete,true);
+ }
+ const known=fixture(3);known.api.state.rows=[raw(1),raw(2)];await known.load();assert.equal(known.record().data.totalSeconds,120);
+ known.api.state.mode='numeric-unsupported';for(const id of ['1','3'])known.c._dialogTimeTaskLogEvidence.set(id,{scope:known.state.identity,revision:0,at:Date.now()});
+ const readGate=deferred();known.api.state.hook=async p=>{if(p[0]!==0&&p[4].NAV_PARAMS.nPageSize===50)await readGate.promise;};
+ const reread=known.load({force:true});await until(()=>known.state.pointCalls.length>0);assert.deepEqual(known.state.pointCalls,[1,2]);
+ assert.equal(known.record().data.totalSeconds,120,'Null evidence cannot erase a known record while per-task GET is held');assert.equal(known.c._dialogTimeTaskLogEvidence.has('1'),false);
+ readGate.resolve();await reread;assert.deepEqual(known.state.pointCalls,[1,2]);assert.equal(known.record().data.totalSeconds,120);
+ const swapped=fixture(3),scopeGate=deferred();swapped.api.state.mode='numeric-unsupported';swapped.api.state.hook=async p=>{if(p[0]!==0)await scopeGate.promise;};
+ const stale=swapped.load();await until(()=>swapped.api.state.calls.length===2);swapped.state.scope='other~9:projects:*:1:g2';swapped.state.identity='other~9';swapped.state.user='9';scopeGate.resolve();await stale;
+ assert.equal(swapped.state.pointCalls.length,0);assert.equal(swapped.record(),undefined);assert.equal(swapped.c._callDialogTimeGlobalElapsedPage.capabilities.size,0,'Stale probe cannot set capability for either identity');
+ const waves=fixture(100),waveGate=deferred();waves.api.state.mode='numeric-unsupported';waves.api.state.rows=Array.from({length:18},(_,i)=>raw(i+1));
+ for(let id=19;id<=100;id++)waves.c._dialogTimeTaskLogEvidence.set(String(id),{scope:waves.state.identity,revision:0,at:Date.now()});
+ waves.api.state.hook=async p=>{if(p[0]!==0&&p[4].NAV_PARAMS.nPageSize===50)await waveGate.promise;};const waveLoad=waves.load();await until(()=>waves.state.pointCalls.length===16);
+ assert.equal(waves.state.pointCalls.length,16,'First legacy wave stays bounded after probe');waveGate.resolve();await waveLoad;assert.equal(waves.state.pointCalls.length,18);assert.equal(waves.record().data.totalSeconds,1080);
+ return{tasks:100,globalAttempts:1,ordinaryProbes:1,legacyTaskReads:1,warmRequests:0,rejectedProofVariants:4,knownSecondsPreserved:120,firstWaveTasks:16};
 });
 await phase('actual load pipeline:4149 tasks with missing/positive all-time fields uses global7; warm0; dirty1; manual7',async()=>{
  for(const fieldKind of ['missing','all-positive']){
