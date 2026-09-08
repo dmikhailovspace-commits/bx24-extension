@@ -596,9 +596,18 @@ try {
 	await runScenario('inaccessible controlled page-tail dialog is quarantined', async page => {
 	  await page.locator('.pena-native-folder-tab[title="Хвост страницы"]').click();
 	  await page.waitForFunction(() => window.__PENA_RECENT_SYNC__?.unavailableCount === 1 && !window.__PENA_RECENT_SYNC__?.detailsInFlight);
+	  // Metadata quarantine is synchronous; managed view removal is scheduled
+	  // for the next render. Check that rendered result, not the previous view.
+	  await page.waitForFunction(() => {
+		const state = document.querySelector('.pena-native-managed-list')?._penaManagedState;
+		return !!state?.view && !state.view.some(item => item.id === 'chat150') &&
+		  !document.querySelector('.pena-native-remote-row[data-id="chat150"]');
+	  }, null, { timeout: 5000 });
 	  const calls = await page.evaluate(() => window.__recentHarness.calls());
 	  assert.equal(calls.filter(call => call.method === 'im.dialog.get' && call.dialogId === 'chat150').length, 1);
 	  assert.ok(!(await managedViewIds(page)).includes('chat150'), 'Inaccessible controlled chat remained clickable in the managed view');
+	  assert.equal(await page.locator('.pena-native-remote-row[data-id="chat150"]').count(), 0);
+	  assert.deepEqual(await page.evaluate(() => ({ api:__recentHarness.apiOpens(), native:__recentHarness.nativeOpens() })), { api:[], native:[] });
 	}, '?limitmandatory=1&tailaccess=1', 401);
 	await runScenario('quarantined recent dialog stays disabled until revalidation succeeds', async page => {
 	  const pageTailFolder = page.locator('.pena-native-folder-tab[title="Хвост страницы"]');
