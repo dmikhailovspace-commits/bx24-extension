@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.112';
+	window.__ANITREC_RUNNING__ = '7.5.113';
 
-	const VER = '7.5.112';
+	const VER = '7.5.113';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -13086,13 +13086,34 @@ if (_presetChannel) {
 		const host = switcher?.parentElement;
 		const listViewport = viewport || switcher?.nextElementSibling;
 		if (!host || !listViewport?.classList?.contains('pena-native-list-scroll-viewport')) return;
-		const panelHeight = Math.max(0, Math.ceil(switcher.getBoundingClientRect().height));
-		host.style.setProperty('--pena-native-panel-height', `${panelHeight}px`);
-		if (!switcher._penaNativeResizeObserver && typeof ResizeObserver === 'function') {
-			switcher._penaNativeResizeObserver = new ResizeObserver(() => {
-				if (switcher.isConnected) _syncDialogControlNativePanelGeometry(switcher);
+		const previous = switcher._penaNativeGeometry;
+		if (previous?.host === host && previous.viewport === listViewport && switcher._penaNativeResizeObserver) return;
+		switcher._penaNativeResizeObserver?.disconnect?.();
+		switcher._penaNativeResizeObserver = null;
+		const state = { host, viewport:listViewport };
+		switcher._penaNativeGeometry = state;
+		const applyHeight = height => {
+			if (!Number.isFinite(height) || height < 0) return;
+			const value = `${Math.ceil(height)}px`;
+			if (host.style.getPropertyValue('--pena-native-panel-height') !== value) host.style.setProperty('--pena-native-panel-height', value);
+		};
+		// Initial mounting/relocation needs one immediate measurement. Subsequent
+		// renders use the browser's already-computed border box, avoiding a forced
+		// layout after every toolbar or time-status write.
+		applyHeight(switcher.getBoundingClientRect().height);
+		if (typeof ResizeObserver === 'function') {
+			const observer = new ResizeObserver(entries => {
+				if (!switcher.isConnected || switcher.parentElement !== host || switcher._penaNativeGeometry !== state || switcher._penaNativeResizeObserver !== observer) return;
+				const entry = entries.find(item => item.target === switcher);
+				if (!entry) return;
+				const boxes = entry.borderBoxSize;
+				const box = Array.isArray(boxes) ? boxes[0] : boxes;
+				const height = Number(box?.blockSize);
+				applyHeight(Number.isFinite(height) ? height : switcher.getBoundingClientRect().height);
 			});
-			switcher._penaNativeResizeObserver.observe(switcher);
+			switcher._penaNativeResizeObserver = observer;
+			try { observer.observe(switcher, { box:'border-box' }); }
+			catch { observer.observe(switcher); }
 		}
 	}
 
@@ -17445,17 +17466,20 @@ if (_presetChannel) {
 		const visibleChatIndex = buildChatElementIndex();
 		const allDialogItems = source.filter(item => !_isDialogControlFolder(item));
 		const filteredDialogItems = allDialogItems.filter(item => _matchesDialogControlGlobalFilters(item, visibleChatIndex));
+		// Segment helpers retain source object references. Reuse this render's filter
+		// result for all tabs; the next render reads fresh filters and live metadata.
+		const filteredDialogSet = new Set(filteredDialogItems);
 		const groupStatuses = new Map();
 		groupTabs.forEach(group => {
 			const id = String(group.id || '');
 			const dialogs = group.isAll
 				? filteredDialogItems
 				: _getDialogControlNativeDialogItemsForSegment(source, id)
-					.filter(item => _matchesDialogControlGlobalFilters(item, visibleChatIndex));
+					.filter(item => filteredDialogSet.has(item));
 			groupStatuses.set(id, _getDialogControlNotificationStatus(dialogs, visibleChatIndex));
 		});
 		const filteredSegmentDialogItems = segmentDialogItems
-			.filter(item => _matchesDialogControlGlobalFilters(item, visibleChatIndex));
+			.filter(item => filteredDialogSet.has(item));
 		const segmentStatus = _getDialogControlNotificationStatus(filteredSegmentDialogItems, visibleChatIndex);
 		const folderStatuses = new Map();
 		segmentFolders.forEach(folder => {

@@ -6,6 +6,7 @@ import {createServer} from 'node:http';
 import {chromium} from 'playwright';
 import {startHarnessServer,collectPageErrors} from './lib/harness-server.mjs';
 import {evaluateStartupTimeBudget} from './lib/native-startup-time-budget.mjs';
+import {selectStartupTaskPage} from './lib/startup-task-page.mjs';
 
 // Integrated startup workload. Normal native recycled source, full accessible
 // task catalog, real controlled HTTP, actual production panel/read handlers.
@@ -18,7 +19,7 @@ const membership=process.env.PENA_STARTUP_TASK_MEMBERSHIP==='1';
 const logMetadata=process.env.PENA_STARTUP_LOG_METADATA==='1';
 const raw=readFileSync(resolve(extension,'injected.js'),'utf8');
 const optimized=logMetadata&&raw.includes('function _loadDialogTaskCatalogPartitionTail(');
-const report={label,protocol:2,source:{sha256:createHash('sha256').update(raw).digest('hex')},configuration:{tasks:4149,physicalChats:108,physicalTaskChats:92,cpu,httpMs:80,httpLanes:4,guardSampler:false,productionFlags:true},phases:[],
+const report={label,protocol:3,source:{sha256:createHash('sha256').update(raw).digest('hex')},configuration:{tasks:4149,physicalChats:108,physicalTaskChats:92,cpu,httpMs:80,httpLanes:4,guardSampler:false,productionFlags:true},phases:[],
  limitations:['Real Chromium and local HTTP with a controlled SDK dataset, not the authenticated desktop portal.','Input field above the controlled modal models shared event-loop/HTTP contention; it is not a Bitrix modal usability assertion.','All task titles are populated; every thirteenth task and final task has an own-user elapsed row. Two RAFs measure paint opportunity, not physical display.']};
 const server=await startHarnessServer();
 const queue=[],transportSamples=[];let active=0;
@@ -72,12 +73,8 @@ fixture=fixture.slice(0,from)+`
         return success(rows,{total:rows.length});
       }
       if(method==='tasks.task.list'){
-        const after=Number(callParams.filter?.['>ID']||0),changed=String(callParams.filter?.['>=CHANGED_DATE']||'');
-        let entries=taskEntries.map(window.timeFixtureTaskGroup).filter(task=>window.timeFixtureMatchesGroup(task,callParams.filter)&&Number(task.id)>after&&(!changed||Date.parse(task.changedDate)>=Date.parse(changed))&&(callParams.filter?.['<=ID']==null||Number(task.id)<=Number(callParams.filter['<=ID'])));
-        if(callParams.order?.ID==='asc')entries=entries.slice().sort((a,b)=>Number(a.id)-Number(b.id));
-        if(callParams.order?.ID==='desc')entries=entries.slice().sort((a,b)=>Number(b.id)-Number(a.id));
-        const start=Math.max(0,Number(callParams.start)||0),page=entries.slice(start,start+50);
-        return success({tasks:page},{next:start+page.length<entries.length?start+page.length:null,total:entries.length});
+        const page=(${selectStartupTaskPage.toString()})(taskEntries,callParams,window.timeTaskGroupOverrides);
+        return success({tasks:page.tasks},{next:page.next,total:page.total});
       }
 `+fixture.slice(to);
 fixture=fixture.replace('<script src="../extension/native-catalog.js">',`<script>(${installProbe.toString()})();</script><script src="../extension/native-catalog.js">`);

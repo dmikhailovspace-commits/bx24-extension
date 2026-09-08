@@ -81,6 +81,8 @@ const suites = [
   'native-mention-interference-regression.mjs',
   'interaction-contention-regression.mjs',
 	'native-cold-task-interaction-performance-regression.mjs',
+  'native-switcher-filter-regression.mjs',
+  'startup-task-page-regression.mjs',
   'native-startup-time-contention.mjs',
   'time-catalog-optimized-startup.mjs',
   'palette-color-model-regression.mjs',
