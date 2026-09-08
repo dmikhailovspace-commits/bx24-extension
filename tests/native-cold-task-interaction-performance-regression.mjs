@@ -12,12 +12,16 @@ const manifestPath = fileURLToPath(new URL('../extension/manifest.json', import.
 const expectedVersion = JSON.parse(readFileSync(manifestPath, 'utf8')).version;
 
 const addOptionalEntryHook = (source, signature, metric) => {
-	const matches = source.split(signature).length - 1;
-	assert.ok(matches <= 1, `Instrumentation anchor is ambiguous for ${metric}: ${signature}`);
-	return matches ? source.replace(
-		signature,
-		`${signature}\n\t\twindow.__PENA_COLD_TASK_METRICS__?.hit?.('${metric}');`
-	) : source;
+	const name = signature.match(/\bfunction\s+([A-Za-z_$][\w$]*)\s*\(/)?.[1];
+	assert.ok(name, `Instrumentation function name is missing for ${metric}`);
+	const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	const declarations = [...source.matchAll(new RegExp(`^[\\t ]*(?:async )?function ${escaped}\\s*\\(`, 'gm'))];
+	assert.ok(declarations.length <= 1, `Instrumentation function is ambiguous for ${metric}: ${name}`);
+	if (!declarations.length) return source; // A removed legacy function has no hot path to measure.
+	const entries = [...source.matchAll(new RegExp(`^[\\t ]*(?:async )?function ${escaped}\\s*\\([^\\r\\n]*\\)\\s*\\{[\\t ]*$`, 'gm'))];
+	assert.equal(entries.length, 1, `Instrumentation entry syntax changed for ${metric}: ${name}`);
+	const entry = entries[0][0];
+	return source.replace(entry, `${entry}\n\t\twindow.__PENA_COLD_TASK_METRICS__?.hit?.('${metric}');`);
 };
 
 const instrumentInjected = rawSource => {
@@ -41,8 +45,7 @@ const instrumentInjected = rawSource => {
 		['\tfunction _commitDialogTaskCatalogResult(result = {}, options = {}) {', 'commitTaskCatalog'],
 		['\tfunction _hydrateAllDialogControlModesFromRecent() {', 'hydrateAllControlModes'],
 		['\tasync function _writeDialogRecentCache() {', 'writeRecentCache'],
-		['\tfunction _scheduleDialogNativePresentationRefresh(container = findContainer(), rows = [], delay = 500) {', 'presentationRefreshSchedule'],
-		['\tfunction _scheduleDialogNativePresentationRefresh(container = findContainer(), delay = 500) {', 'presentationRefreshSchedule']
+		['\tfunction _scheduleDialogNativePresentationRefresh(container = findContainer(), rows = [], delay = 500) {', 'presentationRefreshSchedule']
 	]) source = addOptionalEntryHook(source, signature, metric);
 	for (const [signature, hook] of [
 		[
@@ -58,9 +61,9 @@ const instrumentInjected = rawSource => {
 		assert.equal(matches, 1, `Reason instrumentation anchor changed: ${signature}`);
 		source = source.replace(signature, `${signature}\n\t\t${hook}`);
 	}
-	const ownerAnchor = '\t\tconst syncStartedAt = Date.now();\n\t\tconst syncPromise = (async () => {';
+	const ownerAnchor = '\t\tconst syncStartedAt = Date.now();';
 	assert.equal(source.split(ownerAnchor).length - 1, 1, 'Task catalog owner instrumentation anchor changed');
-	source = source.replace(ownerAnchor, '\t\tconst syncStartedAt = Date.now();\n\t\twindow.__PENA_COLD_TASK_METRICS__?.catalogOwners.push({ scope:scopeKey, headOnly, kind:\'native\', at:syncStartedAt });\n\t\tconst syncPromise = (async () => {');
+	source = source.replace(ownerAnchor, ownerAnchor + '\n\t\twindow.__PENA_COLD_TASK_METRICS__?.catalogOwners.push({ scope:scopeKey, headOnly, kind:\'native\', at:syncStartedAt });');
 	const projectOwnerAnchor = '\t\tconst owner = { scope, delta, promise:null };\n\t\t_dialogTimeProjectCatalogOwner = owner;';
 	assert.equal(source.split(projectOwnerAnchor).length - 1, 1, 'Selected-project catalog owner instrumentation anchor changed');
 	source = source.replace(projectOwnerAnchor, `${projectOwnerAnchor}\n\t\twindow.__PENA_COLD_TASK_METRICS__?.catalogOwners.push({ scope, headOnly:false, kind:'projects', delta, at:Date.now() });`);

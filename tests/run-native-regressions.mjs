@@ -250,6 +250,9 @@ try {
 	assert.ok(displayedDateIds.indexOf('chat225') < displayedDateIds.indexOf('chat5'), 'Ascending native displayed time did not reverse 15:45/16:45');
 
   for (const mode of ['chats', 'tasks']) {
+		// Each fake portal scenario resets its backend journal. Isolate the matching
+		// local journal before navigation, while keeping the saved project choice.
+		await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('pena.time') && !key.startsWith('pena.timeProjects.v1.')).forEach(key => localStorage.removeItem(key)));
 		await page.goto(`${base}/tests/native-consistency-harness.html?mode=${mode}&taskPageCap=10`);
     await page.locator('.pena-native-folder-switcher').waitFor({ state: 'visible' });
     await page.waitForFunction(() => document.querySelectorAll('.test-host:not([hidden]) .pena-native-managed-viewport').length === 1);
@@ -376,25 +379,34 @@ try {
 	await filterPanel.waitFor({ state: 'detached' });
 	assert.equal(await page.getByRole('button', { name: /Фильтры/ }).getAttribute('aria-expanded'), 'false');
 	const beforeTimePanel = await readOutput(page);
-	await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('pena.time')).forEach(key => localStorage.removeItem(key)));
-	// This legacy managed fixture has no production native owner. The separate
-	// native-startup-time-contention suite proves the shared startup cycle.
-	// Keep closed-panel passivity strict here instead of hiding incidental REST.
-	const closedStartup = await page.evaluate(() => ({
-		managed:window.__PENA_TEST_MANAGED_CATALOG__,
-		forcedCatalog:window.__PENA_FORCE_REST_CATALOG__,
+	// A configured active Messenger starts the shared time owner after 500 ms,
+	// including this managed-list fixture. It must finish once before warm open.
+	await page.waitForFunction(() => {
+		const snapshot=window.__PENA_TIME_LOAD_DIAGNOSTICS__?.snapshot();
+		return snapshot?.phase==='ready' && !snapshot.active && document.querySelector('.pena-native-time-button-label')?.textContent==='Сегодня 1:30';
+	},null,{timeout:15000});
+	const readClosedStartup = () => page.evaluate(() => ({
+		managed:window.__PENA_TEST_MANAGED_CATALOG__, forcedCatalog:window.__PENA_FORCE_REST_CATALOG__,
 		cycle:window.__PENA_TIME_LOAD_DIAGNOSTICS__?.snapshot().cycle,
-		methods:window.nativeRestCalls.filter(call => ['server.time','user.current','task.elapseditem.getlist','task.elapseditem.add','task.elapseditem.update','task.elapseditem.delete'].includes(call.method)).map(call=>call.method),
-		contacts:Object.keys(localStorage).filter(key=>key.startsWith('pena.timeVisitedTasks.v1.'))
+		clockCalls:window.nativeRestCalls.filter(call=>call.method==='server.time').length,
+		catalogCalls:window.nativeRestCalls.filter(call=>call.method==='tasks.task.list').length,
+		elapsed:window.timeRestCalls.map(params=>String(params[0])),
+		mutations:window.nativeRestCalls.filter(call=>['task.elapseditem.add','task.elapseditem.update','task.elapseditem.delete'].includes(call.method)),
+		contacts:Object.keys(localStorage).filter(key=>key.startsWith('pena.timeVisitedTasks.v1.')),
+		preference:JSON.parse(localStorage.getItem(`pena.timeProjects.v1.${location.host.toLowerCase()}~7`)||'null')
 	}));
+	const closedStartup = await readClosedStartup();
 	assert.equal(closedStartup.managed,true,'Closed-panel fixture must use the managed test owner');
 	assert.equal(closedStartup.forcedCatalog,true,'Closed-panel fixture must use the forced test catalog');
-	assert.equal(closedStartup.cycle,0,'Legacy managed fixture unexpectedly started a native time cycle');
-	assert.deepEqual(closedStartup.methods,[],`Closed managed fixture made time REST calls in ${mode}`);
-	assert.deepEqual(closedStartup.contacts,[],`Read-only startup created contacts in ${mode}`);
+	assert.equal(closedStartup.cycle,1,`Configured startup repeated its time cycle in ${mode}`);
+	assert.equal(closedStartup.clockCalls,1);assert.equal(closedStartup.catalogCalls,3,'The capped 30-task catalog must be read exactly once');
+	assert.equal(closedStartup.elapsed.length,30);assert.equal(new Set(closedStartup.elapsed).size,30,'Startup reread elapsed tasks');
+	assert.deepEqual(closedStartup.mutations,[],`Read-only startup wrote elapsed data in ${mode}`);
+	assert.deepEqual(closedStartup.contacts,[],`Read-only startup created contacts before any cleanup in ${mode}`);
+	assert.deepEqual(closedStartup.preference,{version:1,all:true,ids:[],includeUnassigned:true});
 	await page.evaluate(()=>window.dispatchNativeTaskMessage('chat5','8'));
 	await page.waitForTimeout(250);
-	assert.equal(await page.evaluate(()=>window.timeRestCalls.length),0,`An ordinary incoming event loaded elapsed time in ${mode}`);
+	assert.deepEqual(await readClosedStartup(),closedStartup,`An ordinary incoming event restarted time work in ${mode}`);
 	await page.locator('.pena-native-time-button').click();
 	const timePanel = page.locator('.pena-native-time-panel');
 	await timePanel.waitFor({ state: 'visible' });
@@ -411,6 +423,11 @@ try {
 		}));
 		throw new Error(`Time panel did not load its working set: ${JSON.stringify(diagnostic)}; ${error.message}`);
 	}
+	await page.waitForFunction(()=>{const snapshot=window.__PENA_TIME_LOAD_DIAGNOSTICS__?.snapshot();return snapshot?.phase==='ready'&&!snapshot.active;});
+	const warmStartup=await readClosedStartup();
+	assert.equal(warmStartup.cycle,closedStartup.cycle+1,'Warm open must have one bounded cached owner');
+	assert.deepEqual({...warmStartup,cycle:closedStartup.cycle},closedStartup,`Warm opening the panel repeated startup reads in ${mode}`);
+	assert.equal(await page.evaluate(()=>window.__PENA_TIME_LOAD_DIAGNOSTICS__.snapshot().elapsedPages),0,'Cached owner repeated elapsed paging');
 	await timePanel.locator('.pena-native-time-tracker-search').waitFor({state:'visible'});
 	const initialElapsedRequests = await page.evaluate(() => window.timeRestCalls.map(params => ({
 		taskId: String(Array.isArray(params) ? params[0] : ''),
@@ -1075,9 +1092,9 @@ try {
 	assert.ok(afterChildFrameClose.lease?.frameId === multiFrameAfterMessage.lease?.frameId && afterChildFrameClose.visit?.visits === 1,
 		`Closing an inactive iframe changed qualified task activity: ${JSON.stringify(afterChildFrameClose)}`);
 
-	// Without a native account scope, closed startup stays passive. A qualified
-	// outgoing event resolves identity once without a temporary self namespace
-	// or a task elapsed scan.
+	// The active Messenger resolves its time identity automatically. Until that
+	// response arrives, elapsed and persistent self-scoped contacts stay blocked;
+	// incoming and outgoing events must share the single pending identity request.
 	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=tasks&timeUserCurrentFallback=1&timeUserCurrentDelay=1500`);
 	await page.waitForFunction(() => (window.nativeCustomEventHandlers.get('onPullEvent-im') || []).length === 1);
@@ -1085,15 +1102,15 @@ try {
 	const unresolvedUserStorage = await page.evaluate(() => ({
 		selfKeys: Object.keys(localStorage).filter(key => /pena\.time[^.]*\.v1\.self(?:\.|$)/.test(key)),
 		userCalls: window.nativeRestCalls.filter(call => call.method === 'user.current').length,
-		elapsedCalls: window.nativeRestCalls.filter(call => call.method === 'task.elapseditem.getlist').length
+		elapsedCalls: window.timeRestCalls.length
 	}));
-	assert.equal(unresolvedUserStorage.userCalls, 0, `Unscoped closed startup resolved identity: ${JSON.stringify(unresolvedUserStorage)}`);
-	assert.equal(unresolvedUserStorage.elapsedCalls, 0, `Closed time panel loaded elapsed time: ${JSON.stringify(unresolvedUserStorage)}`);
+	assert.equal(unresolvedUserStorage.userCalls, 1, `Active startup did not resolve identity exactly once: ${JSON.stringify(unresolvedUserStorage)}`);
+	assert.equal(unresolvedUserStorage.elapsedCalls, 0, `Unresolved user identity loaded elapsed time: ${JSON.stringify(unresolvedUserStorage)}`);
 	assert.deepEqual(unresolvedUserStorage.selfKeys, [], `Tracking wrote unscoped data before user.current resolved: ${JSON.stringify(unresolvedUserStorage)}`);
 	await page.evaluate(() => window.dispatchNativeTaskMessage('chat5', '8'));
 	await page.waitForTimeout(250);
-	assert.equal(await page.evaluate(() => window.nativeRestCalls.filter(call => call.method === 'user.current').length), 0,
-		'Incoming task message triggered identity resolution');
+	assert.equal(await page.evaluate(() => window.nativeRestCalls.filter(call => call.method === 'user.current').length), 1,
+		'Incoming task message duplicated pending identity resolution');
 	assert.equal(await page.evaluate(() => Object.keys(localStorage).some(key => key.startsWith('pena.timeVisitedTasks.v1.'))), false,
 		'Incoming task message created time activity for an unknown current user');
 	await page.evaluate(() => window.dispatchNativeTaskMessage('chat5'));
@@ -1116,25 +1133,31 @@ try {
 	}
 	assert.equal(await page.evaluate(() => window.nativeRestCalls.filter(call => call.method === 'user.current').length), 1,
 		'user.current was not single-flight for duplicate outgoing-message events');
-	assert.equal(await page.evaluate(() => window.timeRestCalls.length), 0, 'Qualified contact launched an elapsed scan without native startup scope');
+	await page.waitForFunction(()=>{const s=window.__PENA_TIME_LOAD_DIAGNOSTICS__?.snapshot();return s?.phase==='ready'&&!s.active;},null,{timeout:15000});
+	const fallbackStartup=await page.evaluate(()=>({elapsed:window.timeRestCalls.map(p=>String(p[0])),users:window.nativeRestCalls.filter(c=>c.method==='user.current').length}));
+	assert.equal(fallbackStartup.users,1);assert.equal(fallbackStartup.elapsed.length,30);assert.equal(new Set(fallbackStartup.elapsed).size,30);
 	await page.locator('.task-host .pena-native-time-button').click();
 	await page.waitForFunction(() => !document.querySelector('.pena-native-time-panel')?.classList.contains('--loading') &&
 		window.timeRestCalls.length > 0, null, { timeout: 10000 });
+	assert.deepEqual(await page.evaluate(()=>({elapsed:window.timeRestCalls.map(p=>String(p[0])),users:window.nativeRestCalls.filter(c=>c.method==='user.current').length})),fallbackStartup,'Opening fallback-identity time panel repeated confirmed startup reads');
 	await page.locator('.pena-native-time-panel').press('Escape');
 
 	// Even a known task/dialog event is ignored in ordinary chats. Without native
-	// account scope, it must not start identity/elapsed reads or create work.
+	// account scope, its completed startup must not be repeated by these events.
 	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&timeUserCurrentFallback=1`);
 	await page.waitForFunction(() => (window.nativeCustomEventHandlers.get('onPullEvent-im') || []).length === 1);
+	await page.waitForFunction(()=>{const s=window.__PENA_TIME_LOAD_DIAGNOSTICS__?.snapshot();return s?.phase==='ready'&&!s.active;},null,{timeout:15000});
+	const ordinaryChatStartup=await page.evaluate(()=>({elapsed:window.timeRestCalls.length,users:window.nativeRestCalls.filter(c=>c.method==='user.current').length}));
+	assert.equal(ordinaryChatStartup.users,1);assert.equal(ordinaryChatStartup.elapsed,30);
 	await page.evaluate(() => {
 		window.dispatchNativeTaskMessage('chat5');
 		window.dispatchNativeSidePanelTask('5');
 	});
 	await page.waitForTimeout(300);
-	assert.equal(await page.evaluate(() => window.nativeRestCalls.filter(call => call.method === 'user.current').length), 0,
-		'Ordinary chat task events resolved fallback identity');
-	assert.equal(await page.evaluate(()=>window.timeRestCalls.length),0,'Ordinary chat task events triggered elapsed reads');
+	assert.equal(await page.evaluate(() => window.nativeRestCalls.filter(call => call.method === 'user.current').length), ordinaryChatStartup.users,
+		'Ordinary chat task events repeated fallback identity resolution');
+	assert.equal(await page.evaluate(()=>window.timeRestCalls.length),ordinaryChatStartup.elapsed,'Ordinary chat task events triggered extra elapsed reads');
 	assert.equal(await page.evaluate(() => Object.keys(localStorage).some(key => key.startsWith('pena.timeVisitedTasks.v1.'))), false,
 		'Ordinary chat task events created time activity');
 
@@ -3592,7 +3615,18 @@ try {
 	assert.equal(afterHeadTimeout.recentListCalls, readyBeforeHeadTimeout.recentListCalls, `Timed-out delta started a second slow recent-list request: ${JSON.stringify(afterHeadTimeout)}`);
 	assert.equal(afterHeadTimeout.chipVisible, false, `Background head timeout exposed a misleading retry chip: ${JSON.stringify(afterHeadTimeout)}`);
 
-	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&lazy=1&catalogRows=1820&restDelay=80&restUnknownTotal=1`);
+	// The closed time bootstrap shares BX24.callBatch with recent pagination. Attribute
+	// wave sizes to their actual SDK methods; the recent limit remains eight.
+	const adaptiveFixtureUrl = `${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&lazy=1&catalogRows=1820&restDelay=80&restUnknownTotal=1`;
+	const recordAdaptiveBatchMethods = async route => {
+		const response = await route.fetch();
+		const html = await response.text();
+		const anchor = 'window.nativeBatchCalls += 1;';
+		assert.equal(html.split(anchor).length, 2, 'Adaptive batch instrumentation anchor must be unique');
+		await route.fulfill({ response, body: html.replace(anchor, `${anchor}\n(window.__nativeBatchMethods ||= []).push(Object.values(calls || {}).map(call => String(call?.method || '')));`) });
+	};
+	await page.route(adaptiveFixtureUrl, recordAdaptiveBatchMethods);
+	await page.goto(adaptiveFixtureUrl);
 	try {
 		await page.waitForFunction(() => {
 			const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
@@ -3616,13 +3650,23 @@ try {
 			pages: Number(sync.pagesLoaded) || 0,
 			batchCalls: window.nativeBatchCalls || 0,
 			batchSizes: window.nativeBatchSizes || [],
+			batchMethods: window.__nativeBatchMethods || [],
 			truncated: !!sync.truncated,
 			sourceTop: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0
 		};
 	});
 	assert.ok(nativeLoadPerformance.count >= 1820, `Startup did not load the complete dynamic catalog: ${JSON.stringify(nativeLoadPerformance)}`);
 	assert.ok(nativeLoadPerformance.pages >= 10 && nativeLoadPerformance.batchCalls >= 2, `Unknown-total startup did not continue adaptive REST batch pagination: ${JSON.stringify(nativeLoadPerformance)}`);
-	assert.ok(nativeLoadPerformance.batchSizes.every(size => size > 0 && size <= 8), `Adaptive batches exceeded the safe wave size: ${JSON.stringify(nativeLoadPerformance)}`);
+	await page.unroute(adaptiveFixtureUrl, recordAdaptiveBatchMethods);
+	assert.deepEqual(nativeLoadPerformance.batchMethods.map(methods => methods.length), nativeLoadPerformance.batchSizes,
+		`Every adaptive SDK batch must have exact method attribution: ${JSON.stringify(nativeLoadPerformance)}`);
+	const recentWaves = nativeLoadPerformance.batchMethods.filter(methods => methods.includes('im.recent.list'));
+	assert.ok(recentWaves.length >= 2, `Unknown-total startup did not issue two recent batches: ${JSON.stringify(nativeLoadPerformance)}`);
+	assert.ok(recentWaves.every(methods => methods.length > 0 && methods.length <= 8 && methods.every(method => method === 'im.recent.list')),
+		`Adaptive recent batches exceeded the safe wave size: ${JSON.stringify(nativeLoadPerformance)}`);
+	assert.ok(nativeLoadPerformance.batchMethods.filter(methods => !methods.includes('im.recent.list'))
+		.every(methods => methods.length > 0 && methods.length <= 16 && methods.every(method => method === 'task.elapseditem.getlist')),
+		`Concurrent time batches exceeded their own safe wave size or contained unexpected methods: ${JSON.stringify(nativeLoadPerformance)}`);
 	assert.equal(nativeLoadPerformance.truncated, false, `Complete REST catalog was reported as partial: ${JSON.stringify(nativeLoadPerformance)}`);
 	assert.equal(nativeLoadPerformance.sourceTop, 0, `REST catalog loading moved the native viewport: ${JSON.stringify(nativeLoadPerformance)}`);
 	assert.ok(nativeLoadPerformance.duration >= 0 && nativeLoadPerformance.duration < 10000, `Complete catalog missed the startup performance target: ${JSON.stringify(nativeLoadPerformance)}`);
@@ -3805,18 +3849,36 @@ try {
 			status.active === false && status.apiActive === false && status.taskCatalogComplete === true &&
 			window.__PENA_RECENT_SYNC__?.gateReady && taskCalls > 0;
 	}, null, { timeout: 8000 });
-	const taskCallsBeforeSwitch = await page.evaluate(() => (window.nativeRestCalls || []).filter(call => call.method === 'tasks.task.list').length);
+	// Native readiness precedes the independent 500 ms time bootstrap. A warm
+	// switch must be measured after both startup owners have settled.
+	await page.waitForFunction(() => {
+		const time = window.__PENA_TIME_LOAD_DIAGNOSTICS__?.snapshot?.();
+		return time?.phase === 'ready' && !time.active;
+	}, null, { timeout: 8000 });
+	const readWarmModeRequests = () => page.evaluate(() => ({
+		tasks: (window.nativeRestCalls || []).filter(call => call.method === 'tasks.task.list').length,
+		elapsed: (window.timeRestCalls || []).map(params => String(params[0]))
+	}));
+	const requestsBeforeSwitch = await readWarmModeRequests();
+	assert.equal(requestsBeforeSwitch.tasks, 2, 'Native and time startup must each complete their distinct initial catalog before the warm switch');
+	assert.deepEqual(await page.evaluate(() => (window.nativeRestCalls || [])
+		.filter(call => call.method === 'tasks.task.list').map(call => call.params?.order)),
+		[{ ACTIVITY_DATE:'desc' }, { ID:'asc' }],
+		'Legacy API startup may read one head then one full catalog; two full crawls are forbidden');
+	assert.equal(requestsBeforeSwitch.elapsed.length, 30, 'Closed startup must finish the complete time working set before switching');
+	assert.equal(new Set(requestsBeforeSwitch.elapsed).size, 30, 'Closed startup repeated elapsed task requests before switching');
 	await switchMode(page);
 	await page.waitForTimeout(500);
 	assert.equal(await page.locator('.task-host .pena-native-load-guard:not([hidden])').count(), 0,
 		'Switching to an eagerly loaded task catalog restarted the blocking loader');
-	assert.equal(await page.evaluate(() => (window.nativeRestCalls || []).filter(call => call.method === 'tasks.task.list').length), taskCallsBeforeSwitch,
-		'Switching to a fresh task catalog restarted tasks.task.list');
+	assert.deepEqual(await readWarmModeRequests(), requestsBeforeSwitch,
+		'Switching to fresh catalogs restarted task or elapsed requests');
 	const loadedModes = await page.evaluate(() => window.__PENA_NATIVE_PREFETCH__.status().loadedModes.slice().sort());
 	assert.deepEqual(loadedModes, ['chats', 'tasks'], 'Startup did not build both page-lifetime catalogs');
 	await switchMode(page);
 	await page.waitForTimeout(500);
 	assert.equal(await page.evaluate(() => window.__PENA_NATIVE_PREFETCH__.status().active), false, 'Returning to an already loaded mode restarted traversal');
+	assert.deepEqual(await readWarmModeRequests(), requestsBeforeSwitch, 'Returning to a fresh mode restarted task or elapsed requests');
 
 	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1&restDelay=350`);
