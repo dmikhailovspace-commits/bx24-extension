@@ -6,6 +6,7 @@ const source=readFileSync(new URL('../extension/injected.js',import.meta.url),'u
 const timeModel=createRequire(import.meta.url)('../extension/native-time-control.js');
 const section=(a,b)=>source.slice(source.indexOf(a),source.indexOf(b,source.indexOf(a)));
 const runtime=[
+ section('\tfunction _getDialogTimeReusableNativeCatalog(', '\n\tasync function _ensureDialogTimeProjectCatalog'),
  section('\tasync function _loadDialogTaskCatalogPartitionTail(', '\n\tasync function _syncDialogTaskCatalog'),
  section('\tfunction _getDialogTaskKeysetCursor(', '\n\tlet _dialogTimeCatalogPromise'),
  section('\tasync function _syncDialogTaskCatalog(', '\n\tfunction _commitDialogTaskCatalogResult'),
@@ -106,6 +107,33 @@ try {
   assert.equal(calls.filter(call=>call.order.ID==='desc').length,1);
   assert.ok(evidences.every(item=>item===evidences[0]&&item.scope===context.scope&&item.at===result.startedAt));
   return {tasks:result.rows.length,batchWaves:waves.length,httpRequests:2+waves.length,logicalPages:calls.length};
+ });
+ await phase('shared native and time catalogs publish each task once without extra transport',async()=>{
+  const evidence=[];
+  for(const count of [100,4149]){
+   const {context,calls,published}=setup({count,computed:true});
+   const result=await context._syncDialogTaskCatalog({forceNetwork:true,deferMerge:true});
+   assert.equal(result.complete,true);assert.equal(published.length,count);assert.equal(new Set(published).size,count);
+   const before=calls.length;
+   context._readDialogTimeProjectPreference=()=>({version:1,all:true,ids:[],includeUnassigned:true});
+   assert.equal(await context._ensureDialogTimeProjectCatalog(),true);
+   assert.equal(context._dialogTimeProjectTaskIds.size,count);
+   assert.equal(published.length,count,'Shared time view must not replay an already published index');
+   assert.equal(calls.length,before,'Joining a completed catalog must not repeat network reads');
+   evidence.push({tasks:count,timeIndexRowsProcessed:published.length,additionalRequests:0});
+  }
+  return evidence;
+ });
+ await phase('head refresh cannot renew an old full catalog or cross an identity boundary',async()=>{
+  const {context}=setup({count:10});
+  const result=await context._syncDialogTaskCatalog({forceNetwork:true,deferMerge:true});
+  assert.equal(context._getDialogTimeReusableNativeCatalog().length,10);
+  result.startedAt=Date.now()-65000;context._dialogTaskCatalogFetchedAt=Date.now();
+  assert.equal(context._getDialogTimeReusableNativeCatalog(),null);
+  result.startedAt=Date.now()+60000;assert.equal(context._getDialogTimeReusableNativeCatalog(),null);
+  result.startedAt=Date.now();context._getDialogTimeIdentityScopeKey=()=> 'another-portal:7';
+  assert.equal(context._getDialogTimeReusableNativeCatalog(),null);
+  return {staleFullRejected:true,futureTimestampRejected:true,foreignIdentityRejected:true};
  });
  await phase('missing computed time field still uses bounded native and selected catalog partitions',async()=>{
   for(const owner of ['native','selected']){

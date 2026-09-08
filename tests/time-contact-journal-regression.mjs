@@ -11,7 +11,7 @@ function extract(name) {
  const tail = source.slice(begin + 1); const next = tail.slice(1).search(/\n\t(?:async )?function /);
  return next < 0 ? tail : tail.slice(0, next + 1);
 }
-const names = ['_getDialogTimePendingQualificationMs','_syncDialogTimePendingLease','_qualifyPendingDialogTimeDuration','_stageDialogTimeActivity','_flushDialogTimePendingActivities','_getDialogTimeContactDateKey','_queueDialogTimeContactEvent','_journalDialogTimeContactEvents','_readDialogTimeContactEvents','_commitDialogTimeContactEvent','_reportDialogTimeContactError','_writeDialogTimeVisits'];
+const names = ['_readDialogTimeVisits','_getDialogTimeMessageContactIdentity','_getDialogTimePendingQualificationMs','_syncDialogTimePendingLease','_qualifyPendingDialogTimeDuration','_stageDialogTimeActivity','_flushDialogTimePendingActivities','_getDialogTimeContactDateKey','_queueDialogTimeContactEvent','_journalDialogTimeContactEvents','_readDialogTimeContactEvents','_commitDialogTimeContactEvent','_reportDialogTimeContactError','_writeDialogTimeVisits'];
 function createLocks(){let tail=Promise.resolve();return{request(_name,callback){const next=tail.then(callback);tail=next.catch(()=>{});return next;}};}
 function frame({ storage = new Map(), locks = createLocks(), id = 'frame1' } = {}) {
  let now = Date.parse('2026-09-06T20:59:00Z'), user = '7', resolver, delay = false, failWrite = false, failAck = false, eligibility = true, portalOffset = 180, portalFail = false, portalCalls = 0;
@@ -40,10 +40,45 @@ function frame({ storage = new Map(), locks = createLocks(), id = 'frame1' } = {
  _persistDialogTimeActivity:(entry,opts)=>{writes.push({taskId:entry.taskId,qualify:opts.qualify,at:now});return true;},
  _removeDialogTimeActivity:()=>{}
  });
- vm.runInContext(`const _dialogTimePendingActivities=new Map(); const _dialogTimeContactEvents=new Map(); let _dialogTimeContactEventSequence=0; let _dialogTimeContactJournalTimer=null; let _dialogTimeContactRetryAttempt=0; let _dialogTimeContactLastError=''; let _dialogTimeContactRecoveryScope=''; let _dialogTimeLeaseHeartbeatTimer=null; let _dialogTimePendingActiveId=''; let _dialogTimeQualificationTimer=null; let _dialogTimeDeferredFlushPromise=null; let _dialogControlNativeWorkspaceTab='time'; ${names.map(extract).join('\n')}\n globalThis.probe={stage:_stageDialogTimeActivity,flush:_flushDialogTimePendingActivities,pending:_dialogTimePendingActivities, events:_dialogTimeContactEvents,write:_writeDialogTimeVisits};`,ctx);
+ vm.runInContext(`const _dialogTimePendingActivities=new Map(); const _dialogTimeContactEvents=new Map(); let _dialogTimeContactEventSequence=0; let _dialogTimeContactJournalTimer=null; let _dialogTimeContactRetryAttempt=0; let _dialogTimeContactLastError=''; let _dialogTimeContactRecoveryScope=''; let _dialogTimeLeaseHeartbeatTimer=null; let _dialogTimePendingActiveId=''; let _dialogTimeQualificationTimer=null; let _dialogTimeDeferredFlushPromise=null; let _dialogControlNativeWorkspaceTab='time'; ${names.map(extract).join('\n')}\n globalThis.probe={stage:_stageDialogTimeActivity,flush:_flushDialogTimePendingActivities,pending:_dialogTimePendingActivities, events:_dialogTimeContactEvents,write:_writeDialogTimeVisits,qualify:_qualifyPendingDialogTimeDuration,messageIdentity:_getDialogTimeMessageContactIdentity};`,ctx);
  return { ...ctx.probe, storage,writes,warnings,titles:ctx._dialogTimeTaskTitles, tick:ms=>{now+=ms;}, setUser:id=>{user=id;}, eligibility:value=>{eligibility=value;}, delay:()=>{delay=true;}, resolve:()=>{delay=false;resolver?.(eligibility);}, failWrite:value=>{failWrite=value;},failAck:value=>{failAck=value;}, unknownPortal:(offset,fail=false)=>{ctx._dialogTimePortalUtcOffsetMinutes=null;portalOffset=offset;portalFail=fail;},portalCalls:()=>portalCalls, total:()=>[...storage].filter(([k])=>k.startsWith('pena.timeVisitedTasks.v1.')).flatMap(([,v])=>JSON.parse(v)).reduce((n,x)=>n+x.visits,0) };
 }
 const scenarios = [];
+await check('replayed message after ACK and frame reload retains one durable contact; new message remains pending',async()=>{
+ const f=frame(),day='2026-09-06',at=Date.parse('2026-09-06T20:59:00Z');
+ const identity=f.messageIdentity({date:at/1000},{},'chat101','501',at);
+ f.stage({taskId:'101',dialogId:'chat101'},{qualify:true,...identity});await f.flush();
+ await f.write(rows=>model.markActivityAccounted(rows,'task:101',at+10000,{itemId:'901'}),day);
+ const reloaded=frame({storage:f.storage,id:'reloaded'});reloaded.tick(40000);
+ const replay=reloaded.messageIdentity({date:at/1000},{},'chat101','501',at+40000);
+ reloaded.stage({taskId:'101',dialogId:'chat101'},{qualify:true,...replay});await reloaded.flush();
+ let rows=JSON.parse(f.storage.get('pena.timeVisitedTasks.v1.7.'+day));
+ assert.equal(rows[0].visits,1);assert.equal(model.selectUntrackedVisits(rows).length,0);
+ reloaded.stage({taskId:'101',dialogId:'chat101'},{qualify:true,...reloaded.messageIdentity({date:(at+40000)/1000},{},'chat101','502',at+40000)});await reloaded.flush();
+ rows=JSON.parse(f.storage.get('pena.timeVisitedTasks.v1.7.'+day));
+ assert.equal(rows[0].visits,2);assert.equal(model.selectUntrackedVisits(rows)[0].pendingContacts,1);
+ return{replayAfterReloadAdded:0,newMessageAdded:1};
+});
+await check('late first delivery uses original send time across accounting cutoff and midnight',async()=>{
+ const f=frame(),day='2026-09-06',at=Date.parse('2026-09-06T20:59:00Z');
+ await f.write(rows=>model.markActivityAccounted(rows,'task:101',at+10000,{itemId:'902'}),day);f.tick(120000);
+ const identity=f.messageIdentity({date:'2026-09-06T23:59:00+03:00'},{},'chat101','503',at+120000);
+ f.stage({taskId:'101',dialogId:'chat101'},{qualify:true,...identity});await f.flush();
+ const rows=JSON.parse(f.storage.get('pena.timeVisitedTasks.v1.7.'+day));
+ assert.equal(rows[0].lastQualifiedAt,at);assert.equal(model.selectUntrackedVisits(rows).length,0);
+ assert.equal(f.storage.has('pena.timeVisitedTasks.v1.7.2026-09-07'),false);
+ return{capturedDay:day,pendingContacts:0};
+});
+await check('saving the open unqualified session prevents a later phantom duration contact but permits a new message',async()=>{
+ const f=frame(),day='2026-09-06',at=Date.parse('2026-09-06T20:59:00Z')-120000;f.tick(-120000);
+ f.stage({taskId:'101'});f.tick(10000);
+ await f.write(rows=>model.markActivityAccounted(rows,'task:101',at+10000,{itemId:'903'}),day);
+ f.tick(60000);assert.equal(f.qualify(f.pending.get('task:101')),false);await f.flush();
+ let rows=JSON.parse(f.storage.get('pena.timeVisitedTasks.v1.7.'+day));assert.equal(model.selectUntrackedVisits(rows).length,0);
+ f.stage({taskId:'101'},{qualify:true});await f.flush();rows=JSON.parse(f.storage.get('pena.timeVisitedTasks.v1.7.'+day));
+ assert.equal(model.selectUntrackedVisits(rows)[0].pendingContacts,1);
+ return{phantomDurationContacts:0,newMessageContacts:1};
+});
 await check('new qualified contact invalidates once; durable replay and 15s dedupe do not',async()=>{const f=frame();f.stage({taskId:'101'},{qualify:true});f.failAck(true);await f.flush();assert.deepEqual(f.writes.invalidations,['101']);await f.flush();assert.deepEqual(f.writes.invalidations,['101']);f.failAck(false);f.tick(1000);f.stage({taskId:'101'},{qualify:true});await f.flush();assert.deepEqual(f.writes.invalidations,['101']);f.tick(20000);f.stage({taskId:'101'},{qualify:true});await f.flush();assert.deepEqual(f.writes.invalidations,['101','101']);return{qualifiedContacts:2,invalidations:2,replayAndDedupInvalidations:0};});
 await check('two frame accounting receipts and later contact preserve immutable pending watermark',async()=>{const storage=new Map(),locks=createLocks(),a=frame({storage,locks,id:'A'}),b=frame({storage,locks,id:'B'});const day='2026-09-06',at=Date.parse('2026-09-06T20:59:00Z');a.stage({taskId:'101'},{qualify:true});await a.flush();a.tick(40000);a.stage({taskId:'101'},{qualify:true});await Promise.all([a.flush(),b.write(rows=>model.markActivityAccounted(rows,'task:101',at+10000,{itemId:'501'}),day)]);await a.write(rows=>model.markActivityAccounted(rows,'task:101',at+60000,{itemId:'501'}),day);const rows=JSON.parse(storage.get('pena.timeVisitedTasks.v1.7.'+day));assert.equal(rows[0].visits,2);assert.equal(rows[0].accountedEntries[0].cutoffAt,at+10000);assert.equal(model.selectUntrackedVisits(rows)[0].pendingContacts,1);return{frames:2,contacts:2,pendingContacts:1,duplicateAckAdvanced:false};});
 async function check(name, run){ try{const detail=await run();scenarios.push({name,status:'PASS',detail});}catch(e){scenarios.push({name,status:'FAIL',error:e.message});} }
@@ -68,7 +103,7 @@ await check('foreign side panel cannot suppress native task lookup for an outgoi
  let reads=0,contact=null;const context=vm.createContext({Date,Map,String,Number,normId:x=>String(x||''),_isDialogTimeFrameActive:()=>true,_currentPanelMode:'tasks',_getCurrentBitrixUserId:()=> '7',_dialogTimeOutgoingIntentAt:0,_dialogTimeOutgoingPullSeen:new Map(),_getDialogRecentMeta:()=>null,
   _getActiveDialogTimeActivity:()=>({taskId:'405',dialogId:'chat405',title:'Задача 405'}),_dialogTimePendingActivities:new Map(),_dialogTimeTaskIdsByChatDialogId:new Map(),_dialogTimeTaskTitles:new Map([['5','Задача 5']]),
   _getDialogControlItemsForMode:()=>{reads++;return[{id:'chat5',taskId:'5',title:'Чат 5'}]},_isDialogControlFolder:()=>false,_rememberDialogTimeTaskChat:()=>{},_rememberTaskChatDialogVisit:(dialogId,title,taskId)=>{contact={dialogId,title,taskId}}});
- vm.runInContext(source.slice(start,end)+"\ncaptureOutgoingTaskMessage('message',{message:{author_id:'7',dialog_id:'chat5',id:'msg-contact-title'}});",context);
+ vm.runInContext(extract('_getDialogTimeMessageContactIdentity')+source.slice(start,end)+"\ncaptureOutgoingTaskMessage('message',{message:{author_id:'7',dialog_id:'chat5',id:'msg-contact-title'}});",context);
  assert.equal(reads,1);assert.deepEqual(contact,{dialogId:'chat5',taskId:'5',title:'Задача 5'});return{nativeTaskLookups:reads,contact};
 });
 await check('legacy ledger taskId/id aliases persist as one canonical row without losing accounting metadata',async()=>{

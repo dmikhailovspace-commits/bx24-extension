@@ -78,6 +78,33 @@ check('replayed contact event under an alias cannot create a second task or incr
  assert.equal(rows.length,1);assert.equal(rows[0].visits,1);assert.equal(model.selectUntrackedVisits(rows)[0].pendingContacts,1);
  return{rows:1,contacts:1};
 });
+check('confirmed ACK covers contacts even before the read snapshot exposes its journal entry',()=>{
+ const rows=event(event([], 'before',0),'during-save',40);
+ const localReceipts=[{taskId:'10',id:'501',cutoffAt:start+20000}];
+ for(const snapshot of [[],logged(0),logged(1800)]) {
+  const result=model.selectUntrackedVisits(rows,snapshot,{localReceipts});
+  assert.equal(result[0].pendingContacts,1);assert.equal(result[0].contactCutoffAt,start+20000);
+ }
+ return{pendingContacts:1,readSnapshotRequired:false};
+});
+check('duration qualified during delayed ADD is covered with its already-open session; an actual later message stays pending',()=>{
+ let rows=model.applyQualifiedContact([],{taskId:'10',eventId:'duration',qualifiedAt:start+60000,sessionStartedAt:start,reason:'duration'});
+ rows=event(rows,'real-message',90);rows=model.markActivityAccounted(rows,'task:10',start+10000,{itemId:'502'});
+ assert.equal(pending(rows)[0].pendingContacts,1);assert.equal(rows[0].visits,2);
+ rows=model.applyQualifiedContact(rows,{taskId:'10',eventId:'new-session',qualifiedAt:start+160000,sessionStartedAt:start+100000,reason:'duration'});
+ assert.equal(pending(rows)[0].pendingContacts,2);
+ return{oldSessionPending:0,newMessagePending:1,newSessionPending:1};
+});
+check('covered duration does not suppress a real message within the 15 second dedupe window',()=>{
+ let rows=model.applyQualifiedContact([],{taskId:'10',eventId:'duration-near-message',qualifiedAt:start+60000,sessionStartedAt:start,reason:'duration'});
+ rows=event(rows,'real-message-near-duration',65);
+ assert.equal(pending(rows)[0].pendingContacts,1,'without a receipt the same interaction window remains one contact');
+ rows=model.markActivityAccounted(rows,'task:10',start+10000,{itemId:'503'});
+ assert.equal(pending(rows)[0]?.pendingContacts,1,'covered session cannot consume the actual new message');
+ rows=model.markActivityAccounted(rows,'task:10',start+70000,{itemId:'504'});
+ assert.equal(pending(rows).length,0,'the next write accounts for that real message');
+ return{coveredDurationPending:0,newMessagePending:1,afterNextWrite:0};
+});
 mkdirSync('tests/artifacts',{recursive:true});
 writeFileSync(process.env.PENA_CONTACT_REPORT || 'tests/artifacts/time-contact-followup-report.json',JSON.stringify({phases},null,2));
 console.log(JSON.stringify(phases,null,2));

@@ -248,10 +248,10 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' \
-            'Date changes cancel obsolete elapsed-read continuations; revisiting a loaded date reuses its verified cache.' \
-            'The time panel blurs and blocks incomplete results until loading finishes. Errors offer retry or an explicit continuation without a total, preserving access to projects and the timer.' \
-            'Contact task IDs are canonicalized; task links in message previews and arbitrary message numbers no longer determine the contacted task.' \
-            'This update uses the explicit time-focused verification profile: date navigation, loading recovery, contacts, elapsed readers and package integrity. It does not claim a full extension regression run.' \
+            'Adds a 30-day time view with date navigation, cached reads and a responsive header.' \
+            'Contact cards show accounted time and contacts after the latest entry. Stable message IDs deduplicate replayed delivery; activity sessions covered by a time entry do not reappear as new contacts.' \
+            'Startup skips redundant metadata merges and publishes each task-catalog page to the time index once. Full-catalog reuse retains identity and freshness checks.' \
+            'This update uses 17 time-focused suites covering contacts, date navigation, startup, task catalogs and package integrity. It does not claim a full extension regression run.' \
             'Controlled tests are not a live Bitrix latency measurement. The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \
             'Includes Windows EXE and Universal macOS DMG for Intel and Apple Silicon.' \
             > release-notes.md

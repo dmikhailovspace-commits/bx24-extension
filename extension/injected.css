@@ -1018,7 +1018,12 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
   .pena-native-time-entry-save,.pena-native-time-entry-cancel{width:100%}
 }
 @media(max-width:420px){
-  .pena-native-time-panel-head{gap:8px;padding-inline:8px}
+  .pena-native-time-panel.pena-native-command-popover{grid-template-rows:auto minmax(0,1fr)}
+  .pena-native-time-panel-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;height:auto;min-height:88px;padding:8px}
+  .pena-native-time-panel.--project-settings .pena-native-time-panel-head{min-height:48px}
+  .pena-native-time-header-actions{grid-column:2;grid-row:1}
+  .pena-native-time-view-tabs{grid-column:1/-1;grid-row:2;min-width:0}
+  .pena-native-time-view-tab{flex:1}
   .pena-native-time-panel-title{font-size:14px}
   .pena-native-time-view-tab{padding-inline:6px}
   .pena-native-time-report{width:32px;padding:0}

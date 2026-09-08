@@ -111,7 +111,8 @@ try{
  assert.equal(nativeItem.contactCutoffAt,0,'Forced read must actually replace the optimistic cutoff; durable receipt supplies precedence');
  report.phases.push({name:'native reread cannot cover a contact made during held ADD',status:'PASS'});
  await page.reload();await page.locator('.pena-native-time-button').waitFor();await installServer(false);await page.locator('.pena-native-time-button').click();
- await page.waitForFunction(()=>window.contactAckProbe.record()?.data?.totalSeconds===6000);
+ await page.waitForFunction(()=>window.contactAckProbe.record()?.data?.totalSeconds===6000&&window.contactAckProbe.record()?.hasCompleteSnapshot===true&&
+  !document.querySelector('.pena-native-time-panel')?.classList.contains('--read-blocked'));
  const reloaded=await snapshot('reload-with-receipt-still-failing');assert.equal(reloaded.draft.pendingWrite.status,'acknowledged');assert.equal(reloaded.addCalls,1);assert.match(reloaded.contactText,/1 контакт/);
  await page.locator('.pena-native-time-manual-submit').click();await snapshot('after-first-retry-still-failing');await page.locator('.pena-native-time-manual-submit').click();
  assert.equal(await page.evaluate(()=>Number(localStorage.getItem('test:ack-server-adds')||0)),1);
@@ -127,17 +128,17 @@ try{
  assert.deepEqual(recovered.submit,{text:'Добавить',disabled:true,matchesDisabled:true,ancestors:[]},'Completed bookkeeping must leave an empty, disabled Add form');
  const receipt=recovered.visits.find(row=>row.taskId==='101').accountedEntries.find(entry=>entry.id==='900001');assert.equal(receipt.cutoffAt,intent.contactCutoffAt||intent.attemptedAt);
  report.phases.push({name:'automatic recovery after storage becomes available only writes bookkeeping and never duplicates ADD',status:'PASS'});assert.deepEqual(errors,[]);
- for(const width of [344,720]){
+ for(const width of [344,360,720]){
   await page.setViewportSize({width,height:850});await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
   const layout=await page.locator('.pena-native-time-suggestions').evaluate(section=>{
    const detail=section.querySelector('.pena-native-time-task-detail'),row=detail.closest('.pena-native-time-task-row'),button=row.querySelector('button.pena-native-time-activity-add');
    const d=detail.getBoundingClientRect(),b=button.getBoundingClientRect(),s=section.getBoundingClientRect();
    return {text:detail.textContent,height:d.height,lineHeight:parseFloat(getComputedStyle(detail).lineHeight),detailRight:d.right,buttonLeft:b.left,sectionLeft:s.left,sectionRight:s.right,viewport:innerWidth};
   });
-  assert.match(layout.text,/^Учтено .+\n\+1 контакт после записи$/);assert(layout.height>=layout.lineHeight*2-1);assert(layout.detailRight<=layout.buttonLeft+1);assert(layout.sectionLeft>=0&&layout.sectionRight<=width);
+  assert.match(layout.text,/^Учтено .+\n\+1 контакт после последней записи$/);assert(layout.height>=layout.lineHeight*2-1);assert(layout.detailRight<=layout.buttonLeft+1);assert(layout.sectionLeft>=0&&layout.sectionRight<=width);
   report.snapshots.push({name:`contact-card-${width}px`,...layout});
   await page.locator('.pena-native-time-panel').screenshot({path:new URL(`./artifacts/time-contact-ack-${width}.png`,import.meta.url).pathname.replace(/^\/([A-Za-z]:)/,'$1')});
  }
- report.phases.push({name:'344px and 720px contact cards keep both detail lines and the action legible',status:'PASS'});
+ report.phases.push({name:'344px, 360px and 720px contact cards keep both detail lines and the action legible',status:'PASS'});
  console.log(JSON.stringify(report.phases));
 }catch(error){report.error=error.stack;await snapshot('failure').catch(e=>{report.snapshotError=e.message;});await page.screenshot({path:new URL('./artifacts/time-contact-ack-failure.png',import.meta.url).pathname.replace(/^\/([A-Za-z]:)/,'$1')}).catch(()=>{});throw error;}finally{report.pageErrors=errors;writeFileSync(new URL('./artifacts/time-contact-ack-acceptance.json',import.meta.url),JSON.stringify(report,null,2));await browser.close();await server.close();}

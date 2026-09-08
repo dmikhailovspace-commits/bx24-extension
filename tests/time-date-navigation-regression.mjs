@@ -10,9 +10,10 @@ const anchor='\tconst _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
 assert.equal(raw.split(anchor).length,2);
 const source=raw.replace(anchor,anchor+`
  window.dateProbe={
-  range:()=>_dialogTimeView==='stats'?_getDialogTimeStatsRange():_getDialogTimeSelectedRange(),
+  range:()=>['stats','stats30'].includes(_dialogTimeView)?_getDialogTimeStatsRange():_getDialogTimeSelectedRange(),
   record:()=>_getDialogTimeRecord(window.dateProbe.range()),
   selected:()=>_getDialogTimeSelectedRange(),
+  view:()=>_dialogTimeView,
   idle:()=>!_dialogTimeInFlight.size&&!_dialogTimeProjectCatalogOwner&&!_dialogTimeBootstrapPromise,
   readKeys:()=>Array.from(_dialogTimeInFlight.keys()),
   select:range=>_setDialogTimeRange(range),
@@ -20,6 +21,10 @@ const source=raw.replace(anchor,anchor+`
   legacy(){_callDialogTimeGlobalElapsedPage.capabilities ||= new Map();_callDialogTimeGlobalElapsedPage.capabilities.set(_getDialogTimeIdentityScopeKey(),{supported:false,reason:'controlled-legacy-portal'});},
   taskCount:()=>_getDialogTimeWorkingTaskIds(window.dateProbe.range()).length,
   clear(){_dialogTimeCache.clear();},
+  pressure(){
+   for(let i=0;i<12;i++){const day=_PENA_TIME_CONTROL.addDays(_getDialogTimeTodayKey(),-100-i);const range={from:day,to:day};_setDialogTimeCacheRecord(_getDialogTimeCacheKey(range),{range,status:'ready'});}
+   return{size:_dialogTimeCache.size,selected:_dialogTimeCache.has(_getDialogTimeCacheKey(window.dateProbe.range())),today:_dialogTimeCache.has(_getDialogTimeCacheKey(_getDialogTimeRange('today')))};
+  },
   sync:()=>_syncDialogTimeUi(_dialogControlNativeSwitcherNode)
  };`);
 const report={sourceSha:createHash('sha256').update(raw).digest('hex'),phases:[],limitations:'Actual Chromium date controls, production journal readers and REST queue; controlled Bitrix SDK responses, not a live portal.'};
@@ -27,7 +32,9 @@ const server=await startHarnessServer(),browser=await chromium.launch({headless:
 const page=await browser.newPage({viewport:{width:1200,height:900}}),errors=collectPageErrors(page);
 page.setDefaultTimeout(15000);
 const phase=async(name,run)=>{const at=performance.now();try{const evidence=await run();report.phases.push({name,status:'PASS',ms:performance.now()-at,evidence});}catch(error){report.phases.push({name,status:'FAIL',ms:performance.now()-at,error:error.stack});throw error;}};
-const ready=(timeout=15000)=>page.waitForFunction(()=>dateProbe.record()?.hasCompleteSnapshot===true&&dateProbe.record()?.status==='ready',undefined,{timeout});
+const ready=(timeout=15000)=>page.waitForFunction(()=>dateProbe.record()?.hasCompleteSnapshot===true&&dateProbe.record()?.status==='ready'&&
+ !document.querySelector('.pena-native-time-panel')?.classList.contains('--read-blocked')&&
+ document.querySelector('.pena-native-time-view-tab.--active')?.dataset.view===dateProbe.view(),undefined,{timeout});
 const seconds=()=>page.evaluate(()=>dateProbe.record()?.data?.totalSeconds);
 try {
  await page.route('**/extension/injected.js*',route=>route.fulfill({contentType:'application/javascript',body:source}));
@@ -96,6 +103,50 @@ try {
   await page.locator('.pena-native-time-view-tab[data-view="stats"]').click();await ready();assert.equal(await seconds(),18600);
   await page.locator('.pena-native-time-stats-row').nth(1).click();await ready();assert.equal(await seconds(),3000);
   return{weekSeconds:18600,selectedDaySeconds:3000};
+ });
+ await phase('30-day view includes both boundary days, excludes the preceding day, and keeps a warm cache',async()=>{
+  await page.evaluate(()=>{
+   dateBackend.rows.push({ID:'9100',TASK_ID:'101',USER_ID:'7',SECONDS:'2400',CREATED_DATE:__PENA_TIME_CONTROL__.addDays(dateBackend.today,-29)+'T12:00:00+03:00'});
+   dateBackend.rows.push({ID:'9101',TASK_ID:'101',USER_ID:'7',SECONDS:'9900',CREATED_DATE:__PENA_TIME_CONTROL__.addDays(dateBackend.today,-30)+'T12:00:00+03:00'});
+  });
+  await page.locator('.pena-native-time-date-today').click();await ready();
+  await page.locator('.pena-native-time-view-tab[data-view="stats30"]').click();await ready();assert.equal(await seconds(),21000);
+  await page.waitForFunction(()=>document.querySelectorAll('.pena-native-time-stats-row').length===30);assert.equal(await page.locator('.pena-native-time-stats-row').count(),30);
+  assert.equal(await page.locator('.pena-native-time-stats .pena-native-time-section-copy strong').textContent(),'Статистика за 30 дней');
+  assert.equal(await page.locator('.pena-native-time-refresh').getAttribute('aria-label'),'Обновить статистику за 30 дней');
+  const evidence=await page.evaluate(()=>({range:dateProbe.range(),today:dateBackend.today,firstDay:__PENA_TIME_CONTROL__.addDays(dateBackend.today,-29),calls:dateBackend.calls.length}));
+  assert.equal(evidence.range.from,evidence.firstDay);assert.equal(evidence.range.to,evidence.today);
+  await page.locator('.pena-native-time-view-tab[data-view="stats"]').click();await ready();assert.equal(await seconds(),18600);
+  await page.locator('.pena-native-time-view-tab[data-view="stats30"]').click();await ready();assert.equal(await seconds(),21000);
+  assert.equal(await page.evaluate(()=>dateBackend.calls.length),evidence.calls);
+  const pressure=await page.evaluate(()=>dateProbe.pressure());assert.equal(pressure.size,8);assert.equal(pressure.selected,true);assert.equal(pressure.today,true);
+  await page.setViewportSize({width:360,height:800});
+  const layout=await page.evaluate(()=>{
+   const panel=document.querySelector('.pena-native-time-panel');const buttons=Array.from(panel.querySelectorAll('.pena-native-time-panel-head button'));const box=panel.getBoundingClientRect();
+   return{panelFits:panel.scrollWidth<=panel.clientWidth+1,buttonsFit:buttons.every(button=>{const r=button.getBoundingClientRect();return r.left>=box.left&&r.right<=box.right+1;}),headerDoesNotOverlap:panel.querySelector('.pena-native-time-scroll').getBoundingClientRect().top>=panel.querySelector('.pena-native-time-panel-head').getBoundingClientRect().bottom-1,tabs:Array.from(panel.querySelectorAll('.pena-native-time-view-tab')).map(tab=>tab.textContent)};
+  });
+  assert.equal(layout.panelFits,true);assert.equal(layout.buttonsFit,true);assert.equal(layout.headerDoesNotOverlap,true);assert.deepEqual(layout.tabs,['День','7 дней','30 дней']);
+  await page.screenshot({path:'tests/artifacts/time-30-days-360.png'});await page.setViewportSize({width:1200,height:900});
+  await page.locator('.pena-native-time-stats-row').last().click();await ready();assert.equal(await seconds(),2400);
+  assert.equal(await page.evaluate(()=>dateProbe.selected().from),evidence.firstDay);
+  assert.equal(await page.locator('.pena-native-time-view-tab[data-view="day"]').getAttribute('aria-selected'),'true');
+  await page.evaluate(()=>{dateBackend.rows=dateBackend.rows.filter(row=>!['9100','9101'].includes(row.ID));});
+  return{...evidence,pressure,layout,totalSeconds:21000,lastDaySeconds:2400,warmAdditionalCalls:0};
+ });
+ await phase('30-day calendar navigation crosses leap February and year boundaries without changing its length',async()=>{
+  const ranges=[];
+  for(const [to,from] of [['2024-03-01','2024-02-01'],['2025-01-10','2024-12-12']]){
+   await page.locator('.pena-native-time-date-input').fill(to);await page.locator('.pena-native-time-date-input').dispatchEvent('change');await ready();
+   await page.locator('.pena-native-time-view-tab[data-view="stats30"]').click();await ready();
+   const range=await page.evaluate(()=>dateProbe.range());assert.equal(range.from,from);assert.equal(range.to,to);await page.waitForFunction(()=>document.querySelectorAll('.pena-native-time-stats-row').length===30);assert.equal(await page.locator('.pena-native-time-stats-row').count(),30);
+   ranges.push(range);
+  }
+  const callsBefore=await page.evaluate(()=>dateBackend.calls.length);
+  await page.locator('.pena-native-time-refresh').click();await ready();await page.waitForFunction(()=>document.querySelector('.pena-native-time-refresh')?.getAttribute('aria-busy')==='false');
+  const refreshCalls=await page.evaluate(before=>dateBackend.calls.slice(before),callsBefore);
+  assert.ok(refreshCalls.length>0);assert.ok(refreshCalls.every(call=>call.from==='2024-12-12'&&call.to==='2025-01-11'));
+  await page.locator('.pena-native-time-view-tab[data-view="day"]').click();await ready();
+  return{ranges,refreshCalls};
  });
  await phase('no-time day is a verified zero, with a completed range record',async()=>{
   const day=await page.evaluate(()=>__PENA_TIME_CONTROL__.addDays(dateBackend.today,-8));

@@ -229,7 +229,7 @@
 			accountedAt: Math.max(0, Number(task.accountedAt) || 0),
 			accountedVisits: Math.max(0, Number(task.accountedVisits) || 0),
 			accountedEntries: Array.isArray(task.accountedEntries) ? task.accountedEntries.filter(entry => /^[1-9]\d*$/.test(String(entry?.id || '')) && Number(entry.cutoffAt) > 0).map(entry => ({ id: String(entry.id), cutoffAt: Number(entry.cutoffAt) })) : [],
-			contactEvents: Array.isArray(task.contactEvents) ? task.contactEvents.filter(event => event && typeof event.id === 'string' && Number.isFinite(Number(event.at))).map(event => ({ id: event.id, at: Number(event.at), reason: String(event.reason || '') })) : [],
+			contactEvents: Array.isArray(task.contactEvents) ? task.contactEvents.filter(event => event && typeof event.id === 'string' && Number.isFinite(Number(event.at))).map(event => ({ id: event.id, at: Number(event.at), reason: String(event.reason || ''), ...(Number(event.sessionStartedAt) > 0 ? { sessionStartedAt: Number(event.sessionStartedAt) } : {}) })) : [],
 			contactBaseVisits: Math.max(0, Number(task.contactBaseVisits) || 0),
 			contactBaseQualifiedAt: Math.max(0, Number(task.contactBaseQualifiedAt) || 0),
 			visits
@@ -284,7 +284,7 @@
 		if (previous?.contactEvents.some(item => item.id === event.eventId)) return merged;
 		const baseVisits = previous?.contactEvents.length ? previous.contactBaseVisits : previous?.visits || 0;
 		const baseAt = previous?.contactEvents.length ? previous.contactBaseQualifiedAt : previous?.lastQualifiedAt || 0;
-		const events = [...(previous?.contactEvents || []), { id: String(event.eventId), at: Number(event.qualifiedAt), reason: String(event.reason || 'message') }]
+		const events = [...(previous?.contactEvents || []), { id: String(event.eventId), at: Number(event.qualifiedAt), reason: String(event.reason || 'message'), ...(Number(event.sessionStartedAt) > 0 ? { sessionStartedAt: Number(event.sessionStartedAt) } : {}) }]
 			.sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
 		let visits = baseVisits, lastAt = 0, lastReason = '';
 		for (const item of events) {
@@ -429,6 +429,10 @@
 		let pending = baseAt > cutoffAt ? Math.max(0, task.contactBaseVisits - task.accountedVisits) : 0;
 		let lastAt = 0;
 		for (const event of [...task.contactEvents].sort((a, b) => a.at - b.at || a.id.localeCompare(b.id))) {
+			// A covered old session is not a new touch and must not suppress an
+			// actual message sent just after its delayed duration qualification.
+			const coveredSession = event.reason === 'duration' && event.sessionStartedAt > 0 && event.sessionStartedAt <= cutoffAt;
+			if (coveredSession) continue;
 			if (baseAt && Math.abs(event.at - baseAt) < DEFAULT_TOUCH_DEDUPE_MS) continue;
 			if (lastAt && event.at - lastAt < DEFAULT_TOUCH_DEDUPE_MS) continue;
 			lastAt = event.at;
@@ -471,6 +475,9 @@
 			const localEntries = new Map(task.accountedEntries.map(entry => [entry.id, entry.cutoffAt]));
 			for (const entry of localReceipts) if (normalizeContactTaskId(entry.taskId) === task.taskId && !localEntries.has(String(entry.id))) localEntries.set(String(entry.id), Number(entry.cutoffAt) || 0);
 			let cutoffAt = task.accountedAt;
+			// A confirmed local ACK remains authoritative while the refreshed journal
+			// has not exposed its entry yet (or bookkeeping waits on another frame).
+			for (const cutoff of localEntries.values()) cutoffAt = Math.max(cutoffAt, cutoff);
 			for (const entry of tracked?.recordedEntries || []) {
 				cutoffAt = Math.max(cutoffAt, localEntries.get(String(entry.id)) || Number(entry.contactCutoffAt) || Number(entry.recordedAt) || 0);
 			}
