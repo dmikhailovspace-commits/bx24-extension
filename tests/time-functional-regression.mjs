@@ -26,6 +26,14 @@ const source=readFileSync(new URL('../extension/injected.js',import.meta.url),'u
  cacheTasks: () => _dialogTimeCache.get(_getDialogTimeCacheKey(_getDialogTimeSelectedRange()))?.taskIdsKey,
  loadAuto: () => _loadDialogTimeRange(_getDialogTimeSelectedRange()),
  load: () => _loadDialogTimeRange(_getDialogTimeSelectedRange(), {force:true})
+ };
+ const originalScheduleElapsed = _scheduleDialogTimeElapsedRefresh;
+ _scheduleDialogTimeElapsedRefresh = (...args) => {
+  const result = originalScheduleElapsed(...args);
+  const notify = window.timeElapsedScheduled;
+  window.timeElapsedScheduled = null;
+  if (notify) notify(window.timeProbe.readWork());
+  return result;
  };`).replace(
  '\tasync function _loadDialogTimeRange(range = _dialogTimeRange, { force = false, bootstrap = null } = {}) {',
  '\tasync function _loadDialogTimeRange(range = _dialogTimeRange, { force = false, bootstrap = null } = {}) {\n window.timeRangeLoadStarts = (window.timeRangeLoadStarts || 0) + 1; (window.timeRangeLoadTrace ||= []).push({at:Date.now(),stack:new Error().stack});'
@@ -114,10 +122,13 @@ try {
  });
  // Exercise the boundary with a real deferred task event, so phase isolation
  // cannot accidentally pass only when the preceding UI wait happened to be slow.
- await page.evaluate(()=>(window.nativeCustomEventHandlers.get('onPullEvent-tasks')||[]).forEach(fn=>fn('task_update',{TASK_ID:'90901'})));
- await page.waitForFunction(()=>window.timeProbe.readWork().elapsedTimer===true);
+ const deferredBoundary = await page.evaluate(()=>new Promise(resolve=>{
+  window.timeElapsedScheduled=resolve;
+  (window.nativeCustomEventHandlers.get('onPullEvent-tasks')||[]).forEach(fn=>fn('task_update',{TASK_ID:'90901'}));
+ }));
+ assert.equal(deferredBoundary.elapsedTimer,true,'The actual prior task handler must schedule a deferred elapsed refresh');
  await phase('all catalog pages and incremental watermark',async()=>{
-  windowCatalogBoundary = await page.evaluate(()=>({pending:window.timeProbe.readWork(),start:window.timeRangeLoadStarts||0}));
+  windowCatalogBoundary = {pending:deferredBoundary,start:await page.evaluate(()=>window.timeRangeLoadStarts||0)};
   // Do not attribute an older task event's 100ms refresh to the catalog pages.
   // Wait for real owners, including chained title/eligibility work, before
   // replacing the SDK fixture and taking the exact-zero baseline.
