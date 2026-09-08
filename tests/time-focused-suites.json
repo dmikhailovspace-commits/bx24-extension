@@ -15,5 +15,8 @@
   "time-project-scope-regression.mjs",
   "native-progress-performance-regression.mjs",
   "time-catalog-optimized-startup.mjs",
+  "time-startup-cycle-regression.mjs",
+  "native-shared-task-startup-regression.mjs",
+  "native-late-repository-proof-regression.mjs",
   "release-integrity.mjs"
 ]

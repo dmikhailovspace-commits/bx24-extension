@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.126';
+	window.__ANITREC_RUNNING__ = '7.5.127';
 
-	const VER = '7.5.126';
+	const VER = '7.5.127';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -3096,7 +3096,7 @@
 			_dialogRecentRepositoryReconnectAttempt = 0;
 			if (_dialogRecentRepositoryReconnectTimer) clearTimeout(_dialogRecentRepositoryReconnectTimer);
 			_dialogRecentRepositoryReconnectTimer = null;
-			if (_dialogRecentRepositoryNeedsFullCommit) await _writeDialogRecentCache();
+			if (_dialogRecentRepositoryNeedsFullCommit) _writeDialogRecentCache().catch(() => {});
 			return _countDialogRecentMeta();
 		})().catch(error => {
 			_dialogRecentRepositoryReady = true;
@@ -5749,6 +5749,11 @@
 			current?.kind === 'api') return current;
 		if (_dialogNativeExpectedAuditPromises.has(auditKey)) return _dialogNativeExpectedAuditPromises.get(auditKey);
 		const auditStartedAt = Date.now();
+		// Time bootstrap may already own the complete global task index. Reuse its
+		// promise for classification only; opening Chats must not launch another crawl.
+		const existingFullTaskFlight = _dialogTaskCatalogSyncFlights.get(`${sharedScopeKey}:full`);
+		let classificationTaskOutcomePromise = options.taskCatalogOutcomePromise ||
+			(existingFullTaskFlight ? existingFullTaskFlight.then(value => ({ value, error:null }), error => ({ value:null, error })) : null);
 
 		const promise = (async () => {
 			const metadata = new Map();
@@ -5835,8 +5840,14 @@
 			// The task index still resolves and commits independently in the caller.
 			if (!recentRowsExplicitlyClassified) {
 				try {
-					const taskOutcome = await options.taskCatalogOutcomePromise;
-					if (!taskOutcome?.error) taskCatalog = taskOutcome?.value || null;
+					// Bootstrap can start while recent pages are in flight. Join that owner
+					// as well, but never treat a selected-project catalog as global proof.
+					const runningFull = _dialogTaskCatalogSyncFlights.get(`${sharedScopeKey}:full`);
+					if (!classificationTaskOutcomePromise && runningFull) classificationTaskOutcomePromise =
+						runningFull.then(value => ({ value, error:null }), error => ({ value:null, error }));
+					const taskOutcome = await classificationTaskOutcomePromise;
+					if (!taskOutcome?.error && taskOutcome?.value?.complete === true &&
+						taskOutcome.value.headOnly !== true && taskOutcome.value.discarded !== true) taskCatalog = taskOutcome.value;
 				} catch {}
 			}
 			const taskChatIds = new Set(_getDialogRecentUniqueMeta().filter(meta => meta?.isTask === true).map(meta => normId(meta?.id)).filter(Boolean));
@@ -5890,7 +5901,7 @@
 					_dialogNativeSharedExpectedCatalog.idsByMode.tasks = Array.from(taskIds);
 				};
 				if (taskCatalog?.complete === true) extendSharedTaskIds({ value: taskCatalog, error: null });
-				else options.taskCatalogOutcomePromise?.then(extendSharedTaskIds).catch(() => {});
+				else classificationTaskOutcomePromise?.then(extendSharedTaskIds).catch(() => {});
 			}
 			const emptyAudit = complete && classificationComplete && ids.length === 0;
 			const sourceRows = emptyAudit &&
@@ -7092,6 +7103,37 @@
 					} else if (missingIds.length) {
 						missingAvailable = (await _verifyDialogNativeMissingIds(mode, missingIds)).available;
 					}
+				}
+				// A repository snapshot may arrive after the API proof or during this
+				// traversal. Its physically confirmed IDs are an independent lower bound:
+				// an exact-looking recent projection must never supersede those IDs.
+				const repositoryLowerBound = () => {
+					const proof = _dialogNativeRepositoryExpectedCatalogs.get(mode);
+					return proof?.complete === true && proof.repositorySchema === 2 &&
+						proof.scopeKey === _getDialogNativeExpectedAuditScopeKey(mode) &&
+						Number(proof.catalogVersion) === _DIALOG_CATALOG_CACHE_VERSION &&
+						Number(proof.revision) > 0 && Array.isArray(proof.ids) &&
+						proof.ids.length === Number(proof.count) ? proof : null;
+				};
+				const repositoryBeforeCheck = repositoryLowerBound();
+				const repositoryMissing = (repositoryBeforeCheck?.ids || []).filter(id => !state.seen.has(normId(id)));
+				if (stableBottom && repositoryMissing.length > 0 && repositoryMissing.length <= _DIALOG_NATIVE_MISSING_VERIFY_LIMIT &&
+					!cancelled && _isDialogNativeSourceGenerationCurrent(mode, container, sourceViewport, sourceGeneration)) {
+					const verified = await _verifyDialogNativeMissingIds(mode, repositoryMissing);
+					if (!cancelled && repositoryLowerBound() === repositoryBeforeCheck &&
+						_isDialogNativeSourceGenerationCurrent(mode, container, sourceViewport, sourceGeneration) && verified.unavailable.length) {
+						const unavailable = new Set(verified.unavailable.map(normId));
+						const ids = repositoryBeforeCheck.ids.filter(id => !unavailable.has(normId(id)));
+						_dialogNativeRepositoryExpectedCatalogs.set(mode, { ...repositoryBeforeCheck, ids, count:ids.length, reason:'repository-tombstones-reconciled' });
+					}
+				}
+				// Re-read after access checks: a newer snapshot received while awaiting the
+				// server remains blocking until that exact lower bound is checked too.
+				const finalRepositoryMissing = (repositoryLowerBound()?.ids || []).filter(id => !state.seen.has(normId(id)));
+				for (const id of finalRepositoryMissing) if (!blockingExpectedIds.includes(id)) blockingExpectedIds.push(id);
+				if (window.__PENA_NATIVE_BOTTOM_DEBUG__) {
+					window.__PENA_NATIVE_BOTTOM_DEBUG__.blockingExpectedCount = blockingExpectedIds.length;
+					window.__PENA_NATIVE_BOTTOM_DEBUG__.repositoryMissingCount = finalRepositoryMissing.length;
 				}
 				const sourceCurrent = _isDialogNativeSourceGenerationCurrent(mode, container, sourceViewport, sourceGeneration);
 				const networkAvailable = _isDialogNetworkAvailable();
@@ -8707,6 +8749,9 @@
 				const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
 				// A fresh installation has no physical lower bound. Hydrate the first
 				// visible source automatically; metadata/cache age never proves DOM-ready.
+				// One time owner runs alongside physical paging, including healthy-source
+				// no-op paths. Neither repository restore nor a hidden-scroll promise owns it.
+				_scheduleDialogTimeBootstrap();
 				const nativeMaterializationFresh = _isDialogNativeMaterializationCurrent(mode, container);
 				const firstSourceLoad = window.__PENA_TEST_SKIP_INITIAL_MOUNT__ !== true && !nativeMaterializationFresh;
 				const completeViewRequested = firstSourceLoad || explicitFullIntent || _dialogControlNeedsCompleteNativeMaterialization(mode);
@@ -9104,8 +9149,30 @@
 			if (_isDialogControlNativePassThrough()) _completeDialogRecentInteractionGate();
 			_syncDialogRecentInteractionGateDocumentState();
 		}
-		_bootstrapDialogRecentRepository().then(() => {
+		// The bridge retries repository.get internally and may never settle while
+		// disconnected. Give a fast local restore one turn, then let native/time
+		// loading proceed. A late snapshot is freshness-merged with live state.
+		const repositoryGrace = setTimeout(() => {
+			if (!_dialogRecentRuntimeStarting || !_isDialogControlNativePassThrough()) return;
 			_dialogRecentRuntimeStarting = false;
+			_armDialogRecentSync();
+			_scheduleDialogNativeModeLoad('runtime-pending-repository', 0);
+		}, 100);
+		_bootstrapDialogRecentRepository().then(() => {
+			clearTimeout(repositoryGrace);
+			_dialogRecentRuntimeStarting = false;
+			// A saved physical lower bound arriving late still matters. It cannot
+			// replace current rows, but missing IDs require a fenced recovery pass.
+			for (const [mode, materialization] of _dialogNativeMaterializedSources) {
+				const baseline = _dialogNativeRepositoryExpectedCatalogs.get(mode);
+				if (baseline?.scopeKey !== _getDialogNativeExpectedAuditScopeKey(mode) ||
+					!_isDialogNativeSourceGenerationCurrent(mode, materialization.list, materialization.viewport, materialization.sourceGeneration)) continue;
+				const captured = new Set(materialization.ids || []);
+				if (baseline.ids?.some(id => !captured.has(id))) {
+					materialization.invalidated = true;
+					materialization.invalidatedReason = 'late-repository-lower-bound';
+				}
+			}
 			_publishDialogRecentSyncState();
 			_armDialogRecentSync();
 			if (window.__PENA_FORCE_REST_CATALOG__ === true) {
@@ -9118,6 +9185,7 @@
 			// visible source after bootstrap; a healthy source exits without scrolling.
 			_scheduleDialogNativeModeLoad('runtime-ready', 0);
 		}).catch(() => {
+			clearTimeout(repositoryGrace);
 			_dialogRecentRuntimeStarting = false;
 			_armDialogRecentSync();
 			if (_isDialogControlNativePassThrough()) _refreshDialogNativeVisibleWindow();
@@ -16026,7 +16094,7 @@ if (_presetChannel) {
 					? _PENA_TIME_CONTROL.formatDurationCompact(visibleTodayData.totalSeconds)
 						: (todayRecord?.status === 'loading' || initializingToday || (todayRecord && !todayRecord.error) ? '…' : '--:--'));
 			const label = tracker ? `Сейчас ${compact}` : (!_getDialogTimeProjectScopeKey() ? 'Учёт времени' : `Сегодня ${compact}`);
-			const title = todayRecord?.error || (todayRecord?.restored && !todayRecord.hasCompleteSnapshot ? 'Сохранённое время за сегодня. Проверяем актуальность.' : 'Затраченное время за сегодня');
+			const title = todayRecord?.error || (_dialogTimeBootstrapToken?.scope === _getDialogTimeProjectScopeKey() ? _dialogTimeBootstrapToken.error : '') || (todayRecord?.restored && !todayRecord.hasCompleteSnapshot ? 'Сохранённое время за сегодня. Проверяем актуальность.' : 'Затраченное время за сегодня');
 			if (timeButtonLabel.textContent !== label) timeButtonLabel.textContent = label;
 			if (timeButton.title !== title) timeButton.title = title;
 			timeButton.classList.toggle('--loading', todayRecord?.status === 'loading');
@@ -16518,9 +16586,20 @@ if (_presetChannel) {
 	let _dialogTimeBootstrapToken = null;
 	let _dialogTimeBootstrapPromise = null;
 	let _dialogTimeBootstrapSequence = 0;
+	let _dialogTimeBootstrapIdentityPromise = null;
 	function _scheduleDialogTimeBootstrap(taskCatalogOutcomePromise = null) {
+		if (!_PENA_TIME_CONTROL || !_isDialogTimeFrameActive() || navigator.onLine === false) return Promise.resolve(null);
+		if (!_getCurrentBitrixUserId()) {
+			if (!_dialogTimeBootstrapIdentityPromise) {
+				_dialogTimeBootstrapIdentityPromise = _ensureCurrentBitrixUserId().then(() => {
+					_dialogTimeBootstrapIdentityPromise = null;
+					return _scheduleDialogTimeBootstrap(taskCatalogOutcomePromise);
+				}).catch(() => null).finally(() => { _dialogTimeBootstrapIdentityPromise = null; });
+			}
+			return _dialogTimeBootstrapIdentityPromise;
+		}
 		const scope = _getDialogTimeProjectScopeKey();
-		if (!scope || !_PENA_TIME_CONTROL || !_isDialogTimeFrameActive() || navigator.onLine === false) return Promise.resolve(null);
+		if (!scope) return Promise.resolve(null);
 		if (_dialogTimeBootstrapPromise && _dialogTimeBootstrapToken?.scope === scope) {
 			// A midnight wake must not disappear into yesterday's cancelling read.
 			// Wait for that owner, then start one coalesced cycle for the new day.
@@ -16529,15 +16608,20 @@ if (_presetChannel) {
 			}
 			return _dialogTimeBootstrapPromise;
 		}
-		const token = { id:++_dialogTimeBootstrapSequence, scope, active:true, phase:'catalog', dateKey:'', completedTasks:0, totalTasks:0, elapsedPages:0, error:'' };
+		const previous = _dialogTimeBootstrapToken;
+		const sameDay = previous?.scope === scope && (!previous.dateKey || previous.dateKey === _getDialogTimeTodayKey());
+		if (sameDay && previous.retryAt > Date.now()) return Promise.resolve(null);
+		if (previous?.retryTimer) clearTimeout(previous.retryTimer);
+		const token = { id:++_dialogTimeBootstrapSequence, scope, active:true, phase:'catalog', dateKey:'', startedAt:Date.now(), finishedAt:0, retryAt:0, retryCount:sameDay && previous.phase !== 'ready' ? (previous.retryCount || 0) + 1 : 0, completedTasks:0, totalTasks:0, elapsedPages:0, error:'' };
 		_dialogTimeBootstrapToken = token;
 		const current = () => token === _dialogTimeBootstrapToken && scope === _getDialogTimeProjectScopeKey() && _isDialogTimeFrameActive() && document.visibilityState !== 'hidden' && navigator.onLine !== false;
 		const run = (async () => {
 			try {
-				// Native wake may carry its visual-guard promise. Respect that boundary
-				// without treating its global task metadata as selected-project proof.
+				// Metadata and today's journal share the project owner, not the physical
+				// scroll lifetime. Waiting for that guard serialized startup and could
+				// lose today's continuation when the source was replaced meanwhile.
 				const portalClock = _ensureDialogTimePortalDate().then(day => { if (current()) _queueDialogTimeUiSync(); return day; });
-				if (taskCatalogOutcomePromise) await taskCatalogOutcomePromise.catch(() => null);
+				taskCatalogOutcomePromise?.catch(() => null);
 				if (!current()) return null;
 				// Time has an independent project scope. Native dialog metadata cannot
 				// grant completeness or invalidate a committed time snapshot.
@@ -16559,6 +16643,17 @@ if (_presetChannel) {
 			} finally {
 				token.active = false;
 				if (token.phase === 'elapsed' || token.phase === 'catalog') token.phase = 'paused';
+				token.finishedAt = Date.now();
+				if (token.phase !== 'ready') {
+					const retryDelay = Math.min(60000, (_dialogTimePortalDateKey ? 15000 : 1500) * 2 ** token.retryCount);
+					token.retryAt = token.finishedAt + retryDelay;
+					// One bounded continuation, independent of the 60-second contact lease
+					// heartbeat. Ready snapshots never arm a timer or start another audit.
+					if (current() && token.retryCount < 3) token.retryTimer = setTimeout(() => {
+						token.retryTimer = null;
+						if (current()) _scheduleDialogTimeBootstrap();
+					}, retryDelay);
+				}
 				if (_dialogTimeBootstrapToken === token) { _dialogTimeBootstrapPromise = null; _queueDialogTimeUiSync(); }
 			}
 		})();
@@ -16568,7 +16663,7 @@ if (_presetChannel) {
 	window.__PENA_TIME_LOAD_DIAGNOSTICS__ = Object.freeze({ snapshot: () => {
 		const token = _dialogTimeBootstrapToken;
 		const read = _callDialogTimeGlobalElapsedPage.diagnostics;
-		return token ? { cycle:token.id, active:token.active, phase:token.phase, dateKey:token.dateKey, completedTasks:token.completedTasks, totalTasks:token.totalTasks, elapsedPages:token.elapsedPages, error:token.error, read:read ? {...read} : null } : { cycle:0, active:false, phase:'idle', read:read ? {...read} : null };
+		return token ? { cycle:token.id, active:token.active, phase:token.phase, dateKey:token.dateKey, startedAt:token.startedAt, finishedAt:token.finishedAt, retryAt:token.retryAt, completedTasks:token.completedTasks, totalTasks:token.totalTasks, elapsedPages:token.elapsedPages, error:token.error, read:read ? {...read} : null } : { cycle:0, active:false, phase:'idle', read:read ? {...read} : null };
 	} });
 	let _dialogTimeElapsedEventTimer = null;
 	let _dialogTimeElapsedEventScope = '';

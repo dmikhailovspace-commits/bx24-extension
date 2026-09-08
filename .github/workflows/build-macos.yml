@@ -248,10 +248,11 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' \
-            'Adds a 30-day time view with date navigation, cached reads and a responsive header.' \
-            'Contact cards show accounted time and contacts after the latest entry. Stable message IDs deduplicate replayed delivery; activity sessions covered by a time entry do not reappear as new contacts.' \
-            'Startup skips redundant metadata merges and publishes each task-catalog page to the time index once. Full-catalog reuse retains identity and freshness checks.' \
-            'This update uses 17 time-focused suites covering contacts, date navigation, startup, task catalogs and package integrity. It does not claim a full extension regression run.' \
+            'Starts native dialogs and the shared task/today owner together. Today recovers automatically after a failed initial clock request without opening the panel.' \
+            'A stalled repository bridge no longer blocks native startup; late physical lower bounds are reconciled without discarding live state.' \
+            'Native completeness audit can use an already running full task catalog, avoiding a redundant physical pass without extra task requests.' \
+            'A controlled 108-dialog Chromium comparison measured 7.929 s to 2.697 s with identical IDs, tail and scroll position. This is not a live portal speed guarantee.' \
+            'This update uses 20 time-focused suites covering startup recovery, contacts, date navigation, task catalogs and package integrity. It does not claim a full extension regression run.' \
             'Controlled tests are not a live Bitrix latency measurement. The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \
             'Includes Windows EXE and Universal macOS DMG for Intel and Apple Silicon.' \
             > release-notes.md

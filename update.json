@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "7.5.126",
+  "version": "7.5.127",
   "release_date": "2026-09-09",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.126",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.126",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.127",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.127",
   "extension_files": [
-    "worker-v7_5_126.js",
+    "worker-v7_5_127.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,7 +33,7 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.126/extension/injected.js",
-  "changelog": "v7.5.126: adds 30-day time view; deduplicates replayed contacts and activity sessions already covered by time entries; shows accounted time and new contacts; avoids redundant dialog metadata and task-index processing; 17 focused verification suites",
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.127/extension/injected.js",
+  "changelog": "v7.5.127: starts dialogs, task catalog and today in one shared cycle; recovers failed initial clock reads automatically; detaches native startup from stalled repository restore; shares running full catalog with native completeness audit; 20 focused suites",
   "verification_profile": "time-focused"
 }
