@@ -20,7 +20,7 @@ function fixture(count = 2) {
   Date:TestDate, setTimeout:()=>0, clearTimeout:()=>{}, document:{visibilityState:'visible'}, navigator:{onLine:true},
   _PENA_TIME_CONTROL:model, _dialogTimePortalDateKey:range.from, _PENA_TIME_CACHE_TTL_MS:120000, _DIALOG_TIME_CATALOG_REFRESH_MS:10000,
   _DIALOG_TIME_FIRST_WAVE_SIZE:16, _DIALOG_TIME_WAVE_SIZE:50,
-  _dialogTimeElapsedEventTimer:null, _dialogTimeElapsedEventScope:'', _dialogTimeCatalogCursor:0, _dialogTimeCatalogScope:'portal:7', _dialogTimeRange:range, _dialogTimeView:'day', _dialogControlNativeWorkspaceTab:'time', _dialogControlNativeSwitcherNode:null,
+  _dialogTimeElapsedEventTimer:null, _dialogTimeElapsedEventScope:'', _dialogTimeCatalogCursor:1, _dialogTimeCatalogScope:'portal:7', _dialogTimeRange:range, _dialogTimeView:'day', _dialogControlNativeWorkspaceTab:'time', _dialogControlNativeSwitcherNode:null,
   _dialogTimeCache:new Map(), _dialogTimeInFlight:new Map(), _dialogTimeForcedRefreshes:new Map(), _dialogTimeRangeRechecks:new Map(),
   _dialogTimeRangeRevisions:new Map(), _dialogTimeTaskRevisions:new Map(), _dialogTimeTaskChangedAt:new Map(), _dialogTimePanelRefreshes:new Map(),
   _dialogTimeTaskTitles:new Map(), _dialogTimeTaskEligibility:new Map(), _readDialogTaskTimeTrackingFlag:row=>row.ALLOW_TIME_TRACKING==='Y', _rememberDialogTimeTaskChat:()=>{},
@@ -30,8 +30,13 @@ function fixture(count = 2) {
   _dialogTimeManualRetryConfirmKey:'', _dialogTimeTrackerRetryConfirmKey:'', _PENA_TIME_MANUAL_DRAFT_KEY:'manual', _PENA_TIME_TRACKER_KEY:'tracker', _dialogTimePortalUtcOffsetMinutes:0,
   _dialogTimeDeleteConfirmEntryId:'', _dialogTimeEditingEntryId:'',
   _getCurrentBitrixUserId:()=> '7', _ensureCurrentBitrixUserId:async()=> '7', _getDialogNativeSharedAuditScopeKey:()=>state.scope,
+  // CRUD/elapsed tests assume an explicitly configured scope. They do not certify
+  // preference persistence or the initial catalog gate; the scope suite does that.
+  _getDialogTimeProjectScopeKey:()=>state.scope,_isDialogTimeProjectTask:id=>state.taskIds.includes(String(id)),
+  _rememberDialogTimeProjectTask:()=>{},
+  _ensureDialogTimeProjectCatalog:async()=>true,
   _getDialogTimeWorkingTaskIds:()=>state.taskIds.slice(), _getDialogTimeSelectedRange:()=>range, _getDialogTimeStatsRange:()=>range,
-  _queueDialogTimeUiSync:()=>state.paints.push(sandbox._dialogTimeCache.get('7:2026-09-07:2026-09-07')?.data?.totalSeconds ?? null),
+  _queueDialogTimeUiSync:()=>state.paints.push(sandbox._dialogTimeCache.get('portal:7:2026-09-07:2026-09-07')?.data?.totalSeconds ?? null),
   _loadDialogTimeTaskTitles:async()=>{ state.titleCalls++; }, _getDialogTimeFriendlyError:e=>e.message,
   _isBxRestBatchPressureError:e=>/TIMEOUT|LIMIT|NETWORK/.test(e.code || ''),
   _sleepDialogControl:async()=>{}, _showDialogDockToast:()=>{}, _markDialogTimeTaskAccounted:async()=>true, warn:()=>{},
@@ -40,7 +45,7 @@ function fixture(count = 2) {
   _readDialogTimeTracker:()=>structuredClone(state.tracker), _writeDialogTimeTracker:tracker=>{state.tracker=structuredClone(tracker);return !state.storageFailure;},
   _ensureDialogTimeTrackerTick:()=>{}, _ensureDialogTimePortalDate:async()=>{},
   _ensureDialogTimeTaskEligibility:()=>state.eligibility?.promise || Promise.resolve(true),
-  _refreshDialogTimeTaskCatalog:async options=>{state.catalogCalls.push(options || {});},
+  _refreshDialogTimeTaskCatalog:async options=>{state.catalogCalls.push(options || {});return true;},
   _callBxRestMethod:async(method,params)=>{
    state.writes.push({method,params});
    if(state.writeHold) await state.writeHold.promise;
@@ -71,9 +76,9 @@ function fixture(count = 2) {
  state.seed=(entries=[])=>{
   state.entries=structuredClone(entries);
   const data={...model.aggregateElapsedItems(entries),range,pages:1,totalAvailable:entries.length};
-  sandbox._dialogTimeCache.set('7:2026-09-07:2026-09-07',{status:'ready',range,data,hasVerifiedData:true,hasCompleteSnapshot:true,updatedAt:state.clock,taskIdsKey:state.taskIds.join(','),taskFreshness:Object.fromEntries(state.taskIds.map(id=>[id,{at:state.clock,revision:0}]))});
+  sandbox._dialogTimeCache.set('portal:7:2026-09-07:2026-09-07',{status:'ready',range,data,hasVerifiedData:true,hasCompleteSnapshot:true,updatedAt:state.clock,taskIdsKey:state.taskIds.join(','),taskFreshness:Object.fromEntries(state.taskIds.map(id=>[id,{at:state.clock,revision:0}]))});
  };
- state.record=()=>sandbox._dialogTimeCache.get('7:2026-09-07:2026-09-07');
+ state.record=()=>sandbox._dialogTimeCache.get('portal:7:2026-09-07:2026-09-07');
  return {state,api:sandbox};
 }
 const entry=(id,task,seconds,date='2026-09-07')=>({ID:String(id),TASK_ID:String(task),USER_ID:'7',SECONDS:seconds,CREATED_DATE:date+'T12:00:00'});
@@ -83,10 +88,10 @@ try {
  await phase('confirmed add retains the existing day and overlapping week immediately',async()=>{
   const {state,api}=fixture();state.seed([entry(1,1,3600),entry(2,2,1800)]);
   const week=model.normalizeRange('2026-09-01','2026-09-07');
-  api._dialogTimeCache.set('7:2026-09-01:2026-09-07',{status:'ready',range:week,data:{...model.aggregateElapsedItems(state.entries),range:week},updatedAt:state.clock});
+  api._dialogTimeCache.set('portal:7:2026-09-01:2026-09-07',{status:'ready',range:week,data:{...model.aggregateElapsedItems(state.entries),range:week},updatedAt:state.clock});
   api._invalidateDialogTimeCachesForDates(range.from,{taskId:'1'});api._applyDialogTimeOptimisticEntry('1',600,range.from,'9');
   assert.equal(state.record().data.totalSeconds,6000);
-  assert.equal(api._dialogTimeCache.get('7:2026-09-01:2026-09-07').data.totalSeconds,6000);
+  assert.equal(api._dialogTimeCache.get('portal:7:2026-09-01:2026-09-07').data.totalSeconds,6000);
   return {immediateSeconds:6000};
  });
  await phase('pre-write response cannot roll back the confirmed value',async()=>{
@@ -118,10 +123,10 @@ try {
   api._dialogTimeTaskRevisions.set('117',1);await api._loadDialogTimeRange(range);assert.deepEqual(state.calls.slice(cold).flat(),['117']);
   return {coldTasks:117,coldBatches:cold,unchangedAfterDayReads:0,dirtyTaskReads:1};
  });
- await phase('manual refresh coalesces and uses task catalog delta',async()=>{
+ await phase('manual refresh coalesces and completes explicit catalog reconciliation before elapsed',async()=>{
   const {state,api}=fixture(30);state.seed([entry(1,30,600)]);const gate=deferred();state.hold=gate;
   const a=api._refreshDialogTimePanel(range),b=api._refreshDialogTimePanel(range);gate.resolve();await Promise.all([a,b]);
-  assert.equal(state.catalogCalls.length,1);assert.notEqual(state.catalogCalls[0].force,true);assert.equal(state.calls.flat().length,30);
+  assert.equal(state.catalogCalls.length,1);assert.equal(state.catalogCalls[0].force,true);assert.equal(state.calls.flat().length,30);
   return {manualCallers:2,catalogReads:1,elapsedTaskReads:30};
  });
  await phase('closing the panel stops the remaining cold scan',async()=>{
@@ -229,7 +234,7 @@ try {
   class TitleDate extends Date { static now(){return state.clock;} }
   const api={Date:TitleDate,Promise,document:{visibilityState:'visible'},navigator:{onLine:true},_dialogControlNativeWorkspaceTab:'time',
    _dialogTimeTitleLoadPromise:null,_dialogTimeTitleLoadQueued:false,_dialogTimeTaskTitles:new Map(known?Array.from({length:50},(_,i)=>[String(i+1),'Task '+(i+1)]):[]),_dialogTimeTaskTitleAttempted:new Map(),
-   _getDialogNativeSharedAuditScopeKey:()=>state.scope,_readDialogTimeVisits:()=>[],_findDialogTimeTaskItem:()=>{state.nativeFinds++;return null;},_isDialogTimePlaceholderTaskTitle:(id,title)=>!title,
+   _getDialogNativeSharedAuditScopeKey:()=>state.scope,_getDialogTimeProjectScopeKey:()=>state.scope,_isDialogTimeProjectTask:()=>true,_readDialogTimeVisits:()=>[],_findDialogTimeTaskItem:()=>{state.nativeFinds++;return null;},_isDialogTimePlaceholderTaskTitle:(id,title)=>!title,
    _getFreshDialogTimeTaskEligibility:()=>null,_queueDialogTimeUiSync:()=>{},_sleepDialogControl:async()=>{},
    _rememberDialogTimeTaskEligibility:(id,data)=>{state.commits.push(id);api._dialogTimeTaskTitles.set(id,data.task.title);},
    _callBxRestPagesFast:async(jobs,timeout,options)=>{assert.equal(options.isCurrent(),true);state.batches.push(jobs.map(j=>j.params.taskId));if(state.gate)await state.gate.promise;
@@ -302,19 +307,17 @@ try {
   return {initialCompleted:0,finalCompleted:17,retainedSeconds:600};
  });
 
- await phase('synthetic bootstrap zero stays unverified while first elapsed responses are held',async()=>{
-  const {state,api}=fixture(0);await api._loadDialogTimeRange(range);
-  assert.equal(state.record().data.totalSeconds,0);assert.equal(api._hasDialogTimeVerifiedData(state.record()),false);
-  state.taskIds=['1'];const gate=deferred();state.hold=gate;const pending=api._loadDialogTimeRange(range);
+ await phase('first elapsed snapshot stays unverified while every response is held',async()=>{
+  const {state,api}=fixture(1);
+  const gate=deferred();state.hold=gate;const pending=api._loadDialogTimeRange(range);
   await Promise.resolve();assert.equal(state.record().status,'loading');assert.equal(state.record().readProgress.completedTasks,0);
   assert.equal(api._hasDialogTimeVerifiedData(state.record()),false);
   gate.resolve();await pending;
   assert.equal(api._hasDialogTimeVerifiedData(state.record()),true);assert.equal(state.record().data.totalSeconds,0);
   return {beforeFirstResponseVerified:false,actualEmptyResponseVerified:true,actualSeconds:0};
  });
- await phase('confirmed empty catalog upgrades bootstrap zero without requests and remains verified while new task loads',async()=>{
-  const {state,api}=fixture(0);await api._loadDialogTimeRange(range);assert.equal(api._hasDialogTimeVerifiedData(state.record()),false);
-  api._dialogTimeCatalogCursor=state.clock;await api._loadDialogTimeRange(range);
+ await phase('confirmed empty selected catalog needs no elapsed requests and stays verified while a new task loads',async()=>{
+  const {state,api}=fixture(0);await api._loadDialogTimeRange(range);
   assert.equal(api._hasDialogTimeVerifiedData(state.record()),true);assert.equal(state.calls.length,0);
   state.taskIds=['1'];const gate=deferred();state.hold=gate;const pending=api._loadDialogTimeRange(range);await Promise.resolve();
   assert.equal(api._hasDialogTimeVerifiedData(state.record()),true);assert.equal(state.record().data.totalSeconds,0);
@@ -323,9 +326,9 @@ try {
   return {emptyCatalogReads:0,confirmedZeroRetainedOnLoad:true,confirmedZeroRetainedOnError:true};
  });
  await phase('unknown catalog scope and failed first read cannot confirm synthetic zero; positive ACK can',async()=>{
-  const {state,api}=fixture(0);api._dialogTimeCatalogCursor=state.clock;api._dialogTimeCatalogScope='portal:8';await api._loadDialogTimeRange(range);
+  const {state,api}=fixture(0);api._dialogTimeCatalogCursor=state.clock;api._dialogTimeCatalogScope='portal:8';api._ensureDialogTimeProjectCatalog=async()=>false;await api._loadDialogTimeRange(range);
   assert.equal(api._hasDialogTimeVerifiedData(state.record()),false);
-  state.taskIds=['1'];const gate=deferred();state.hold=gate;const pending=api._loadDialogTimeRange(range);await Promise.resolve();
+  api._dialogTimeCatalogScope=state.scope;state.taskIds=['1'];const gate=deferred();state.hold=gate;const pending=api._loadDialogTimeRange(range);await Promise.resolve();
   gate.reject(Object.assign(new Error('TIMEOUT'),{code:'TIMEOUT'}));await assert.rejects(pending);assert.equal(api._hasDialogTimeVerifiedData(state.record()),false);
   api._invalidateDialogTimeCachesForDates(range.from,{taskId:'1'});api._applyDialogTimeOptimisticEntry('1',600,range.from,'101');
   assert.equal(api._hasDialogTimeVerifiedData(state.record()),true);assert.equal(state.record().data.totalSeconds,600);
@@ -350,20 +353,20 @@ try {
   assert.equal(state.record().data.coverage.complete,true);return {completedBeforeClose:16,remainingAfterReopen:101,repeatedTaskReads:0};
  });
 
- await phase('complete snapshot provenance waits for catalog tail and survives targeted invalidation',async()=>{
-  const {state,api}=fixture(16);await api._loadDialogTimeRange(range);
-  assert.equal(state.record().data.coverage.complete,true);assert.equal(state.record().hasCompleteSnapshot,false);
-  state.taskIds=Array.from({length:117},(_,i)=>String(i+1));api._dialogTimeCatalogCursor=state.clock;
+ await phase('complete snapshot provenance waits for catalog and elapsed tails and survives targeted invalidation',async()=>{
+  const {state,api}=fixture(117);api._dialogTimeCatalogCursor=0;
+  const catalog=deferred();api._ensureDialogTimeProjectCatalog=async()=>{await catalog.promise;api._dialogTimeCatalogCursor=state.clock;return true;};
   const gate=deferred();state.hold=gate;const tail=api._loadDialogTimeRange(range);await Promise.resolve();
+  assert.equal(state.calls.length,0);assert.equal(state.record(),undefined);
+  catalog.resolve();while(!state.calls.length)await Promise.resolve();
   assert.equal(state.record().hasCompleteSnapshot,false);gate.resolve();await tail;
   assert.equal(state.calls.flat().length,117);assert.equal(state.record().hasCompleteSnapshot,true);
   api._dialogTimeTaskRevisions.set('1',1);const dirty=deferred();state.hold=dirty;const refresh=api._loadDialogTimeRange(range);
   await Promise.resolve();assert.equal(state.record().hasCompleteSnapshot,true);dirty.resolve();await refresh;
-  assert.equal(state.record().hasCompleteSnapshot,true);return {first16Complete:false,full117Complete:true,dirtyRetainsCompleteProvenance:true};
+  assert.equal(state.record().hasCompleteSnapshot,true);return {beforeCatalogElapsed:0,full117Complete:true,dirtyRetainsCompleteProvenance:true};
  });
- await phase('late completed empty catalog confirms a full snapshot without extra requests',async()=>{
-  const {state,api}=fixture(0);await api._loadDialogTimeRange(range);assert.equal(state.record().hasCompleteSnapshot,false);
-  api._dialogTimeCatalogCursor=state.clock;await api._loadDialogTimeRange(range);assert.equal(state.record().hasCompleteSnapshot,true);assert.equal(state.record().data.coverage.checkedTasks,0);assert.equal(state.record().data.coverage.totalTasks,0);assert.equal(state.record().data.coverage.complete,true);
+ await phase('confirmed empty selected catalog yields a complete snapshot without elapsed requests',async()=>{
+  const {state,api}=fixture(0);await api._loadDialogTimeRange(range);assert.equal(state.record().hasCompleteSnapshot,true);assert.equal(state.record().data.coverage.checkedTasks,0);assert.equal(state.record().data.coverage.totalTasks,0);assert.equal(state.record().data.coverage.complete,true);
   state.taskIds=['1'];const hold=deferred();state.hold=hold;const read=api._loadDialogTimeRange(range);await Promise.resolve();
   assert.equal(state.record().hasCompleteSnapshot,true);hold.resolve();await read;assert.equal(state.calls.flat().length,1);
   return {emptyFullSnapshot:true,newTaskRetainsProvenance:true};
@@ -400,7 +403,7 @@ try {
   state.entries[0].SECONDS=900;api._dialogControlNativeWorkspaceTab='time';await api._loadDialogTimeRange(range);
   assert.deepEqual(state.calls.flat(),['1']);assert.equal(state.record().data.totalSeconds,900);
   api._invalidateDialogTimeTaskSnapshot('1');api._invalidateDialogTimeTaskSnapshot('1');assert.equal(timers.size,1);
-  const callback=timers.values().next().value;timers.clear();callback();await api._dialogTimeInFlight.get('7:2026-09-07:2026-09-07');
+  const callback=timers.values().next().value;timers.clear();callback();await api._dialogTimeInFlight.get('portal:7:2026-09-07:2026-09-07');
   assert.deepEqual(state.calls.flat(),['1','1']);
   api._invalidateDialogTimeTaskSnapshot('1');const old=timers.values().next().value;timers.clear();state.scope='portal:8';old();
   assert.equal(state.calls.flat().length,2);assert.equal(api._invalidateDialogTimeTaskSnapshot('not-a-task'),false);
@@ -477,6 +480,36 @@ try {
   api._writeDialogTimeManualDraft(null);assert.equal(api._readDialogTimeManualDraft().pendingWrite.status,'acknowledged');
   assert.equal(api._writeDialogTimeManualDraft({pendingWrite:null},{writeIntent:true,resolvePendingKey:'old-operation'}),false);
   assert.equal(api._readDialogTimeManualDraft().pendingWrite.itemId,'101');return{formResetPreserved:true,staleAckRejected:true};
+ });
+ await phase('late manual ACK or rejection preserves the new project draft and keeps the old write identity',async()=>{
+  const results=[];
+  for(const outcome of ['ack','rejected','unknown']){
+   const {state,api}=fixture(1),storage=new Map(),gate=deferred();let projectScope='project-A';
+   api._getDialogTimeProjectScopeKey=()=>projectScope;
+   api.localStorage={getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)};
+   vm.runInContext(extract('_readDialogTimeManualDraft')+'\n'+extract('_writeDialogTimeManualDraft'),api);
+   api._writeDialogTimeManualDraft({taskId:'1',title:'Task A',query:'Task A',hours:'0',minutes:'10',dateKey:range.from});
+   state.writeHold=gate;if(outcome==='rejected')state.rejectFalse=true;if(outcome==='unknown')state.noId=true;
+   const add=api._commitDialogTimeManualEntry({taskId:'1',title:'Task A'},0,10,range.from);
+   for(let i=0;i<20&&!state.writes.length;i++)await Promise.resolve();assert.equal(state.writes.length,1);
+   const original=api._readDialogTimeManualDraft().pendingWrite;assert.equal(original.taskId,'1');assert.equal(original.seconds,600);
+   projectScope='project-B';state.taskIds=['2'];api._dialogTimeCatalogScope=projectScope;
+   api._writeDialogTimeManualDraft({taskId:'2',title:'Task B',query:'Task B',hours:'0',minutes:'17',dateKey:range.from});
+   const selected={taskId:'2',title:'Task B'},searchResults=[selected];
+   api._dialogTimeManualSelectedTask=selected;api._dialogTimeManualSearchQuery='Task B';api._dialogTimeManualSearchResults=searchResults;
+   const hours={value:'0'},minutes={value:'17'};
+   api._dialogControlNativeSwitcherNode={querySelector:()=>({querySelector:selector=>selector.endsWith('hours')?hours:minutes})};
+   gate.resolve();await add;
+   const draft=api._readDialogTimeManualDraft();
+   assert.equal(draft.taskId,'2');assert.equal(draft.query,'Task B');assert.equal(draft.minutes,'17');assert.equal(draft.hours,'0');
+   assert.equal(api._dialogTimeManualSelectedTask,selected);assert.equal(api._dialogTimeManualSearchQuery,'Task B');assert.equal(api._dialogTimeManualSearchResults,searchResults);
+   assert.equal(hours.value,'0');assert.equal(minutes.value,'17');assert.equal(state.writes.length,1);
+   assert.equal(state.writes[0].params.TASKID,1);assert.equal(state.writes[0].params.ARFIELDS.SECONDS,600);
+   if(outcome==='rejected')assert.equal(draft.pendingWrite,null);
+   else {assert.equal(draft.pendingWrite.operationId,original.operationId);assert.equal(draft.pendingWrite.taskId,'1');assert.equal(draft.pendingWrite.seconds,600);assert.equal(draft.pendingWrite.status,outcome==='ack'?'acknowledged':'unknown');if(outcome==='ack')assert.equal(draft.pendingWrite.itemId,'101');}
+   results.push({outcome,draftTask:draft.taskId,draftMinutes:draft.minutes,serverWrites:state.writes.length,pendingStatus:draft.pendingWrite?.status||'none'});
+  }
+  return {results};
  });
  await phase('acknowledged timer clear failure stays neutral and retries bookkeeping without another ADD',async()=>{
   const {state,api}=fixture(1);state.clock=Date.parse('2026-09-07T10:00:10Z');state.seed([]);

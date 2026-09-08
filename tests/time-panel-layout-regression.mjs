@@ -129,8 +129,8 @@ try {
 	const wide = await measure(page);
 	assert.ok(closeEnough((wide.panel.left + wide.panel.right) / 2, wide.viewport.width / 2), `Wide window is not horizontally centered: ${JSON.stringify(wide)}`);
 	assert.ok(closeEnough((wide.panel.top + wide.panel.bottom) / 2, wide.viewport.height / 2), `Wide window is not vertically centered: ${JSON.stringify(wide)}`);
-	assert.ok(closeEnough(wide.panel.width, 720), `Wide window is not 720px: ${JSON.stringify(wide)}`);
-	assert.ok(closeEnough(wide.panel.height, 520), `Wide window is not 520px: ${JSON.stringify(wide)}`);
+	assert.ok(closeEnough(wide.panel.width, 960), `Wide window is not 960px: ${JSON.stringify(wide)}`);
+	assert.ok(closeEnough(wide.panel.height, 720), `Wide window is not 720px: ${JSON.stringify(wide)}`);
 	assert.ok(closeEnough(wide.header.height, 48), `Header left the 8px grid: ${JSON.stringify(wide.header)}`);
 	assert.equal(await panel.locator('.pena-native-time-footer').count(), 0, 'Legacy footer still occupies panel height');
 	assert.equal(await panel.locator('.pena-native-time-header-actions .pena-native-time-report').count(), 1,
@@ -332,8 +332,8 @@ try {
 		await page.setViewportSize(viewport);
 		panel = await open();
 		const current = await measure(page);
-		const expectedWidth = viewport.width <= 680 ? Math.min(520, viewport.width - 16) : Math.min(720, viewport.width - 32);
-		const expectedHeight = viewport.width <= 680 ? viewport.height - 16 : Math.min(520, viewport.height - 32);
+		const expectedWidth = viewport.width <= 680 ? Math.min(520, viewport.width - 16) : Math.min(960, viewport.width - 32);
+		const expectedHeight = viewport.width <= 680 ? viewport.height - 16 : Math.min(720, viewport.height - 32);
 		assert.ok(closeEnough(current.panel.width, expectedWidth),
 			`Window width is unstable at ${viewport.width}px: ${JSON.stringify(current.panel)}`);
 		assert.ok(closeEnough(current.panel.height, expectedHeight),

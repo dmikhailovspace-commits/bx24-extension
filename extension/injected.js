@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.105';
+	window.__ANITREC_RUNNING__ = '7.5.106';
 
-	const VER = '7.5.105';
+	const VER = '7.5.106';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -4551,49 +4551,290 @@
 
 	function _getDialogTimeEligibleTaskIds() {
 		return Array.from(_dialogTimeTaskEligibility.entries())
-			.filter(([taskId, enabled]) => enabled === true)
+			.filter(([taskId, enabled]) => enabled === true && _isDialogTimeProjectTask(taskId))
 			.map(([taskId]) => String(taskId))
 			.sort((left, right) => Number(left) - Number(right));
 	}
 
-	function _getDialogTimeWorkingTaskIds(range = _dialogTimeRange) {
-		const normalized = _PENA_TIME_CONTROL?.normalizeRange?.(range?.from, range?.to) || range || {};
-		const ids = new Set();
-		const add = value => {
-			const id = String(value || '').trim();
-			if (/^\d+$/.test(id)) ids.add(id);
-		};
-		for (const record of _dialogTimeCache.values()) {
-			(record?.data?.tasks || []).forEach(task => add(task?.taskId));
+	let _dialogTimeProjectPreference = null;
+	let _dialogTimeProjectGeneration = 0;
+	let _dialogTimeProjectTaskIds = new Set();
+	let _dialogTimeProjectCatalogOwner = null;
+	let _dialogTimeProjectCatalogError = null;
+	let _dialogTimeProjectCatalogDirty = false;
+	let _dialogTimeProjectListOwner = null;
+	function _normalizeDialogTimeProjectPreference(value) {
+		if (value?.version !== 1 || typeof value.all !== 'boolean' || !Array.isArray(value.ids)) return null;
+		const ids = [...new Set(value.ids.map(String).filter(id => /^[1-9]\d*$/.test(id)))].sort((a,b) => Number(a)-Number(b));
+		const includeUnassigned = value.includeUnassigned === true;
+		if (!value.all && !ids.length && !includeUnassigned) return null;
+		return { version:1, all:value.all, ids:value.all ? [] : ids, includeUnassigned };
+	}
+	function _getDialogTimeProjectStorageKey() {
+		const scope = _getDialogNativeSharedAuditScopeKey();
+		return scope ? `pena.timeProjects.v1.${scope}` : '';
+	}
+	function _readDialogTimeProjectPreference() {
+		const key = _getDialogTimeProjectStorageKey();
+		if (_dialogTimeProjectPreference?.key === key) return _dialogTimeProjectPreference.value;
+		let value = null;
+		try { if (key) value = _normalizeDialogTimeProjectPreference(JSON.parse(localStorage.getItem(key) || 'null')); } catch {}
+		_dialogTimeProjectPreference = { key, value };
+		_dialogTimeProjectGeneration++;
+		return value;
+	}
+	function _getDialogTimeProjectScopeKey() {
+		const preference = _readDialogTimeProjectPreference();
+		return preference ? `${_getDialogNativeSharedAuditScopeKey()}:projects:${preference.all ? '*' : preference.ids.join(',')}:${+preference.includeUnassigned}:g${_dialogTimeProjectGeneration}` : '';
+	}
+	function _getDialogTimeProjectFilter() {
+		const preference = _readDialogTimeProjectPreference();
+		if (!preference) throw new Error('Сначала выберите проекты');
+		if (preference.all) return preference.includeUnassigned ? {} : { '>GROUP_ID':0 };
+		return { GROUP_ID:[...preference.ids, ...(preference.includeUnassigned ? ['0'] : [])] };
+	}
+	function _matchesDialogTimeProjectTask(task) {
+		const preference = _readDialogTimeProjectPreference();
+		const groupId = task?.GROUP_ID ?? task?.groupId ?? task?.group?.id;
+		if (!preference || groupId == null || !/^\d+$/.test(String(groupId))) return false;
+		if (Number(groupId) === 0) return preference.includeUnassigned;
+		return preference.all || preference.ids.includes(String(groupId));
+	}
+	function _isDialogTimeProjectTask(taskId) {
+		return !!_dialogTimeCatalogCursor && _dialogTimeCatalogScope === _getDialogTimeProjectScopeKey() && _dialogTimeProjectTaskIds.has(String(taskId));
+	}
+	function _rememberDialogTimeProjectTask(task) {
+		const id = String(task?.ID ?? task?.id ?? '');
+		if (!/^\d+$/.test(id) || _dialogTimeCatalogScope !== _getDialogTimeProjectScopeKey() || !_dialogTimeCatalogCursor) return;
+		if (task?.GROUP_ID == null && task?.groupId == null && task?.group?.id == null) return;
+		const wasIncluded = _dialogTimeProjectTaskIds.has(id);
+		const included = _matchesDialogTimeProjectTask(task);
+		if (included) _dialogTimeProjectTaskIds.add(id); else _dialogTimeProjectTaskIds.delete(id);
+		if (included !== wasIncluded) {
+			_dialogTimeTaskRevisions.set(id, (_dialogTimeTaskRevisions.get(id) || 0) + 1);
+			if (!included) _pruneDialogTimeProjectSnapshots();
+			if (included && _dialogControlNativeWorkspaceTab === 'time') _scheduleDialogTimeElapsedRefresh();
+			_queueDialogTimeUiSync();
 		}
-		if (normalized.from && normalized.to && _PENA_TIME_CONTROL?.addDays) {
-			let dateKey = normalized.from;
-			for (let day = 0; day < 8 && dateKey <= normalized.to; day += 1) {
-				_readDialogTimeVisits(dateKey).forEach(visit => add(visit?.taskId));
-				if (dateKey === normalized.to) break;
-				dateKey = _PENA_TIME_CONTROL.addDays(dateKey, 1);
+	}
+	function _pruneDialogTimeProjectSnapshots() {
+		const scope = _getDialogTimeProjectScopeKey();
+		for (const [key, record] of _dialogTimeCache) {
+			if (!key.startsWith(`${scope}:`) || !record.data?.items) continue;
+			const items=record.data.items.filter(item => _dialogTimeProjectTaskIds.has(String(item.taskId)));
+			const taskFreshness=Object.fromEntries(Object.entries(record.taskFreshness || {}).filter(([id]) => _dialogTimeProjectTaskIds.has(id)));
+			if (items.length === record.data.items.length && Object.keys(taskFreshness).length===Object.keys(record.taskFreshness || {}).length) continue;
+			_dialogTimeRangeRevisions.set(key,(_dialogTimeRangeRevisions.get(key)||0)+1);
+			const data={ ...record.data, ..._PENA_TIME_CONTROL.aggregateElapsedItems(items), totalAvailable:items.length };
+			_setDialogTimeCacheRecord(key,{...record,data,taskFreshness});
+		}
+	}
+	function _saveDialogTimeProjectPreference(value) {
+		const normalized = _normalizeDialogTimeProjectPreference(value);
+		const key = _getDialogTimeProjectStorageKey();
+		if (!normalized || !key) throw new Error('Выберите хотя бы один проект или задачи без проекта');
+		const previous = _readDialogTimeProjectPreference();
+		if (JSON.stringify(previous) === JSON.stringify(normalized)) return false;
+		// Persist before changing the live scope. A failed write leaves the working
+		// snapshot, timer and contact journal intact and the settings form open.
+		localStorage.setItem(key, JSON.stringify(normalized));
+		_dialogTimeProjectPreference = { key, value:normalized };
+		_dialogTimeProjectGeneration++;
+		_dialogTimeManualSearchToken++;
+		_dialogTimeManualSelectedTask = null;
+		_dialogTimeManualSearchQuery = '';
+		_dialogTimeManualSearchResults = [];
+		clearTimeout(_dialogTimeManualSearchTimer);
+		_queueDialogTimeUiSync();
+		return true;
+	}
+	function _getDialogTimeReusableNativeCatalog() {
+		const result=_dialogTaskCatalogLastResult;
+		if (_dialogTaskCatalogScopeKey !== _getDialogNativeSharedAuditScopeKey() || !result?.complete || result.headOnly || Date.now()-_dialogTaskCatalogFetchedAt>60000) return null;
+		if (!Array.isArray(result.rows) || result.rows.some(task => task.GROUP_ID == null && task.groupId == null && task.group?.id == null)) return null;
+		return result.rows;
+	}
+	async function _ensureDialogTimeProjectCatalog({ force = false, delta = false } = {}) {
+		const scope = _getDialogTimeProjectScopeKey();
+		const current = () => scope && scope === _getDialogTimeProjectScopeKey() && _isDialogTimeFrameActive() && document.visibilityState !== 'hidden' && navigator.onLine !== false;
+		if (!current()) return false;
+		if (_dialogTimeProjectCatalogOwner?.scope === scope) {
+			const running=_dialogTimeProjectCatalogOwner;
+			if (force && running.delta) return running.promise.then(() => current() ? _ensureDialogTimeProjectCatalog({force:true}) : false);
+			return running.promise;
+		}
+		if (!force && !delta && _dialogTimeCatalogScope === scope && _dialogTimeCatalogCursor) return true;
+		const owner = { scope, delta, promise:null };
+		_dialogTimeProjectCatalogOwner = owner;
+		_dialogTimeProjectCatalogError = null;
+		_queueDialogTimeUiSync();
+		const since = delta && _dialogTimeCatalogScope === scope ? _dialogTimeCatalogCursor : 0;
+		const startedAt = Date.now();
+		const run = (async () => {
+			if (!force && !delta) {
+				const preference=_readDialogTimeProjectPreference();
+				const nativeOwner=preference?.all && preference.includeUnassigned ? _dialogTaskCatalogSyncFlights.get(`${_getDialogNativeSharedAuditScopeKey()}:full`) : null;
+				if (nativeOwner) await nativeOwner.catch(() => null);
+				if (!current()) return false;
+				const nativeRows=_getDialogTimeReusableNativeCatalog();
+				if (nativeRows) {
+					const selected=nativeRows.filter(_matchesDialogTimeProjectTask);
+					_dialogTimeProjectTaskIds=new Set(selected.map(task => String(task.ID ?? task.id)));
+					_dialogTimeCatalogScope=scope; _dialogTimeCatalogCursor=_dialogTaskCatalogLastResult.startedAt || _dialogTaskCatalogFetchedAt;
+					_publishDialogTimeTaskIndexRows(selected);
+					return true;
+				}
 			}
-		}
-		add(_dialogTimeManualSelectedTask?.taskId);
-		add(_readDialogTimeTracker()?.taskId);
-		add(_getActiveDialogTimeActivity()?.taskId);
-		// Prioritize local work for the first wave, then cover every accessible task.
-		// ALLOW_TIME_TRACKING controls new work; it cannot erase historical entries.
-		_getDialogTimeEligibleTaskIds().slice(0, 8).forEach(add);
-		const recent = _getDialogRecentUniqueMeta()
-			.filter(meta => meta?.isTask === true && _getDialogTimeTaskEligibilityForDisplay(String(meta.taskId || '')))
-			.sort((left, right) => (Number(right.lastMessageTs) || 0) - (Number(left.lastMessageTs) || 0));
-		for (const meta of recent) {
-			if (ids.size >= 16) break;
-			add(meta.taskId);
-		}
-		const priority = Array.from(ids).sort((left, right) => Number(left) - Number(right));
-		const priorityIds = new Set(priority);
-		const all = new Set([..._dialogTimeTaskEligibility.keys(), ..._dialogTimeTaskTitles.keys()]);
-		Array.from(all).sort((left, right) => Number(left) - Number(right)).forEach(add);
-		return [...priority, ...Array.from(ids).filter(id => !priorityIds.has(id))];
+			const rows = [];
+			let afterId = 0;
+			while (current()) {
+				const page = await _callBxRestPageWithTimeout('tasks.task.list', {
+					filter:{ ..._getDialogTimeProjectFilter(), '>ID':afterId, ...(since ? { '>=CHANGED_DATE':new Date(since - 60000).toISOString() } : {}) },
+					select:['ID','TITLE','CHAT_ID','GROUP_ID','ALLOW_TIME_TRACKING','CHANGED_DATE'], order:{ID:'asc'}, start:0
+				}, 12000, { isCurrent:current });
+				if (!current()) return false;
+				const batch = _extractDialogTaskCatalogRows(page.data);
+				const nextId = _getDialogTaskKeysetCursor(batch, afterId);
+				// Treat an ignored source filter as an error, never as permission to
+				// crawl the whole portal or publish unrelated tasks.
+				if (batch.some(task => !_matchesDialogTimeProjectTask(task))) throw new Error('Битрикс24 вернул задачи вне выбранных проектов');
+				rows.push(...batch);
+				const root = page.data?.result || page.data || {};
+				const tail = root.hasMore === false || root.hasMorePages === false || !batch.length ||
+					(!(page.next != null && page.next > 0) && root.hasMore !== true && root.hasMorePages !== true && batch.length < 50);
+				if (tail) {
+					const ids = since ? new Set(_dialogTimeProjectTaskIds) : new Set();
+					rows.forEach(task => ids.add(String(task.ID ?? task.id)));
+					_dialogTimeProjectTaskIds = ids;
+					_dialogTimeCatalogScope = scope;
+					_dialogTimeCatalogCursor = startedAt;
+					_dialogTimeProjectCatalogDirty = false;
+					_pruneDialogTimeProjectSnapshots();
+					_publishDialogTimeTaskIndexRows(rows);
+					_queueDialogTimeUiSync();
+					return true;
+				}
+				afterId = nextId;
+				await _sleepDialogControl(0);
+			}
+			return false;
+		})().catch(error => {
+			if (current()) _dialogTimeProjectCatalogError={scope,message:error.message,at:Date.now()};
+			throw error;
+		}).finally(() => {
+			if (_dialogTimeProjectCatalogOwner === owner) _dialogTimeProjectCatalogOwner = null;
+			_queueDialogTimeUiSync();
+		});
+		owner.promise = run;
+		return run;
+	}
+	async function _loadDialogTimeProjects() {
+		const scope = _getDialogNativeSharedAuditScopeKey();
+		if (_dialogTimeProjectListOwner?.scope === scope) return _dialogTimeProjectListOwner.promise;
+		const owner = { scope, promise:null };
+		const current = () => !!scope && scope === _getDialogNativeSharedAuditScopeKey();
+		owner.promise = (async () => {
+			const projects = new Map();
+			let start = 0;
+			while (current()) {
+				const page = await _callBxRestPageWithTimeout('sonet_group.get', { ORDER:{ID:'ASC'}, start }, 12000, {isCurrent:current});
+				if (!current()) return [];
+				const data = page.data?.result ?? page.data;
+				if (!Array.isArray(data)) throw new Error('Битрикс24 не вернул список проектов');
+				const rows = data;
+				for (const row of rows) if (/^[1-9]\d*$/.test(String(row.ID ?? row.id))) projects.set(String(row.ID ?? row.id), {id:String(row.ID ?? row.id), name:String(row.NAME ?? row.name ?? `Проект #${row.ID ?? row.id}`)});
+				if (page.next == null) return [...projects.values()].sort((a,b) => a.name.localeCompare(b.name,'ru'));
+				if (Number(page.next) <= start) throw new Error('Битрикс24 повторил страницу проектов');
+				start = Number(page.next);
+			}
+			return [];
+		})().catch(error => { if (_dialogTimeProjectListOwner === owner) _dialogTimeProjectListOwner = null; throw error; });
+		_dialogTimeProjectListOwner = owner;
+		return owner.promise;
+	}
+	function _openDialogTimeProjectSettings(panel) {
+		if (!panel || panel._penaTimeProjectSettings) return;
+		const previous = _readDialogTimeProjectPreference();
+		const scope = _getDialogNativeSharedAuditScopeKey();
+		if (!scope) return;
+		const state = { scope, all:previous?.all === true, ids:new Set(previous?.ids || []), includeUnassigned:previous?.includeUnassigned === true, projects:[], loaded:false };
+		panel._penaTimeProjectSettings = state;
+		panel.classList.add('--project-settings');
+		let section = panel.querySelector('.pena-native-time-project-settings');
+		if (!section) { section=document.createElement('section'); section.className='pena-native-time-project-settings'; panel.querySelector('.pena-native-time-scroll').prepend(section); }
+		section.hidden = false;
+		section.replaceChildren();
+		const title = document.createElement('h3'); title.className='pena-native-time-project-title'; title.textContent=previous ? 'Проекты для учёта времени' : 'Сначала выберите проекты';
+		const description = document.createElement('p'); description.className='pena-native-time-project-description'; description.textContent='Загружаем задачи и трудозатраты только из выбранных проектов и рабочих групп. Выбор сохранится для вашего пользователя.';
+		const search = document.createElement('input'); search.type='search'; search.className='pena-native-time-project-search'; search.placeholder='Найти проект'; search.setAttribute('aria-label','Найти проект');
+		const makeCheck = (labelText, className, checked, onChange) => {
+			const label=document.createElement('label'); label.className=className;
+			const input=document.createElement('input'); input.type='checkbox'; input.checked=checked;
+			const name=document.createElement('span'); name.className='pena-native-time-project-name'; name.textContent=labelText;
+			input.addEventListener('change', () => onChange(input.checked)); label.append(input,name); return label;
+		};
+		const status=document.createElement('p'); status.className='pena-native-time-project-status'; status.setAttribute('role','status'); status.textContent='Загружаем проекты…';
+		const list=document.createElement('div'); list.className='pena-native-time-project-list';
+		const footer=document.createElement('div'); footer.className='pena-native-time-project-footer';
+		const save=document.createElement('button'); save.type='button'; save.className='pena-native-time-project-save'; save.textContent=previous ? 'Сохранить' : 'Начать учёт';
+		const cancel=document.createElement('button'); cancel.type='button'; cancel.className='pena-native-time-project-cancel'; cancel.textContent='Отмена'; cancel.hidden=!previous;
+		const close = () => { panel._penaTimeProjectSettings=null; panel.classList.remove('--project-settings'); section.hidden=true; _queueDialogTimeUiSync(); };
+		cancel.addEventListener('click',close);
+		const updateSave = () => { save.disabled=!state.loaded || (!state.all && !state.ids.size && !state.includeUnassigned); };
+		const renderList = () => {
+			const query=search.value.trim().toLocaleLowerCase('ru');
+			list.replaceChildren();
+			for (const project of state.projects.filter(project => !query || project.name.toLocaleLowerCase('ru').includes(query))) {
+				const option=makeCheck(project.name,'pena-native-time-project-option',state.all || state.ids.has(project.id),checked => {
+					if (state.all) { state.all=false; state.ids=new Set(state.projects.map(item => item.id)); }
+					if (checked) state.ids.add(project.id); else state.ids.delete(project.id);
+					all.querySelector('input').checked=state.all;
+					all.querySelector('input').indeterminate=!state.all && state.ids.size>0;
+					updateSave();
+				});
+				option.querySelector('input').dataset.projectId=project.id; list.append(option);
+			}
+		};
+		const all=makeCheck('Выбрать все проекты','pena-native-time-project-all',state.all,checked => { state.all=checked; state.ids.clear(); all.querySelector('input').indeterminate=false; renderList(); updateSave(); });
+		all.querySelector('input').indeterminate=!state.all && state.ids.size>0;
+		const unassigned=makeCheck('Задачи без проекта','pena-native-time-project-option',state.includeUnassigned,checked => {state.includeUnassigned=checked; updateSave();});
+		unassigned.querySelector('input').dataset.projectId='0';
+		search.addEventListener('input',renderList);
+		footer.append(cancel,save);
+		section.append(title,description,search,all,unassigned,status,list,footer);
+		updateSave();
+		save.addEventListener('click', () => {
+			if (scope !== _getDialogNativeSharedAuditScopeKey()) { status.textContent='Пользователь изменился. Откройте настройки заново.'; return; }
+			try {
+				_saveDialogTimeProjectPreference({version:1,all:state.all,ids:[...state.ids],includeUnassigned:state.includeUnassigned});
+				close();
+				_scheduleDialogTimeBootstrap();
+				const range=_dialogTimeView==='stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
+				_loadDialogTimeRange(range).catch(() => {});
+			} catch { status.classList.add('--error'); status.textContent='Не удалось сохранить выбор. Повторите.'; }
+		});
+		const load = () => {
+			status.textContent='Загружаем проекты…'; status.classList.remove('--error');
+			_loadDialogTimeProjects().then(projects => {
+				if (panel._penaTimeProjectSettings !== state || scope !== _getDialogNativeSharedAuditScopeKey()) return;
+				state.projects=projects; state.loaded=true;
+				// Retain saved inaccessible IDs visibly so opening settings cannot
+				// silently remove a previous selection.
+				for (const id of state.ids) if (!projects.some(project => project.id===id)) projects.push({id,name:`Проект #${id} (сейчас недоступен)`});
+				status.textContent=projects.length ? '' : 'Доступных проектов нет'; renderList(); updateSave();
+			}).catch(() => {
+				if (panel._penaTimeProjectSettings !== state) return;
+				status.classList.add('--error'); status.textContent='Не удалось загрузить проекты. ';
+				const retry=document.createElement('button'); retry.type='button'; retry.textContent='Повторить'; retry.addEventListener('click',load); status.append(retry);
+			});
+		};
+		load();
 	}
 
+	function _getDialogTimeWorkingTaskIds(range = _dialogTimeRange) {
+		if (_dialogTimeCatalogScope !== _getDialogTimeProjectScopeKey() || !_dialogTimeCatalogCursor) return [];
+		return Array.from(_dialogTimeProjectTaskIds).sort((a,b) => Number(a)-Number(b));
+	}
 	function _getDialogTaskKeysetCursor(rows, afterId = 0) {
 		let cursor = Number(afterId) || 0;
 		for (const row of rows) {
@@ -4609,75 +4850,16 @@
 	let _dialogTimeCatalogPromise = null;
 	let _dialogTimeCatalogCursor = 0;
 	let _dialogTimeCatalogScope = '';
-	let _dialogTimeCatalogTimer = null;
 	async function _refreshDialogTimeTaskCatalog({ force = false } = {}) {
-		if (_dialogTimeCatalogPromise) return _dialogTimeCatalogPromise;
-		const scope = _getDialogNativeSharedAuditScopeKey();
-		const current = () => scope === _getDialogNativeSharedAuditScopeKey() && _dialogControlNativeWorkspaceTab === 'time' && document.visibilityState !== 'hidden';
-		if (!scope || !current()) return;
-		if (scope !== _dialogTimeCatalogScope) { _dialogTimeCatalogCursor = 0; _dialogTimeCatalogScope = scope; }
-		_dialogTimeCatalogPromise = (async () => {
-			// A single full-catalog owner serves native startup and time tracking in
-			// either opening order. Separate SELECT lists must not double the crawl.
-			if (force || !_dialogTimeCatalogCursor || _dialogTaskCatalogSyncFlights.has(`${scope}:full`)) {
-				const full = await _syncDialogTaskCatalog({ forceNetwork:force || !_dialogTimeCatalogCursor, deferMerge:true });
-				if (!current()) return;
-				if (full?.complete !== true || full?.discarded) throw new Error('Не удалось полностью проверить список задач');
-				const range = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
-				_loadDialogTimeRange(range).catch(() => {});
-				return;
-			}
-			const since = force ? 0 : _dialogTimeCatalogCursor;
-			const startedAt = Date.now();
-			let afterId = 0;
-			let pages = 0;
-			const seen = new Set();
-			while (current()) {
-				const filter = { '>ID': afterId, ...(since ? { '>=CHANGED_DATE': new Date(since - 60000).toISOString() } : {}) };
-				const revisions = new Map(_dialogTimeTaskRevisions);
-				const page = await _callBxRestPage('tasks.task.list', {
-					filter, select: ['ID', 'TITLE', 'CHAT_ID', 'ALLOW_TIME_TRACKING', 'CHANGED_DATE'],
-					order: { ID: 'asc' }, start: 0
-				}, { isCurrent: current });
-				if (!current()) return;
-				const rows = _extractDialogTaskCatalogRows(page.data);
-				const nextId = _getDialogTaskKeysetCursor(rows, afterId);
-				pages += 1;
-				const newIds = rows.map(row => String(row.ID ?? row.id)).filter(id => !seen.has(id));
-				if (rows.length && !newIds.length) throw new Error('Task pagination repeated a page');
-				newIds.forEach(id => seen.add(id));
-				const changed = _publishDialogTimeTaskIndexRows(rows.filter(row => {
-					const id = String(row.ID ?? row.id);
-					return (revisions.get(id) || 0) === (_dialogTimeTaskRevisions.get(id) || 0);
-				}));
-				const root = page.data?.result || page.data || {};
-				const atTail = root.hasMore === false || root.hasMorePages === false || !rows.length ||
-					(!(page.next != null && page.next > 0) && root.hasMore !== true && root.hasMorePages !== true && rows.length < 50);
-				// Publish completed catalog evidence before the range fast path checks
-				// whether its already loaded entries form the complete first snapshot.
-				if (atTail) _dialogTimeCatalogCursor = startedAt;
-				// First page paints useful totals; the tail reconciles the final working
-				// set. Intermediate title pages must not fan out into elapsed-time reads.
-				if (pages === 1 || atTail) {
-					const range = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
-					_loadDialogTimeRange(range).catch(() => {});
-				}
-				if (changed && _dialogTimeManualSearchQuery && !_dialogTimeManualSelectedTask) {
-					_dialogTimeManualSearchResults = _getDialogTimeLocalTaskSearchResults(_dialogTimeManualSearchQuery);
-					_renderDialogTimeManualSearch();
-				}
-				if (atTail) return;
-				afterId = nextId;
-				await _sleepDialogControl(200);
-			}
-		})().finally(() => {
-			_dialogTimeCatalogPromise = null;
-			clearTimeout(_dialogTimeCatalogTimer);
-			if (current()) _dialogTimeCatalogTimer = setTimeout(() => _refreshDialogTimeTaskCatalog().catch(() => {}), _DIALOG_TIME_CATALOG_REFRESH_MS);
+		if (!_getDialogTimeProjectScopeKey()) return false;
+		const scope = _getDialogTimeProjectScopeKey();
+		if (_dialogTimeCatalogPromise && _dialogTimeProjectCatalogOwner?.scope === scope) return _dialogTimeCatalogPromise;
+		const run = _ensureDialogTimeProjectCatalog({ force }).finally(() => {
+			if (_dialogTimeCatalogPromise === run) _dialogTimeCatalogPromise = null;
 		});
-		return _dialogTimeCatalogPromise;
+		_dialogTimeCatalogPromise = run;
+		return run;
 	}
-
 	function _publishDialogTimeTaskIndexRows(rows = []) {
 		let changed = false;
 		const scope = _getDialogNativeSharedAuditScopeKey();
@@ -4769,7 +4951,7 @@
 		}
 		const syncStartedAt = Date.now();
 		const syncPromise = (async () => {
-			const select = ['ID', 'TITLE', 'CHAT_ID', 'ALLOW_TIME_TRACKING', 'ACTIVITY_DATE', 'CHANGED_DATE'];
+			const select = ['ID', 'TITLE', 'CHAT_ID', 'GROUP_ID', 'ALLOW_TIME_TRACKING', 'ACTIVITY_DATE', 'CHANGED_DATE'];
 			const maxPages = headOnly
 				? Math.max(1, Math.min(4, Number(options.maxPages) || 1))
 				: _DIALOG_TASK_CATALOG_MAX_PAGES;
@@ -4802,10 +4984,6 @@
 				// catalog to finish or fail.
 				_publishDialogTimeTaskIndexRows(batch);
 				pages += 1;
-				if (!headOnly && pages === 1 && _dialogControlNativeWorkspaceTab === 'time' && document.visibilityState !== 'hidden') {
-					const range = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
-					_loadDialogTimeRange(range).catch(() => {});
-				}
 				if (page?.total != null && Number.isFinite(Number(page.total)) && Number(page.total) >= 0) {
 					total = Math.max(0, Number(page.total));
 				}
@@ -4860,12 +5038,7 @@
 			if (!headOnly || complete) _dialogTaskCatalogComplete = complete;
 			_dialogTaskCatalogFetchedAt = Date.now();
 			_dialogTaskCatalogScopeKey = scopeKey;
-			if (complete && !headOnly) {
-				if (_dialogTimeCatalogScope !== scopeKey) _dialogTimeCatalogCursor = 0;
-				_dialogTimeCatalogScope = scopeKey;
-				_dialogTimeCatalogCursor = Math.max(_dialogTimeCatalogCursor, syncStartedAt);
-			}
-			const result = { count: merged, tasks: unique.size, pages, expectedTotal: total, complete, headOnly, paginationChainValid, emptyQuorumConfirmed, emptyNativeContradiction, rows: uniqueRows };
+			const result = { startedAt:syncStartedAt, count: merged, tasks: unique.size, pages, expectedTotal: total, complete, headOnly, paginationChainValid, emptyQuorumConfirmed, emptyNativeContradiction, rows: uniqueRows };
 			if (!headOnly || complete || !_dialogTaskCatalogLastResult) _dialogTaskCatalogLastResult = result;
 			return result;
 		})().finally(() => {
@@ -9025,10 +9198,11 @@ function _rememberTaskMetaForDialogControlItem(item, meta) {
 		return data?.task || data?.TASK || data?.result?.task || data?.RESULT?.TASK || data?.result?.TASK || data?.RESULT?.task || data || {};
 	}
 
-	function _rememberDialogTimeTaskEligibility(taskId, data) {
+	function _rememberDialogTimeTaskEligibility(taskId, data, options = {}) {
 		const id = String(taskId || '').trim();
 		if (!/^\d+$/.test(id)) return null;
 		const task = _extractTaskRecordFromData(data);
+		if (options.projectScope == null || options.projectScope === _getDialogTimeProjectScopeKey()) _rememberDialogTimeProjectTask(task);
 		const taskChatDialogId = _rememberDialogTimeTaskChat(id, task?.CHAT_ID ?? task?.chatId ?? task?.chat?.id) ||
 			_getDialogTimeTaskChatDialogId(id);
 		const enabled = _readDialogTaskTimeTrackingFlag(task);
@@ -9078,13 +9252,14 @@ function _rememberTaskMetaForDialogControlItem(item, meta) {
 		if (fresh != null && options.force !== true) return Promise.resolve(fresh);
 		if (_dialogTimeTaskEligibilityInFlight.has(id)) return _dialogTimeTaskEligibilityInFlight.get(id);
 		const scope = _getDialogNativeSharedAuditScopeKey();
+		const projectScope = _getDialogTimeProjectScopeKey();
 		const revision = _dialogTimeTaskRevisions.get(id) || 0;
 		const request = _callBxRestMethod('tasks.task.get', {
 			taskId: id,
-			select: ['ID', 'TITLE', 'CHAT_ID', 'ALLOW_TIME_TRACKING']
+			select: ['ID', 'TITLE', 'CHAT_ID', 'GROUP_ID', 'ALLOW_TIME_TRACKING']
 		}, options).then(data => {
 			if (scope !== _getDialogNativeSharedAuditScopeKey() || revision !== (_dialogTimeTaskRevisions.get(id) || 0)) return null;
-			const enabled = _rememberDialogTimeTaskEligibility(id, data);
+			const enabled = _rememberDialogTimeTaskEligibility(id, data, {projectScope});
 			return enabled == null ? null : enabled === true;
 		})
 			// Network/permission transport errors are not an explicit ALLOW_TIME_TRACKING=N.
@@ -13129,9 +13304,9 @@ if (_presetChannel) {
 		}
 		_dialogTimePortalDateKey = nextKey;
 		if (followsToday) _dialogTimeRange = _PENA_TIME_CONTROL.getQuickRange('today', nextKey);
-		if (_dialogControlNativeWorkspaceTab === 'time') {
+		if (followsToday && _dialogControlNativeWorkspaceTab === 'time') {
 			const visibleRange = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
-			_loadDialogTimeRange(visibleRange, { force: true }).catch(() => {});
+			_loadDialogTimeRange(visibleRange).catch(() => {});
 		}
 		_queueDialogTimeUiSync();
 		return true;
@@ -13139,7 +13314,7 @@ if (_presetChannel) {
 
 	function _getDialogTimeCacheKey(range = _dialogTimeRange) {
 		const normalized = _PENA_TIME_CONTROL?.normalizeRange?.(range?.from, range?.to) || range || {};
-		return `${_getCurrentBitrixUserId() || 'self'}:${normalized.from || ''}:${normalized.to || ''}`;
+		return `${_getDialogTimeProjectScopeKey() || 'unconfigured'}:${normalized.from || ''}:${normalized.to || ''}`;
 	}
 
 	function _getDialogTimeRecord(range = _dialogTimeRange) {
@@ -13902,13 +14077,13 @@ if (_presetChannel) {
 			_dialogTimeTitleLoadQueued = true;
 			return _dialogTimeTitleLoadPromise;
 		}
-		const scope = _getDialogNativeSharedAuditScopeKey();
-		const isCurrent = () => visible() && scope === _getDialogNativeSharedAuditScopeKey();
+		const scope = _getDialogTimeProjectScopeKey();
+		const isCurrent = () => !!scope && visible() && scope === _getDialogTimeProjectScopeKey();
 		const fallbackById = new Map(visits.map(visit => [String(visit.taskId || ''), visit.title || '']));
 		const taskIds = Array.from(new Set([
 			...(data?.tasks || []).map(task => String(task.taskId || '')),
 			...visits.map(visit => String(visit.taskId || ''))
-		].filter(id => /^\d+$/.test(id))));
+		].filter(id => /^\d+$/.test(id) && _isDialogTimeProjectTask(id))));
 		taskIds.forEach(id => {
 			if (!_isDialogTimePlaceholderTaskTitle(id, _dialogTimeTaskTitles.get(id))) return;
 			const localTitle = _findDialogTimeTaskItem(id)?.title || fallbackById.get(id) || '';
@@ -13926,7 +14101,7 @@ if (_presetChannel) {
 				let pages = [];
 				try {
 					pages = await _callBxRestPagesFast(ids.map(taskId => ({ method:'tasks.task.get', params:{
-						taskId, select:['ID','TITLE','CHAT_ID','ALLOW_TIME_TRACKING']
+						taskId, select:['ID','TITLE','CHAT_ID','GROUP_ID','ALLOW_TIME_TRACKING']
 					} })), 12000, { isCurrent });
 				} catch (error) {
 					// Keep successful batch members; a failed/expired batch never fans out
@@ -13936,7 +14111,7 @@ if (_presetChannel) {
 				if (!isCurrent()) break;
 				ids.forEach((id, index) => {
 					_dialogTimeTaskTitleAttempted.set(id, Date.now());
-					if (pages[index]?.data != null) _rememberDialogTimeTaskEligibility(id, pages[index].data);
+					if (pages[index]?.data != null) _rememberDialogTimeTaskEligibility(id, pages[index].data, {projectScope:scope});
 				});
 				if (pages.length !== ids.length || ids.some((_, index) => !pages[index])) break;
 				if (offset + 50 < missing.length) await _sleepDialogControl(0);
@@ -14016,7 +14191,7 @@ if (_presetChannel) {
 				dialogId: selected.dialogId || ''
 			});
 		}
-		return Array.from(map.values()).sort((a, b) => (b.visitedAt || 0) - (a.visitedAt || 0) || (b.trackedSeconds || 0) - (a.trackedSeconds || 0));
+		return Array.from(map.values()).filter(task => _isDialogTimeProjectTask(task.taskId)).sort((a, b) => (b.visitedAt || 0) - (a.visitedAt || 0) || (b.trackedSeconds || 0) - (a.trackedSeconds || 0));
 	}
 
 	function _filterDialogTimeDataByEligibility(data) {
@@ -14198,7 +14373,7 @@ if (_presetChannel) {
 
 	function _getDialogTimeTaskSearchState(target = 'manual') {
 		if (target === 'tracker') {
-			const scope = _getDialogNativeSharedAuditScopeKey();
+			const scope = _getDialogTimeProjectScopeKey();
 			if (_dialogTimeTrackerSearch.scope !== scope) {
 				if (_dialogTimeTrackerSearch.timer) clearTimeout(_dialogTimeTrackerSearch.timer);
 				Object.assign(_dialogTimeTrackerSearch, { scope, query:'', selectedTask:null, results:[], loading:false, error:'', activeIndex:-1, token:_dialogTimeTrackerSearch.token + 1, timer:null });
@@ -14321,7 +14496,7 @@ if (_presetChannel) {
 		const add = (taskId, title, dialogId = '') => {
 			const id = String(taskId || '').trim();
 			const cleanTitle = String(title || '').replace(/\s+/g, ' ').trim();
-			if (!/^\d+$/.test(id) || !cleanTitle || !_getDialogTimeTaskEligibilityForDisplay(id)) return;
+			if (!_isDialogTimeProjectTask(id) || !/^\d+$/.test(id) || !cleanTitle || !_getDialogTimeTaskEligibilityForDisplay(id)) return;
 			const haystack = `${cleanTitle} ${id}`.toLocaleLowerCase('ru');
 			if (!haystack.includes(normalizedQuery)) return;
 			byId.set(id, { taskId: id, title: cleanTitle, dialogId: normId(dialogId || '') });
@@ -14354,8 +14529,8 @@ if (_presetChannel) {
 	async function _searchDialogTimeEligibleTasks(query, token = null, target = 'manual') {
 		const state = _getDialogTimeTaskSearchState(target);
 		if (token == null) token = ++state.token;
-		const scope = _getDialogNativeSharedAuditScopeKey();
-		const isCurrent = () => token === state.token && scope === _getDialogNativeSharedAuditScopeKey() && _dialogControlNativeWorkspaceTab === 'time' && !state.selectedTask;
+		const scope = _getDialogTimeProjectScopeKey();
+		const isCurrent = () => !!scope && token === state.token && scope === _getDialogTimeProjectScopeKey() && _dialogControlNativeWorkspaceTab === 'time' && !state.selectedTask;
 		const normalizedQuery = String(query || '').replace(/\s+/g, ' ').trim();
 		if (!isCurrent()) return [];
 		if (!normalizedQuery) {
@@ -14398,7 +14573,8 @@ if (_presetChannel) {
 			const collectTask = task => {
 				const taskId = String(task?.ID ?? task?.id ?? '').trim();
 				const title = String(task?.TITLE ?? task?.title ?? '').replace(/\s+/g, ' ').trim();
-				if (!/^\d+$/.test(taskId) || !title) return;
+				if (!/^\d+$/.test(taskId) || !title || !_matchesDialogTimeProjectTask(task)) return;
+				_rememberDialogTimeProjectTask(task);
 				if (taskId !== normalizedQuery && !title.toLocaleLowerCase('ru').includes(normalizedLower)) return;
 				const rawChatId = String(task?.CHAT_ID ?? task?.chatId ?? '').trim();
 				const dialogId = normId(rawChatId && !/^chat/i.test(rawChatId) ? `chat${rawChatId}` : rawChatId);
@@ -14423,7 +14599,7 @@ if (_presetChannel) {
 				try {
 					const exactData = await _callBxRestMethod('tasks.task.get', {
 						taskId: normalizedQuery,
-						select: ['ID', 'TITLE', 'CHAT_ID', 'ALLOW_TIME_TRACKING']
+						select: ['ID', 'TITLE', 'CHAT_ID', 'GROUP_ID', 'ALLOW_TIME_TRACKING']
 					});
 					if (!isCurrent()) return [];
 					collectTask(_extractTaskRecordFromData(exactData));
@@ -14436,8 +14612,8 @@ if (_presetChannel) {
 				if (!isCurrent()) return [];
 				seenStarts.add(start);
 				const page = await _callBxRestReadPage('tasks.task.list', {
-					filter: { TITLE: `%${normalizedQuery}%` },
-					select: ['ID', 'TITLE', 'CHAT_ID', 'ALLOW_TIME_TRACKING', 'ACTIVITY_DATE'],
+					filter: { ..._getDialogTimeProjectFilter(), TITLE: `%${normalizedQuery}%` },
+					select: ['ID', 'TITLE', 'CHAT_ID', 'GROUP_ID', 'ALLOW_TIME_TRACKING', 'ACTIVITY_DATE'],
 					order: { ACTIVITY_DATE: 'desc' },
 					start
 				}, { timeoutMs: 12000, attempts: 2, isCurrent });
@@ -14510,12 +14686,14 @@ if (_presetChannel) {
 
 	function _applyDialogTimeOptimisticEntry(taskId, seconds, dateKey, itemId = '', options = {}) {
 		if (!_PENA_TIME_CONTROL?.aggregateElapsedItems) return;
+		if (!_isDialogTimeProjectTask(taskId)) return;
 		const day = _PENA_TIME_CONTROL.normalizeRange(dateKey, dateKey);
 		const createdAt = _buildDialogTimeWriteFields(seconds, dateKey, '', { allowSubMinute: true }).CREATED_DATE;
 		const id = String(itemId || `pena-local-${Date.now()}`);
 		const key = _getDialogTimeCacheKey(day);
 		if (!_dialogTimeCache.has(key)) _setDialogTimeCacheRecord(key, { range: day, data: null, updatedAt: 0 });
 		for (const [cacheKey, record] of Array.from(_dialogTimeCache)) {
+			if (!cacheKey.startsWith(`${_getDialogTimeProjectScopeKey()}:`)) continue;
 			const range = record?.range || record?.data?.range;
 			if (!range || dateKey < range.from || dateKey > range.to) continue;
 			const previous = record?.data;
@@ -14569,6 +14747,7 @@ if (_presetChannel) {
 
 	async function _commitDialogTimeManualEntry(task, hours, minutes, dateKey = _getDialogTimeSelectedRange()?.from) {
 		if (_dialogTimeActionInFlight || !_PENA_TIME_CONTROL) return;
+		const projectScope = _getDialogTimeProjectScopeKey();
 		const scope = _getDialogNativeSharedAuditScopeKey();
 		const storageKey = _getDialogTimeScopedStorageKey(_PENA_TIME_MANUAL_DRAFT_KEY);
 		const initialDraft = _readDialogTimeManualDraft();
@@ -14604,6 +14783,7 @@ if (_presetChannel) {
 		try {
 			const eligibility = await _ensureDialogTimeTaskEligibility(taskId);
 			if (scope !== _getDialogNativeSharedAuditScopeKey()) return;
+			if (!uncertain && (projectScope !== _getDialogTimeProjectScopeKey() || !_isDialogTimeProjectTask(taskId))) { _dialogTimeManualError='Задача не входит в выбранные проекты'; return; }
 			if (eligibility !== true) {
 				_dialogTimeManualError = eligibility === false ? 'В задаче выключен учёт времени' : 'Не удалось подтвердить учёт времени в задаче';
 				return;
@@ -14619,17 +14799,21 @@ if (_presetChannel) {
 			saved = true;
 			const acknowledged = { ...intent, status:'acknowledged', itemId:savedItemId };
 			_dialogTimeAcknowledgedManualMemory = { scope, storageKey, intent:acknowledged };
-			_writeDialogTimeManualDraft({ taskId:'', title:'', query:'', hours:'', minutes:'', pendingWrite:acknowledged }, { storageKey, resolvePendingKey:_getDialogTimeWriteIntentKey(intent), writeIntent:true });
+			const sameProjectSelection = projectScope === _getDialogTimeProjectScopeKey();
+			const acknowledgedDraft = sameProjectSelection ? {taskId:'',title:'',query:'',hours:'',minutes:''} : _readDialogTimeManualDraft();
+			_writeDialogTimeManualDraft({ ...acknowledgedDraft, pendingWrite:acknowledged }, { storageKey, resolvePendingKey:_getDialogTimeWriteIntentKey(intent), writeIntent:true });
 			if (scope !== _getDialogNativeSharedAuditScopeKey()) return;
 			_invalidateDialogTimeCachesForDates(dateKey, { taskId, preserveTaskFreshness:true });
 			_applyDialogTimeOptimisticEntry(taskId, duration.seconds, dateKey, savedItemId, { contactCutoffAt:intent.contactCutoffAt });
-			_dialogTimeManualSelectedTask = null;
-			_dialogTimeManualSearchQuery = '';
-			_dialogTimeManualSearchResults = [];
-			const panel = _dialogControlNativeSwitcherNode?.querySelector('.pena-native-time-panel');
-			const hoursInput = panel?.querySelector('.pena-native-time-manual-hours'), minutesInput = panel?.querySelector('.pena-native-time-manual-minutes');
-			if (hoursInput) hoursInput.value = '';
-			if (minutesInput) minutesInput.value = '';
+			if (sameProjectSelection) {
+				_dialogTimeManualSelectedTask = null;
+				_dialogTimeManualSearchQuery = '';
+				_dialogTimeManualSearchResults = [];
+				const panel = _dialogControlNativeSwitcherNode?.querySelector('.pena-native-time-panel');
+				const hoursInput = panel?.querySelector('.pena-native-time-manual-hours'), minutesInput = panel?.querySelector('.pena-native-time-manual-minutes');
+				if (hoursInput) hoursInput.value = '';
+				if (minutesInput) minutesInput.value = '';
+			}
 			_showDialogDockToast(`Добавлено: ${_PENA_TIME_CONTROL.formatDuration(duration.seconds)}`, 'ok');
 			_dialogTimeActionInFlight = false;
 			_queueDialogTimeUiSync();
@@ -14638,7 +14822,7 @@ if (_presetChannel) {
 			_scheduleDialogTimeAccountingRecovery({ reset:true });
 		} catch (error) {
 			const unknown = requestStarted && !saved && !_isDialogTimeDefiniteWriteFailure(error);
-			if (!saved) _writeDialogTimeManualDraft({ ...draft, pendingWrite: unknown ? { ...intent, status:'unknown' } : null }, { storageKey, resolvePendingKey:_getDialogTimeWriteIntentKey(intent), writeIntent:true });
+			if (!saved) _writeDialogTimeManualDraft({ ...(projectScope === _getDialogTimeProjectScopeKey() ? draft : _readDialogTimeManualDraft()), pendingWrite: unknown ? { ...intent, status:'unknown' } : null }, { storageKey, resolvePendingKey:_getDialogTimeWriteIntentKey(intent), writeIntent:true });
 			if (scope === _getDialogNativeSharedAuditScopeKey()) {
 				if (saved) { _scheduleDialogTimeAccountingRecovery({ reset:true }); return; }
 				_dialogTimeManualError = unknown ? 'Ответ сервера не получен. Проверьте журнал задачи перед повторной записью.' :
@@ -14751,6 +14935,7 @@ if (_presetChannel) {
 
 	async function _startDialogTimeTracker(task) {
 		if (_dialogTimeActionInFlight) return;
+		const projectScope = _getDialogTimeProjectScopeKey();
 		if (_readDialogTimeTracker()) {
 			_showDialogDockToast('Сначала остановите текущий трекинг', 'danger');
 			return;
@@ -14766,7 +14951,7 @@ if (_presetChannel) {
 			return;
 		}
 		await _withDialogTimeTrackerLock(async existing => {
-		if (existing || startScope !== _getDialogNativeSharedAuditScopeKey()) return;
+		if (existing || startScope !== _getDialogNativeSharedAuditScopeKey() || projectScope !== _getDialogTimeProjectScopeKey() || !_isDialogTimeProjectTask(taskId)) return;
 		const title = _getDialogTimeTaskTitle(taskId, task?.title);
 		_dialogTimeTrackerCancelConfirmTaskId = '';
 		const tracker = { taskId, title, dialogId: String(task?.dialogId || ''), startedAt: Date.now(), dateKey: _getDialogTimeTodayKey(), pendingSeconds: 0, error: '' };
@@ -15164,6 +15349,17 @@ if (_presetChannel) {
 		}, true);
 		window.addEventListener('storage', event => {
 			if (!event.key) return;
+			if (event.key === _getDialogTimeProjectStorageKey()) {
+				_dialogTimeProjectPreference = null;
+				_dialogTimeManualSearchToken++;
+				_dialogTimeManualSelectedTask=null; _dialogTimeManualSearchQuery=''; _dialogTimeManualSearchResults=[];
+				const panel=_dialogControlNativeSwitcherNode?.querySelector('.pena-native-time-panel');
+				if (panel?._penaTimeProjectSettings) {
+					panel._penaTimeProjectSettings=null; panel.classList.remove('--project-settings');
+					panel.querySelector('.pena-native-time-project-settings').hidden=true;
+				}
+				_scheduleDialogTimeBootstrap(); _queueDialogTimeUiSync();
+			}
 			if (event.newValue && event.key.startsWith(`${_PENA_TIME_CONTACT_OUTBOX_KEY}.${_getCurrentBitrixUserId()}.`)) _scheduleDialogTimeDeferredFlush(1200);
 			if (event.key === _getDialogTimeScopedStorageKey(_PENA_TIME_TRACKER_KEY)) {
 				_dialogTimeTrackerMemoryLoadedAt = 0;
@@ -15208,24 +15404,25 @@ if (_presetChannel) {
 					const task = payload.task || payload.TASK || payload;
 					const id = String(task.taskId ?? task.TASK_ID ?? task.ID ?? task.id ?? payload.FIELDS_AFTER?.ID ?? '');
 					if (!/^\d+$/.test(id)) return;
-					if (_dialogControlNativeWorkspaceTab !== 'time' && !_dialogTimePendingActivities.has('task:' + id) && !_dialogTimeTaskEligibility.has(id)) return;
+					if (!_isDialogTimeProjectTask(id)) _dialogTimeProjectCatalogDirty=true;
+					if (_dialogControlNativeWorkspaceTab !== 'time' && !_dialogTimePendingActivities.has('task:' + id) && !_isDialogTimeProjectTask(id)) return;
 					_dialogTimeTaskRevisions.set(id, (_dialogTimeTaskRevisions.get(id) || 0) + 1);
 					_dialogTimeTaskEligibilityCheckedAt.delete(id);
 					// Every cached task receives portal-wide Pull updates, including changes
 					// made by other users. A closed panel only needs invalidation: contact
 					// qualification always makes its own fresh eligibility request.
-					if (_dialogControlNativeWorkspaceTab !== 'time' || document.visibilityState === 'hidden') return;
+					if (_dialogControlNativeWorkspaceTab !== 'time' || document.visibilityState === 'hidden' || !_getDialogTimeProjectScopeKey()) return;
 					if (_dialogTimeChangedTaskTimers.has(id)) return;
-					const scope = _getDialogNativeSharedAuditScopeKey();
+					const scope = _getDialogTimeProjectScopeKey();
 					_dialogTimeChangedTaskTimers.set(id, setTimeout(async () => {
 						try {
-							const isCurrent = () => scope === _getDialogNativeSharedAuditScopeKey() &&
-								_dialogControlNativeWorkspaceTab === 'time' && document.visibilityState !== 'hidden';
+							const isCurrent = () => scope === _getDialogTimeProjectScopeKey() &&
+								_dialogControlNativeWorkspaceTab === 'time' && _isDialogTimeFrameActive() && document.visibilityState !== 'hidden';
 							if (!isCurrent()) return;
 							await _dialogTimeTaskEligibilityInFlight.get(id);
 							if (!isCurrent()) return;
 							await _ensureDialogTimeTaskEligibility(id, { isCurrent });
-							if (scope !== _getDialogNativeSharedAuditScopeKey()) return;
+							if (!isCurrent()) return;
 							_scheduleDialogTimeElapsedRefresh();
 							if (_dialogTimeManualSearchQuery && !_dialogTimeManualSelectedTask) {
 								_dialogTimeManualSearchResults = _getDialogTimeLocalTaskSearchResults(_dialogTimeManualSearchQuery);
@@ -15396,13 +15593,15 @@ if (_presetChannel) {
 			_ensureDialogTimeTrackerTick();
 			return;
 		}
+		if (!_readDialogTimeProjectPreference() && !panel._penaTimeProjectSettings) _openDialogTimeProjectSettings(panel);
+		if (panel._penaTimeProjectSettings) return;
 		const selectedDay = _getDialogTimeSelectedRange();
 		const visibleRange = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : selectedDay;
 		const record = _getDialogTimeRecord(visibleRange);
 		const rawData = _hasDialogTimeVerifiedData(record) ? record.data : null;
 		const data = _filterDialogTimeDataByEligibility(rawData);
 		const initializing = panel._penaTimeInitialization?.pending === true;
-		const initializationError = panel._penaTimeInitialization?.error || '';
+		const initializationError = panel._penaTimeInitialization?.error || (_dialogTimeProjectCatalogError?.scope === _getDialogTimeProjectScopeKey() ? _dialogTimeProjectCatalogError.message : '');
 		panel.classList.toggle('--loading', record?.status === 'loading');
 		panel.classList.toggle('--stats', _dialogTimeView === 'stats');
 		panel.querySelectorAll('.pena-native-time-view-tab').forEach(tab => {
@@ -15428,7 +15627,7 @@ if (_presetChannel) {
 			const last = value % 10;
 			return value > 10 && value < 20 ? many : (last === 1 ? one : (last >= 2 && last <= 4 ? few : many));
 		};
-		const catalogIncomplete = !_dialogTimeCatalogCursor || _dialogTimeCatalogScope !== _getDialogNativeSharedAuditScopeKey();
+		const catalogIncomplete = !_dialogTimeCatalogCursor || _dialogTimeCatalogScope !== _getDialogTimeProjectScopeKey();
 		const meta = panel.querySelector('.pena-native-time-meta');
 		if (meta) {
 			meta.textContent = data
@@ -15455,7 +15654,7 @@ if (_presetChannel) {
 				!(record?.updatedAt > _dialogTimeManualRefreshError.failedAt)
 				? _dialogTimeManualRefreshError.message : '';
 			const error = initializationError || record?.error || manualError;
-			const catalogBusy = !!_dialogTimeCatalogPromise && _dialogTimeCatalogScope === refreshScope;
+			const catalogBusy = !!_dialogTimeProjectCatalogOwner && _dialogTimeProjectCatalogOwner.scope === _getDialogTimeProjectScopeKey();
 			const busy = initializing || record?.status === 'loading' || catalogBusy || (manualRefreshing && _dialogTimeManualRefreshToken.rangeKey === rangeKey);
 			const coverage = data?.coverage;
 			const readProgress = record?.status === 'loading' ? record?.readProgress : null;
@@ -15889,33 +16088,28 @@ if (_presetChannel) {
 	let _dialogTimeBootstrapPromise = null;
 	let _dialogTimeBootstrapSequence = 0;
 	function _scheduleDialogTimeBootstrap(taskCatalogOutcomePromise = null) {
-		const scope = _getDialogNativeSharedAuditScopeKey();
+		const scope = _getDialogTimeProjectScopeKey();
 		if (!scope || !_PENA_TIME_CONTROL || !_isDialogTimeFrameActive() || navigator.onLine === false) return Promise.resolve(null);
 		if (_dialogTimeBootstrapPromise && _dialogTimeBootstrapToken?.scope === scope) {
 			// A midnight wake must not disappear into yesterday's cancelling read.
 			// Wait for that owner, then start one coalesced cycle for the new day.
 			if (_dialogTimeBootstrapToken.dateKey && _dialogTimeBootstrapToken.dateKey !== _getDialogTimeTodayKey()) {
-				return _dialogTimeBootstrapPromise.then(() => scope === _getDialogNativeSharedAuditScopeKey() ? _scheduleDialogTimeBootstrap(null) : null);
+				return _dialogTimeBootstrapPromise.then(() => scope === _getDialogTimeProjectScopeKey() ? _scheduleDialogTimeBootstrap(null) : null);
 			}
 			return _dialogTimeBootstrapPromise;
 		}
 		const token = { id:++_dialogTimeBootstrapSequence, scope, active:true, phase:'catalog', dateKey:'', completedTasks:0, totalTasks:0, elapsedPages:0, error:'' };
 		_dialogTimeBootstrapToken = token;
-		const current = () => token === _dialogTimeBootstrapToken && scope === _getDialogNativeSharedAuditScopeKey() && _isDialogTimeFrameActive() && document.visibilityState !== 'hidden' && navigator.onLine !== false;
+		const current = () => token === _dialogTimeBootstrapToken && scope === _getDialogTimeProjectScopeKey() && _isDialogTimeFrameActive() && document.visibilityState !== 'hidden' && navigator.onLine !== false;
 		const run = (async () => {
 			try {
-				let outcome = await taskCatalogOutcomePromise;
+				// Native wake may carry its visual-guard promise. Respect that boundary
+				// without treating its global task metadata as selected-project proof.
+				if (taskCatalogOutcomePromise) await taskCatalogOutcomePromise.catch(() => null);
 				if (!current()) return null;
-				if (outcome?.error) throw outcome.error;
-				// A native task feed can be complete without ever needing the REST
-				// task index. Today still joins that same catalog owner, once, here.
-				if ((!_dialogTimeCatalogCursor || _dialogTimeCatalogScope !== scope) && !outcome?.value?.discarded && outcome?.value?.complete !== false) {
-					outcome = { value:await _syncDialogTaskCatalog({ forceNetwork:true, deferMerge:true }), error:null };
-					if (!current()) return null;
-				}
-				if (outcome?.value?.discarded || outcome?.value?.complete === false || !_dialogTimeCatalogCursor || _dialogTimeCatalogScope !== scope) {
-					token.phase = 'paused'; return null;
-				}
+				// Time has an independent project scope. Native dialog metadata cannot
+				// grant completeness or invalidate a committed time snapshot.
+				if (!await _ensureDialogTimeProjectCatalog({ delta:_dialogTimeProjectCatalogDirty || (!!taskCatalogOutcomePromise && Date.now()-_dialogTimeCatalogCursor>60000) }) || !current()) { token.phase='paused'; return null; }
 				await _ensureDialogTimePortalDate();
 				if (!current()) return null;
 				_syncDialogTimePortalDay();
@@ -15944,7 +16138,6 @@ if (_presetChannel) {
 	} });
 	let _dialogTimeElapsedEventTimer = null;
 	let _dialogTimeElapsedEventScope = '';
-	const _DIALOG_TIME_CATALOG_REFRESH_MS = 10000;
 	const _DIALOG_TIME_FIRST_WAVE_SIZE = 16;
 	const _DIALOG_TIME_WAVE_SIZE = 50;
 	function _invalidateDialogTimeTaskSnapshot(taskId) {
@@ -15957,13 +16150,14 @@ if (_presetChannel) {
 		return true;
 	}
 	function _scheduleDialogTimeElapsedRefresh() {
-		const scope = _getDialogNativeSharedAuditScopeKey();
+		const scope = _getDialogTimeProjectScopeKey();
 		if (_dialogTimeElapsedEventTimer && _dialogTimeElapsedEventScope === scope) return;
 		if (_dialogTimeElapsedEventTimer) clearTimeout(_dialogTimeElapsedEventTimer);
 		_dialogTimeElapsedEventScope = scope;
 		_dialogTimeElapsedEventTimer = setTimeout(() => {
 			_dialogTimeElapsedEventTimer = null;
-			if (scope !== _getDialogNativeSharedAuditScopeKey() || _dialogControlNativeWorkspaceTab !== 'time' || document.visibilityState === 'hidden') return;
+			if (!scope || scope !== _getDialogTimeProjectScopeKey() || document.visibilityState === 'hidden') return;
+			if (_dialogControlNativeWorkspaceTab !== 'time') { _scheduleDialogTimeBootstrap(); return; }
 			const range = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
 			_loadDialogTimeRange(range).catch(() => {});
 		}, 100);
@@ -15971,9 +16165,16 @@ if (_presetChannel) {
 	async function _loadDialogTimeRange(range = _dialogTimeRange, { force = false, bootstrap = null } = {}) {
 		if (!_PENA_TIME_CONTROL) throw new Error('Модуль учета времени недоступен');
 		let normalized = _PENA_TIME_CONTROL.normalizeRange(range?.from, range?.to);
+		const projectScope = _getDialogTimeProjectScopeKey();
+		if (!projectScope) return null;
+		const allowed = () => projectScope === _getDialogTimeProjectScopeKey() && (_dialogControlNativeWorkspaceTab === 'time' || (bootstrap === _dialogTimeBootstrapToken && bootstrap?.active)) && document.visibilityState !== 'hidden' && navigator.onLine !== false;
+		if (!allowed()) return null;
+		if (_dialogTimeCatalogScope !== projectScope || !_dialogTimeCatalogCursor) {
+			if (!await _ensureDialogTimeProjectCatalog() || !allowed()) return null;
+		}
 		if (!_dialogTimePortalDateKey) {
-			const clockScope = _getDialogNativeSharedAuditScopeKey();
-			const clockCurrent = () => clockScope === _getDialogNativeSharedAuditScopeKey() &&
+			const clockScope = _getDialogTimeProjectScopeKey();
+			const clockCurrent = () => clockScope === _getDialogTimeProjectScopeKey() &&
 				(_dialogControlNativeWorkspaceTab === 'time' || (bootstrap && bootstrap === _dialogTimeBootstrapToken && bootstrap.active && bootstrap.scope === clockScope && _isDialogTimeFrameActive())) &&
 				document.visibilityState !== 'hidden' && navigator.onLine !== false;
 			if (!clockCurrent()) return null;
@@ -16006,12 +16207,12 @@ if (_presetChannel) {
 			throw error;
 		}
 		const key = _getDialogTimeCacheKey(normalized);
-		const scope = _getDialogNativeSharedAuditScopeKey();
+		const scope = _getDialogTimeProjectScopeKey();
 		const cached = _dialogTimeCache.get(key);
 		const revision = _dialogTimeRangeRevisions.get(key) || 0;
 		const bootstrapCurrent = () => bootstrap && bootstrap === _dialogTimeBootstrapToken && bootstrap.active && bootstrap.scope === scope && _isDialogTimeFrameActive() &&
 			normalized.from === bootstrap.dateKey && normalized.to === bootstrap.dateKey && bootstrap.dateKey === _getDialogTimeTodayKey();
-		const current = () => key === _getDialogTimeCacheKey(normalized) && scope === _getDialogNativeSharedAuditScopeKey() &&
+		const current = () => key === _getDialogTimeCacheKey(normalized) && scope === _getDialogTimeProjectScopeKey() &&
 			(_dialogControlNativeWorkspaceTab === 'time' || bootstrapCurrent()) && document.visibilityState !== 'hidden' && navigator.onLine !== false &&
 			revision === (_dialogTimeRangeRevisions.get(key) || 0);
 		if (!current()) return cached?.data || null;
@@ -16106,7 +16307,7 @@ if (_presetChannel) {
 					}
 				});
 				if (!current()) return _dialogTimeCache.get(key)?.data || null;
-				const accepted = new Set(wave.filter(id => !unavailable.has(id) && taskRevisions.get(id) === (_dialogTimeTaskRevisions.get(id) || 0)));
+				const accepted = new Set(wave.filter(id => _isDialogTimeProjectTask(id) && !unavailable.has(id) && taskRevisions.get(id) === (_dialogTimeTaskRevisions.get(id) || 0)));
 				if (accepted.size) base.hasVerifiedData = true;
 				const merged = _PENA_TIME_CONTROL.replaceElapsedTasks(data, batch, accepted);
 				accepted.forEach(id => { freshness[id] = { at: dispatchedAt.get(id) || waveStartedAt, revision: taskRevisions.get(id) }; });
@@ -16149,10 +16350,7 @@ if (_presetChannel) {
 	function _refreshDialogTimePanel(range) {
 		const key = _getDialogTimeCacheKey(range);
 		if (_dialogTimePanelRefreshes.has(key)) return _dialogTimePanelRefreshes.get(key);
-		const refresh = Promise.all([
-			_refreshDialogTimeTaskCatalog(),
-			_loadDialogTimeRange(range, { force: true })
-		]).then(() => _loadDialogTimeRange(range)).finally(() => _dialogTimePanelRefreshes.delete(key));
+		const refresh = _refreshDialogTimeTaskCatalog({ force:true }).then(ready => ready ? _loadDialogTimeRange(range, { force:true }) : null).finally(() => _dialogTimePanelRefreshes.delete(key));
 		_dialogTimePanelRefreshes.set(key, refresh);
 		return refresh;
 	}
@@ -16279,7 +16477,13 @@ if (_presetChannel) {
 		fullReport.target = '_blank';
 		fullReport.rel = 'noopener noreferrer';
 		fullReport.innerHTML = '<span>Отчёт</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M10 14l9-9M19 14v5H5V5h5"/></svg>';
-		headerActions.append(fullReport, _createDialogControlPopoverClose('Закрыть учёт времени'));
+		const projectSettings = document.createElement('button');
+		projectSettings.type = 'button';
+		projectSettings.className = 'pena-native-time-project-button';
+		projectSettings.setAttribute('aria-label','Настроить проекты');
+		projectSettings.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M9 4v6m6 4v6"/></svg><span>Проекты</span>';
+		projectSettings.addEventListener('click', () => _openDialogTimeProjectSettings(panel));
+		headerActions.append(projectSettings, fullReport, _createDialogControlPopoverClose('Закрыть учёт времени'));
 		panelHeader.append(panelTitle, viewTabs, headerActions);
 
 		const summary = document.createElement('div');
@@ -16739,8 +16943,10 @@ if (_presetChannel) {
 			_scheduleDialogTimeAccountingRecovery({ reset:true });
 			_armDialogTimeVisitTracking();
 			const range = _dialogTimeView === 'stats' ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
-			_loadDialogTimeRange(range).catch(() => {});
-			_refreshDialogTimeTaskCatalog().catch(() => {});
+			if (_readDialogTimeProjectPreference()) {
+				_scheduleDialogTimeBootstrap();
+				_loadDialogTimeRange(range).catch(() => {});
+			} else _openDialogTimeProjectSettings(panel);
 			_queueDialogTimeUiSync();
 		}).catch(error => {
 			initialLoadState.error = error?.code === 'PENA_TIME_INITIALIZATION' ? error.message : _getDialogTimeFriendlyError(error);

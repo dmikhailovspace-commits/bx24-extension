@@ -40,7 +40,13 @@ function loadFixture() {
     _PENA_TIME_CONTROL: time, _dialogTimeRange: range, _dialogTimePortalDateKey: range.from, _dialogTimeView: 'day', _dialogControlNativeWorkspaceTab: 'time',
     _dialogTimeCache: new Map(), _dialogTimeInFlight: new Map(), _dialogTimeRangeRevisions: new Map(), _dialogTimeTaskRevisions: new Map(),
     _dialogTimeForcedRefreshes: new Map(), _dialogTimeRangeRechecks: new Map(), _dialogTimePanelRefreshes: new Map(),
-    _dialogTimeCatalogCursor: 0, _dialogTimeCatalogScope: 'portal:7',
+    // This low-level elapsed oracle starts after project selection and catalog commit.
+    // Actual first-run/settings gates are covered by time-project-scope-regression.
+    _dialogTimeCatalogCursor: 1, _dialogTimeCatalogScope: 'portal:7',
+    _getDialogTimeProjectScopeKey: () => state.scope,
+    _dialogTimeProjectTaskIds: new Set(eligibility.keys()),
+    _isDialogTimeProjectTask: id => eligibility.has(String(id)),
+    _ensureDialogTimeProjectCatalog: async () => true,
     _DIALOG_TIME_LOGGED_TTL_MS: 10000, _DIALOG_TIME_EMPTY_TTL_MS: 120000, _DIALOG_TIME_FIRST_WAVE_SIZE: 16, _DIALOG_TIME_WAVE_SIZE: 50,
     _PENA_TIME_CACHE_TTL_MS: 120000, _getCurrentBitrixUserId: () => '7', _getDialogNativeSharedAuditScopeKey: () => state.scope,
     _dialogTimeTaskEligibility: eligibility, _dialogTimeTaskTitles: new Map([...eligibility.keys()].map(id => [id, `Task ${id}`])),
@@ -70,10 +76,10 @@ function loadFixture() {
   for (const name of names) {
     const marker = new RegExp(`\\t(?:async )?function ${name}\\(`).exec(injected);
     assert.ok(marker, `Missing function ${name}`);
-    const next = /\n\t(?:async )?function /.exec(injected.slice(marker.index + 1));
-    vm.runInContext(injected.slice(marker.index, marker.index + 1 + next.index), context);
+    const end = injected.indexOf('\n\t}', marker.index) + 4;
+    vm.runInContext(injected.slice(marker.index, end), context);
   }
-  return { state, context, range, record: () => context._dialogTimeCache.get('7:2026-09-07:2026-09-07') };
+  return { state, context, range, record: () => context._dialogTimeCache.get(context._getDialogTimeCacheKey(range)) };
 }
 
 await run('legacy getlist accepts positional payload and reaches all 127 own entries without pagination hints', async () => {
@@ -167,11 +173,13 @@ if (!baseline) {
   });
   await run('identity switch during a read discards the old response', async () => {
     const f = loadFixture(); await f.context._loadDialogTimeRange(f.range);
+    const previousKey = f.context._getDialogTimeCacheKey(f.range);
     f.state.rows[0].SECONDS = 900;
     let release; f.state.hold = new Promise(resolve => { release = resolve; });
     const oldRead = f.context._loadDialogTimeRange(f.range, { force: true });
     await Promise.resolve(); f.state.scope = 'portal:8'; release(); await oldRead;
-    assert.equal(f.record().data.totalSeconds, 1800);
+    assert.equal(f.context._dialogTimeCache.get(previousKey).data.totalSeconds, 1800);
+    assert.equal(f.record(), undefined, 'New identity must not inherit the old confirmed total');
     return { previousConfirmedSeconds: 1800, lateDataPublished: false };
   });
 }

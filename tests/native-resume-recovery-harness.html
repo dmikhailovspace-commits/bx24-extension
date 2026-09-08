@@ -49,6 +49,18 @@
     const POOL_SIZE = 24;
     const LONG_PAUSE_MS = 16 * 60 * 1000;
     const params = new URLSearchParams(location.search);
+    const timeProjectPreferenceKey = `pena.timeProjects.v1.${location.host.toLowerCase()}~7`;
+    if (params.get('timeProjects') !== 'unconfigured' && localStorage.getItem(timeProjectPreferenceKey) == null) {
+      localStorage.setItem(timeProjectPreferenceKey, JSON.stringify({version:1,all:true,ids:[],includeUnassigned:true}));
+    }
+    window.timeFixtureTaskGroup = task => ({ ...task, GROUP_ID:String(window.timeTaskGroupOverrides?.[String(task.ID ?? task.id)] ?? task.GROUP_ID ?? task.groupId ?? task.group?.id ?? '1') });
+    window.timeFixtureMatchesGroup = (task, filter = {}) => {
+      const group = String(window.timeFixtureTaskGroup(task).GROUP_ID);
+      const selected = filter.GROUP_ID ?? filter['=GROUP_ID'];
+      return (selected == null || (Array.isArray(selected) ? selected : [selected]).map(String).includes(group)) &&
+        (filter['>GROUP_ID'] == null || Number(group) > Number(filter['>GROUP_ID']));
+    };
+    window.timeFixtureProjects = [{ID:'1',NAME:'Проект 1',PROJECT:'Y',CLOSED:'N'}, {ID:'2',NAME:'Проект 2',PROJECT:'Y',CLOSED:'N'}];
     const autoBootstrap = params.get('autoBootstrap') === '1';
     const chatCount = Math.max(72, Number(params.get('chatCount')) || 108);
     const taskCount = Math.max(72, Number(params.get('taskCount')) || 92);
@@ -522,17 +534,19 @@
       }
       if (method === 'im.recent.get') return success({ items: chatEntries.slice(0, 50) }, { total: chatEntries.length });
       if (method === 'im.counters.get') return success({ CHAT: {}, DIALOG: {}, CHAT_UNREAD: [], DIALOG_UNREAD: [] });
+      if (method === 'sonet_group.get') return success(window.timeFixtureProjects, {total:window.timeFixtureProjects.length});
       if (method === 'tasks.task.list') {
         const start = Math.max(0, Number(callParams.start) || 0);
+        const scopedEntries = taskEntries.map(window.timeFixtureTaskGroup).filter(task => window.timeFixtureMatchesGroup(task, callParams.filter));
         const entries = callParams.order?.ID === 'asc'
-          ? taskEntries.filter(task => Number(task.ID ?? task.id) > Number(callParams.filter?.['>ID'] || 0)).slice().sort((a, b) => Number(a.ID ?? a.id) - Number(b.ID ?? b.id))
-          : taskEntries;
+          ? scopedEntries.filter(task => Number(task.ID ?? task.id) > Number(callParams.filter?.['>ID'] || 0)).slice().sort((a, b) => Number(a.ID ?? a.id) - Number(b.ID ?? b.id))
+          : scopedEntries;
         const page = entries.slice(start, start + 50);
         return success({ tasks: page }, { next: start + page.length < entries.length ? start + page.length : null, total: entries.length });
       }
       if (method === 'tasks.task.get') {
         const task = taskEntries.find(item => String(item.id) === String(callParams.taskId)) || null;
-        return success({ task });
+        return success({ task:task ? window.timeFixtureTaskGroup(task) : null });
       }
       if (method === 'im.dialog.get') {
         const wanted = String(callParams.DIALOG_ID || callParams.dialogId || callParams.ID || '');

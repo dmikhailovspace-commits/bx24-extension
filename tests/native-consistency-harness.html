@@ -66,6 +66,18 @@
   <button id="switch-mode" type="button">Переключить тестовый режим</button>
   <button id="dispatch-wheel" type="button">Проверить событие колеса</button>
 <script>
+  const timeProjectPreferenceKey = `pena.timeProjects.v1.${location.host.toLowerCase()}~7`;
+  if (new URLSearchParams(location.search).get('timeProjects') !== 'unconfigured' && localStorage.getItem(timeProjectPreferenceKey) == null) {
+    localStorage.setItem(timeProjectPreferenceKey, JSON.stringify({ version:1, all:true, ids:[], includeUnassigned:true }));
+  }
+  window.timeFixtureTaskGroup = task => ({ ...task, GROUP_ID:String(window.timeTaskGroupOverrides?.[String(task.ID ?? task.id)] ?? task.GROUP_ID ?? task.groupId ?? task.group?.id ?? '1') });
+  window.timeFixtureMatchesGroup = (task, filter = {}) => {
+    const group = String(window.timeFixtureTaskGroup(task).GROUP_ID);
+    const selected = filter.GROUP_ID ?? filter['=GROUP_ID'];
+    return (selected == null || (Array.isArray(selected) ? selected : [selected]).map(String).includes(group)) &&
+      (filter['>GROUP_ID'] == null || Number(group) > Number(filter['>GROUP_ID']));
+  };
+  window.timeFixtureProjects = [{ ID:'1', NAME:'Проект 1', PROJECT:'Y', CLOSED:'N' }, { ID:'2', NAME:'Проект 2', PROJECT:'Y', CLOSED:'N' }];
   // The fake portal is UTC+03; its clock must describe the same instant as the browser.
   window.timePortalTimestamp = (at = Date.now()) => new Date(at + 180 * 60000).toISOString().replace('Z', '+03:00');
   window.timePortalDateKey = (at = Date.now()) => window.timePortalTimestamp(at).slice(0, 10);
@@ -687,15 +699,18 @@
 		};
 	  }
 	  const limit = taskPageCap > 0 ? taskPageCap : 50;
+	  const query = String(params.filter?.TITLE || '').replace(/^%|%$/g, '').toLowerCase();
+	  const scopedEntries = [...taskCatalogEntries, ...(query ? window.timeSearchOnlyEntries || [] : [])].map(window.timeFixtureTaskGroup).filter(task =>
+		window.timeFixtureMatchesGroup(task, params.filter) && (!query || String(task.TITLE ?? task.title ?? '').toLowerCase().includes(query)));
 	  const entries = params.order?.ID === 'asc'
-		? taskCatalogEntries.filter(task => Number(task.ID ?? task.id) > Number(params.filter?.['>ID'] || 0)).slice().sort((a, b) => Number(a.ID ?? a.id) - Number(b.ID ?? b.id))
-		: taskCatalogEntries;
+		? scopedEntries.filter(task => Number(task.ID ?? task.id) > Number(params.filter?.['>ID'] || 0)).slice().sort((a, b) => Number(a.ID ?? a.id) - Number(b.ID ?? b.id))
+		: scopedEntries;
 	  const page = entries.slice(start, start + limit);
 	  const hasMore = start + page.length < entries.length;
 	  return {
 		error: () => null,
 		data: () => ({ tasks: page, ...(taskNoEndMarker ? {} : { hasMore, hasMorePages: hasMore }) }),
-		total: () => taskBogusTotal ? 0 : taskCatalogEntries.length,
+		total: () => taskBogusTotal ? 0 : scopedEntries.length,
 		answer: { next: taskNoNext ? undefined : (hasMore ? start + page.length : undefined) }
 	  };
 	};
@@ -858,6 +873,10 @@
 		  callback({ error: () => null, data: () => true });
 		  return;
 		}
+		if (method === 'sonet_group.get') {
+		  callback({ error:() => null, data:() => window.timeFixtureProjects, total:() => window.timeFixtureProjects.length, answer:{} });
+		  return;
+		}
 		if (method === 'tasks.task.get') {
 		  const taskId = String(params?.taskId || params?.id || '');
 		  const taskRecord = taskCatalogEntries.find(task => String(task.ID || task.id || '') === taskId);
@@ -868,7 +887,7 @@
 		  }
 		  const override = window.timeTaskEligibilityOverrides?.[taskId];
 		  const allowTimeTracking = override == null ? (taskId === '405' ? 'N' : 'Y') : String(override);
-		  callback({ error: () => null, data: () => ({ task: { id: taskId, title: taskRecord?.TITLE || `Задача ${taskId}`, chatId: taskId, allowTimeTracking } }) });
+		  callback({ error: () => null, data: () => ({ task: window.timeFixtureTaskGroup({ ...taskRecord, id: taskId, title: taskRecord?.TITLE || `Задача ${taskId}`, chatId: taskId, ALLOW_TIME_TRACKING:allowTimeTracking, allowTimeTracking }) }) });
 		  return;
 		}
 		if (method === 'tasks.task.list') {
@@ -901,7 +920,7 @@
 			return;
 		  }
 		  const searchEntries = titleQuery ? [...taskCatalogEntries, ...(window.timeSearchOnlyEntries || [])] : taskCatalogEntries;
-		  const filtered = searchEntries.filter(task =>
+		  const filtered = searchEntries.map(window.timeFixtureTaskGroup).filter(task => window.timeFixtureMatchesGroup(task, params.filter) &&
 			(!titleQuery || String(task.title || task.TITLE || '').toLowerCase().includes(titleQuery)) &&
 			(!trackingOnly || String(task.allowTimeTracking || task.ALLOW_TIME_TRACKING || '').toUpperCase() === 'Y')
 		  );
@@ -937,10 +956,17 @@
 		window.nativeBatchSizes.push(Object.keys(calls || {}).length);
 		const respond = () => callback(Object.fromEntries(Object.entries(calls).map(([key, call]) => [
 		  key,
-		  call?.method === 'im.recent.list'
+		  call?.method === 'sonet_group.get'
+			? { error:() => null, data:() => window.timeFixtureProjects, total:() => window.timeFixtureProjects.length, answer:{} }
+			: call?.method === 'im.recent.list'
 			? recentPageResult(call.params || {})
 			: call?.method === 'tasks.task.get'
-			  ? { error: () => null, data: () => ({ task: { id: String(call.params?.taskId || ''), title: `Задача ${call.params?.taskId || ''}`, chatId: String(call.params?.taskId || ''), allowTimeTracking: String(call.params?.taskId || '') === '405' ? 'N' : 'Y' } }) }
+			  ? { error: () => null, data: () => {
+				  const taskId = String(call.params?.taskId || '');
+				  const taskRecord = taskCatalogEntries.find(task => String(task.ID ?? task.id) === taskId);
+				  const allowTimeTracking = String(window.timeTaskEligibilityOverrides?.[taskId] ?? (taskId === '405' ? 'N' : 'Y'));
+				  return { task:window.timeFixtureTaskGroup({ ...taskRecord, id:taskId, title:taskRecord?.TITLE || `Задача ${taskId}`, chatId:taskId, ALLOW_TIME_TRACKING:allowTimeTracking, allowTimeTracking }) };
+				} }
 			  : call?.method === 'tasks.task.list'
 				? taskCatalogPageResult(call.params?.start, call.params)
 				: call?.method === 'task.elapseditem.getlist'

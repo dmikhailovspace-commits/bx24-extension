@@ -13,6 +13,7 @@ const source=readFileSync(new URL('../extension/injected.js',import.meta.url),'u
  window.networkProbe={
   full:()=>_syncDialogTaskCatalog({forceNetwork:true,deferMerge:true}),
   refresh:()=>_refreshDialogTimeTaskCatalog(),
+  delta:()=>_ensureDialogTimeProjectCatalog({delta:true}),
   tab:value=>{_dialogControlNativeWorkspaceTab=value;},
   cursor:()=>({scope:_dialogTimeCatalogScope,cursor:_dialogTimeCatalogCursor}),
   publish:rows=>_publishDialogTimeTaskIndexRows(rows),
@@ -43,7 +44,7 @@ try {
    const time=window.networkProbe.refresh();
    await Promise.all([full,time]);
    const initialDeltaPages=window.networkCalls.filter(c=>c.method==='tasks.task.list'&&c.params.filter?.['>=CHANGED_DATE']).length;
-   await window.networkProbe.refresh(); // An explicit subsequent refresh uses the shared watermark.
+   await window.networkProbe.delta(); // An explicit scoped delta uses the request-start watermark.
    window.networkProbe.tab('dialogs');
    const calls=window.networkCalls.filter(c=>c.method==='tasks.task.list');
    return {before,initialDeltaPages,cursor:window.networkProbe.cursor(),full: calls.filter(c=>!c.params.filter?.['>=CHANGED_DATE']),delta:calls.filter(c=>c.params.filter?.['>=CHANGED_DATE'])};

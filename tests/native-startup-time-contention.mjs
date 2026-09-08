@@ -32,8 +32,8 @@ function installProbe(){
  for(const proto of [Document.prototype,Element.prototype])for(const name of ['querySelector','querySelectorAll']){const old=proto[name];proto[name]=function(...args){if(scope)scope.queries++;return old.apply(this,args);};}
  let previous=0;const frame=now=>{if(p.stopped)return;if(previous&&p.frames.length<20000)p.frames.push(now-previous);previous=now;requestAnimationFrame(frame);};requestAnimationFrame(frame);
  new PerformanceObserver(list=>{p.longtasks.push(...list.getEntries().map(e=>({at:e.startTime,ms:e.duration,phase:p.phase})));}).observe({entryTypes:['longtask']});
- const summary=call=>({method:call.method,after:Number(call.params?.filter?.['>ID']||0),delta:Boolean(call.params?.filter?.['>=CHANGED_DATE']),start:Number(call.params?.start||0),select:call.params?.select?.join('|')||'',taskId:call.method==='task.elapseditem.getlist'?String(call.params?.[0]):undefined,
-   dateFrom:call.method==='task.elapseditem.getlist'?String(call.params?.[2]?.['>=CREATED_DATE']||''):undefined,dateTo:call.method==='task.elapseditem.getlist'?String(call.params?.[2]?.['<=CREATED_DATE']||''):undefined});
+ const summary=call=>({method:call.method,after:Number(call.params?.filter?.['>ID']||0),delta:Boolean(call.params?.filter?.['>=CHANGED_DATE']),start:Number(call.params?.start||0),select:call.params?.select?.join('|')||'',projectFilter:call.params?.filter?.GROUP_ID ?? call.params?.filter?.['>GROUP_ID'],taskId:call.method==='task.elapseditem.getlist'?String(call.params?.[0]):undefined,
+   dateFrom:call.method==='task.elapseditem.getlist'?String(call.params?.[2]?.['>=CREATED_DATE']||''):undefined,dateTo:call.method==='task.elapseditem.getlist'?String(call.params?.[2]?.['<CREATED_DATE']||call.params?.[2]?.['<=CREATED_DATE']||''):undefined});
  const one=BX.rest.callMethod;
  BX.rest.callMethod=function(method,params,cb){p.rest.push({at:performance.now(),phase:p.phase,...summary({method,params})});fetch('/__latency?kind=extension').then(()=>one.call(this,method,params,cb)).catch(e=>p.errors.push(String(e)));};
  const batch=BX24.callBatch;
@@ -50,6 +50,9 @@ fixture=fixture.replace('    const success = (data, options = {}) => ({',`
     const stableChangedDate=new Date(Date.now()-86400000).toISOString();
     taskEntries.forEach(task=>{task.changedDate=stableChangedDate;});
     for(let i=0;i<4149-recordsByMode.tasks.length;i++) taskEntries.push({id:String(50000+i),title:'Каталожная задача '+i+' — работа с документами и внутреннее согласование',allowTimeTracking:'Y',activityDate:stableChangedDate,changedDate:stableChangedDate});
+    taskEntries.forEach((task,index)=>{task.groupId=index<149?'1':'2';});
+    const selectedProjectOnly=params.get('selectedProjects')==='1';
+    if(selectedProjectOnly)localStorage.setItem(timeProjectPreferenceKey,JSON.stringify({version:1,all:false,ids:['1'],includeUnassigned:false}));
     const elapsedIds=new Set(taskEntries.filter((task,index)=>index%13===0||index===4148).map(task=>task.id));
     window.startupExpected={tasks:taskEntries.length,entries:elapsedIds.size,seconds:elapsedIds.size*60};
     const success = (data, options = {}) => ({`);
@@ -67,7 +70,7 @@ fixture=fixture.slice(0,from)+`
       }
       if(method==='tasks.task.list'){
         const after=Number(callParams.filter?.['>ID']||0),changed=String(callParams.filter?.['>=CHANGED_DATE']||'');
-        let entries=taskEntries.filter(task=>Number(task.id)>after&&(!changed||Date.parse(task.changedDate)>=Date.parse(changed)));
+        let entries=taskEntries.map(window.timeFixtureTaskGroup).filter(task=>window.timeFixtureMatchesGroup(task,callParams.filter)&&Number(task.id)>after&&(!changed||Date.parse(task.changedDate)>=Date.parse(changed)));
         if(callParams.order?.ID==='asc')entries=entries.slice().sort((a,b)=>Number(a.id)-Number(b.id));
         const start=Math.max(0,Number(callParams.start)||0),page=entries.slice(start,start+50);
         return success({tasks:page},{next:start+page.length<entries.length?start+page.length:null,total:entries.length});
@@ -180,6 +183,25 @@ try{
    report.phases.push({name:'first panel open after background completion uses cached full total without elapsed/full catalog requests',status:complete&&report.closedThenOpen.record.seconds===report.expected.seconds&&!extra.some(c=>c.method==='task.elapseditem.getlist'||c.method==='tasks.task.list'&&!c.delta)?'PASS':'FAIL'});
  }else{report.phases.push({name:'closed first startup completes catalog and today before panel open',status:'FAIL',reason:'Runtime has no automatic today bootstrap; old101 baseline negative control.'});}
  report.closedPageErrors=closedErrors;
+ // The same 4149-task portal with one project selected must avoid every
+ // excluded elapsed request. Native physical completeness remains unchanged.
+ await page.close();
+ page=await browser.newPage({viewport:{width:1100,height:800}});const selectedErrors=collectPageErrors(page);
+ await(await page.context().newCDPSession(page)).send('Emulation.setCPUThrottlingRate',{rate:cpu});
+ await page.route('**/tests/native-resume-recovery-harness.html?*',route=>route.fulfill({contentType:'text/html',body:fixture}));
+ await page.route('**/extension/injected.js',route=>route.fulfill({contentType:'application/javascript',body:injected}));
+ await page.route('**/extension/native-time-control.js',route=>route.fulfill({contentType:'application/javascript',body:model}));
+ await page.goto(endpoint+'/tests/native-resume-recovery-harness.html?autoBootstrap=1&selectedProjects=1');
+ await page.waitForFunction(()=>__resumeHarness.ready('chats')&&startupProbe.record().complete,undefined,{timeout:60000});
+ report.selected=await page.evaluate(()=>startupProbe.snapshot());
+ const selectedCalls=commands(report.selected),selectedElapsed=selectedCalls.filter(call=>call.method==='task.elapseditem.getlist');
+ const selectedCatalog=selectedCalls.filter(call=>call.method==='tasks.task.list'&&Array.isArray(call.projectFilter));
+ report.projectSavings={allElapsed:report.requestCounts.closed.elapsed,selectedElapsed:selectedElapsed.length,elapsedReduction:report.requestCounts.closed.elapsed/selectedElapsed.length,allMs:report.closed.elapsedMs,selectedMs:report.selected.elapsedMs,selectedErrors};
+ report.phases.push({name:'selected project reads 149 tasks once instead of 4149, in three scoped catalog pages',status:selectedElapsed.length===149&&new Set(selectedElapsed.map(call=>call.taskId)).size===149&&selectedCatalog.length===3&&selectedCatalog.every(call=>JSON.stringify(call.projectFilter)==='["1"]')&&report.selected.record.seconds===720&&selectedErrors.length===0?'PASS':'FAIL'});
+ const selectedBefore=selectedElapsed.length;
+ await page.locator('.pena-native-time-button').click();await page.waitForTimeout(350);
+ const selectedAfter=await page.evaluate(()=>startupProbe.snapshot());
+ report.phases.push({name:'selected project first panel open keeps the automatic initial total without recount',status:commands(selectedAfter).filter(call=>call.method==='task.elapseditem.getlist').length===selectedBefore&&selectedAfter.record.seconds===720&&selectedAfter.visible.statusHidden?'PASS':'FAIL'});
  if(process.env.PENA_STARTUP_REPORT_ONLY!=='1'){assert(done,'Initial full task/time/native completion');assert.deepEqual(errors,[]);assert.deepEqual(closedErrors,[]);assert.equal(report.final.record.seconds,report.expected.seconds);assert(report.phases.every(p=>p.status==='PASS'),JSON.stringify(report.phases));}
  }
 }catch(error){report.failure=String(error);if(page)report.last=await page.evaluate(()=>startupProbe?.snapshot()).catch(()=>null);throw error;}

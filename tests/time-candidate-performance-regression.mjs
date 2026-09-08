@@ -14,6 +14,8 @@ function fixture(count, canonical = true) {
   const state = { itemReads: 0, metaReads: 0, meta: [], items: { tasks: [], chats: [] } };
   const titles = new Map();
   const ids = Array.from({ length: count }, (_, index) => String(index + 1));
+  // This rendering benchmark starts after the project catalog has been validated.
+  state.projectTaskIds = new Set(ids);
   for (const id of ids) {
     state.items.tasks.push({ taskId: id, title: `Task ${id}` });
     if (canonical) titles.set(id, `Canonical ${id}`);
@@ -22,7 +24,11 @@ function fixture(count, canonical = true) {
   const sandbox = {
     _dialogTimeTaskTitles: titles, _dialogTimeTaskChatDialogIds: new Map(), _dialogTimeTaskIdsByChatDialogId: new Map(),
     _dialogTimeManualSelectedTask: null, normId: value => String(value || '').trim(),
+    // Candidate rendering cost starts after project membership is confirmed.
+    // The scope suite separately rejects foreign native/cache candidates.
+    _isDialogTimeProjectTask: () => true,
     _isDialogControlFolder: item => item?.type === 'folder',
+    _isDialogTimeProjectTask: id => state.projectTaskIds.has(String(id)),
     _extractTaskIdFromTaskUrl: value => /task\/(\d+)/.exec(value)?.[1] || '',
     _getDialogControlItemsForMode: mode => { state.itemReads += 1; return state.items[mode]; },
     _getDialogRecentUniqueMeta: () => { state.metaReads += 1; return state.meta; },
@@ -71,6 +77,12 @@ phase('missing title and chat are retried from new metadata on the very next ren
   const selected = f.get({ tasks: [{ taskId: '1', seconds: 30 }] }, [{ taskId: '1', title: 'Old fallback', visits: 1, lastQualifiedAt: 1, visitedAt: 5, dialogId: 'chat42' }]);
   assert.deepEqual(selected[0], { taskId: '1', title: 'Fresh canonical title', dialogId: 'chat42', visitedAt: 5, trackedSeconds: 30 });
   return { updatedOnNextRender: true, firstMatchingChatPreserved: true };
+});
+phase('candidate rendering excludes a task outside the confirmed project membership', () => {
+  const f = fixture(2);
+  f.state.projectTaskIds.delete('2');
+  assert.deepEqual(f.get().map(row => row.taskId), ['1']);
+  return { eligibleTasks: 2, confirmedProjectTasks: 1 };
 });
 mkdirSync(new URL('./artifacts/', import.meta.url), { recursive: true });
 const report = { sourceSha256: createHash('sha256').update(source).digest('hex'), phases };

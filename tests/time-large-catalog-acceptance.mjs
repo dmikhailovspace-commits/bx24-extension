@@ -18,10 +18,14 @@ function fixture(count=4149){
   _dialogTimeForcedRefreshes:new Map(),_dialogTimeRangeRechecks:new Map(),_dialogTimePanelRefreshes:new Map(),
   _dialogTimeCatalogCursor:999000,_dialogTimeCatalogScope:'portal:7',_DIALOG_TIME_LOGGED_TTL_MS:10000,_DIALOG_TIME_EMPTY_TTL_MS:120000,_DIALOG_TIME_FIRST_WAVE_SIZE:16,_DIALOG_TIME_WAVE_SIZE:50,
   _getCurrentBitrixUserId:()=> '7',_getDialogNativeSharedAuditScopeKey:()=>s.scope,
+  // Configured, committed scope is the premise of this elapsed-policy oracle.
+  // The mandatory settings/catalog gate has its own actual-helper acceptance suite.
+  _getDialogTimeProjectScopeKey:()=>s.scope,_dialogTimeProjectTaskIds:new Set(ids),
+  _isDialogTimeProjectTask:id=>ids.includes(String(id)),_ensureDialogTimeProjectCatalog:async()=>true,
   _dialogTimeTaskEligibility:new Map(ids.map(id=>[id,true])),_dialogTimeTaskTitles:new Map(ids.map(id=>[id,`Task ${id}`])),
   _getDialogTimeTaskEligibilityForDisplay:()=>true,_readDialogTimeVisits:()=>[],_dialogTimeManualSelectedTask:null,_readDialogTimeTracker:()=>null,
   _getActiveDialogTimeActivity:()=>null,_getDialogRecentUniqueMeta:()=>[],_queueDialogTimeUiSync:()=>{},_loadDialogTimeTaskTitles:async()=>{},
-  _getDialogTimeFriendlyError:e=>e.message,_isBxRestBatchPressureError:()=>false,_sleepDialogControl:async()=>{},_refreshDialogTimeTaskCatalog:async()=>{},
+  _getDialogTimeFriendlyError:e=>e.message,_isBxRestBatchPressureError:()=>false,_sleepDialogControl:async()=>{},_refreshDialogTimeTaskCatalog:async()=>true,
   _callDialogTimeElapsedPages:async jobs=>{
    const requestedAt=s.now;s.calls.push(jobs.map(p=>String(p[0])));
    const result=jobs.map(p=>({requestedAt,data:s.rows.has(String(p[0]))?[{ID:`entry-${p[0]}`,TASK_ID:String(p[0]),USER_ID:'7',SECONDS:s.rows.get(String(p[0])),CREATED_DATE:`${p[2]['>=CREATED_DATE'].slice(0,10)}T12:00:00+03:00`}]:[]}));
@@ -30,7 +34,7 @@ function fixture(count=4149){
  });
  for(const name of ['_getDialogTimeEligibleTaskIds','_getDialogTimeWorkingTaskIds','_getDialogTimeCacheKey','_setDialogTimeCacheRecord','_hasDialogTimeVerifiedData','_loadDialogTimeRange','_refreshDialogTimePanel']){
   const start=new RegExp(`\\t(?:async )?function ${name}\\(`).exec(injected)?.index;assert.notEqual(start,undefined,name);
-  const next=/\n\t(?:async )?function /.exec(injected.slice(start+1));vm.runInContext(injected.slice(start,start+1+next.index),c);
+  const end=injected.indexOf('\n\t}',start)+4;vm.runInContext(injected.slice(start,end),c);
  }
  return {s,c,range,load:(options)=>c._loadDialogTimeRange(range,options),record:()=>c._dialogTimeCache.get(c._getDialogTimeCacheKey(range)),requests:()=>s.calls.flat().length};
 }

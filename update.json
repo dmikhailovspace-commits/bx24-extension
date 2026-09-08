@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "7.5.105",
+  "version": "7.5.106",
   "release_date": "2026-09-08",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.105",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.105",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.106",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.106",
   "extension_files": [
-    "worker-v7_5_105.js",
+    "worker-v7_5_106.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,6 +33,6 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.105/extension/injected.js",
-  "changelog": "v7.5.105: shares one startup task catalog, waits for the confirmed portal day before elapsed reads, preloads today's time with native startup, refreshes changed tasks only, bounds journal rendering, and places the searchable timer across the bottom of the panel; preserves complete totals and contact bookkeeping"
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.106/extension/injected.js",
+  "changelog": "v7.5.106: shares one startup task catalog, waits for the confirmed portal day before elapsed reads, preloads today's time with native startup, refreshes changed tasks only, bounds journal rendering, and places the searchable timer across the bottom of the panel; preserves complete totals and contact bookkeeping"
 }

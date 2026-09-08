@@ -17,10 +17,11 @@ const source=readFileSync(new URL('../extension/injected.js',import.meta.url),'u
  qualify: (...args) => _qualifyPendingDialogTimeDuration(...args),
  pending: id => _dialogTimePendingActivities.get('task:'+id),
  refresh: (force = true) => _refreshDialogTimeTaskCatalog({force}),
+ projectCatalog: options => _ensureDialogTimeProjectCatalog(options),
  eligibility: id => _getFreshDialogTimeTaskEligibility(id),
  flush: () => _flushDialogTimePendingActivities(),
  visits: () => _readDialogTimeVisits(),
- publish: rows => _publishDialogTimeTaskIndexRows(rows),
+ publish: rows => { rows.forEach(task => _rememberDialogTimeProjectTask(task)); return _publishDialogTimeTaskIndexRows(rows); },
  cacheTasks: () => _dialogTimeCache.get(_getDialogTimeCacheKey(_getDialogTimeSelectedRange()))?.taskIdsKey,
  loadAuto: () => _loadDialogTimeRange(_getDialogTimeSelectedRange()),
  load: () => _loadDialogTimeRange(_getDialogTimeSelectedRange(), {force:true})
@@ -70,7 +71,7 @@ try {
    const r=panel.getBoundingClientRect(), hit=document.elementFromPoint(r.x+30,r.y+80);
    return {top:modal.matches(':popover-open'),hit:panel.contains(hit),width:r.width};
   });
-  assert.equal(result.top,true);assert.equal(result.hit,true);assert.equal(result.width,720);
+  assert.equal(result.top,true);assert.equal(result.hit,true);assert.equal(result.width,960);
   await page.evaluate(()=>document.getElementById('foreign-badge').remove());
  });
  await phase('scrolling summary and centered icon geometry',async()=>{
@@ -113,13 +114,13 @@ try {
  await phase('all catalog pages and incremental watermark',async()=>{
   await page.evaluate(()=>{
    window.catalogProbeCalls=[];
-   const original=window.BX.rest.callMethod;
-   const rows=Array.from({length:125},(_,i)=>({ID:String(92000+i),TITLE:'Каталог '+i,ALLOW_TIME_TRACKING:i===124?'Y':'N'}));
+   const original=window.BX.rest.callMethod;window.catalogProbeOriginal=original;
+   window.catalogProbeRows=Array.from({length:125},(_,i)=>({ID:String(92000+i),TITLE:'Каталог '+i,GROUP_ID:'1',ALLOW_TIME_TRACKING:i===124?'Y':'N'}));
    window.BX.rest.callMethod=function(method,params,cb){
     if(method==='tasks.task.list' && params.order?.ID==='asc'){
      window.catalogProbeCalls.push(params);
      const start=params.start||0, delta=!!params.filter?.['>=CHANGED_DATE'];
-     const data=delta?[]:rows.filter(row=>Number(row.ID)>Number(params.filter?.['>ID']||0)).slice(start,start+50);
+     const data=delta?[]:window.catalogProbeRows.filter(row=>Number(row.ID)>Number(params.filter?.['>ID']||0)).slice(start,start+50);
      return cb({error:()=>null,data:()=>({tasks:data}),next:()=>null});
     }
     return original.apply(this,arguments);
@@ -130,12 +131,17 @@ try {
   await page.waitForFunction(()=>timeProbe.eligibility('92124')===true);
   assert.deepEqual(await page.evaluate(()=>window.catalogProbeCalls.map(c=>c.start)),[0,0,0]);
   assert.deepEqual(await page.evaluate(()=>window.catalogProbeCalls.map(c=>c.filter['>ID'])),[0,92049,92099]);
-  assert.equal((await page.evaluate(()=>window.timeRangeLoadStarts))-loadStarts,2,'catalog pages must refresh elapsed only on first page and tail');
-  await page.evaluate(()=>window.timeProbe.refresh(false));
-  assert.ok(await page.evaluate(()=>window.catalogProbeCalls.at(-1).filter['>=CHANGED_DATE']));
+  assert.equal((await page.evaluate(()=>window.timeRangeLoadStarts))-loadStarts,0,'Project metadata publication must not launch an elapsed crawl from each catalog page');
+  assert.ok(await page.evaluate(()=>{const pref=JSON.parse(localStorage.getItem(`pena.timeProjects.v1.${location.host.toLowerCase()}~7`));return pref.all&&pref.includeUnassigned&&window.catalogProbeCalls.every(call=>call.select.includes('GROUP_ID')&&call.filter.GROUP_ID==null&&call.filter['>GROUP_ID']==null);}), 'Explicit all+unassigned catalog must return verifiable GROUP_ID without excluding projects');
+  const deltaStartedAt=await page.evaluate(()=>Date.now());
+  await page.evaluate(()=>window.timeProbe.projectCatalog({delta:true}));
+  const deltaWatermark=await page.evaluate(()=>Date.parse(window.catalogProbeCalls.at(-1).filter['>=CHANGED_DATE']));
+  assert.ok(deltaWatermark>deltaStartedAt-65000&&deltaWatermark<=deltaStartedAt,'Project delta did not use the completed request-start watermark');
   await page.locator('.pena-native-time-tracker-search').fill('Каталог');
   await page.locator('#pena-time-tracker-task-option-92124').waitFor();
   assert.equal(await page.locator('#pena-time-tracker-task-option-92000').count(),0);
+  // Isolate successor coalescing from the number of history pages in the preceding catalog.
+  await page.evaluate(async()=>{window.catalogProbeRows=window.catalogProbeRows.slice(-1);await window.timeProbe.projectCatalog({force:true});await window.timeProbe.load();});
  });
  await phase('new eligible task coalesces one successor to a delayed elapsed read',async()=>{
   await page.evaluate(()=>{
@@ -153,13 +159,13 @@ try {
   });
   await page.waitForFunction(()=>window.workingSetHeld.length===1);
   await page.evaluate(()=>{
-   window.timeProbe.publish([{ID:'5',TITLE:'Новая задача рабочего набора',ALLOW_TIME_TRACKING:'Y'}]);
+   window.timeProbe.publish([{ID:'5',TITLE:'Новая задача рабочего набора',GROUP_ID:'1',ALLOW_TIME_TRACKING:'Y'}]);
    window.workingSetNext=Promise.all(Array.from({length:20},()=>window.timeProbe.loadAuto()));
    window.workingSetHeld[0]();
   });
   await page.waitForFunction(()=>window.workingSetHeld.length===2);
   await page.evaluate(()=>{
-   window.timeProbe.publish([{ID:'6',TITLE:'Следующая задача рабочего набора',ALLOW_TIME_TRACKING:'Y'}]);
+   window.timeProbe.publish([{ID:'6',TITLE:'Следующая задача рабочего набора',GROUP_ID:'1',ALLOW_TIME_TRACKING:'Y'}]);
    window.workingSetThird=Promise.all(Array.from({length:20},()=>window.timeProbe.loadAuto()));
    window.workingSetHeld[1]();
   });
@@ -168,16 +174,18 @@ try {
   const tasks=(await page.evaluate(()=>window.timeProbe.cacheTasks())).split(',');
   assert.ok(tasks.includes('5') && tasks.includes('6'));
   assert.equal(await page.evaluate(()=>window.workingSetReads),3,'40 concurrent refreshes need only one read per new working set');
+  // Restore the real fixture catalog so subsequent write tests have confirmed project membership.
+  await page.evaluate(async()=>{window.BX.rest.callMethod=window.catalogProbeOriginal;await window.timeProbe.refresh();});
  });
  await phase('obsolete search stops eligibility fan-out',async()=>{
   await page.evaluate(()=>{
-   window.timeSearchOnlyEntries=Array.from({length:80},(_,i)=>({ID:String(93000+i),TITLE:'Проверка очереди '+i}));
+   window.timeSearchOnlyEntries=Array.from({length:80},(_,i)=>({ID:String(93000+i),TITLE:'Проверка очереди '+i,GROUP_ID:'1'}));
    window.obsoleteGets=[];
    const original=window.BX.rest.callMethod;
    window.BX.rest.callMethod=function(method,params,cb){
     if(method==='tasks.task.get' && Number(params.taskId)>=93000 && Number(params.taskId)<93100){
      window.obsoleteGets.push(params.taskId);
-     return setTimeout(()=>cb({error:()=>null,data:()=>({task:{id:params.taskId,title:'Проверка очереди',allowTimeTracking:'Y'}})}),250);
+     return setTimeout(()=>cb({error:()=>null,data:()=>({task:{id:params.taskId,title:'Проверка очереди',groupId:'1',allowTimeTracking:'Y'}})}),250);
     }
     return original.apply(this,arguments);
    };

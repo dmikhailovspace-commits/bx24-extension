@@ -21,6 +21,12 @@ function fixture(count=51){
   _dialogTimeForcedRefreshes:new Map(),_dialogTimeRangeRechecks:new Map(),_dialogTimePanelRefreshes:new Map(),
   _dialogTimeCatalogCursor:100,_dialogTimeCatalogScope:state.scope,_DIALOG_TIME_FIRST_WAVE_SIZE:16,_DIALOG_TIME_WAVE_SIZE:50,
   _getCurrentBitrixUserId:()=>state.userId,_getDialogNativeSharedAuditScopeKey:()=>state.scope,_isDialogTimeFrameActive:()=>state.active&&c.document.visibilityState!=='hidden',
+  // These clock/CPU oracles start with a saved project choice; the separate
+  // project-scope suite verifies actual persistence and catalog membership.
+  _getDialogTimeProjectScopeKey:()=>state.scope,
+  _isDialogTimeProjectTask:id=>ids.includes(String(id)),
+  _dialogTimeProjectCatalogDirty:false,_dialogTimeProjectCatalogError:null,
+  _ensureDialogTimeProjectCatalog:async()=>{if(c._dialogTimeCatalogCursor&&c._dialogTimeCatalogScope===state.scope)return true;state.catalogCalls++;c._dialogTimeCatalogCursor=100;c._dialogTimeCatalogScope=state.scope;return true;},
   _ensureDialogTimePortalDate:async()=>range.from,_syncDialogTimePortalDay:()=>{},_getDialogTimeTodayKey:()=>state.today,
   _getDialogTimeWorkingTaskIds:()=>ids.slice(),_getDialogTimeRecord:r=>c._dialogTimeCache.get(c._getDialogTimeCacheKey(r)),
   _queueDialogTimeUiSync:()=>{},_loadDialogTimeTaskTitles:async()=>{},_sleepDialogControl:async()=>{},_getDialogTimeFriendlyError:e=>e.message,
@@ -94,6 +100,7 @@ try {
  await phase('4149-task working set preserves every ID without quadratic membership scans',()=>{
   const ids=Array.from({length:4149},(_,i)=>String(i+1));
   const c=vm.createContext({_PENA_TIME_CONTROL:model,_dialogTimeRange:{from:'2026-09-07',to:'2026-09-07'},_dialogTimeCache:new Map([['day',{data:{tasks:ids.map(taskId=>({taskId}))}}]]),
+   _dialogTimeProjectTaskIds:new Set(ids),_dialogTimeCatalogCursor:1,_dialogTimeCatalogScope:'configured',_getDialogTimeProjectScopeKey:()=> 'configured',
    _dialogTimeTaskTitles:new Map(ids.map(id=>[id,'Task '+id])),_dialogTimeTaskEligibility:new Map(ids.map(id=>[id,true])),
    _readDialogTimeVisits:()=>[],_dialogTimeManualSelectedTask:null,_readDialogTimeTracker:()=>null,_getActiveDialogTimeActivity:()=>null,
    _getDialogTimeEligibleTaskIds:()=>ids,_getDialogRecentUniqueMeta:()=>[],_getDialogTimeTaskEligibilityForDisplay:()=>true});
@@ -129,8 +136,9 @@ try {
  });
  await phase('scope change and uncompleted catalog cannot publish another user or false zero',async()=>{
   const first=fixture();first.state.onPage=()=>{first.state.scope='portal~8';};await first.c._scheduleDialogTimeBootstrap(null);
-  assert.equal(first.c._getDialogTimeRecord(first.range)?.data,null);
-  const second=fixture();await second.c._scheduleDialogTimeBootstrap(Promise.resolve({value:{complete:false}}));assert.equal(second.state.calls.length,0);assert.equal(second.c._dialogTimeBootstrapToken.phase,'paused');
+  assert.equal(first.c._getDialogTimeRecord(first.range),undefined);
+  const second=fixture();second.c._ensureDialogTimeProjectCatalog=async()=>false;
+  await second.c._scheduleDialogTimeBootstrap(null);assert.equal(second.state.calls.length,0);assert.equal(second.c._dialogTimeBootstrapToken.phase,'paused');
  });
  await phase('midnight wake waits for the old read and starts the new day exactly once',async()=>{
   const {c,state,range}=fixture();state.hold=deferred();const first=c._scheduleDialogTimeBootstrap(null);
@@ -154,7 +162,7 @@ try {
   while(!state.calls.length)await Promise.resolve();const held=state.hold;state.hold=null;
   state.scope='portal~8';state.userId='8';await c._scheduleDialogTimeBootstrap(null);held.resolve();await first;
   assert.equal(c._getDialogTimeRecord(range).data.totalSeconds,3060);assert.ok(c._getDialogTimeRecord(range).data.items.every(item=>item.userId==='8'));
-  assert.equal(c._dialogTimeCache.get('7:'+range.from+':'+range.to)?.data,null);assert.equal(c._dialogTimeBootstrapToken.scope,state.scope);
+  assert.equal(c._dialogTimeCache.get('portal~7:'+range.from+':'+range.to)?.data,null);assert.equal(c._dialogTimeBootstrapToken.scope,state.scope);
   assert.equal(c._dialogTimeBootstrapToken.phase,'ready');assert.equal(c._dialogTimeInFlight.size,0);
  });
  for(const held of [false,true])await phase(held?'default wake waits for native guard and reuses today':'default native view starts metadata and today without inventing DOM proof',async()=>{

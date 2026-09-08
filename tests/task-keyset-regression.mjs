@@ -6,12 +6,13 @@ const section=(a,b)=>source.slice(source.indexOf(a),source.indexOf(b,source.inde
 const runtime=[
  section('\tfunction _getDialogTaskKeysetCursor(', '\n\tlet _dialogTimeCatalogPromise'),
  section('\tasync function _syncDialogTaskCatalog(', '\n\tfunction _commitDialogTaskCatalogResult'),
- section('\tasync function _refreshDialogTimeTaskCatalog(', '\n\tfunction _publishDialogTimeTaskIndexRows')
+ section('\tasync function _refreshDialogTimeTaskCatalog(', '\n\tfunction _publishDialogTimeTaskIndexRows'),
+ section('\tasync function _ensureDialogTimeProjectCatalog(', '\n\tasync function _loadDialogTimeProjects')
 ].join('\n');
 const phases=[];
 const phase=async(name,fn)=>{const started=Date.now();const evidence=await fn();phases.push({name,status:'PASS',ms:Date.now()-started,evidence});};
 function setup({count=100,deleteAfterFirst=false,ignoreCursor=false,reverse=false,changeScope=false}={}){
- let rows=Array.from({length:count},(_,i)=>({ID:String(i+1),TITLE:'Task '+(i+1),ALLOW_TIME_TRACKING:'Y'}));
+ let rows=Array.from({length:count},(_,i)=>({ID:String(i+1),TITLE:'Task '+(i+1),GROUP_ID:'10',ALLOW_TIME_TRACKING:'Y'}));
  const calls=[],published=[];let context;
  const fetch=async(_method,params)=>{
   calls.push(JSON.parse(JSON.stringify(params)));
@@ -25,6 +26,12 @@ function setup({count=100,deleteAfterFirst=false,ignoreCursor=false,reverse=fals
  context=vm.createContext({scope:'portal:7',Date,Map,Set,Promise,
   setTimeout:()=>1,clearTimeout:()=>{},
   _getDialogNativeSharedAuditScopeKey:()=>context.scope,
+  // Pagination-only oracle: the user has saved project 10; actual preference
+  // normalization, persistence and generation fencing have their own suite.
+  _getDialogTimeProjectScopeKey:()=>context.scope,_getDialogTimeProjectFilter:()=>({GROUP_ID:['10']}),
+  _matchesDialogTimeProjectTask:row=>row.GROUP_ID==='10',_isDialogTimeFrameActive:()=>true,
+  _dialogTimeProjectTaskIds:new Set(),_dialogTimeProjectCatalogOwner:null,_dialogTimeProjectCatalogDirty:false,_dialogTimeProjectCatalogError:null,
+  _pruneDialogTimeProjectSnapshots:()=>{},_queueDialogTimeUiSync:()=>{},
   _isDialogTaskCatalogMetadataFresh:()=>false,
   _dialogTaskCatalogSyncFlights:new Map(),_dialogTaskCatalogSyncPromise:null,_dialogTaskCatalogSyncScopeKey:'',_dialogTaskCatalogLastResult:null,
   _DIALOG_TASK_CATALOG_MAX_PAGES:100,_DIALOG_TASK_CATALOG_PAGE_SIZE:50,_DIALOG_RECENT_PAGE_DELAY_MS:0,
@@ -53,7 +60,7 @@ try {
   assert.equal(result.complete,true);assert.ok(published.includes('51'));
   assert.deepEqual([...new Set(published)].map(Number).sort((a,b)=>a-b),Array.from({length:100},(_,i)=>i+1));
   assert.deepEqual(calls.map(c=>c.filter['>ID']),[0,50,100,100]);
-  assert.ok(context._dialogTimeCatalogCursor>0);
+  assert.equal(context._dialogTimeCatalogCursor,0,'Native catalog cannot certify the selected time catalog');
   return{pages:calls.length,task51Present:true,complete:true};
  });
  for(const options of [{ignoreCursor:true},{reverse:true}])await phase(`invalid keyset fails closed: ${Object.keys(options)[0]}`,async()=>{
@@ -78,7 +85,7 @@ try {
  await phase('time delta also uses keyset and retains unchanged rows shifted by deletion',async()=>{
   const {context,calls,published}=setup({deleteAfterFirst:true});
   context._dialogTimeCatalogScope=context.scope;context._dialogTimeCatalogCursor=Date.now()-5000;
-  await context._refreshDialogTimeTaskCatalog();
+  await context._ensureDialogTimeProjectCatalog({delta:true});
   assert.ok(published.includes('51'));assert.deepEqual(calls.map(c=>c.filter['>ID']),[0,50,100]);
   assert.ok(calls.every(c=>c.start===0&&c.filter['>=CHANGED_DATE']));
   return{pages:calls.length,task51Present:true};

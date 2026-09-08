@@ -127,7 +127,11 @@ try {
   report.backgroundTimeoutTrace=await page.evaluate(()=>window.__PENA_REST_DIAGNOSTICS__.snapshot().samples.filter(sample=>sample.method==='batch:task.elapseditem.getlist'));
   const timeoutIndex=report.backgroundTimeoutTrace.findIndex(sample=>sample.code==='TIMEOUT');
   assert.equal(report.backgroundTimeoutTrace.filter(sample=>sample.code==='TIMEOUT').length,1);
-  assert(report.backgroundTimeoutTrace[timeoutIndex+1].queuedMs>=cooldown-250,'Manual successor bypassed the real timeout cooldown');
+  const failedRead=report.backgroundTimeoutTrace[timeoutIndex], successorRead=report.backgroundTimeoutTrace[timeoutIndex+1];
+  // Manual refresh now discovers selected tasks before elapsed. The catalog
+  // request may consume the cooldown; measure dispatch time, not queue time
+  // of the later elapsed job in isolation.
+  assert(successorRead.startedAt-(failedRead.startedAt+failedRead.durationMs)>=cooldown-250,'Manual successor bypassed the real timeout cooldown');
  });
 
  await page.evaluate(()=>{window.feedback.holdAdd=true;window.feedback.readMode='hold';window.feedbackProbe.prepare({taskId:'101',title:'Задача 101'});});
