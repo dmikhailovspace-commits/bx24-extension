@@ -1095,8 +1095,23 @@ try {
 	// The active Messenger resolves its time identity automatically. Until that
 	// response arrives, elapsed and persistent self-scoped contacts stay blocked;
 	// incoming and outgoing events must share the single pending identity request.
+	const fallbackIdentityAdmissionResults = [];
+	for (const admissionTiming of ['before-open', 'after-open']) {
 	await page.evaluate(() => localStorage.clear());
 	await page.goto(`${base}/tests/native-consistency-harness.html?mode=tasks&timeUserCurrentFallback=1&timeUserCurrentDelay=1500`);
+	await page.evaluate(() => {
+		const original = window.BX.rest.callMethod;
+		const control = window.__fallbackEligibilityControl = { holding:true, held:[], trace:[] };
+		window.BX.rest.callMethod = function(method, params, callback, ...rest) {
+			if (method !== 'tasks.task.get' || String(params?.taskId ?? params?.id) !== '5') return original.call(this, method, params, callback, ...rest);
+			control.trace.push({ phase:'eligibility-dispatch', at:Date.now() });
+			return original.call(this, method, params, result => {
+				const deliver = () => { control.trace.push({ phase:'eligibility-response', at:Date.now() }); callback(result); };
+				if (control.holding) control.held.push(deliver); else deliver();
+			}, ...rest);
+		};
+		control.release = () => { control.holding=false; control.trace.push({ phase:'release', at:Date.now() }); control.held.splice(0).forEach(deliver=>deliver()); };
+	});
 	await page.waitForFunction(() => (window.nativeCustomEventHandlers.get('onPullEvent-im') || []).length === 1);
 	await page.waitForTimeout(750);
 	const unresolvedUserStorage = await page.evaluate(() => ({
@@ -1118,7 +1133,7 @@ try {
 	await page.waitForTimeout(250);
 	assert.deepEqual(await page.evaluate(() => Object.keys(localStorage).filter(key => /pena\.time[^.]*\.v1\.self(?:\.|$)/.test(key))), [],
 		'Task action wrote a temporary self namespace while user.current was pending');
-	try {
+	const waitForFallbackContact = async () => { try {
 		await page.waitForFunction(() => {
 			const key = Object.keys(localStorage).find(candidate => candidate.startsWith('pena.timeVisitedTasks.v1.7.'));
 			return key && JSON.parse(localStorage.getItem(key) || '[]').some(item => item.taskId === '5' && item.visits === 1);
@@ -1130,17 +1145,49 @@ try {
 			taskItems: window.__PENA_NATIVE_PREFETCH__?.status?.().catalogCount
 		}));
 		throw new Error(`Deferred outgoing activity was not persisted: ${JSON.stringify(diagnostic)}; ${error.message}`);
-	}
+	} };
 	assert.equal(await page.evaluate(() => window.nativeRestCalls.filter(call => call.method === 'user.current').length), 1,
 		'user.current was not single-flight for duplicate outgoing-message events');
 	await page.waitForFunction(()=>{const s=window.__PENA_TIME_LOAD_DIAGNOSTICS__?.snapshot();return s?.phase==='ready'&&!s.active;},null,{timeout:15000});
-	const fallbackStartup=await page.evaluate(()=>({elapsed:window.timeRestCalls.map(p=>String(p[0])),users:window.nativeRestCalls.filter(c=>c.method==='user.current').length}));
+	await page.waitForFunction(()=>window.__fallbackEligibilityControl.held.length>0);
+	const readFallbackRequests=()=>page.evaluate(()=>({elapsed:window.timeRestCalls.map(p=>String(p[0])),users:window.nativeRestCalls.filter(c=>c.method==='user.current').length,catalog:window.nativeRestCalls.filter(c=>c.method==='tasks.task.list').map(c=>c.params)}));
+	const fallbackStartup=await readFallbackRequests();
 	assert.equal(fallbackStartup.users,1);assert.equal(fallbackStartup.elapsed.length,30);assert.equal(new Set(fallbackStartup.elapsed).size,30);
+	assert.equal(fallbackStartup.elapsed.includes('5'),false,'Unverified task5 entered the initial elapsed working set');
+	assert.equal(await page.evaluate(()=>Object.keys(localStorage).some(k=>k.startsWith('pena.timeVisitedTasks.v1.'))),false,'Held eligibility admitted an unverified contact');
+	assert.equal(await page.locator('.task-host .pena-native-time-button').innerText(),'Сегодня 1:30','Initial toolbar did not reflect the verified 30-task total');
+	// The task exists outside the initial catalog response. Its backend history is
+	// already real when eligibility admits it; no ADD command is sent by the test.
+	await page.evaluate(()=>window.timeAddedItems.push({ID:'late-task5-600',TASK_ID:'5',USER_ID:'7',SECONDS:'600',CREATED_DATE:`${window.timePortalDateKey()}T12:30:00+03:00`}));
+	if(admissionTiming==='before-open') {
+		await page.evaluate(()=>window.__fallbackEligibilityControl.release());
+		await waitForFallbackContact();
+		await page.waitForFunction(()=>document.querySelector('.task-host .pena-native-time-button')?.textContent==='Сегодня 1:40',null,{timeout:10000});
+		assert.deepEqual(await readFallbackRequests(),{...fallbackStartup,elapsed:[...fallbackStartup.elapsed,'5']},'Closed admission must read only newly admitted task5 and update the toolbar before opening');
+	}
 	await page.locator('.task-host .pena-native-time-button').click();
 	await page.waitForFunction(() => !document.querySelector('.pena-native-time-panel')?.classList.contains('--loading') &&
 		window.timeRestCalls.length > 0, null, { timeout: 10000 });
-	assert.deepEqual(await page.evaluate(()=>({elapsed:window.timeRestCalls.map(p=>String(p[0])),users:window.nativeRestCalls.filter(c=>c.method==='user.current').length})),fallbackStartup,'Opening fallback-identity time panel repeated confirmed startup reads');
+	if(admissionTiming==='after-open') {
+		assert.deepEqual(await readFallbackRequests(),fallbackStartup,'Warm open repeated confirmed startup reads while eligibility was held');
+		await page.evaluate(()=>window.__fallbackEligibilityControl.release());
+		await waitForFallbackContact();
+	}
+	await page.waitForFunction(()=>window.timeRestCalls.some(p=>String(p[0])==='5') && !document.querySelector('.pena-native-time-panel')?.classList.contains('--loading'),null,{timeout:10000});
+	const admitted=await readFallbackRequests();
+	assert.deepEqual(admitted,{...fallbackStartup,elapsed:[...fallbackStartup.elapsed,'5']},'Qualified task admission must read exactly the new task5, without re-reading the initial catalog or elapsed set');
+	await page.waitForFunction(()=>document.querySelector('.task-host .pena-native-time-button')?.textContent==='Сегодня 1:40',null,{timeout:10000});
 	await page.locator('.pena-native-time-panel').press('Escape');
+	await page.locator('.task-host .pena-native-time-button').click();
+	await page.waitForFunction(()=>!document.querySelector('.pena-native-time-panel')?.classList.contains('--loading'),null,{timeout:10000});
+	await page.waitForTimeout(250);
+	assert.deepEqual(await readFallbackRequests(),admitted,'Reopening after admission repeated task or elapsed reads');
+	const contact=await page.evaluate(()=>{const key=Object.keys(localStorage).find(k=>k.startsWith('pena.timeVisitedTasks.v1.7.'));return JSON.parse(localStorage.getItem(key)||'[]').find(row=>row.taskId==='5');});
+	assert.equal(contact?.visits,1,'Deferred eligibility or warm reopening duplicated the outgoing contact');
+	fallbackIdentityAdmissionResults.push({admissionTiming,initial:fallbackStartup,admitted,contactCount:contact.visits,toolbar:await page.locator('.task-host .pena-native-time-button').innerText(),trace:await page.evaluate(()=>window.__fallbackEligibilityControl.trace)});
+	await page.locator('.pena-native-time-panel').press('Escape');
+	}
+	writeFileSync(join(root,'tests/artifacts/native-fallback-identity-admission.json'),JSON.stringify({scenarios:fallbackIdentityAdmissionResults},null,2));
 
 	// Even a known task/dialog event is ignored in ordinary chats. Without native
 	// account scope, its completed startup must not be repeated by these events.

@@ -38,7 +38,7 @@ function fixture(storage=new Map()){
   _dialogTimeTaskTitles:new Map([['999','Foreign task']]),_dialogTimeTaskEligibility:new Map([['999',true]]),
   _DIALOG_TIME_FIRST_WAVE_SIZE:16,_DIALOG_TIME_WAVE_SIZE:50,_queueDialogTimeUiSync:()=>{},_loadDialogTimeTaskTitles:async()=>{},
   _sleepDialogControl:async()=>{},_getDialogTimeFriendlyError:error=>error.message,_isBxRestBatchPressureError:()=>false,
-  _getDialogTimeTodayKey:()=>range.from,_syncDialogTimePortalDay:()=>{},_ensureDialogTimePortalDate:async()=>range.from,
+  _getDialogTimeTodayKey:()=>range.from,_getDialogTimeRange:()=>range,_syncDialogTimePortalDay:()=>{},_ensureDialogTimePortalDate:async()=>range.from,
   _extractDialogTaskCatalogRows:data=>data.tasks,
   _publishDialogTimeTaskIndexRows:rows=>rows.forEach(row=>c._dialogTimeTaskTitles.set(String(row.ID),row.TITLE)),
   _getDialogTimeTaskEligibilityForDisplay:()=>true,_getDialogRecentUniqueMeta:()=>[{isTask:true,taskId:'999',title:'Foreign task',id:'chat999'}],
@@ -217,5 +217,28 @@ await phase('a stale committed project cursor still performs a delta and reads o
  return {deltaPages:delta.length,newElapsedTasks:1,existingElapsedRereads:0};
 });
 
+await phase('new selected membership refreshes completed closed today while existing contacts and unrelated tasks stay quiet',async()=>{
+ const f=fixture();f.save(choice());await f.load();f.c._dialogControlNativeWorkspaceTab='';let scheduled=0;
+ f.c._scheduleDialogTimeElapsedRefresh=()=>{scheduled++;};
+ const beforeCatalog=f.state.calls.length,beforeElapsed=f.state.elapsed.length;
+ f.c._rememberDialogTimeProjectTask(task(401));assert.equal(scheduled,1);
+ await f.c._scheduleDialogTimeBootstrap();assert.equal(f.state.calls.length,beforeCatalog);assert.deepEqual(f.state.elapsed.slice(beforeElapsed),['401']);assert.equal(f.record().data.totalSeconds,6120);
+ f.c._rememberDialogTimeProjectTask(task(401));f.c._rememberDialogTimeProjectTask(task(402,'20'));assert.equal(scheduled,1);
+ vm.runInContext(extract('_invalidateDialogTimeTaskSnapshot'),f.c);f.c._invalidateDialogTimeTaskSnapshot('401');assert.equal(scheduled,1,'Ordinary closed qualified contact must not schedule a GET');
+ f.c._rememberDialogTimeProjectTask(task(401,'20'));assert.equal(scheduled,1);assert.equal(f.record().data.totalSeconds,6060);
+ return{newMemberElapsedReads:1,newCatalogReads:0,existingMemberExtraWakes:0,ordinaryContactExtraWakes:0,removalPruned:true};
+});
+await phase('closed membership wake requires current complete today, active frame, visible page and online state',async()=>{
+ for(const condition of ['hidden','offline','inactive','incomplete','newProjectGeneration']){
+  const f=fixture();f.save(choice());await f.load();f.c._dialogControlNativeWorkspaceTab='';let scheduled=0;f.c._scheduleDialogTimeElapsedRefresh=()=>{scheduled++;};
+  if(condition==='hidden')f.c.document.visibilityState='hidden';
+  if(condition==='offline')f.c.navigator.onLine=false;
+  if(condition==='inactive')f.c._isDialogTimeFrameActive=()=>false;
+  if(condition==='incomplete')f.record().hasCompleteSnapshot=false;
+  if(condition==='newProjectGeneration'){f.save(choice(['20']));f.save(choice());}
+  f.c._rememberDialogTimeProjectTask(task(401));assert.equal(scheduled,0,condition);
+ }
+ return{gatedConditions:5,unexpectedWakes:0};
+});
 mkdirSync('tests/artifacts',{recursive:true});writeFileSync('tests/artifacts/time-project-scope-report.json',JSON.stringify(report,null,2));
 console.log(JSON.stringify(report,null,2));if(report.phases.some(p=>p.status==='FAIL'))process.exitCode=1;

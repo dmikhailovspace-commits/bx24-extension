@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.111';
+	window.__ANITREC_RUNNING__ = '7.5.112';
 
-	const VER = '7.5.111';
+	const VER = '7.5.112';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -4618,7 +4618,13 @@
 		if (included !== wasIncluded) {
 			_dialogTimeTaskRevisions.set(id, (_dialogTimeTaskRevisions.get(id) || 0) + 1);
 			if (!included) _pruneDialogTimeProjectSnapshots();
-			if (included && _dialogControlNativeWorkspaceTab === 'time') _scheduleDialogTimeElapsedRefresh();
+			if (included) {
+				const closedTodayReady = _dialogControlNativeWorkspaceTab !== 'time' && document.visibilityState !== 'hidden' &&
+					navigator.onLine !== false && _isDialogTimeFrameActive() && _getDialogTimeRecord(_getDialogTimeRange('today'))?.hasCompleteSnapshot;
+				// A newly confirmed project member can change the toolbar total. Reuse
+				// the existing today owner; ordinary contacts remain invalidate-only.
+				if (_dialogControlNativeWorkspaceTab === 'time' || closedTodayReady) _scheduleDialogTimeElapsedRefresh();
+			}
 			_queueDialogTimeUiSync();
 		}
 	}
