@@ -170,13 +170,13 @@ await phase('confirmed write for the previous selection cannot add a foreign tas
  return {newSelectionSeconds:120,foreignWriteSeconds:600,foreignProjection:0};
 });
 await phase('only a fresh complete same-user native catalog with group metadata can replace scoped discovery',async()=>{
- for(const invalid of ['', 'partial', 'head', 'scope', 'stale', 'missingGroup']){
-  const f=fixture();f.save(choice());f.c._dialogTaskCatalogLastResult={complete:invalid!=='partial',headOnly:invalid==='head',rows:structuredClone(f.state.rows),startedAt:999800};
-  f.c._dialogTaskCatalogScopeKey=invalid==='scope'?'other.test~7':f.state.scope;f.c._dialogTaskCatalogFetchedAt=invalid==='stale'?900000:999900;
+ for(const invalid of ['', 'partial', 'head', 'scope', 'stale', 'headRenewedStale', 'future', 'missingGroup']){
+  const f=fixture();f.save(choice());f.c._dialogTaskCatalogLastResult={complete:invalid!=='partial',headOnly:invalid==='head',rows:structuredClone(f.state.rows),startedAt:invalid==='stale'||invalid==='headRenewedStale'?900000:invalid==='future'?1001000:999800};
+  f.c._dialogTaskCatalogScopeKey=invalid==='scope'?'other.test~7':f.state.scope;f.c._dialogTaskCatalogFetchedAt=invalid==='stale'?900100:999900;
   if(invalid==='missingGroup')delete f.c._dialogTaskCatalogLastResult.rows[0].GROUP_ID;
   await f.load();assert.equal(f.state.elapsed.length,101);assert.equal(f.state.calls.length,invalid?3:0,invalid||'valid reuse');assert.equal(f.record().data.totalSeconds,6060);
  }
- return {validReuseOwnCatalogRequests:0,invalidProofVariants:5,eachInvalidScopedPages:3};
+ return {validReuseOwnCatalogRequests:0,invalidProofVariants:7,eachInvalidScopedPages:3};
 });
 await phase('both startup orders share the actual native transport until full proof',async()=>{
  for(const order of ['native-first','time-first']){
