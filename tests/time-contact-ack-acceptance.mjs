@@ -14,6 +14,10 @@ const source=raw.replace(anchor,anchor+`
   record:()=>_getDialogTimeRecord(_getDialogTimeSelectedRange()),
   visits:()=>_readDialogTimeVisits(),load:()=>_loadDialogTimeRange(_getDialogTimeSelectedRange(),{force:true}),
   recover:()=>_recoverDialogTimeContactAccounting(),sync:()=>_syncDialogTimeUi(_dialogControlNativeSwitcherNode),
+  state:()=>({busy:_dialogTimeActionInFlight,scope:_getDialogTimeIdentityScopeKey(),projectScope:_getDialogTimeProjectScopeKey(),
+   recovery:{active:!!_dialogTimeAccountingRecoveryPromise,timer:!!_dialogTimeAccountingRecoveryTimer,attempt:_dialogTimeAccountingRecoveryAttempt},
+   activeIntent:_dialogTimeActiveManualWriteIntent,selected:_dialogTimeManualSelectedTask,error:_dialogTimeManualError,
+   rangeReads:[..._dialogTimeInFlight.keys()],rechecks:[..._dialogTimeRangeRechecks.keys()],elapsedDiagnostics:window.__PENA_TIME_LOAD_DIAGNOSTICS__?.snapshot()}),
   contact:async(id,at)=>{
    const event={eventId:id,userId:String(_getCurrentBitrixUserId()),taskId:'101',dialogId:'101',title:'Task 101',qualifiedAt:at,dateKey:_getDialogTimeTodayKey(),reason:'message'};
    localStorage.setItem(_PENA_TIME_CONTACT_OUTBOX_KEY+'.'+event.userId+'.'+id,JSON.stringify(event));
@@ -22,8 +26,10 @@ const source=raw.replace(anchor,anchor+`
  };`);
 const report={sourceSha:createHash('sha256').update(raw).digest('hex'),phases:[],snapshots:[],limitations:'Actual Chromium manual ADD handler and contact journal commit; synthetic qualified events, controlled SDK ACK and receipt-only storage failures. Server fixture data survives reload. No real messages or live Bitrix.'};
 const server=await startHarnessServer(),browser=await chromium.launch({headless:true}),page=await browser.newPage({viewport:{width:1100,height:900}}),errors=collectPageErrors(page);
-async function snapshot(name){await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));const value=await page.evaluate(()=>({
+async function snapshot(name){await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));const value=await page.evaluate(async()=>({
  draft:window.contactAckProbe.draft(),visits:window.contactAckProbe.visits(),record:window.contactAckProbe.record(),
+ state:window.contactAckProbe.state(),locks:await navigator.locks.query(),rest:window.__PENA_REST_DIAGNOSTICS__?.snapshot(),
+ submit:(()=>{const node=document.querySelector('.pena-native-time-manual-submit'),ancestors=[];for(let parent=node?.parentElement;parent;parent=parent.parentElement)if(parent.inert||parent.hasAttribute('aria-disabled')||parent.hasAttribute('disabled'))ancestors.push({tag:parent.tagName,className:parent.className,inert:parent.inert,ariaDisabled:parent.getAttribute('aria-disabled'),disabled:parent.getAttribute('disabled')});return{text:node?.textContent,disabled:node?.disabled,matchesDisabled:node?.matches(':disabled'),ancestors};})(),
  addCalls:Number(localStorage.getItem('test:ack-server-adds')||0),
  contactText:document.querySelector('.pena-native-time-suggestions')?.textContent,
  total:document.querySelector('.pena-native-time-total-value')?.textContent,
@@ -72,16 +78,20 @@ try{
  await page.reload();await page.locator('.pena-native-time-button').waitFor();await installServer(false);await page.locator('.pena-native-time-button').click();
  await page.waitForFunction(()=>window.contactAckProbe.record()?.data?.totalSeconds===6000);
  const reloaded=await snapshot('reload-with-receipt-still-failing');assert.equal(reloaded.draft.pendingWrite.status,'acknowledged');assert.equal(reloaded.addCalls,1);assert.match(reloaded.contactText,/1 контакт/);
- await page.locator('.pena-native-time-manual-submit').click();await page.locator('.pena-native-time-manual-submit').click();
+ await page.locator('.pena-native-time-manual-submit').click();await snapshot('after-first-retry-still-failing');await page.locator('.pena-native-time-manual-submit').click();
  assert.equal(await page.evaluate(()=>Number(localStorage.getItem('test:ack-server-adds')||0)),1);
  report.phases.push({name:'reload preserves acknowledged ID and original contact cutoff',status:'PASS'});
  await page.evaluate(()=>localStorage.setItem('test:ack-fail-receipt','0'));
- await page.locator('.pena-native-time-manual-submit').click();
+ // Recovery is already scheduled by the previous failed manual attempts. Once
+ // storage works, it may clear the ACK before another user click. Clicking the
+ // now-empty Add form would wait forever for its correctly disabled button.
  await page.waitForFunction(()=>window.contactAckProbe.draft().pendingWrite===null);
+ await page.waitForFunction(()=>!window.contactAckProbe.state().busy);
  await page.evaluate(()=>window.contactAckProbe.load());const recovered=await snapshot('receipt-recovered-and-native-reread');
  assert.equal(recovered.draft.pendingWrite,null);assert.equal(recovered.addCalls,1);assert.equal(recovered.total,'1 ч 40 мин');assert.match(recovered.contactText,/1 контакт/);
+ assert.deepEqual(recovered.submit,{text:'Добавить',disabled:true,matchesDisabled:true,ancestors:[]},'Completed bookkeeping must leave an empty, disabled Add form');
  const receipt=recovered.visits.find(row=>row.taskId==='101').accountedEntries.find(entry=>entry.id==='900001');assert.equal(receipt.cutoffAt,intent.contactCutoffAt||intent.attemptedAt);
- report.phases.push({name:'recovery only writes bookkeeping and never duplicates ADD',status:'PASS'});assert.deepEqual(errors,[]);
+ report.phases.push({name:'automatic recovery after storage becomes available only writes bookkeeping and never duplicates ADD',status:'PASS'});assert.deepEqual(errors,[]);
  for(const width of [344,720]){
   await page.setViewportSize({width,height:850});await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
   const layout=await page.locator('.pena-native-time-suggestions').evaluate(section=>{
@@ -95,4 +105,4 @@ try{
  }
  report.phases.push({name:'344px and 720px contact cards keep both detail lines and the action legible',status:'PASS'});
  console.log(JSON.stringify(report.phases));
-}catch(error){report.error=error.stack;throw error;}finally{report.pageErrors=errors;writeFileSync(new URL('./artifacts/time-contact-ack-acceptance.json',import.meta.url),JSON.stringify(report,null,2));await browser.close();await server.close();}
+}catch(error){report.error=error.stack;await snapshot('failure').catch(e=>{report.snapshotError=e.message;});await page.screenshot({path:new URL('./artifacts/time-contact-ack-failure.png',import.meta.url).pathname.replace(/^\/([A-Za-z]:)/,'$1')}).catch(()=>{});throw error;}finally{report.pageErrors=errors;writeFileSync(new URL('./artifacts/time-contact-ack-acceptance.json',import.meta.url),JSON.stringify(report,null,2));await browser.close();await server.close();}

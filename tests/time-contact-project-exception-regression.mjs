@@ -291,5 +291,5 @@ try {
 } finally {
  mkdirSync(new URL('./artifacts/',import.meta.url),{recursive:true});
  writeFileSync(new URL('./artifacts/time-contact-project-exception-report.json',import.meta.url),JSON.stringify(report,null,2));
- console.log(JSON.stringify(report,null,2));
+ console.log(JSON.stringify({sourceSha256:report.sourceSha256,phases:report.phases,diagnostics:'tests/artifacts/time-contact-project-exception-report.json'},null,2));
 }
