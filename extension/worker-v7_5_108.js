@@ -2,7 +2,7 @@
 // worker URL across unpacked-extension updates, so every release gets a new
 // entry filename and an independently verifiable build/protocol marker.
 const PENA_WORKER_ENTRY = 'worker-v7_5_106.js';
-const PENA_WORKER_BUILD = '7.5.107';
+const PENA_WORKER_BUILD = '7.5.108';
 const PENA_WORKER_PROTOCOL = 'dialog-repository-v2';
 const manifestVersion = chrome.runtime.getManifest().version;
 

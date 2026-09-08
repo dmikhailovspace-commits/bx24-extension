@@ -29,6 +29,7 @@ function setup({count=100,deleteAfterFirst=false,ignoreCursor=false,reverse=fals
   // Pagination-only oracle: the user has saved project 10; actual preference
   // normalization, persistence and generation fencing have their own suite.
   _getDialogTimeProjectScopeKey:()=>context.scope,_getDialogTimeProjectFilter:()=>({GROUP_ID:['10']}),
+  _readDialogTimeProjectPreference:()=>({version:1,all:false,ids:['10'],includeUnassigned:false}),
   _matchesDialogTimeProjectTask:row=>row.GROUP_ID==='10',_isDialogTimeFrameActive:()=>true,
   _dialogTimeProjectTaskIds:new Set(),_dialogTimeProjectCatalogOwner:null,_dialogTimeProjectCatalogDirty:false,_dialogTimeProjectCatalogError:null,
   _pruneDialogTimeProjectSnapshots:()=>{},_queueDialogTimeUiSync:()=>{},

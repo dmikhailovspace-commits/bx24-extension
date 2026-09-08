@@ -5,7 +5,7 @@
 <!-- AUTO:BEGIN -->
 ## Current release facts (generated)
 
-- Version: **7.5.107**
+- Version: **7.5.108**
 - Release date: **2026-09-08**
 - Runtime files: **19**
 - Regression suites: **55**
@@ -23,7 +23,7 @@
 - `extension/injected.js` управляет интерфейсом, загрузкой диалогов, сортировкой, папками, поиском и интеграцией с нативным DOM Bitrix24.
 - `extension/native-*.js` содержат изолированные модели каталога, состояния взаимодействия, времени и жизненного цикла.
 - `extension/dialog-repository.js` — клиентский мост к хранилищу.
-- `extension/worker-v7_5_107.js` — release-specific MV3 entry с явными build/protocol-маркерами; новое имя worker обязательно при каждом patch-релизе, потому что Chromium-оболочка Bitrix24 может сохранить регистрацию и ScriptCache старого unpacked worker после замены файлов.
+- `extension/worker-v7_5_108.js` — release-specific MV3 entry с явными build/protocol-маркерами; новое имя worker обязательно при каждом patch-релизе, потому что Chromium-оболочка Bitrix24 может сохранить регистрацию и ScriptCache старого unpacked worker после замены файлов.
 - `extension/background.js` — импортируемое ядро service worker с каталогом диалогов в `chrome.storage.local`.
 - Windows-updater всегда собирает пустой staging строго по `update.extension_files`, сверяет полный набор файлов и оба встроенных шрифта, а имя worker берёт из `manifest.background.service_worker`. Старые generic/versioned worker и любой лишний runtime не переносятся в новую установку; до атомарной замены сохраняется рабочий rollback.
 - `.github/workflows/build-macos.yml` — единственный удалённый путь выпуска macOS DMG: сборка и проверка выполняются на GitHub-hosted `macos-15`.
@@ -130,7 +130,7 @@ update.json         состав и адрес неизменяемого рел
 
 Скрипт обновляет только блок между `AUTO:BEGIN` и `AUTO:END`. Архитектурные решения и продуктовые контракты редактируются вручную в той же задаче, где меняется соответствующее поведение. Если фактический блок устарел, `-Check` завершится ошибкой.
 
-### Проекты и единый подсчёт времени 7.5.107
+### Проекты и единый подсчёт времени 7.5.108
 
 - Перед первым чтением трудозатрат обязателен выбор проектов. Настройка `pena.timeProjects.v1.<portalHost>~<userId>` хранит version=1, all, ids и includeUnassigned. Не настроенный профиль не запускает time-task catalog или elapsed; существующий native chat catalog сохраняет собственные правила. «Выбрать все проекты» включает будущие доступные группы, задачи без проекта выбираются отдельно. Источник списка — `sonet_group.get`, включая доступные рабочие группы; закрытые/скрытые доступные группы не отбрасываются искусственно.
 - Фильтр GROUP_ID применяется в `tasks.task.list` до пагинации и в поиске. ID-keyset остаётся монотонным. Ответ вне выбранных проектов считается ошибкой, глобального fallback нет. Полный выбранный каталог публикуется атомарно; ранние страницы и native metadata не разрешают elapsed и не расширяют его membership. Полный свежий native catalog с GROUP_ID можно использовать без повторного запроса; новый глобальный обход ради времени не запускается.
