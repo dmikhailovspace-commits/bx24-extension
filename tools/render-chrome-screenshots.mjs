@@ -11,7 +11,8 @@ import { buildChrome } from './build-chrome.mjs';
 // portal's data and surrounding page are styled; no extension DOM/CSS is rewritten.
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const output = join(root, 'chrome/assets');
-const artifactDir = join(root, 'tests/artifacts/chrome-screenshot-package');
+const runtimeVersion = JSON.parse(readFileSync(join(root,'extension/manifest.json'),'utf8')).version;
+const artifactDir = join(root, `tests/artifacts/chrome-screenshot-package-v${runtimeVersion}`);
 const reportPath = join(root, 'tests/artifacts/chrome-screenshots-report.json');
 const origin = 'https://demo.chrome.test';
 const build = buildChrome(artifactDir);

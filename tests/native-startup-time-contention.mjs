@@ -19,7 +19,34 @@ const membership=process.env.PENA_STARTUP_TASK_MEMBERSHIP==='1';
 const logMetadata=process.env.PENA_STARTUP_LOG_METADATA==='1';
 const raw=readFileSync(resolve(extension,'injected.js'),'utf8');
 const optimized=logMetadata&&raw.includes('function _loadDialogTaskCatalogPartitionTail(');
-const report={label,protocol:3,source:{sha256:createHash('sha256').update(raw).digest('hex')},configuration:{tasks:4149,physicalChats:108,physicalTaskChats:92,cpu,httpMs:80,httpLanes:4,guardSampler:false,productionFlags:true},phases:[],
+const globalJournal=raw.includes('function _callDialogTimeGlobalElapsedPage(');
+// Model the PHP sentinel and positional pagination on a fixed server dataset.
+// Filtering happens before sorting/paging; task 0 means all accessible tasks.
+function selectStartupElapsedPage(rows,params){
+ assertPositional(params);
+ const [taskId,order,filter,,navigation]=params;
+ const own=(filter.USER_ID??filter['=USER_ID']);
+ const selected=rows.filter(row=>(Number(taskId)===0||String(row.TASK_ID)===String(taskId))&&
+  (own==null||String(row.USER_ID)===String(own))&&(filter.ID==null||String(row.ID)===String(filter.ID))&&
+  (filter['>ID']==null||Number(row.ID)>Number(filter['>ID']))&&
+  (!filter['>=CREATED_DATE']||row.CREATED_DATE>=filter['>=CREATED_DATE'])&&
+  (!filter['<CREATED_DATE']||row.CREATED_DATE<filter['<CREATED_DATE'])&&
+  (!filter['<=CREATED_DATE']||row.CREATED_DATE<=filter['<=CREATED_DATE']));
+ selected.sort((a,b)=>(Number(a.ID)-Number(b.ID))*(String(order.ID).toUpperCase()==='DESC'?-1:1));
+ const size=Math.min(50,Math.max(1,Number(navigation.NAV_PARAMS.nPageSize)||50));
+ const start=(Math.max(1,Number(navigation.NAV_PARAMS.iNumPage)||1)-1)*size;
+ return {rows:selected.slice(start,start+size),total:selected.length,next:start+size<selected.length?start+size:null};
+ function assertPositional(value){if(!Array.isArray(value)||value.length<5||!value[4]?.NAV_PARAMS)throw new Error('Elapsed positional API contract violated');}
+}
+// Independent fixed expected rows prevent a broken fixture from validating itself.
+const fixtureRows=[{ID:'1',TASK_ID:'9',USER_ID:'7',CREATED_DATE:'2026-09-08T10:00:00Z'},{ID:'2',TASK_ID:'10',USER_ID:'8',CREATED_DATE:'2026-09-08T10:00:00Z'},{ID:'3',TASK_ID:'10',USER_ID:'7',CREATED_DATE:'2026-09-07T10:00:00Z'},{ID:'4',TASK_ID:'10',USER_ID:'7',CREATED_DATE:'2026-09-08T10:00:00Z'}];
+const fixtureParams=[0,{ID:'ASC'},{USER_ID:7,'>=CREATED_DATE':'2026-09-08T00:00:00','<CREATED_DATE':'2026-09-09T00:00:00'},[],{NAV_PARAMS:{nPageSize:1,iNumPage:1}}];
+assert.deepEqual(selectStartupElapsedPage(fixtureRows,fixtureParams),{rows:[fixtureRows[0]],total:2,next:1});
+assert.deepEqual(selectStartupElapsedPage(fixtureRows,[0,{ID:'ASC'},{...fixtureParams[2],'>ID':1},[],fixtureParams[4]]).rows,[fixtureRows[3]]);
+assert.deepEqual(selectStartupElapsedPage(fixtureRows,[0,{ID:'DESC'},{USER_ID:7,ID:3},[],fixtureParams[4]]).rows,[fixtureRows[2]]);
+assert.deepEqual(selectStartupElapsedPage(fixtureRows,[10,...fixtureParams.slice(1)]).rows,[fixtureRows[3]]);
+assert.deepEqual(selectStartupElapsedPage(fixtureRows,[...fixtureParams.slice(0,4),{NAV_PARAMS:{nPageSize:1,iNumPage:2}}]).rows,[fixtureRows[3]]);
+const report={label,protocol:4,source:{sha256:createHash('sha256').update(raw).digest('hex')},configuration:{tasks:4149,physicalChats:108,physicalTaskChats:92,cpu,httpMs:80,httpLanes:4,guardSampler:false,productionFlags:true,globalJournal,elapsedFixture:'user/date/ID keyset + positional paging; task0 global; foreign-user and historical rows'},phases:[],
  limitations:['Real Chromium and local HTTP with a controlled SDK dataset, not the authenticated desktop portal.','Input field above the controlled modal models shared event-loop/HTTP contention; it is not a Bitrix modal usability assertion.','All task titles are populated; every thirteenth task and final task has an own-user elapsed row. Two RAFs measure paint opportunity, not physical display.']};
 const server=await startHarnessServer();
 const queue=[],transportSamples=[];let active=0;
@@ -36,6 +63,7 @@ function installProbe(){
  let previous=0;const frame=now=>{if(p.stopped)return;if(previous&&p.frames.length<20000)p.frames.push(now-previous);previous=now;requestAnimationFrame(frame);};requestAnimationFrame(frame);
  new PerformanceObserver(list=>{p.longtasks.push(...list.getEntries().map(e=>({at:e.startTime,ms:e.duration,phase:p.phase})));}).observe({entryTypes:['longtask']});
  const summary=call=>({method:call.method,after:Number(call.params?.filter?.['>ID']||0),upper:call.params?.filter?.['<=ID'],order:call.params?.order?.ID,delta:Boolean(call.params?.filter?.['>=CHANGED_DATE']),start:Number(call.params?.start||0),select:call.params?.select?.join('|')||'',projectFilter:call.params?.filter?.GROUP_ID ?? call.params?.filter?.['>GROUP_ID'],taskId:call.method==='task.elapseditem.getlist'?String(call.params?.[0]):undefined,
+   elapsedAfter:call.method==='task.elapseditem.getlist'?Number(call.params?.[2]?.['>ID']||0):undefined,userId:call.method==='task.elapseditem.getlist'?String(call.params?.[2]?.USER_ID||''):undefined,
    dateFrom:call.method==='task.elapseditem.getlist'?String(call.params?.[2]?.['>=CREATED_DATE']||''):undefined,dateTo:call.method==='task.elapseditem.getlist'?String(call.params?.[2]?.['<CREATED_DATE']||call.params?.[2]?.['<=CREATED_DATE']||''):undefined});
  const one=BX.rest.callMethod;
  BX.rest.callMethod=function(method,params,cb){p.rest.push({at:performance.now(),phase:p.phase,...summary({method,params})});fetch('/__latency?kind=extension').then(()=>one.call(this,method,params,cb)).catch(e=>p.errors.push(String(e)));};
@@ -57,6 +85,9 @@ fixture=fixture.replace('    const success = (data, options = {}) => ({',`
     const selectedProjectOnly=params.get('selectedProjects')==='1';
     if(selectedProjectOnly)localStorage.setItem(timeProjectPreferenceKey,JSON.stringify({version:1,all:false,ids:['1'],includeUnassigned:false}));
     const elapsedIds=new Set(taskEntries.filter((task,index)=>index%13===0||index===4148).map(task=>task.id));
+    const elapsedDay=new Date().toISOString().slice(0,10),oldElapsedDay=new Date(Date.now()-86400000).toISOString().slice(0,10);
+    const elapsedRows=Array.from(elapsedIds,id=>({ID:String(Number(id)+100000),TASK_ID:id,USER_ID:'7',SECONDS:60,CREATED_DATE:elapsedDay+'T12:00:00+00:00',DATE_START:elapsedDay+'T10:00:00+00:00',COMMENT_TEXT:'Controlled entry'}));
+    elapsedRows.push({...elapsedRows[0],ID:'9000001',USER_ID:'8'},{...elapsedRows[0],ID:'9000002',CREATED_DATE:oldElapsedDay+'T12:00:00+00:00'});
     if(${logMetadata})taskEntries.forEach(task=>{task.timeSpentInLogs=elapsedIds.has(task.id)?'60':null;});
     window.startupExpected={tasks:taskEntries.length,entries:elapsedIds.size,seconds:elapsedIds.size*60};
     const success = (data, options = {}) => ({`);
@@ -66,11 +97,9 @@ fixture=fixture.slice(0,from)+`
       if(method==='server.time')return success(new Date().toISOString());
       if(method==='user.current')return success({ID:'7'});
       if(method==='task.elapseditem.getlist'){
-        if(!Array.isArray(callParams)||callParams.length<5)throw new Error('Elapsed positional API contract violated');
-        const id=String(callParams[0]),day=new Date().toISOString().slice(0,10),filter=callParams[2]||{};
-        const inRange=(!filter['>=CREATED_DATE']||day>=String(filter['>=CREATED_DATE']).slice(0,10))&&(!filter['<=CREATED_DATE']||day<=String(filter['<=CREATED_DATE']).slice(0,10));
-        const rows=inRange&&elapsedIds.has(id)?[{ID:String(Number(id)+100000),TASK_ID:id,USER_ID:'7',SECONDS:60,CREATED_DATE:day+'T12:00:00+00:00',DATE_START:day+'T10:00:00+00:00',COMMENT_TEXT:'Controlled entry'}]:[];
-        return success(rows,{total:rows.length});
+        if(Number(callParams[0])===0&&params.get('globalElapsed')==='unsupported')return {...failure('Task not found'),error:()=>'TASK_NOT_FOUND'};
+        const page=(${selectStartupElapsedPage.toString()})(elapsedRows,callParams);
+        return success(page.rows,{total:page.total,next:page.next});
       }
       if(method==='tasks.task.list'){
         const page=(${selectStartupTaskPage.toString()})(taskEntries,callParams,window.timeTaskGroupOverrides);
@@ -90,9 +119,10 @@ const stats=values=>{const v=values.slice().sort((a,b)=>a-b);return{count:v.leng
 const commands = snapshot => snapshot.rest.flatMap(call=>call.commands||[call]);
 const counts = snapshot => {
  const all=commands(snapshot),elapsed=all.filter(call=>call.method==='task.elapseditem.getlist'),catalog=all.filter(call=>call.method==='tasks.task.list'&&!call.delta);
- return {elapsed:elapsed.length,uniqueElapsed:new Set(elapsed.map(call=>call.taskId)).size,fullPages:catalog.length,fullHeads:catalog.filter(call=>!call.after&&!call.start&&call.order!=='desc').length};
+ return {elapsed:elapsed.length,uniqueElapsed:new Set(elapsed.map(call=>call.taskId)).size,globalPages:elapsed.filter(c=>c.taskId==='0').length,pointReads:elapsed.filter(c=>c.taskId!=='0').length,globalCursors:elapsed.filter(c=>c.taskId==='0').map(c=>c.elapsedAfter),fullPages:catalog.length,fullHeads:catalog.filter(call=>!call.after&&!call.start&&call.order!=='desc').length};
 };
-const exactRead = snapshot => {const count=counts(snapshot);return count.elapsed===(optimized?321:4149)&&count.uniqueElapsed===(optimized?321:4149)&&(optimized?count.fullPages<250:count.fullPages===83)&&count.fullHeads===1;};
+const exactGlobalRead=snapshot=>{const reads=commands(snapshot).filter(c=>c.method==='task.elapseditem.getlist');return reads.length===7&&reads.every((c,i)=>c.taskId==='0'&&c.userId==='7'&&c.dateFrom&&c.dateTo&&(i===0?c.elapsedAfter===0:c.elapsedAfter>reads[i-1].elapsedAfter));};
+const exactRead = snapshot => {const count=counts(snapshot);return (globalJournal?exactGlobalRead(snapshot):count.elapsed===(optimized?321:4149)&&count.uniqueElapsed===(optimized?321:4149))&&(globalJournal?count.fullPages===130:optimized?count.fullPages<250:count.fullPages===83)&&count.fullHeads===1;};
 try{
  if(!membership){const off=await browser.newPage({viewport:{width:1100,height:800}});
  await(await off.context().newCDPSession(off)).send('Emulation.setCPUThrottlingRate',{rate:cpu});
@@ -143,7 +173,7 @@ try{
  report.statistics={frames:stats(report.final.frames),input:stats(report.final.samples.map(s=>s.handler)),http:stats(report.final.samples.map(s=>s.http)),paint:stats(report.final.samples.map(s=>s.paint))};
  report.budgets=evaluateStartupTimeBudget(report.final,report.off,report.browserMetrics);
  report.requestCounts={earlyOpen:counts(report.final)};
- report.phases.push({name:'early open reads all tasks exactly once through one full task catalog',status:exactRead(report.final)?'PASS':'FAIL'});
+ report.phases.push({name:'early open loads the complete own-day journal once through one full task catalog',status:exactRead(report.final)?'PASS':'FAIL'});
  const warmExtra=report.warm?commands(report.final).slice(report.initial.commandCount,report.warm.commandCount):[];
  report.phases.push({name:'warm reopen has complete cached totals, no elapsed rereads and no full catalog',status:done&&report.warm.record.seconds===19260&&report.warm.visible.statusHidden===true&&!warmExtra.some(c=>c.method==='task.elapseditem.getlist'||c.method==='tasks.task.list'&&!c.delta)?'PASS':'FAIL'});
  report.phases.push({name:'native physical source remains exactly 108 chats and one materialization pass',status:report.final.native.modes.chats.sourceComplete&&report.final.native.status.modeStates.chats.materialization.nativePassCount===1?'PASS':'FAIL'});
@@ -188,8 +218,8 @@ try{
    report.phases.push({name:'first panel open after background completion uses cached full total without elapsed/full catalog requests',status:complete&&report.closedThenOpen.record.seconds===report.expected.seconds&&!extra.some(c=>c.method==='task.elapseditem.getlist'||c.method==='tasks.task.list'&&!c.delta)?'PASS':'FAIL'});
  }else{report.phases.push({name:'closed first startup completes catalog and today before panel open',status:'FAIL',reason:'Runtime has no automatic today bootstrap; old101 baseline negative control.'});}
  report.closedPageErrors=closedErrors;
- // The same 4149-task portal with one project selected must avoid every
- // excluded elapsed request. Native physical completeness remains unchanged.
+ // Project membership is source-filtered; the global own-day journal is
+ // intersected with that catalog. Its seven pages cover every project.
  await page.close();
  page=await browser.newPage({viewport:{width:1100,height:800}});const selectedErrors=collectPageErrors(page);
  await(await page.context().newCDPSession(page)).send('Emulation.setCPUThrottlingRate',{rate:cpu});
@@ -202,11 +232,27 @@ try{
  const selectedCalls=commands(report.selected),selectedElapsed=selectedCalls.filter(call=>call.method==='task.elapseditem.getlist');
  const selectedCatalog=selectedCalls.filter(call=>call.method==='tasks.task.list'&&Array.isArray(call.projectFilter));
  report.projectSavings={allElapsed:report.requestCounts.closed.elapsed,selectedElapsed:selectedElapsed.length,elapsedReduction:report.requestCounts.closed.elapsed/selectedElapsed.length,allMs:report.closed.elapsedMs,selectedMs:report.selected.elapsedMs,selectedErrors};
- report.phases.push({name:'selected project reads its 149-task catalog once and skips only proven empty logs',status:selectedElapsed.length===(optimized?12:149)&&new Set(selectedElapsed.map(call=>call.taskId)).size===(optimized?12:149)&&selectedCatalog.length===3&&selectedCatalog.every(call=>JSON.stringify(call.projectFilter)==='["1"]')&&report.selected.record.seconds===720&&selectedErrors.length===0?'PASS':'FAIL'});
+ report.phases.push({name:'selected project reads its149-task catalog once and retains exactly12 own entries from the global journal',status:(globalJournal?exactGlobalRead(report.selected):selectedElapsed.length===(optimized?12:149)&&new Set(selectedElapsed.map(call=>call.taskId)).size===(optimized?12:149))&&selectedCatalog.length===3&&selectedCatalog.every(call=>JSON.stringify(call.projectFilter)==='["1"]')&&report.selected.record.seconds===720&&report.selected.record.entries===12&&selectedErrors.length===0?'PASS':'FAIL'});
  const selectedBefore=selectedElapsed.length;
  await page.locator('.pena-native-time-button').click();await page.waitForTimeout(350);
  const selectedAfter=await page.evaluate(()=>startupProbe.snapshot());
  report.phases.push({name:'selected project first panel open keeps the automatic initial total without recount',status:commands(selectedAfter).filter(call=>call.method==='task.elapseditem.getlist').length===selectedBefore&&selectedAfter.record.seconds===720&&selectedAfter.visible.statusHidden?'PASS':'FAIL'});
+ if(globalJournal){
+  await page.close();page=await browser.newPage({viewport:{width:1100,height:800}});const fallbackErrors=collectPageErrors(page);
+  await(await page.context().newCDPSession(page)).send('Emulation.setCPUThrottlingRate',{rate:cpu});
+  await page.route('**/tests/native-resume-recovery-harness.html?*',route=>route.fulfill({contentType:'text/html',body:fixture}));
+  await page.route('**/extension/injected.js',route=>route.fulfill({contentType:'application/javascript',body:injected}));
+  await page.route('**/extension/native-time-control.js',route=>route.fulfill({contentType:'application/javascript',body:model}));
+  await page.goto(endpoint+'/tests/native-resume-recovery-harness.html?autoBootstrap=1&selectedProjects=1&globalElapsed=unsupported');
+  await page.waitForFunction(()=>__resumeHarness.ready('chats')&&startupProbe.record().complete,undefined,{timeout:60000});
+  report.unsupported=await page.evaluate(()=>startupProbe.snapshot());
+  const fallback=counts(report.unsupported),fallbackCommands=commands(report.unsupported);
+  const pointIds=fallbackCommands.filter(c=>c.method==='task.elapseditem.getlist'&&c.taskId!=='0').map(c=>c.taskId);
+  report.phases.push({name:'unsupported global sentinel falls back to149 distinct selected-task reads once',status:fallback.globalPages===1&&fallback.pointReads===149&&new Set(pointIds).size===149&&report.unsupported.record.entries===12&&report.unsupported.record.seconds===720&&fallbackErrors.length===0?'PASS':'FAIL'});
+  const before=fallbackCommands.length;await page.locator('.pena-native-time-button').click();await page.waitForTimeout(350);
+  report.unsupportedOpen=await page.evaluate(()=>startupProbe.snapshot());
+  report.phases.push({name:'unsupported capability is remembered and first warm open creates no elapsed/full-catalog traffic',status:report.unsupportedOpen.record.seconds===720&&!commands(report.unsupportedOpen).slice(before).some(c=>c.method==='task.elapseditem.getlist'||c.method==='tasks.task.list'&&!c.delta)?'PASS':'FAIL'});
+ }
  if(process.env.PENA_STARTUP_REPORT_ONLY!=='1'){assert(done,'Initial full task/time/native completion');assert.deepEqual(errors,[]);assert.deepEqual(closedErrors,[]);assert.equal(report.final.record.seconds,report.expected.seconds);assert(report.phases.every(p=>p.status==='PASS'),JSON.stringify(report.phases));}
  }
 }catch(error){report.failure=String(error);if(page)report.last=await page.evaluate(()=>startupProbe?.snapshot()).catch(()=>null);throw error;}

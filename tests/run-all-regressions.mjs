@@ -139,10 +139,13 @@ for (const suite of selected) {
   if (result.status !== 0) {
     console.error(`[tests] FAILED: ${suite}`);
     failed.push(suite);
+    // A failed release cannot be packaged. Stop its gate immediately while
+    // keeping the ordinary local command useful for collecting all failures.
+    if (process.env.PENA_TEST_FAIL_FAST === '1') break;
   }
 }
 saveReport(failed.length ? 'failed' : 'passed');
-const passed = selected.length - failed.length;
+const passed = measurements.length - failed.length;
 if (failed.length) {
   console.error(`\n[tests] FAIL ${passed}/${selected.length} suites in ${((Date.now() - startedAt) / 1000).toFixed(1)}s (Node ${process.versions.node})`);
   console.error(`[tests] Failed suites: ${failed.join(', ')}`);

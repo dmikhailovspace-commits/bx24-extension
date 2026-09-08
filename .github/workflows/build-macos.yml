@@ -34,6 +34,8 @@ jobs:
 
       - name: Run all regressions
         shell: pwsh
+        env:
+          PENA_TEST_FAIL_FAST: '1'
         run: pnpm test
 
       - name: Verify project context

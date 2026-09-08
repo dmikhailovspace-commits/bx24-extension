@@ -81,17 +81,33 @@ const assertSingleStartupCatalog = (sample, label) => {
 	assert.equal(projectOwners[0].delta, false, `${label}: a cold project catalog cannot start from a delta`);
 	assert.equal(sample.bootstrap.cycle, 1, `${label}: input created a second startup cycle`);
 	assert.ok(sample.fullRestCalls.length > 0, `${label}: initial catalog did not start`);
-	assert.ok(sample.fullRestCalls.length <= Math.ceil(5000 / 50) + 1, `${label}: initial 5000-task keyset exceeded its page bound`);
-	let previous = -1;
+	// A full read has one first page, one descending high watermark, and
+	// disjoint keyset partitions. At most two empty tail proofs per partition.
+	assert.ok(sample.fullRestCalls.length <= Math.ceil(5000 / 50) + 2 * 16 + 2, `${label}: initial 5000-task keyset exceeded its bounded partition overhead`);
+	const initial = sample.fullRestCalls.filter(call => call.params.order?.ID === 'asc' && Number(call.params.filter?.['>ID']) === 0 && call.params.filter?.['<=ID'] == null);
+	assert.equal(initial.length, 1, `${label}: repeated initial catalog page`);
+	const watermark = sample.fullRestCalls.filter(call => call.params.order?.ID === 'desc');
+	assert.ok(watermark.length <= 1, `${label}: repeated high watermark read`);
+	const cursors = new Map(), attempts = new Map();
 	for (const call of sample.fullRestCalls) {
 		assert.equal(call.method, 'tasks.task.list', `${label}: unexpected full recent-dialog crawl`);
-		assert.equal(call.params.order?.ID, 'asc', `${label}: startup must use stable ID keyset pagination`);
 		assert.equal(Number(call.params.start), 0, `${label}: offset pagination is not the startup owner`);
 		const cursor = Number(call.params.filter?.['>ID']);
-		assert.ok(Number.isFinite(cursor) && cursor > previous, `${label}: repeated or regressing catalog cursor ${cursor} after ${previous}`);
-		if (previous < 0) assert.equal(cursor, 0, `${label}: initial catalog did not begin at the first page`);
+		assert.ok(Number.isFinite(cursor) && cursor >= 0, `${label}: invalid catalog cursor`);
+		if (call.params.order?.ID === 'desc') {
+			assert.deepEqual(call.params.select, ['ID'], `${label}: watermark must only read IDs`);
+			assert.ok(cursor > 0, `${label}: watermark must follow the first page`);
+			continue;
+		}
+		assert.equal(call.params.order?.ID, 'asc', `${label}: partition must use stable ID keyset pagination`);
+		const upper = call.params.filter?.['<=ID'] == null ? Infinity : Number(call.params.filter['<=ID']);
+		assert.ok(upper > cursor, `${label}: invalid partition bounds`);
+		assert.ok(cursor >= (cursors.get(upper) ?? -1), `${label}: regressing partition cursor`);
+		const key = `${cursor}:${upper}`;
+		attempts.set(key, (attempts.get(key) || 0) + 1);
+		assert.ok(attempts.get(key) <= (upper === Infinity ? 1 : 2), `${label}: repeated partition beyond empty confirmation`);
 		assert.ok(call.at >= transportOwners[0].at, `${label}: REST preceded its transport catalog owner`);
-		previous = cursor;
+		cursors.set(upper, cursor);
 	}
 };
 

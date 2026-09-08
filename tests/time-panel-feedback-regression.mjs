@@ -35,6 +35,13 @@ try {
  await page.goto(server.baseUrl+'/tests/native-consistency-harness.html?mode=tasks');
  await page.locator('.pena-native-time-button').waitFor();
  await page.evaluate(()=>{
+  // The global endpoint validates real numeric elapsed IDs. Keep this suite's
+  // SDK data realistic without changing shared fixtures used by fallback tests.
+  const day=window.timePortalDateKey();
+  window.timeSeedItems=[
+   {ID:'5001',TASK_ID:'101',USER_ID:'7',SECONDS:'3600',CREATED_DATE:day+'T10:00:00+03:00'},
+   {ID:'5002',TASK_ID:'102',USER_ID:'7',SECONDS:'1800',CREATED_DATE:day+'T12:00:00+03:00'}
+  ];
   const f=window.feedback={readMode:'hold',holdAdd:false,heldReads:[],heldAdds:[],readCalls:0,deliveredReads:0,readTaskIds:[],addCalls:0,hideAdded:false,toastLog:[]};
   const errorResult=()=>({error:()=> 'TEMPORARY_ERROR',error_description:()=> 'controlled elapsed refresh failed'});
   const transform=value=>{
@@ -52,7 +59,7 @@ try {
    }
    if(name!=='task.elapseditem.getlist')return method.call(this,name,params,callback);
    f.readCalls++;
-   f.readTaskIds.push(String(params?.[0]||params?.TASKID||''));
+   f.readTaskIds.push(String(params?.[0]??params?.TASKID??''));
    return method.call(this,name,params,value=>{const deliver=()=>{f.deliveredReads++;callback(transform(value));};if(f.readMode==='hold')f.heldReads.push(deliver);else deliver();});
   };
   const batch=BX24.callBatch;
@@ -60,7 +67,7 @@ try {
    const elapsed=Object.entries(calls).filter(([,call])=>call?.method==='task.elapseditem.getlist');
    if(!elapsed.length)return batch.call(this,calls,callback);
    f.readCalls+=elapsed.length;
-   for(const[,call]of elapsed)f.readTaskIds.push(String(call.params?.[0]||''));
+   for(const[,call]of elapsed)f.readTaskIds.push(String(call.params?.[0]??''));
    return batch.call(this,calls,result=>{
     const deliver=()=>{const next={...result};for(const[key]of elapsed)next[key]=transform(next[key]);f.deliveredReads+=elapsed.length;callback(next);};
     if(f.readMode==='hold')f.heldReads.push(deliver);else deliver();
@@ -78,7 +85,7 @@ try {
     manualError:manualError&&!manualError.hidden?manualError.textContent:'',submit:panel?.querySelector('.pena-native-time-manual-submit')?.textContent,
     statusText:status?.textContent||'',statusHidden:status?.hidden??null,
     refreshDisabled:refresh?.disabled,refreshAnimation:refresh?.querySelector('svg')?getComputedStyle(refresh.querySelector('svg')).animationName:'',
-    refreshTitle:refresh?.title||'',readCalls:f.readCalls,task101Reads:f.readTaskIds.filter(id=>id==='101').length,addCalls:f.addCalls,heldReads:f.heldReads.length,
+    refreshTitle:refresh?.title||'',readCalls:f.readCalls,readTaskIds:f.readTaskIds.slice(),task101Reads:f.readTaskIds.filter(id=>id==='101').length,addCalls:f.addCalls,heldReads:f.heldReads.length,
     toastLog:f.toastLog.slice(),toasts:[...document.querySelectorAll('.pena-native-toast')].map(node=>({text:node.textContent,className:node.className}))};
   };
  });
@@ -93,10 +100,12 @@ try {
   assert.equal(first.total,'—');assert.match(first.statusText,/Загружаем список задач|Считаем время/);
  });
  await page.evaluate(()=>window.feedback.heldReads.shift()());
- await page.waitForFunction(()=>window.feedback.heldReads.length>0&&window.feedbackProbe.record()?.data?.coverage?.checkedTasks>0);
- const partial=await snapshot('first-open-partial-response');
- await phase('initial partial responses retain a visible loading status until the catalog is checked',()=>{
-  assert(partial.coverage.checkedTasks<partial.coverage.totalTasks);assert.equal(partial.statusHidden,false);assert.equal(partial.cacheStatus,'loading');
+ await page.waitForFunction(()=>window.feedbackProbe.record()?.status==='ready'&&window.feedbackProbe.record()?.data?.coverage?.complete===true);
+ const completeGlobal=await snapshot('first-open-complete-global-response');
+ await phase('one complete global response certifies the journal without a second per-task wave',()=>{
+  assert.deepEqual(completeGlobal.readTaskIds,['0']);assert.equal(completeGlobal.deliveredReads,1);assert.equal(completeGlobal.heldReads,0);
+  assert.equal(completeGlobal.coverage.checkedTasks,30);assert.equal(completeGlobal.coverage.totalTasks,30);assert.equal(completeGlobal.coverage.complete,true);
+  assert.equal(completeGlobal.seconds,5400);assert.equal(completeGlobal.entries,2);assert.equal(completeGlobal.total,'1 ч 30 мин');assert.equal(completeGlobal.cacheStatus,'ready');
  });
  await page.evaluate(()=>window.feedback.releaseReads('pass'));
  await page.waitForFunction(()=>window.feedbackProbe.record()?.status==='ready'&&window.feedbackProbe.record()?.data?.totalSeconds===5400);
@@ -124,10 +133,11 @@ try {
   const recovered=await snapshot('background-timeout-manual-successor-ready');
   assert.equal(recovered.total,'1 ч 30 мин');assert.equal(recovered.error,'');
   assert.equal(recovered.toastLog.slice(held.toastLog.length).some(toast=>toast.tone==='danger'),false);
-  report.backgroundTimeoutTrace=await page.evaluate(()=>window.__PENA_REST_DIAGNOSTICS__.snapshot().samples.filter(sample=>sample.method==='batch:task.elapseditem.getlist'));
+  report.backgroundTimeoutTrace=await page.evaluate(()=>window.__PENA_REST_DIAGNOSTICS__.snapshot().samples.filter(sample=>['batch:task.elapseditem.getlist','task.elapseditem.getlist'].includes(sample.method)));
   const timeoutIndex=report.backgroundTimeoutTrace.findIndex(sample=>sample.code==='TIMEOUT');
   assert.equal(report.backgroundTimeoutTrace.filter(sample=>sample.code==='TIMEOUT').length,1);
   const failedRead=report.backgroundTimeoutTrace[timeoutIndex], successorRead=report.backgroundTimeoutTrace[timeoutIndex+1];
+  assert.equal(failedRead.method,'batch:task.elapseditem.getlist');assert.equal(successorRead.method,'task.elapseditem.getlist','Manual successor must use the global journal');
   // Manual refresh now discovers selected tasks before elapsed. The catalog
   // request may consume the cooldown; measure dispatch time, not queue time
   // of the later elapsed job in isolation.
@@ -274,6 +284,9 @@ try {
   } finally {await cold.close();}
  });
  console.log(JSON.stringify(report.phases));
+} catch(error) {
+ report.failure={error:String(error),snapshot:await page.evaluate(()=>window.feedback?.snapshot()).catch(()=>null),queue:await page.evaluate(()=>window.__PENA_REST_DIAGNOSTICS__?.snapshot()).catch(()=>null)};
+ throw error;
 } finally {
  report.errors=errors;mkdirSync(resolve(root,'tests/artifacts'),{recursive:true});
  writeFileSync(resolve(root,`tests/artifacts/time-panel-feedback-${label}.json`),JSON.stringify(report,null,2));

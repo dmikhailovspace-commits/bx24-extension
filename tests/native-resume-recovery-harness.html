@@ -538,8 +538,12 @@
       if (method === 'tasks.task.list') {
         const start = Math.max(0, Number(callParams.start) || 0);
         const scopedEntries = taskEntries.map(window.timeFixtureTaskGroup).filter(task => window.timeFixtureMatchesGroup(task, callParams.filter));
-        const entries = callParams.order?.ID === 'asc'
-          ? scopedEntries.filter(task => Number(task.ID ?? task.id) > Number(callParams.filter?.['>ID'] || 0)).slice().sort((a, b) => Number(a.ID ?? a.id) - Number(b.ID ?? b.id))
+        const ordered = /^(asc|desc)$/i.test(String(callParams.order?.ID || ''));
+        const direction = String(callParams.order?.ID).toLowerCase() === 'desc' ? -1 : 1;
+        const entries = ordered
+          ? scopedEntries.filter(task => Number(task.ID ?? task.id) > Number(callParams.filter?.['>ID'] || 0) &&
+              Number(task.ID ?? task.id) <= Number(callParams.filter?.['<=ID'] ?? Infinity))
+            .slice().sort((a, b) => direction * (Number(a.ID ?? a.id) - Number(b.ID ?? b.id)))
           : scopedEntries;
         const page = entries.slice(start, start + 50);
         return success({ tasks: page }, { next: start + page.length < entries.length ? start + page.length : null, total: entries.length });

@@ -83,7 +83,7 @@ try{
  await phase('closed startup resolves API identity and loads own today without a panel click',async()=>{
   await page.goto(url('&timeUserCurrentFallback=1&timeUserCurrentDelay=120'));await ready(page,5400,5000);
   const s=await state(page);assert.equal(s.panelOpen,false);assert.notEqual(s.tab,'time');assert.equal(s.userId,'7');assert.match(s.toolbar,/1:30/);
-  assert.equal(s.full,1);assert.equal(s.elapsed.length,10);assert.equal(new Set(s.elapsed).size,10);
+  assert.equal(s.full,1);assert.deepEqual(s.elapsed,['0'],'One complete global journal must replace ten per-task reads');
   await waitSaved(page);initialSaved=await saved(page);assert.equal(initialSaved.offset,180);assert.equal(initialSaved.day,'2026-09-08');assert(initialSaved.items.every(item=>item.userId==='7'));
   return s;
  });
@@ -95,7 +95,7 @@ try{
  });
  await phase('released catalog replaces preview with the current backend amount',async()=>{
   await page.evaluate(()=>{timeSeedItems.find(item=>item.ID==='5001').SECONDS='7200';releasePreviewCatalog();});await ready(page,9000);
-  const s=await state(page);assert.equal(s.full,1);assert.equal(s.elapsed.length,10);assert.match(s.toolbar,/2:30/);assert.equal(s.panelOpen,false);return s;
+  const s=await state(page);assert.equal(s.full,1);assert.deepEqual(s.elapsed,['0']);assert.match(s.toolbar,/2:30/);assert.equal(s.panelOpen,false);return s;
  });
  await phase('closed known-task Pull updates toolbar through exactly one elapsed read and no full catalog',async()=>{
   const before=await state(page);
