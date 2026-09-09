@@ -45,6 +45,12 @@ function frame({ storage = new Map(), locks = createLocks(), id = 'frame1' } = {
  return { ...ctx.probe, storage,writes,warnings,titles:ctx._dialogTimeTaskTitles, tick:ms=>{now+=ms;}, setUser:id=>{user=id;}, eligibility:value=>{eligibility=value;}, delay:()=>{delay=true;}, resolve:()=>{delay=false;resolver?.(eligibility);}, failWrite:value=>{failWrite=value;},failAck:value=>{failAck=value;}, unknownPortal:(offset,fail=false)=>{ctx._dialogTimePortalUtcOffsetMinutes=null;portalOffset=offset;portalFail=fail;},portalCalls:()=>portalCalls, total:()=>[...storage].filter(([k])=>k.startsWith('pena.timeVisitedTasks.v1.')).flatMap(([,v])=>JSON.parse(v)).reduce((n,x)=>n+x.visits,0) };
 }
 const scenarios = [];
+await check('legacy passive outbox without a known day is acknowledged without eligibility or date requests',async()=>{
+ const f=frame(),key='pena.timeContactOutbox.v1.7.old-duration';
+ f.storage.set(key,JSON.stringify({eventId:'old-duration',userId:'7',taskId:'101',qualifiedAt:100000,dateKey:'',datePending:true,reason:'duration'}));
+ await f.flush();assert.equal(f.storage.has(key),false);assert.equal(f.total(),0);assert.equal(f.portalCalls(),0);
+ return{remainingPassiveEvents:0,contacts:0,dateRequests:0};
+});
 await check('time panel pauses task duration during backdated bookkeeping and preserves real outgoing messages',async()=>{
  const f=frame();f.tick(-120000);f.stage({taskId:'101'});f.tick(20000);f.panel(true);
  f.tick(180000);assert.equal(f.qualify(f.pending.get('task:101')),false);await f.flush();assert.equal(f.total(),0);

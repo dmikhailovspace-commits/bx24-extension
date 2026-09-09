@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.130';
+	window.__ANITREC_RUNNING__ = '7.5.131';
 
-	const VER = '7.5.130';
+	const VER = '7.5.131';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -14158,7 +14158,8 @@ if (_presetChannel) {
 					// recovery never derives a second day for this event.
 					localStorage.setItem(eventKey, JSON.stringify(event));
 				} else event = stored;
-				if (!event.dateKey || event.datePending) return false;
+				// Discarded legacy viewing events need no resolved day or REST.
+				if (eligible && (!event.dateKey || event.datePending)) return false;
 				if (eligible) {
 					const dayKey = `${_PENA_TIME_VISITS_KEY}.${event.userId}.${event.dateKey}`;
 					const current = JSON.parse(localStorage.getItem(dayKey) || '[]');
