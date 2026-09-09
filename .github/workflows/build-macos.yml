@@ -252,7 +252,8 @@ jobs:
             'Known passive-duration contacts are excluded from suggestions without changing saved time entries.' \
             'Task titles update from existing events; title-only updates cause no elapsed reads or catalog walks.' \
             'Healthy routine checks retain the 120-second interval.' \
-            'By user request, verification is limited to five targeted suites: work actions, contact journal, idle network, Chrome package and release integrity. The full registry was not run.' \
+            'Task opening preserves the native row handler and keeps task IDs separate from chat IDs. Observer failures cannot abort native request completion.' \
+            'Verified against the complete regression registry, including task navigation and real-action contact tests.' \
             'Controlled tests are not a live Bitrix latency measurement. The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \
             'Includes Windows EXE and Universal macOS DMG for Intel and Apple Silicon.' \
             > release-notes.md

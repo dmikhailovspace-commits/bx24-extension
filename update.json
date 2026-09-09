@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "7.5.131",
+  "version": "7.5.132",
   "release_date": "2026-09-09",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.131",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.131",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.132",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.132",
   "extension_files": [
-    "worker-v7_5_131.js",
+    "worker-v7_5_132.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,7 +33,7 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.131/extension/injected.js",
-  "changelog": "v7.5.131: work actions only for contacts; live task titles; five targeted release suites",
-  "verification_profile": "time-focused"
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.132/extension/injected.js",
+  "changelog": "v7.5.132: preserve native task opening; separate task/chat IDs; isolate action observers; full regression gate",
+  "verification_profile": "full"
 }

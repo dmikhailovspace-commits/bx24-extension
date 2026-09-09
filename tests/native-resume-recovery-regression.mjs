@@ -348,6 +348,8 @@ try {
   assert.notEqual(snapshot.status.modeStates.chats.materialization.sourceGeneration,
     tailFenceRace.materializationGeneration,
     `Stale tail probe certified its detached source: ${compact(snapshot.status.modeStates.chats)}`);
+  assert.equal(snapshot.status.modeStates.chats.materialization.apiProjectionExtraCount, 0,
+    'A stale probe must not filter the replacement first window and create artificial API-only holes');
   assertAnchor(snapshot.modes.chats.anchor, chatAnchor, 'tail verify source fence');
   assertStableNativeSource(snapshot, 'chats', 'tail verify source fence');
 

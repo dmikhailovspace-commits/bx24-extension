@@ -19,6 +19,15 @@ try {
  await page.goto(server.baseUrl+'/tests/native-consistency-harness.html?mode=tasks');
  await page.waitForFunction(()=>window.actionProbe && (nativeCustomEventHandlers.get('onAjaxSuccess')||[]).length);
  await page.evaluate(()=>actionProbe.clear());
+ await phase('observer failures cannot abort native response completion',async()=>{
+  const r=await page.evaluate(()=>{
+   let nativeCompleted=0;
+   const configs=[{get data(){throw Error('native payload unavailable');}}, {url:'/bitrix/services/main/ajax.php?action=tasks.task.get',data:{taskId:'5'}}, null];
+   for(const config of configs){actionProbe.emit({status:'success'},config);nativeCompleted++;}
+   return nativeCompleted;
+  });
+  assert.equal(r,3);assert.equal(await page.evaluate(()=>actionProbe.pending()),0);
+ });
  await phase('100 opened/read tasks and elapsed viewing never qualify',async()=>{
   const r=await page.evaluate(async()=>{for(let i=1;i<=100;i++)actionProbe.stage({taskId:String(i)});actionProbe.qualify({taskId:'101',active:true,startedAt:Date.now()-3600000});await actionProbe.flush();return{rows:actionProbe.rows(),pending:actionProbe.pending()};});
   assert.equal(r.rows.length,0);assert.equal(r.pending,0);
@@ -45,6 +54,15 @@ try {
   assert.equal(await page.evaluate(()=>actionProbe.rows().find(x=>x.taskId==='5')?.visits),1,'remote title updates are not personal work');
   await page.waitForTimeout(1350);
   assert.deepEqual(await page.evaluate(()=>({gets:timeRestCalls.filter(x=>x.method==='tasks.task.get').length,elapsed:timeRestCalls.filter(x=>x.method==='task.elapseditem.getlist').length})),before,'25 title updates must cause no task or elapsed reads');
+ });
+ await phase('V2 task entity saves count work, while V2 reads and time bookkeeping do not',async()=>{
+  const r=await page.evaluate(()=>{
+   const p=actionProbe.parse,cfg=(action,task)=>({action,data:{task}}),ok={status:'success',data:{id:'101',title:'V2 title'}};
+   return {accepted:p(ok,cfg('tasks.v2.Task.update',{id:'101',title:'V2 title'}))?.taskId,
+    encoded:p({status:'success'},{action:'tasks.v2.Task.update',data:'task%5Bid%5D=101&task%5Btitle%5D=V2+title'})?.taskId,
+    rejected:[p(ok,cfg('tasks.v2.Task.get',{id:'101'})),p(ok,cfg('tasks.v2.Task.update',{id:'102',title:'wrong'})),p(ok,cfg('tasks.v2.Task.update',{id:'101',timeSpent:120})),p({status:'error'},cfg('tasks.v2.Task.update',{id:'101',title:'failed'}))].filter(Boolean).length};
+  });
+  assert.deepEqual(r,{accepted:'101',encoded:'101',rejected:0});
  });
  assert.deepEqual(errors,[]);
 } finally {writeFileSync(new URL('./artifacts/time-work-actions-regression.json',import.meta.url),JSON.stringify({phases,errors,liveBitrix:false},null,2));await browser.close();await server.close();}

@@ -201,9 +201,16 @@ try {
       assertGeometry(await rowGeometry(page), baseline, 'hover geometry');
       await row.click();
       await page.waitForFunction(expected => (
-        window.__nativeContract.snapshot().events.apiOpens.includes(expected) &&
+        (new URLSearchParams(location.search).get('mode') === 'tasks'
+          ? window.__nativeContract.snapshot().events.nativeClicks === 1
+          : window.__nativeContract.snapshot().events.apiOpens.includes(expected)) &&
         document.querySelector(`.pena-native-managed-row[data-id="${expected}"]`)?.getAttribute('aria-current') === 'true'
       ), 'chat1');
+      if (mode === 'tasks') {
+        const events = await page.evaluate(() => window.__nativeContract.snapshot().events);
+        assert.deepEqual(events.nativeClickIds, ['chat1']);
+        assert.deepEqual(events.apiOpens, []);
+      }
       await nextFrames(page);
       assert.equal(await row.getAttribute('aria-current'), 'true');
       assertGeometry(await rowGeometry(page), baseline, 'selected geometry');

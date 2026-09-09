@@ -119,20 +119,20 @@ function testActivityEstimation() {
 	activities = time.syncActivitySession(activities, 'task:10', start + 59000);
 	assert.equal(activities[0].visits, 0, 'a sub-minute view must not count as work');
 	activities = time.syncActivitySession(activities, 'task:10', start + 61000);
-	assert.equal(activities[0].visits, 1, 'one active minute must qualify the session');
-	assert.equal(activities[0].lastQualificationReason, 'duration');
+	assert.equal(activities[0].visits, 0, 'one active minute is reading, not work');
+	assert.notEqual(activities[0].lastQualificationReason, 'duration');
 	activities = time.beginActivitySession(activities, { taskId: '11', title: 'Задача 11', visitedAt: start + 120000 });
 	const task10 = activities.find(item => item.taskId === '10');
 	assert.equal(task10.activeSeconds, 120, 'active dwell before switching tasks was not accumulated');
 	activities = time.closeActivitySession(activities, start + 30 * 60000);
 	assert.equal(activities.find(item => item.taskId === '11').activeSeconds, 900, 'idle dwell must be capped');
-	assert.equal(activities.find(item => item.taskId === '11').visits, 1, 'a long active session must qualify once');
+	assert.equal(activities.find(item => item.taskId === '11').visits, 0, 'a long view never qualifies');
 	const closedAgain = time.closeActivitySession(activities, start + 31 * 60000);
 	assert.equal(closedAgain.find(item => item.taskId === '11').activeSeconds, 900, 'closing an inactive session twice must not add time');
 	let live = time.beginActivitySession([], { taskId: '21', visitedAt: start });
 	live = time.syncActivitySession(live, 'task:21', start + 125000);
 	assert.equal(live[0].activeSeconds, 125, 'live task dwell must be accumulated without extra touches');
-	assert.equal(live[0].visits, 1);
+	assert.equal(live[0].visits, 0);
 	let message = time.beginActivitySession([], { taskId: '22', visitedAt: start });
 	message = time.qualifyActivityTouch(message, { taskId: '22', visitedAt: start + 1000 }, { reason: 'message' });
 	assert.equal(message[0].visits, 1, 'an outgoing task message must qualify immediately');
@@ -145,10 +145,14 @@ function testActivityEstimation() {
 	assert.equal(time.selectUntrackedVisits(reopened, []).some(item => item.taskId === '10'), false, 'reopening after accounting must not suggest work');
 	let continued = time.syncActivitySession(reopened, 'task:10', start + 32 * 60000);
 	const continuedTask = continued.find(item => item.taskId === '10');
-	assert.equal(time.selectUntrackedVisits(continued, []).some(item => item.taskId === '10'), true, 'a qualified minute after accounting must be suggested');
+	assert.equal(time.selectUntrackedVisits(continued, []).some(item => item.taskId === '10'), false, 'reading after accounting must not be suggested');
 	assert.equal(continuedTask.activeSeconds, 180);
+	continued = time.qualifyActivityTouch(continued, {taskId:'10',visitedAt:start+32*60000}, {reason:'message'});
+	assert.equal(time.selectUntrackedVisits(continued, [])[0].pendingContacts, 1, 'a real message after reading is suggested');
 	continued = time.markActivityAccounted(continued, 'task:10', start + 32 * 60000);
 	continued = time.syncActivitySession(continued, 'task:10', start + 37 * 60000 + 1000);
+	assert.equal(continued.find(item => item.taskId === '10').visits, 1, 'more reading adds no contact');
+	continued = time.qualifyActivityTouch(continued, {taskId:'10',visitedAt:start+37*60000+1000}, {reason:'task-edit'});
 	assert.equal(continued.find(item => item.taskId === '10').visits, 2, 'a new qualified contact must be counted without suggesting a duration');
 
 	const visitAt = Date.parse('2026-08-27T12:00:00+03:00');
@@ -257,7 +261,7 @@ function testExactTimerAndContactBoundaries() {
 	for(let ms=500;ms<60000;ms+=500) visits=time.beginActivitySession(visits,{taskId:'1',visitedAt:start+ms});
 	assert.equal(visits[0].visits,0,'subsecond duplicate opens cannot round up to a qualified minute');
 	visits=time.syncActivitySession(visits,'task:1',start+60000);
-	assert.equal(visits[0].visits,1,'duplicate opens cannot lose accumulated visible time');
+	assert.equal(visits[0].visits,0,'duplicate opens cannot turn accumulated viewing into contact');
 }
 
 async function testRepeatedFullPageStops() {

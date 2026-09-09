@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.131';
+	window.__ANITREC_RUNNING__ = '7.5.132';
 
-	const VER = '7.5.131';
+	const VER = '7.5.132';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -525,6 +525,10 @@
 
 	function _getTypedDialogDataId(el) {
 		if (!el) return '';
+		// A task entity ID is not its chat ID. Explicit dialog identity wins
+		// over generic entity attributes (including recycled native rows).
+		const dialogId = String(el.getAttribute?.('data-dialog-id') || el.getAttribute?.('data-dialog-id-value') || el.getAttribute?.('data-dialogid') || '').trim();
+		if (/^(?:(?:chat|sg|user))?\d+$/i.test(dialogId)) return dialogId;
 		const chatId = String(el.getAttribute?.('data-chat-id') || el.dataset?.chatId || '').trim();
 		if (/^\d+$/.test(chatId)) return `chat${chatId}`;
 		if (/^(?:chat|sg)\d+$/i.test(chatId)) return chatId;
@@ -534,7 +538,7 @@
 		const entityId = String(el.getAttribute?.('data-entity-id') || el.dataset?.entityId || '').trim();
 		const entityType = String(el.getAttribute?.('data-entity-type') || el.dataset?.entityType || '').trim();
 		if (/^\d+$/.test(entityId)) {
-			if (/chat|dialog|group|task/i.test(entityType)) return `chat${entityId}`;
+			if (/^(?:chat|dialog|group)$/i.test(entityType)) return `chat${entityId}`;
 			if (/user|private/i.test(entityType)) return `user${entityId}`;
 		}
 		return /^(?:chat|sg|user)\d+$/i.test(entityId) ? entityId : '';
@@ -8324,15 +8328,19 @@
 			else viewport.style.removeProperty('overflow-anchor');
 			if (originalScrollBehavior) viewport.style.setProperty('scroll-behavior', originalScrollBehavior, originalScrollBehaviorPriority);
 			else viewport.style.removeProperty('scroll-behavior');
-			applyFilters();
-			viewport.scrollTop = Math.max(0, Number(scrollSnapshot?.top) || 0);
-			viewport.scrollLeft = Math.max(0, Number(scrollSnapshot?.left) || 0);
-			viewport.dispatchEvent(new Event('scroll'));
-			await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-			_restoreDialogControlNativeScroll(scrollSnapshot);
-			await new Promise(resolve => requestAnimationFrame(resolve));
-			_restoreDialogControlNativeScroll(scrollSnapshot);
-			await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+			// A detached probe must not reapply global filters to the replacement
+			// source while its new traversal is collecting the first window.
+			if (probeFenceCurrent()) {
+				applyFilters();
+				viewport.scrollTop = Math.max(0, Number(scrollSnapshot?.top) || 0);
+				viewport.scrollLeft = Math.max(0, Number(scrollSnapshot?.left) || 0);
+				viewport.dispatchEvent(new Event('scroll'));
+				await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+				if (probeFenceCurrent()) _restoreDialogControlNativeScroll(scrollSnapshot);
+				await new Promise(resolve => requestAnimationFrame(resolve));
+				if (probeFenceCurrent()) _restoreDialogControlNativeScroll(scrollSnapshot);
+				await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+			}
 			_dialogNativeHealthProbeActive = false;
 			_dialogNativeHealthProbeMode = '';
 			const ownsProbeAttempt = Number(_dialogNativeAttemptStates.get(targetMode)?.startedAt) === probeStartedAt;
@@ -9389,7 +9397,7 @@
 				.find(url => /\/tasks\/task\/view\/\d+/i.test(url)) || '';
 		} catch {}
 
-		const attrNames = ['taskId', 'taskid', 'task-id', 'data-task-id', 'entityId', 'entityid'];
+		const attrNames = ['taskId', 'taskid', 'task-id', 'data-task-id'];
 		let taskId = _extractTaskIdFromTaskUrl(taskUrl);
 		if (!taskId) {
 			for (const name of attrNames) {
@@ -9400,10 +9408,9 @@
 				}
 			}
 		}
-		if (!taskId) {
-			const text = `${fallbackTitle || ''} ${el.textContent || ''}`;
-			const m = /(?:задач[аиуы]?\s*|task\s*)?[#№]\s*(\d{2,})/i.exec(text);
-			if (m) taskId = m[1];
+		if (!taskId && /^(?:tasks|tasks_task|task)$/i.test(String(el.dataset?.entityType || el.getAttribute?.('data-entity-type') || ''))) {
+			const entityId = String(el.dataset?.entityId || el.getAttribute?.('data-entity-id') || '').trim();
+			if (/^[1-9]\d*$/.test(entityId)) taskId = entityId;
 		}
 		if (!taskUrl && taskId) taskUrl = _buildTaskUrl(taskId);
 		return taskUrl || taskId ? { taskId, taskUrl } : null;
@@ -9633,10 +9640,12 @@ function _rememberTaskMetaForDialogControlItem(item, meta) {
 
 	async function _openTaskForDialogControlItem(item) {
 		if (!item) return false;
-		let meta = item.taskUrl
-			? { taskId: item.taskId || _extractTaskIdFromTaskUrl(item.taskUrl), taskUrl: _normalizeBitrixPath(item.taskUrl) }
-			: _extractTaskMetaFromDialogData(item);
-		if (!meta?.taskUrl && item.taskId) meta = { taskId: String(item.taskId), taskUrl: _buildTaskUrl(item.taskId) };
+		const canonical = _getDialogRecentMeta(item.id);
+		const taskId = String(_dialogTimeTaskIdsByChatDialogId.get(normId(item.id)) || canonical?.taskId || '');
+		let meta = taskId ? { taskId, taskUrl: _extractTaskIdFromTaskUrl(canonical?.taskUrl) === taskId
+			? _normalizeBitrixPath(canonical.taskUrl) : _buildTaskUrl(taskId) } : null;
+		// Legacy saved rows could infer #numbers in a caption as a task ID.
+		// Resolve that association once instead of navigating to a guessed task.
 		if (!meta?.taskUrl) meta = await _resolveTaskMetaForDialog(item.id);
 		if (!meta?.taskUrl) return false;
 		_rememberTaskMetaForDialogControlItem(item, meta);
@@ -15847,12 +15856,13 @@ if (_presetChannel) {
 		}
 		if (!data || typeof data !== 'object') return null;
 		const action = String(knownAction || data.action || '');
-		const match = /^tasks\.(?:task|checklist)(?:\.(?:checklist|checklistitem|item))?\.(update|save|add|complete|renew|start|pause|defer|delete)$/i.exec(action);
+		const match = /^tasks\.(?:v2\.)?(?:task|checklist)(?:\.(?:checklist|checklistitem|item))?\.(update|save|add|complete|renew|start|pause|defer|delete)$/i.exec(action);
 		if (!match) return null;
-		const fields = data.fields || data.FIELDS || data.data?.fields || {};
-		const task = result.data?.task || result.result?.task || result.task || {};
+		const v2 = /^tasks\.v2\.task\./i.test(action);
+		const fields = data.fields || data.FIELDS || data.data?.fields || (v2 ? data.task : null) || {};
+		const task = result.data?.task || result.result?.task || result.task || (v2 && (result.data?.id || result.data?.ID) ? result.data : {}) || {};
 		if (!(result.status === 'success' || result.success === true || result.result === true || task.id || task.ID)) return null;
-		const taskId = String(data.taskId ?? data.TASK_ID ?? data.task_id ?? data.data?.taskId ??
+		const taskId = String(data.taskId ?? data.TASK_ID ?? data.task_id ?? data.data?.taskId ?? (v2 ? data.task?.id ?? data.task?.ID ?? data['task[id]'] ?? data['task[ID]'] : undefined) ??
 			task.id ?? task.ID ?? fallbackTaskId);
 		if (!/^[1-9]\d*$/.test(taskId)) return null;
 		if ((task.id || task.ID) && String(task.id || task.ID) !== taskId) return null;
@@ -15860,10 +15870,10 @@ if (_presetChannel) {
 		if (!checklist && /\.delete$/i.test(action)) return null;
 		if (!checklist && /\.(?:update|save|add)$/i.test(action)) {
 			const workFields = new Set(['title','description','status','deadline','responsibleid','accomplices','auditors','priority','groupid','parentid','tags','ufTaskWebdavFiles'.toLowerCase()]);
-			const keys = [...Object.keys(fields), ...Object.keys(data).map(key => /^fields\[([^\]]+)\]$/i.exec(key)?.[1] || '')];
+			const keys = [...Object.keys(fields), ...Object.keys(data).map(key => /^fields\[([^\]]+)\]$/i.exec(key)?.[1] || (v2 ? /^task\[([^\]]+)\]$/i.exec(key)?.[1] : '') || '')];
 			if (!keys.some(key => workFields.has(key.replace(/_/g, '').toLowerCase()))) return null;
 		}
-		return { taskId, title:String(task.title || task.TITLE || fields.title || fields.TITLE || data['fields[TITLE]'] || data['fields[title]'] || ''), reason:checklist ? 'checklist' : 'task-edit' };
+		return { taskId, title:String(task.title || task.TITLE || fields.title || fields.TITLE || data['fields[TITLE]'] || data['fields[title]'] || (v2 ? data['task[title]'] || data['task[TITLE]'] : '') || ''), reason:checklist ? 'checklist' : 'task-edit' };
 	}
 
 	function _armDialogTimeNativeActionEvents(BXNS, fallbackTaskId = '', isCurrent = () => true) {
@@ -15874,19 +15884,27 @@ if (_presetChannel) {
 			return;
 		}
 		const context = { fallbackTaskId, isCurrent };
-		_dialogTimeNativeActionNamespaces.set(BXNS, context);
-		BXNS.addCustomEvent('onAjaxSuccess', (result, config) => {
-			if (!_isDialogTimeLocalCoordinator() || !context.isCurrent() || !config || typeof config !== 'object') return;
-			const action = _getDialogTimeNativeTaskMutation(result, config, context.fallbackTaskId);
-			if (!action || _dialogTimeNativeActionReceipts.has(config)) return;
-			_dialogTimeNativeActionReceipts.add(config);
-			const scope = _getDialogTimeIdentityScopeKey();
-			setTimeout(() => {
-				if (scope !== _getDialogTimeIdentityScopeKey() || !_isDialogTimeLocalCoordinator()) return;
-				if (action.title) _queueDialogTimeTaskTitle(action.taskId, action.title);
-				_rememberDialogTimeTaskVisit(action.taskId, action.title, _getDialogTimeTaskChatDialogId(action.taskId), { qualify:true, reason:action.reason });
-			}, 0);
-		});
+		try {
+			BXNS.addCustomEvent('onAjaxSuccess', (result, config) => {
+				// Bitrix emits this inside its own request completion. No observer
+				// exception may abort native onsuccess or the following subscribers.
+				try {
+					if (!config || typeof config !== 'object' || _dialogTimeNativeActionReceipts.has(config)) return;
+					const action = _getDialogTimeNativeTaskMutation(result, config, context.fallbackTaskId);
+					if (!action || !_isDialogTimeLocalCoordinator() || !context.isCurrent()) return;
+					_dialogTimeNativeActionReceipts.add(config);
+					const scope = _getDialogTimeIdentityScopeKey();
+					setTimeout(() => {
+						try {
+							if (scope !== _getDialogTimeIdentityScopeKey() || !_isDialogTimeLocalCoordinator() || !context.isCurrent()) return;
+							if (action.title) _queueDialogTimeTaskTitle(action.taskId, action.title);
+							_rememberDialogTimeTaskVisit(action.taskId, action.title, _getDialogTimeTaskChatDialogId(action.taskId), { qualify:true, reason:action.reason });
+						} catch { _reportDialogTimeContactError('NATIVE_ACTION_OBSERVER_FAILED'); }
+					}, 0);
+				} catch { _reportDialogTimeContactError('NATIVE_ACTION_OBSERVER_FAILED'); }
+			});
+			_dialogTimeNativeActionNamespaces.set(BXNS, context);
+		} catch { /* Native namespace can disappear while a slider is closing. */ }
 	}
 
 	function _armDialogTimeVisitTracking() {
@@ -18899,6 +18917,12 @@ if (_presetChannel) {
 		if (!item || _isDialogRecentInteractionBlocked()) return false;
 		const meta = _getDialogRecentMeta(item.id);
 		if (meta && !_isDialogRecentPublishable(meta)) return false;
+		// Let Bitrix choose its task route when the exact native row exists.
+		// Public.openChat is not a substitute for every task-list click handler.
+		if (mode === 'tasks') {
+			const nativeRow = _findFreshBitrixChatElementById(item.id);
+			if (nativeRow && openChatElement(nativeRow, item.id)) return true;
+		}
 		if (await _openDialogControlViaBitrixApi(item)) {
 			if (mode === 'tasks') _rememberTaskChatDialogVisit(item.id || '', item.title || '', item.taskId || '', { takeover: true });
 			return true;

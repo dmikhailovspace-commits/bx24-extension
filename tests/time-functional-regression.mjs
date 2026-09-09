@@ -244,11 +244,12 @@ try {
   });
   assert.equal(enabled,1,'Cached N lost the newly enabled contact');
  });
- await phase('hidden time is excluded from contact qualification',async()=>{
+ await phase('hidden and visible reading never allocate or qualify contact sessions',async()=>{
   await page.locator('.pena-native-time-header-actions > .pena-native-popover-close').click();
   const r=await page.evaluate(()=>{
    window.timeProbe.stage({taskId:'101',dialogId:'chat101'});
-   const entry=window.timeProbe.pending('101');entry.durationQualified=false;entry.qualify=false;entry.startedAt=Date.now()-20000;
+   const pending=window.timeProbe.pending('101');
+   const entry={taskId:'101',active:true,startedAt:Date.now()-20000,qualify:false};
    Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});
    document.dispatchEvent(new Event('visibilitychange'));
    const hiddenQualified=entry.qualify;
@@ -259,9 +260,9 @@ try {
    const resumedQualified=window.timeProbe.qualify(entry);
    entry.startedAt=Date.now()-41000;
    const afterMinute=window.timeProbe.qualify(entry);
-   return {hiddenQualified,whileHidden,resumedQualified,afterMinute,visibleMs:entry.visibleMs};
+   return {hiddenQualified,whileHidden,resumedQualified,afterMinute,pending:!!pending,resumedPending:!!window.timeProbe.pending('101')};
   });
-  assert.equal(r.hiddenQualified,false);assert.equal(r.whileHidden,false);assert.equal(r.resumedQualified,false);assert.equal(r.afterMinute,true);
+  assert.deepEqual(r,{hiddenQualified:false,whileHidden:false,resumedQualified:false,afterMinute:false,pending:false,resumedPending:false});
   await page.locator('.pena-native-time-button').click();
  });
  await phase('uncertain manual write survives form changes and reload without an automatic duplicate',async()=>{

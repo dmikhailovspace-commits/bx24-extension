@@ -5,7 +5,9 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { buildChrome } from '../tools/build-chrome.mjs';
 const require = createRequire(import.meta.url), { chromium } = require('playwright');
-const build = buildChrome(resolve('tests/artifacts/chrome-browser-package'));
+mkdirSync(resolve('tests/artifacts'), { recursive:true });
+const packageDir = mkdtempSync(resolve('tests/artifacts/chrome-browser-package-'));
+const build = buildChrome(packageDir);
 const origin = 'https://portal.chrome.test';
 const phases = [], errors = [], consoleErrors = [];
 let context;
@@ -35,7 +37,7 @@ try {
 
   // A test-only manifest grants one HTTPS fixture host. This models accepted
   // Chrome consent without automating or claiming to test Chrome's native dialog.
-  const grantedDir = resolve('tests/artifacts/chrome-browser-granted');
+  const grantedDir = join(packageDir, 'granted-fixture');
   mkdirSync(grantedDir, { recursive: true }); cpSync(build.unpacked, grantedDir, { recursive: true });
   const manifest = JSON.parse(readFileSync(join(grantedDir, 'manifest.json')));
   manifest.host_permissions = [`${origin}/*`];

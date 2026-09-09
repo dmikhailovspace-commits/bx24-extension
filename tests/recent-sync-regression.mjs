@@ -1389,8 +1389,8 @@ try {
 	  taskUrl: '/company/personal/user/101/tasks/task/view/7001/'
 	}, `Task metadata lost its task association: ${JSON.stringify(ownership.taskMeta)}`);
 	await page.locator('.pena-native-remote-row[data-id="chat9001"]').click();
-	await page.waitForFunction(() => window.__recentHarness.apiOpens().includes('chat9001'));
 	await page.waitForFunction(() => window.__recentHarness.nativeOpens().includes('chat9001'));
+	assert.deepEqual(await page.evaluate(() => window.__recentHarness.apiOpens()), [], 'An exact native task row must not use a generic messenger API');
 	assert.deepEqual(await page.evaluate(() => window.__recentHarness.sidePanelOpens()), [], 'Task row opened SidePanel instead of the messenger');
   }, '?taskview=1&apicase=1');
 

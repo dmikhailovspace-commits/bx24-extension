@@ -730,7 +730,7 @@ try {
 		task.visits = 1;
 		task.sessionQualified = true;
 		task.lastQualifiedAt = Date.now();
-		task.lastQualificationReason = 'duration';
+		task.lastQualificationReason = 'message';
 		localStorage.setItem(key, JSON.stringify(activities));
 		document.querySelector('.pena-native-time-refresh')?.click();
 	});
@@ -739,7 +739,7 @@ try {
 		const key = 'pena.timeVisitedTasks.v1.7.' + document.querySelector('.pena-native-time-date-input').value;
 		return JSON.parse(localStorage.getItem(key) || '[]').find(item => item.taskId === '404') || null;
 	});
-	assert.equal(qualifiedSidePanelTouch?.visits, 1, `One active minute did not qualify exactly one touch in ${mode}: ${JSON.stringify(qualifiedSidePanelTouch)}`);
+	assert.equal(qualifiedSidePanelTouch?.visits, 1, `One confirmed message must remain one contact in ${mode}: ${JSON.stringify(qualifiedSidePanelTouch)}`);
 	await page.evaluate(() => {
 		const key = 'pena.timeVisitedTasks.v1.7.' + document.querySelector('.pena-native-time-date-input').value;
 		const activities = JSON.parse(localStorage.getItem(key) || '[]');
@@ -747,7 +747,7 @@ try {
 		task.visits = 4;
 		task.activeSeconds = 540;
 		task.lastQualifiedAt = Date.now();
-		task.lastQualificationReason = 'duration';
+		task.lastQualificationReason = 'message';
 		localStorage.setItem(key, JSON.stringify(activities));
 		window.timeListFailures = 1;
 		window.dispatchNativeSidePanelTask('404');
@@ -1092,8 +1092,8 @@ try {
 		{ handlers: 1, childVisibility: 'visible' },
 		`A CSS-hidden non-Messenger iframe subscribed to shared Bitrix tracking events: ${JSON.stringify(multiFrameBeforeMessage)}`
 	);
-	assert.ok(multiFrameAfterMessage.lease?.frameId,
-		`The active Messenger did not claim the qualified task lease: ${JSON.stringify({ multiFrameBeforeMessage, multiFrameAfterMessage })}`);
+	assert.equal(multiFrameAfterMessage.lease, null,
+		`Explicit contact events use the ledger lock, not a passive viewing lease: ${JSON.stringify({ multiFrameBeforeMessage, multiFrameAfterMessage })}`);
 	assert.equal(multiFrameAfterMessage.visit?.visits, 1, 'One outgoing message was counted more than once across frames');
 	await page.evaluate(() => {
 		const iframe = document.getElementById('time-tracking-child-frame');

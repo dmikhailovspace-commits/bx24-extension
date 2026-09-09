@@ -99,13 +99,13 @@ check('confirmed ACK covers contacts even before the read snapshot exposes its j
  }
  return{pendingContacts:1,readSnapshotRequired:false};
 });
-check('duration qualified during delayed ADD is covered with its already-open session; an actual later message stays pending',()=>{
+check('duration around delayed ADD is ignored; only an actual later message stays pending',()=>{
  let rows=model.applyQualifiedContact([],{taskId:'10',eventId:'duration',qualifiedAt:start+60000,sessionStartedAt:start,reason:'duration'});
  rows=event(rows,'real-message',90);rows=model.markActivityAccounted(rows,'task:10',start+10000,{itemId:'502'});
- assert.equal(pending(rows)[0].pendingContacts,1);assert.equal(rows[0].visits,2);
+ assert.equal(pending(rows)[0].pendingContacts,1);assert.equal(rows[0].visits,1);
  rows=model.applyQualifiedContact(rows,{taskId:'10',eventId:'new-session',qualifiedAt:start+160000,sessionStartedAt:start+100000,reason:'duration'});
- assert.equal(pending(rows)[0].pendingContacts,2);
- return{oldSessionPending:0,newMessagePending:1,newSessionPending:1};
+ assert.equal(pending(rows)[0].pendingContacts,1);assert.equal(rows[0].visits,1);
+ return{oldSessionPending:0,newMessagePending:1,newSessionPending:0};
 });
 check('covered duration does not suppress a real message within the 15 second dedupe window',()=>{
  let rows=model.applyQualifiedContact([],{taskId:'10',eventId:'duration-near-message',qualifiedAt:start+60000,sessionStartedAt:start,reason:'duration'});
