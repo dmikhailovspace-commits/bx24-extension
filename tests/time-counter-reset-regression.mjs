@@ -126,7 +126,7 @@ await phase('switching identity releases the old today pin and never leaks its t
  return{oldIdentityRetained:false,currentSeconds:0,size:f.c._dialogTimeCache.size};
 });
 function selectionFixture(existingStorage=null){
- const storage=existingStorage || new Map();const state={storage,user:'7',host:'portal.test',now:Date.parse('2026-09-07T12:30:00Z')};
+ const storage=existingStorage || new Map();const state={storage,user:'7',host:'portal.test',now:Date.parse('2026-09-07T12:30:00Z'),timers:[]};
  class Clock extends Date{constructor(...args){super(...(args.length?args:[state.now]));}static now(){return state.now;}}
  const c=vm.createContext({Date:Clock,Map,Set,_PENA_TIME_CONTROL:model,
   location:{get host(){return state.host;}},_getCurrentBitrixUserId:()=>state.user,
@@ -135,7 +135,8 @@ function selectionFixture(existingStorage=null){
   _dialogTimePortalUtcOffsetMinutes:0,_dialogTimeCache:new Map(),_dialogTimeInFlight:new Map(),_dialogTimeTaskEligibility:new Map([['42',true]]),
   _dialogTimeManualSearchToken:0,_dialogTimeManualSelectedTask:null,_dialogTimeManualSearchQuery:'',_dialogTimeManualSearchResults:[],_dialogTimeManualSearchTimer:null,
   _dialogTimeTodayPreviewReadKey:'',_dialogTimeTodayPreviewWriteKey:'',_dialogTimeTodayPreviewTimer:null,_dialogTimeTodayPreviewPendingKey:'',_dialogTimeTodayPreviewRetry:null,
-  _queueDialogTimeUiSync:()=>{},clearTimeout:()=>{},setTimeout:()=>1,_getDialogTimeTodayKey:()=>range.from
+  _queueDialogTimeUiSync:()=>{},clearTimeout:id=>{state.timers[id-1]=null;},setTimeout:fn=>state.timers.push(fn),_getDialogTimeTodayKey:()=>range.from,
+  _getDialogTimeCalendarZone:()=>({utcOffsetMinutes:0}),_getDialogTimeCalendarZoneKey:()=> 'offset:0',_getDialogTimeCalendarNow:()=>state.now
  });
  for(const name of ['_getDialogTimeIdentityScopeKey','_normalizeDialogTimeProjectPreference','_getDialogTimeProjectStorageKey',
   '_readDialogTimeProjectPreference','_getDialogTimeProjectScopeKey','_migrateDialogTimeProjectSnapshots','_saveDialogTimeProjectPreference',
@@ -150,7 +151,7 @@ function selectionFixture(existingStorage=null){
   c._saveDialogTimeProjectPreference(selected);
   const data={...model.aggregateElapsedItems([entry(3600)]),range};
   c._setDialogTimeCacheRecord(c._getDialogTimeCacheKey(range),{range,status:'ready',data,hasVerifiedData:true,hasCompleteSnapshot:true,globalSnapshotRead:true,readForce:true,failedTaskRevisions:{'1':0},taskFreshness:{'1':{at:state.now,revision:0}}});
-  storage.set('pena.timeToday.v1.portal.test~7',JSON.stringify({version:1,scope:c._getDialogTimeProjectScopeKey().replace(/:g\d+$/,''),day:range.from,offset:0,savedAt:state.now,items:data.items}));
+  storage.set('pena.timeToday.v1.portal.test~7',JSON.stringify({version:1,calendar:'user-v1',zone:'offset:0',scope:c._getDialogTimeProjectScopeKey().replace(/:g\d+$/,''),day:range.from,offset:0,savedAt:state.now,items:data.items}));
   storage.set('pena.timeActiveTracker.v1.7',JSON.stringify({taskId:'42',startedAt:state.now-45000,dateKey:range.from}));
   storage.set('pena.timeVisitedTasks.v1.7.2026-09-07',JSON.stringify([{taskId:'42',visits:2,lastQualifiedAt:state.now}]));
  };
@@ -183,6 +184,28 @@ await phase('excluding the old project keeps an explicit unverified preview inst
  assert.equal(reload.c._hasDialogTimeVerifiedData(reload.record()),false);
  assert.equal(reload.record().hasCompleteSnapshot,false);
  return{oldRawSeconds:3600,presentedAsVerified:false,reloadPresentedAsVerified:false};
+});
+await phase('legacy server-calendar preview is rejected while the user-calendar preview restores',async()=>{
+ const f=selectionFixture();f.seed();const key='pena.timeToday.v1.portal.test~7',saved=JSON.parse(f.state.storage.get(key));
+ const valid=selectionFixture(new Map(f.state.storage));valid.c._syncDialogTimeTodayPreview(range);
+ assert.equal(valid.record().data.totalSeconds,3600);assert.equal(valid.record().hasCompleteSnapshot,false);
+ delete saved.calendar;delete saved.zone;f.state.storage.set(key,JSON.stringify(saved));
+ const legacy=selectionFixture(new Map(f.state.storage));legacy.c._syncDialogTimeTodayPreview(range);
+ assert.equal(legacy.record(),null,'Pre-user-calendar cache must not provide a current-day total');
+ return{validRestoredSeconds:3600,legacyRestored:false};
+});
+await phase('project migration retains calendar suffix and an old pending preview writer cannot overwrite the new scope',async()=>{
+ const f=selectionFixture();f.seed();f.c._syncDialogTimeTodayPreview(range);
+ const write=f.state.timers.find(Boolean);assert.equal(typeof write,'function');
+ const previousScope=f.c._getDialogTimeProjectScopeKey();
+ f.c._saveDialogTimeProjectPreference({version:1,all:true,ids:[],includeUnassigned:true});
+ const nextScope=f.c._getDialogTimeProjectScopeKey(),cacheKey=f.c._getDialogTimeCacheKey(range);
+ assert.notEqual(previousScope,nextScope);assert.ok(cacheKey.endsWith(':tz=offset:0'));
+ assert.equal(f.c._dialogTimeCache.get(cacheKey).data.totalSeconds,3600);
+ const key='pena.timeToday.v1.portal.test~7',migrated=f.state.storage.get(key);write();
+ assert.equal(f.state.storage.get(key),migrated,'Old writer changed the migrated preview after scope change');
+ assert.equal(JSON.parse(migrated).scope,nextScope.replace(/:g\d+$/,''));
+ return{seconds:3600,calendarFenceRetained:true,oldWriterIgnored:true};
 });
 await phase('failed project preference write leaves old scope, total and storage intact',async()=>{
  const f=selectionFixture();f.seed();const scope=f.c._getDialogTimeProjectScopeKey(),before=Array.from(f.state.storage);

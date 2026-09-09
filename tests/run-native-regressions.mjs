@@ -43,7 +43,8 @@ const assertLegacyElapsedStartup = (snapshot, expectedIds = ['101','102','303','
 	const params=snapshot.global[0];
 	assert.equal(params.length,5);assert.equal(params[0],0);assert.deepEqual(params[1],{ID:'ASC'});
 	const nextDay=new Date(`${snapshot.dateKey}T12:00:00Z`);nextDay.setUTCDate(nextDay.getUTCDate()+1);
-	assert.deepEqual(params[2],{USER_ID:7,'>=CREATED_DATE':`${snapshot.dateKey}T00:00:00`,'<CREATED_DATE':`${nextDay.toISOString().slice(0,10)}T00:00:00`,'>ID':0});
+	// native-consistency-harness declares the user's manual Bitrix zone as +03.
+	assert.deepEqual(params[2],{USER_ID:7,'>=CREATED_DATE':`${snapshot.dateKey}T00:00:00+03:00`,'<CREATED_DATE':`${nextDay.toISOString().slice(0,10)}T00:00:00+03:00`,'>ID':0});
 	assert.ok(params[3].includes('TASK_ID')&&params[3].includes('USER_ID')&&params[3].includes('SECONDS'));
 	assert.deepEqual(params[4],{NAV_PARAMS:{nPageSize:50,iNumPage:1}});
 	assert.deepEqual(snapshot.elapsed.slice().sort(),expectedIds.slice().sort(),'Fallback must read each expected task exactly once');
@@ -469,7 +470,7 @@ try {
 	assert.equal(await timePanel.locator('.pena-native-time-tracker-search').inputValue(), '', `Tracker auto-selected an unexplained task in ${mode}`);
 	assert.equal(await timePanel.locator('.pena-native-time-start').isDisabled(), true);
 	assert.equal(await timePanel.locator('.pena-native-time-date-input').count(), 1, `Time panel has no selected-date control in ${mode}`);
-	assert.equal(await timePanel.locator('.pena-native-time-view-tab').count(), 2, `Time panel has no day/statistics switch in ${mode}`);
+	assert.deepEqual(await timePanel.locator('.pena-native-time-view-tab').evaluateAll(tabs=>tabs.map(tab=>({view:tab.dataset.view,label:tab.textContent.trim()}))), [{view:'day',label:'День'},{view:'stats',label:'7 дней'},{view:'stats30',label:'30 дней'}], `Time panel has no complete day/statistics switch in ${mode}`);
 	assert.equal(await timePanel.getByText('Трекинг сейчас', { exact: true }).count(), 0);
 	assert.equal(await timePanel.getByText('Без запуска таймера', { exact: true }).count(), 0);
 	assert.equal(await timePanel.locator('.pena-native-time-manual-hours').getAttribute('type'), 'text');
@@ -637,6 +638,9 @@ try {
 	assert.ok(statisticRows.some(text => /2 ч 45 мин/.test(text)), `Statistics omitted today's total in ${mode}: ${JSON.stringify(statisticRows)}`);
 	await timePanel.locator('.pena-native-time-view-tab[data-view="day"]').click();
 	await page.waitForFunction(() => document.querySelector('.pena-native-time-total-value')?.textContent === '2 ч 45 мин');
+	// The week has the same total; it cannot prove that the queued day render ran.
+	await timePanel.locator('.pena-native-time-tracker').waitFor({state:'visible'});
+	assert.equal(await selectedDateInput.inputValue(),todayKey,`Returning from statistics changed the selected day in ${mode}`);
 	assert.equal(await timePanel.locator('.pena-native-time-tracker').isVisible(), true, `Timer did not return on today in ${mode}`);
 	await manualToggle.click();
 	assert.equal(await timePanel.locator('.pena-native-time-manual').isHidden(), true, `Manual entry could not return to its collapsed state in ${mode}`);
@@ -926,7 +930,7 @@ try {
 	assert.equal(await page.evaluate(() => String(window.timeDeletedItems.at(-1)?.TASKID || '')), '101', 'Unified panel deleted the wrong task record');
 	const duringTimePanel = await readOutput(page);
 	assert.ok(Math.abs(duringTimePanel.avatarGeometry.avatarLeft - beforeTimePanel.avatarGeometry.avatarLeft) < 0.5, `Time popover shifted avatars in ${mode}`);
-	await timePanel.locator('.pena-native-popover-close').click();
+	await timePanel.locator('.pena-native-time-header-actions > .pena-native-popover-close').click();
 	await timePanel.waitFor({ state: 'detached' });
 	const markerBaseline = await readOutput(page);
 	const rerenderStartedAt = Date.now();
@@ -1352,6 +1356,7 @@ try {
 	await page.locator('.task-host .pena-native-folder-switcher').waitFor({ state: 'visible', timeout: 4000 });
 	await page.locator('.task-host .pena-native-time-button').click();
 	const trackingPanel = page.locator('.task-host .pena-native-time-panel');
+	await trackingPanel.locator('.pena-native-time-loading-overlay').waitFor({state:'hidden'});
 	if (await trackingPanel.locator('.pena-native-time-manual').isHidden()) {
 		await trackingPanel.locator('.pena-native-time-manual-toggle').click();
 	}
@@ -4025,10 +4030,11 @@ try {
 	].sort();
 	assert.equal(deepTaskCatalog.stored, exactDeepTaskIds.length,
 		`Multi-page task catalog stopped before all available tasks: ${JSON.stringify(deepTaskCatalog)}`);
-	assert.deepEqual(deepTaskCatalog.taskStarts.slice(0, 4), [0, 50, 100, 150],
-		`Background task-head refresh did not stay inside its bounded START window: ${JSON.stringify(deepTaskCatalog)}`);
-	assert.deepEqual(deepTaskCatalog.taskCursors.slice(-6), [0, 50043, 50093, 50143, 50193, 50243],
-		`Manual task catalog refresh did not follow monotonic ID keyset pages: ${JSON.stringify(deepTaskCatalog)}`);
+	assert.deepEqual(deepTaskCatalog.taskStarts, [],
+		`Startup launched a redundant task-head crawl instead of sharing the complete catalog: ${JSON.stringify(deepTaskCatalog)}`);
+	const expectedFullCursors=[0,50043,50093,50143,50193,50243];
+	assert.deepEqual(deepTaskCatalog.taskCursors, [...expectedFullCursors,...expectedFullCursors],
+		`Startup and manual refresh must each perform one complete ID-keyset crawl: ${JSON.stringify(deepTaskCatalog)}`);
 	assert.deepEqual(deepTaskCatalog.ids, exactDeepTaskIds,
 		`Multi-page task catalog lost or invented task identities: ${JSON.stringify(deepTaskCatalog)}`);
 	assert.equal(deepTaskCatalog.oldTask?.addedAt, Date.parse('2024-01-15T09:00:00.000Z'),

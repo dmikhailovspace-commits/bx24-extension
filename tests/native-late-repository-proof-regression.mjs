@@ -22,7 +22,41 @@ fixture=fixture.replace(anchor,`
       }
 `);
 const server=await startHarnessServer(),browser=await chromium.launch({headless:true});const phases=[];
-try{for(const moment of ['during','after']){
+try{
+ // A repository lower bound is authoritative until a fenced access check proves
+ // one missing dialog was deleted. That same pass must retire the old blocker.
+ const tombstoneFixture=readFileSync(new URL('./native-resume-recovery-harness.html',import.meta.url),'utf8')
+  .replace("Math.max(72, Number(params.get('chatCount')) || 108)","Math.max(1, Number(params.get('chatCount')) || 108)")
+  .replace(anchor,`
+    const deletedExtra={...recordsByMode.chats.at(-1),id:'chat991999',numericId:991999,title:'Удалённый подтверждённый диалог',timestamp:Date.now()-99999999};
+    window.deletedChecks=0;window.deletedChecksAtBottom=0;
+    window.__PENA_DIALOG_REPOSITORY__={get:async()=>{
+      const rows=[...recordsByMode.chats,deletedExtra],ids=rows.map(row=>row.id);
+      return {manifest:{schema:2,revision:1,catalogVersion:1,savedAt:Date.now(),catalogModes:{chats:{complete:true,loadedAt:Date.now(),count:ids.length,confirmedIds:ids}}},records:rows.map(row=>({id:row.id,mode:'chats',title:row.title,chatId:String(row.numericId),lastMessageTs:row.timestamp}))};
+    },patch:async()=>({ok:true}),commit:async()=>({ok:true})};
+  `+anchor+`
+    if(method==='im.recent.list')return {error:()=> 'TEMPORARY_ERROR',error_description:()=> 'fixture metadata unavailable',data:()=>null,answer:{}};
+    if(method==='im.dialog.get'&&String(callParams.DIALOG_ID)==='chat991999'){
+      window.deletedChecks++;
+      if(!window.__PENA_NATIVE_BOTTOM_DEBUG__)return success({dialog:apiEntry(deletedExtra)});
+      window.deletedChecksAtBottom++;
+      return {error:()=> 'CHAT_NOT_FOUND',error_description:()=> 'Chat not found',data:()=>null,answer:{}};
+    }
+  `);
+ const tombstonePage=await browser.newPage({viewport:{width:430,height:780}}),tombstoneErrors=collectPageErrors(tombstonePage);
+ await tombstonePage.route('**/tests/native-resume-recovery-harness.html?*',r=>r.fulfill({status:200,contentType:'text/html',body:tombstoneFixture}));
+ await tombstonePage.goto(server.baseUrl+'/tests/native-resume-recovery-harness.html?autoBootstrap=1&chatCount=28&timeProjects=unconfigured');
+ await tombstonePage.waitForFunction(()=>window.__resumeHarness.ready('chats')&&!window.__PENA_NATIVE_PREFETCH__.status().originalActive,null,{timeout:20000});
+ const tombstone=await tombstonePage.evaluate(()=>({state:window.__resumeHarness.state(),sync:window.__PENA_RECENT_SYNC__,checks:window.deletedChecksAtBottom,failure:window.__PENA_NATIVE_FAILURE_DEBUG__}));
+ assert.ok(tombstone.checks>0,'Deletion must be established by the access check at physical bottom');
+ assert.equal(tombstone.state.status.modeStates.chats.materialization.count,28);
+ assert.deepEqual(tombstone.state.modes.chats.observedIds.slice().sort(),tombstone.state.modes.chats.expectedIds.slice().sort());
+ assert.equal(tombstone.state.modes.chats.observedIds.includes('chat991999'),false);
+ assert.equal(tombstone.sync.recoveryActionRequired,false);
+ assert.equal(tombstone.failure?.blockingExpected?.includes('chat991999')||false,false,'The confirmed tombstone must not fail this attempt and require another manual retry');
+ assert.deepEqual(tombstoneErrors,[]);
+ phases.push({moment:'cold-tombstone',status:'PASS',finalDialogs:28,accessChecksAtBottom:tombstone.checks,manualRetries:0});await tombstonePage.close();
+ for(const moment of ['during','after']){
  const page=await browser.newPage({viewport:{width:430,height:780}}),errors=collectPageErrors(page);
  await page.route('**/tests/native-resume-recovery-harness.html?*',r=>r.fulfill({status:200,contentType:'text/html',body:fixture}));
  await page.goto(server.baseUrl+'/tests/native-resume-recovery-harness.html?autoBootstrap=1&timeProjects=unconfigured');

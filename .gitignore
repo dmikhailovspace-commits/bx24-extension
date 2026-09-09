@@ -21,6 +21,7 @@ __pycache__/
 # Build output (compiled installers)
 dist/
 chrome-release/
+tests/artifacts/
 
 # Archives
 *.zip

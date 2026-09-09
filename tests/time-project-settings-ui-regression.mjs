@@ -78,18 +78,27 @@ try{
   await project('1').check();await save();
   const workspace=await page.locator('.pena-native-time-panel').boundingBox();assert.equal(workspace.width,960);assert.equal(workspace.height,720);
   await page.waitForFunction(()=>window.initialProjectCatalogHolds.length===1);
+  await page.waitForFunction(()=>document.querySelector('.pena-native-time-panel.--read-blocked .pena-native-time-scroll')?.inert===true);
+  // The first unconfirmed snapshot blocks the entire workspace (v124 onward).
+  // An inert input cannot accept real user selection; do not force fixture clicks.
+  const blocked=await page.locator('.pena-native-time-panel').evaluate(panel=>{
+   const search=panel.querySelector('.pena-native-time-manual-search');search.focus();
+   return{blocked:panel.classList.contains('--read-blocked'),headInert:panel.querySelector('.pena-native-time-panel-head').inert,
+    scrollInert:panel.querySelector('.pena-native-time-scroll').inert,searchFocused:document.activeElement===search,query:search.value};
+  });
+  assert.deepEqual(blocked,{blocked:true,headInert:true,scrollInert:true,searchFocused:false,query:''});
+  for(const selector of ['.pena-native-time-manual-submit','.pena-native-time-start']){
+   assert.equal(await page.locator(selector).evaluate(button=>{button.focus();return !!button.closest('[inert]')&&document.activeElement!==button;}),true,'Time action became interactive before project membership was confirmed');
+  }
+  const held=await page.evaluate(()=>({catalog:window.initialProjectCatalogHolds.length,elapsed:window.timeRestCalls.length,adds:window.timeAddCalls.length,updates:window.timeUpdateCalls.length,deletes:window.timeDeletedItems.length}));
+  assert.deepEqual(held,{catalog:1,elapsed:0,adds:0,updates:0,deletes:0});
+  await page.evaluate(()=>{window.releaseInitialProjectCatalog=true;window.initialProjectCatalogHolds.splice(0).forEach(release=>release());});
+  await settled('1 ч');
   await page.locator('.pena-native-time-manual-search').fill('Задача 101');
   await page.locator('#pena-time-task-option-101').click();
   await page.locator('.pena-native-time-manual-minutes').fill('10');
   await page.locator('.pena-native-time-tracker-search').fill('Задача 101');
   await page.locator('#pena-time-tracker-task-option-101').click();
-  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
-  assert.equal(await page.locator('.pena-native-time-manual-submit').isDisabled(),true,'Manual write became available before project membership was confirmed');
-  assert.equal(await page.locator('.pena-native-time-start').isDisabled(),true,'Timer became available before project membership was confirmed');
-  const held=await page.evaluate(()=>({catalog:window.initialProjectCatalogHolds.length,elapsed:window.timeRestCalls.length,adds:window.timeAddCalls.length,updates:window.timeUpdateCalls.length,deletes:window.timeDeletedItems.length}));
-  assert.deepEqual(held,{catalog:1,elapsed:0,adds:0,updates:0,deletes:0});
-  await page.evaluate(()=>{window.releaseInitialProjectCatalog=true;window.initialProjectCatalogHolds.splice(0).forEach(release=>release());});
-  await settled('1 ч');
   await page.waitForFunction(()=>document.querySelector('.pena-native-time-manual-submit')?.disabled===false&&document.querySelector('.pena-native-time-start')?.disabled===false);
   assert.equal(await page.evaluate(()=>window.timeAddCalls.length),0,'Releasing project metadata must not write time automatically');
   return held;

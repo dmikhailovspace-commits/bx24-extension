@@ -266,7 +266,7 @@ try {
     await page.locator('.pena-native-time-project-save').click();
     await page.waitForFunction(()=>window.contactHeldRefresh.callbacks.length>0);
     const pendingSave=await page.evaluate(()=>{window.contactExceptionProbe.sync();return{seconds:window.contactExceptionProbe.record()?.data?.totalSeconds,verified:window.contactExceptionProbe.record()?.hasVerifiedData,total:document.querySelector('.pena-native-time-total-value')?.textContent,visits:window.contactExceptionProbe.visits()};});
-    assert.equal(pendingSave.seconds,6000);assert.equal(pendingSave.verified,true);assert.notEqual(pendingSave.total,'—');assert.deepEqual(pendingSave.visits,visitsBeforeSave);
+    assert.equal(pendingSave.seconds,6000);assert.equal(pendingSave.verified,true);assert.equal(pendingSave.total,'—','Retain the raw snapshot while hiding the unconfirmed expanded-scope total');assert.deepEqual(pendingSave.visits,visitsBeforeSave);
     await page.evaluate(()=>{window.contactHeldRefresh.active=false;for(const fn of window.contactHeldRefresh.callbacks.splice(0))fn();});
     await page.waitForFunction(()=>window.contactExceptionProbe.record()?.hasCompleteSnapshot && window.contactExceptionProbe.record()?.data?.totalSeconds===6000);
     assert.deepEqual(await page.evaluate(()=>window.contactExceptionProbe.visits()),visitsBeforeSave);

@@ -14,7 +14,7 @@ async function until(test) { for (let i = 0; i < 1000; i++) { if (test()) return
 function fixture(initial = ['https://portal.test/*']) {
   const state = { origins: initial, registered: [], calls: [], getHook: null, scriptHook: null, registerHook: null, stale: false, failFiles: false, silentFileError: false, surface: true, url: 'https://portal.test/online/', child: false };
   const realms = new Map();
-  const runtime = { id: 'extension-id', getManifest: () => ({ version: '7.5.128' }), getURL: file => `chrome-extension://extension-id/${file}`, onMessage: event(), onInstalled: event(), onStartup: event() };
+  const runtime = { id: 'extension-id', getManifest: () => ({ version: '7.5.129' }), getURL: file => `chrome-extension://extension-id/${file}`, onMessage: event(), onInstalled: event(), onStartup: event() };
   const chrome = { runtime, permissions: {
     getAll: async () => { const snapshot = [...state.origins]; if (state.getHook) await state.getHook(); return { origins: snapshot }; },
     onAdded: event(), onRemoved: event(),
@@ -34,7 +34,7 @@ function fixture(initial = ['https://portal.test/*']) {
         if (!state.silentFileError) Object.assign(realms.get(`${args.target.documentIds[0]}:MAIN`), {
           __PENA_NATIVE_CATALOG__: { buildIndex() {} }, __PENA_INTERACTIONS__: { createInteractionState() {} },
           __PENA_TIME_CONTROL__: { loadElapsedItems() {} }, __PENA_NATIVE_LIFECYCLE__: { createLifecycleController() {} },
-          __PENA_DIALOG_REPOSITORY__: { get() {} }, __ANITREC_RUNNING__: '7.5.128',
+          __PENA_DIALOG_REPOSITORY__: { get() {} }, __ANITREC_RUNNING__: '7.5.129',
         });
         return [{ documentId: args.target.documentIds[0], result: undefined }];
       }

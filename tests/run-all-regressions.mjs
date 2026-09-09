@@ -82,6 +82,8 @@ const suites = [
   'native-lifecycle-controller.mjs',
   'native-preservation-regression.mjs',
   'native-status-isolation-regression.mjs',
+  'native-retry-action-regression.mjs',
+  'native-healthy-metadata-frequency-regression.mjs',
 	'native-progress-performance-regression.mjs',
 	'native-message-performance-regression.mjs',
   'native-dom-mutation-regression.mjs',

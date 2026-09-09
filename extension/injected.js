@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.128';
+	window.__ANITREC_RUNNING__ = '7.5.129';
 
-	const VER = '7.5.128';
+	const VER = '7.5.129';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -4682,7 +4682,9 @@
 			// An expanded set contains the confirmed old rows, but has not yet been
 			// fully checked. A narrower/changed set must not display the old total.
 			const data = { ...record.data, coverage:{ checkedTasks:0, totalTasks:0, complete:false } };
-			_setDialogTimeCacheRecord(`${nextScope}:${range.from}:${range.to}`, {
+			// Preserve the range's calendar fence as well as its dates. Rebuilding
+			// only the dates strands a confirmed snapshot under a pre-timezone key.
+			_setDialogTimeCacheRecord(`${nextScope}${key.slice(previousScope.length)}`, {
 				...record, range, data, status:'loading', error:'', failedAt:0,
 				hasVerifiedData:expands && record.hasVerifiedData === true, hasCompleteSnapshot:false,
 				scopeSelectionPending:!expands, globalSnapshotRead:false, taskFreshness:{}, taskIdsKey:'', readRevision:undefined, readScope:undefined,
@@ -6202,7 +6204,7 @@
 		}
 		const sourceRegion = _resolveDialogControlNativeMount(container, { requireStable: false })?.sourceRegion || sourceViewport;
 		const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
-		if (options.reason === 'manual' || options.reason === 'mode-switch') {
+		if (['manual', 'gate-retry', 'mode-switch'].includes(options.reason)) {
 			_dialogNativeTraversalFailedModes.delete(mode);
 		}
 		if (!options.force && _dialogNativePrefetchedModes.has(mode)) {
@@ -6538,7 +6540,7 @@
 				forceApi: sourceReplaced
 			}))
 			: null;
-		if (options.reason === 'manual' || options.reason === 'mode-switch') {
+		if (['manual', 'gate-retry', 'mode-switch'].includes(options.reason)) {
 			_clearDialogNativeRecoveryRetry(mode);
 		}
 		if (!options.force && _dialogNativePrefetchedModes.has(mode)) {
@@ -7062,7 +7064,7 @@
 				// viewport and recycle its rows away from the proven physical bottom.
 				const physicalTailIds = stableBottom ? _getDialogNativePhysicalTailIds(container) : [];
 				const missingExpectedIds = expectedCatalogCurrent ? getMissingExpectedIds() : [];
-				const blockingExpectedIds = expectedCatalog?.kind === 'repository' ? missingExpectedIds : [];
+				const blockingExpectedIds = expectedCatalog?.kind === 'repository' ? missingExpectedIds.slice() : [];
 				const apiProjectionExtraIds = expectedCatalog?.kind === 'api' ? missingExpectedIds : [];
 				const unexpectedSeenIds = expectedCatalogCurrent
 					? Array.from(state.seen).map(normId).filter(id => id && !expectedCatalogIdSet.has(id))
@@ -7125,6 +7127,12 @@
 						const unavailable = new Set(verified.unavailable.map(normId));
 						const ids = repositoryBeforeCheck.ids.filter(id => !unavailable.has(normId(id)));
 						_dialogNativeRepositoryExpectedCatalogs.set(mode, { ...repositoryBeforeCheck, ids, count:ids.length, reason:'repository-tombstones-reconciled' });
+						// This attempt captured its blockers before the access check. Retire
+						// those same proven tombstones now; otherwise a correct 28/28 list
+						// still asks for a second manual retry against its former 29-ID proof.
+						for (let index = blockingExpectedIds.length - 1; index >= 0; index--) {
+							if (unavailable.has(normId(blockingExpectedIds[index]))) blockingExpectedIds.splice(index, 1);
+						}
 					}
 				}
 				// Re-read after access checks: a newer snapshot received while awaiting the
@@ -7772,11 +7780,21 @@
 			: _DIALOG_RECENT_FULL_REFRESH_MS;
 	}
 
-	function _getDialogRecentHeadRefreshMs() {
+	function _getDialogRecentHeadRefreshMs(options = {}) {
 		const testTtl = Number(window.__PENA_TEST_DIALOG_HEAD_TTL_MS__);
-		return Number.isFinite(testTtl) && testTtl >= 50
-			? testTtl
-			: _DIALOG_RECENT_REFRESH_STALE_MS;
+		if (Number.isFinite(testTtl) && testTtl >= 50) return testTtl;
+		const mode = options.mode;
+		const materialized = _dialogNativeMaterializedSources.get(mode);
+		// Only routine metadata checks share the longer window. Reuse the recorded
+		// source proof here; reading its geometry would force layout on every focus.
+		const healthy = options.metadataOnly === true && options.tailProbe !== true &&
+			/^(?:periodic|focus|visibility)-freshness$/.test(String(options.reason || '')) &&
+			_dialogNativePrefetchedModes.has(mode) && !_dialogNativeMetadataRetryStates.has(mode) &&
+			materialized?.validatedAt > 0 && !materialized.invalidated && !materialized.needsColdConfirmation &&
+			materialized.list === options.container && materialized.viewport === options.viewport &&
+			materialized.sourceGeneration === options.sourceGeneration &&
+			String(_dialogNativeAttemptStates.get(mode)?.state || 'idle') === 'idle';
+		return healthy ? _DIALOG_RECENT_HEALTHY_HEAD_REFRESH_MS : _DIALOG_RECENT_REFRESH_STALE_MS;
 	}
 
 	function _getDialogTaskCatalogRefreshMs() {
@@ -8026,7 +8044,7 @@
 	}
 
 	function _canBypassDialogNativeRecoveryDelay(reason) {
-		return /^(?:retry:|online-recovery|manual|mode-switch|source-remount)/i.test(String(reason || ''));
+		return /^(?:retry:|online-recovery|manual|gate-retry|mode-switch|source-remount)/i.test(String(reason || ''));
 	}
 
 	function _shouldKeepDialogNativeRecoveryInternal(mode, reason) {
@@ -8423,7 +8441,9 @@
 			}
 		}
 		const now = Date.now();
-		const headStale = !_dialogRecentLastSuccessAt || now - _dialogRecentLastSuccessAt >= _getDialogRecentHeadRefreshMs();
+		const headStale = !_dialogRecentLastSuccessAt || now - _dialogRecentLastSuccessAt >= _getDialogRecentHeadRefreshMs({
+			reason, mode, container, viewport, sourceGeneration, metadataOnly, tailProbe: runTailProbe
+		});
 		if (headStale) {
 			let deltaResult = null;
 			try {
@@ -9787,6 +9807,7 @@ let _dialogControlTitleLastSyncAt = 0;
 	const _DIALOG_RECENT_QUICK_MS = 15000;
 	const _DIALOG_NATIVE_TRAVERSAL_HARD_TIMEOUT_MS = 120000;
 	const _DIALOG_RECENT_REFRESH_STALE_MS = 60 * 1000;
+	const _DIALOG_RECENT_HEALTHY_HEAD_REFRESH_MS = 2 * 60 * 1000;
 	const _DIALOG_CATALOG_CACHE_VERSION = 1;
 	const _DIALOG_API_WATERMARK_VERSION = 1;
 	const _DIALOG_RECENT_FULL_REFRESH_MS = 24 * 60 * 60 * 1000;
@@ -18138,7 +18159,10 @@ if (_presetChannel) {
 				(!sync.error && !sync.gateError && !recoveryActionRequired && pending <= 0)) return;
 			event.preventDefault();
 			event.stopPropagation();
-			if (pending > 0 && !sync.gateError) {
+			// Repair the failing native list first. Refreshing saved-dialog details
+			// cannot clear a physical recovery failure and left Repeat stuck forever
+			// when both kinds of work were pending at the same time.
+			if (pending > 0 && !sync.gateError && !recoveryActionRequired && !sync.error) {
 				_scheduleDialogRecentMandatoryDetails(new Set(), { forceAccessRetry: true });
 				return;
 			}

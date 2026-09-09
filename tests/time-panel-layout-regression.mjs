@@ -312,10 +312,18 @@ try {
 	assert.equal(afterSearch.styles.manualResults.overflowY, 'visible',
 		`Search results should grow inside the main scroll owner: ${JSON.stringify(afterSearch.styles.manualResults)}`);
 
-	const focusables = panel.locator('button:not([disabled]):not([hidden]),a[href],input:not([disabled]):not([hidden]),select:not([disabled]):not([hidden])');
-	await focusables.last().focus();
+	// Hidden loader controls and descendants of collapsed sections are in the
+	// DOM but outside the keyboard sequence. Exercise the actual visible ends.
+	const focusables = [];
+	for (const node of await panel.locator('button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])').elementHandles()) {
+		if (await node.evaluate(element => !element.closest('[inert]') && element.tabIndex >= 0 && element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden')) focusables.push(node);
+	}
+	assert.ok(focusables.length >= 2, 'Dialog needs two visible enabled controls for a meaningful focus-wrap check');
+	await focusables.at(-1).focus();
 	await page.keyboard.press('Tab');
-	assert.equal(await page.evaluate(() => document.activeElement === document.querySelector('.pena-native-time-panel button:not([disabled]):not([hidden])')), true, 'Tab escaped the dialog');
+	assert.equal(await focusables[0].evaluate(element => document.activeElement === element), true, 'Tab did not wrap to the first visible enabled control');
+	await page.keyboard.press('Shift+Tab');
+	assert.equal(await focusables.at(-1).evaluate(element => document.activeElement === element), true, 'Shift+Tab did not wrap to the last visible enabled control');
 	await close(panel);
 
 	panel = await open();
@@ -338,7 +346,7 @@ try {
 			`Window width is unstable at ${viewport.width}px: ${JSON.stringify(current.panel)}`);
 		assert.ok(closeEnough(current.panel.height, expectedHeight),
 			`Window height is unstable at ${viewport.width}px: ${JSON.stringify(current.panel)}`);
-		assert.ok(closeEnough(current.header.height, 48),
+		assert.ok(closeEnough(current.header.height, viewport.width <= 420 ? 88 : 48),
 			`Header rhythm changed at ${viewport.width}px: ${JSON.stringify(current.header)}`);
 		assert.ok(current.panel.left >= 7 && current.panel.right <= current.viewport.width - 7,
 			`Window leaves ${viewport.width}px viewport: ${JSON.stringify(current)}`);
