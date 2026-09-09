@@ -50,13 +50,13 @@ await check('time panel pauses task duration during backdated bookkeeping and pr
  f.tick(180000);assert.equal(f.qualify(f.pending.get('task:101')),false);await f.flush();assert.equal(f.total(),0);
  assert.equal(f.stage({taskId:'102'}),false,'searching bookkeeping tasks cannot open contact sessions');
  f.stage({taskId:'102'},{qualify:true});await f.flush();assert.equal(f.total(),1,'real outgoing message remains a contact while time panel is open');
- f.panel(false);f.stage({taskId:'101'});f.tick(61000);assert.equal(f.qualify(f.pending.get('task:101')),true);await f.flush();assert.equal(f.total(),2);
- return{panelDurationContacts:0,messageDuringPanel:1,resumedTaskVisit:1};
+ f.panel(false);f.stage({taskId:'101'});f.tick(61000);assert.equal(f.qualify(f.pending.get('task:101')),false);await f.flush();assert.equal(f.total(),1);
+ return{panelDurationContacts:0,messageDuringPanel:1,resumedTaskVisit:0};
 });
 await check('pausing a short visit preserves only its pre-panel visible duration',async()=>{
  const f=frame();f.tick(-120000);f.stage({taskId:'101'});f.tick(20000);f.panel(true);f.tick(120000);f.panel(false);f.stage({taskId:'101'});
- f.tick(39000);assert.equal(f.qualify(f.pending.get('task:101')),false);f.tick(1000);assert.equal(f.qualify(f.pending.get('task:101')),true);await f.flush();
- assert.equal(f.total(),1);return{visibleBeforePanel:20,hiddenInPanel:120,visibleAfterPanel:40,contacts:1};
+ f.tick(39000);assert.equal(f.qualify(f.pending.get('task:101')),false);f.tick(1000);assert.equal(f.qualify(f.pending.get('task:101')),false);await f.flush();
+ assert.equal(f.total(),0);return{visibleBeforePanel:20,hiddenInPanel:120,visibleAfterPanel:40,contacts:0};
 });
 await check('structured system notifications from the employee cannot qualify a contact; real time-related text and attachments can',()=>{
  const start=source.indexOf('const captureOutgoingTaskMessage = (...eventArgs) => {');
@@ -218,22 +218,14 @@ if(!process.env.PENA_CONTACT_SKIP_BROWSER) await check('Chromium two pages: real
   await a.evaluate(()=>{const remove=Storage.prototype.removeItem;Storage.prototype.removeItem=function(key){if(String(key).startsWith('pena.timeContactOutbox'))throw Error('injected ack failure');return remove.call(this,key)};probe.stage({taskId:'302'},{qualify:true});});await a.evaluate(()=>probe.flush());
   assert.equal(await a.evaluate(()=>probe.rows().length),18);await boot(a,'A-after-ack-failure');await a.evaluate(()=>probe.flush());
   const result=await a.evaluate(()=>({rows:probe.rows(),diag:probe.diagnostics()}));assert.equal(result.rows.length,18);assert.equal(result.rows.reduce((n,r)=>n+r.visits,0),18);assert.equal(result.diag.pendingDurable,0);
-  const base=Date.now();
-  for(const page of [a,b])await page.evaluate(base=>{const NativeDate=Date;window.testNow=base;window.Date=class extends NativeDate{static now(){return window.testNow}};probe.stage({taskId:'401'},{takeover:true});},base);
-  assert.equal(await a.evaluate(()=>probe.heartbeat()),true);assert.equal(await b.evaluate(()=>probe.heartbeat()),false);
-  await a.evaluate(base=>{window.testNow=base+60000;probe.heartbeat();},base);assert.equal(await a.evaluate(()=>probe.qualify()),true);await a.evaluate(()=>probe.flush());
-  await a.evaluate(base=>{window.testNow=base+80000;probe.heartbeat();},base);
-  await b.evaluate(base=>{window.testNow=base+80000;},base);assert.equal(await b.evaluate(()=>probe.qualify()),false);await b.evaluate(()=>probe.flush());
-  assert.equal(await a.evaluate(()=>probe.rows().find(row=>row.taskId==='401')?.visits),1,'different duration thresholds in visible frames cannot qualify the same owned session twice');
-  await b.evaluate(()=>{probe.stage({taskId:'501'},{qualify:true,reason:'message'});});await b.evaluate(()=>probe.flush());assert.equal(await b.evaluate(()=>probe.rows().find(row=>row.taskId==='501')?.visits),1,'confirmed outgoing message cannot be blocked by another session lease');
-  await boot(a,'heartbeat-A');await boot(b,'heartbeat-B');await a.evaluate(()=>localStorage.clear());
-  const clock=async(page,at)=>page.evaluate(at=>{const NativeDate=Date;window.clockNow=at;window.Date=class extends NativeDate{static now(){return clockNow}};let sequence=0;const timers=new Map();window.setTimeout=(fn,delay=0)=>{const id=++sequence;timers.set(id,{at:clockNow+Number(delay),fn});return id;};window.clearTimeout=id=>timers.delete(id);window.advanceClock=until=>{for(;;){const next=[...timers].filter(([,v])=>v.at<=until).sort((a,b)=>a[1].at-b[1].at)[0];if(!next)break;timers.delete(next[0]);clockNow=next[1].at;next[1].fn();}clockNow=until;};},at);
-  await clock(a,base);await a.evaluate(()=>probe.stage({taskId:'601'},{takeover:true}));await a.evaluate(at=>advanceClock(at),base+1500);await a.evaluate(()=>probe.flush());
-  await a.evaluate(at=>advanceClock(at),base+20000);await clock(b,base+20000);await b.evaluate(()=>probe.stage({taskId:'601'},{takeover:true}));await b.evaluate(at=>advanceClock(at),base+21500);await b.evaluate(()=>probe.flush());
-  for(let elapsed=25000;elapsed<=80000;elapsed+=5000){await a.evaluate(at=>advanceClock(at),base+elapsed);await b.evaluate(at=>advanceClock(at),base+elapsed);if(elapsed===60000){assert.equal(await a.evaluate(()=>probe.qualify()),true);await a.evaluate(()=>probe.flush());}}
-  assert.equal(await b.evaluate(()=>probe.qualify()),false);await b.evaluate(()=>probe.flush());
-  const staggered=await a.evaluate(()=>({count:probe.rows().find(row=>row.taskId==='601')?.visits,lease:JSON.parse(localStorage.getItem('pena.timeActivityOwner.v1.7'))}));assert.equal(staggered.count,1);assert.equal(staggered.lease.frameId,'heartbeat-A');assert.ok(base+80000-staggered.lease.heartbeatAt<15000);
-  return{browser:browser.version(),pages:2,concurrentBatches:8,contacts:20,secureContext:result.diag.secureContext,webLocks:result.diag.storageLockAvailable,ackReplayDuplicateCount:0,dualVisibleDurationContacts:1,foreignLeaseOutgoingMessage:1,staggeredOpenMs:20000,staggeredDurationContacts:staggered.count,heartbeatAgeMs:base+80000-staggered.lease.heartbeatAt};
+  for(const tab of [a,b])await tab.evaluate(()=>{for(let i=0;i<30;i++)probe.stage({taskId:String(401+i)},{takeover:true});});
+  assert.equal(await a.evaluate(()=>probe.heartbeat()),false);assert.equal(await b.evaluate(()=>probe.heartbeat()),false);
+  assert.equal(await a.evaluate(()=>probe.qualify()),false);assert.equal(await b.evaluate(()=>probe.qualify()),false);
+  await a.evaluate(()=>probe.flush());await b.evaluate(()=>probe.flush());
+  assert.equal(await a.evaluate(()=>probe.rows().length),18,'reading many tasks does not add contacts');
+  await b.evaluate(()=>probe.stage({taskId:'501'},{qualify:true,reason:'message'}));await b.evaluate(()=>probe.flush());
+  assert.equal(await b.evaluate(()=>probe.rows().find(row=>row.taskId==='501')?.visits),1);
+  return{browser:browser.version(),pages:2,concurrentBatches:8,contacts:19,secureContext:result.diag.secureContext,webLocks:result.diag.storageLockAvailable,ackReplayDuplicateCount:0,dualVisibleReadingContacts:0,ownMessageContacts:1};
  }finally{await browser.close();await server.close();}
 });
 fs.mkdirSync(new URL('./artifacts/',import.meta.url),{recursive:true});

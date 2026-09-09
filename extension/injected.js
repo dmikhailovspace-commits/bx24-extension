@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.129';
+	window.__ANITREC_RUNNING__ = '7.5.130';
 
-	const VER = '7.5.129';
+	const VER = '7.5.130';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -2377,7 +2377,7 @@
 				_setDialogTimeTaskEligibility(taskId, meta.timeTrackingEnabled, meta.taskCatalogFetchedAt || meta.fetchedAt);
 			}
 			const canonicalTitle = String(meta.taskCatalogFetchedAt ? (meta.displayTitle || '') : '').replace(/\s+/g, ' ').trim();
-			if (canonicalTitle) _dialogTimeTaskTitles.set(taskId, canonicalTitle);
+			if (canonicalTitle && !_dialogTimeTaskTitles.has(taskId)) _dialogTimeTaskTitles.set(taskId, canonicalTitle);
 		}
 		const normalizeAlias = raw => {
 			const value = String(raw || '').trim();
@@ -3941,6 +3941,8 @@
 			type: domMeta.type || recent.type,
 			hasMention: !!(domMeta.hasMention || recent.hasMention)
 		});
+		const taskTitle = recent.taskId && _dialogTimeTaskTitles.get(String(recent.taskId));
+		if (taskTitle) { merged.displayTitle = taskTitle; merged.title = taskTitle.toLowerCase(); }
 		const recentCounterAt = Math.max(0, Number(recent.counterFetchedAt) || 0);
 		const countersFresh = recentCounterAt > 0 &&
 			Date.now() - recentCounterAt <= (_DIALOG_RECENT_QUICK_MS * 3);
@@ -9499,7 +9501,7 @@ function _rememberTaskMetaForDialogControlItem(item, meta) {
 		const enabled = _readDialogTaskTimeTrackingFlag(task);
 		if (enabled != null) _setDialogTimeTaskEligibility(id, enabled);
 		const title = _extractTaskTitleFromData(data);
-		if (title) _dialogTimeTaskTitles.set(id, title);
+		if (title) _queueDialogTimeTaskTitle(id, title);
 		let metaChanged = false;
 		for (const meta of _getDialogRecentUniqueMeta()) {
 			if (String(meta?.taskId || '') !== id) continue;
@@ -10043,6 +10045,12 @@ let _dialogControlTitleLastSyncAt = 0;
 	const _dialogTimeTaskLogEvidence = new Map();
 	const _dialogTimeTaskChangedAt = new Map();
 	const _dialogTimeChangedTaskTimers = new Map();
+	const _dialogTimeNativeActionNamespaces = new WeakMap();
+	const _dialogTimeNativeActionReceipts = new WeakSet();
+	const _dialogTimePendingTaskTitles = new Map();
+	let _dialogTimeTaskTitleTimer = null;
+	const _dialogTimeDirtyTitleTasks = new Set();
+	let _dialogTimeTitleReadTimer = null;
 	const _dialogTimeTaskEligibilityCheckedAt = new Map();
 	const _DIALOG_TIME_TASK_ELIGIBILITY_TTL_MS = Math.max(
 		50,
@@ -14031,25 +14039,9 @@ if (_presetChannel) {
 		return Number.isFinite(testMs) && testMs >= 50 ? testMs : 60 * 1000;
 	}
 
-	function _syncDialogTimePendingLease(now = Date.now()) {
-		clearTimeout(_dialogTimeLeaseHeartbeatTimer);
-		_dialogTimeLeaseHeartbeatTimer = null;
-		const entry = _dialogTimePendingActivities.get(_dialogTimePendingActiveId);
-		if (!entry?.active || !_isDialogTimeLocalCoordinator()) return false;
-		_dialogTimeLeaseHeartbeatTimer = setTimeout(() => {
-			_dialogTimeLeaseHeartbeatTimer = null;
-			if (_dialogTimePendingActivities.get(_dialogTimePendingActiveId) === entry) _syncDialogTimePendingLease();
-		}, 5000);
-		const owned = _claimDialogTimeActivityLease(entry.activityId, { takeover: entry.takeover === true });
-		if (!owned) {
-			// A second visible realm cannot accrue the first realm's task session.
-			entry.startedAt = now; entry.visibleMs = 0; entry.leaseConfirmed = false;
-			return false;
-		}
-		if (entry.leaseConfirmed === false) { entry.startedAt = now; entry.visibleMs = 0; }
-		entry.leaseConfirmed = true;
-		entry.takeover = false;
-		return true;
+	function _syncDialogTimePendingLease() {
+		// Explicit events are serialized by the ledger lock; viewing needs no lease.
+		return false;
 	}
 
 	function _reportDialogTimeContactError(code) {
@@ -14208,28 +14200,9 @@ if (_presetChannel) {
 		clearTimeout(_dialogTimeQualificationTimer);
 	}
 
-	function _qualifyPendingDialogTimeDuration(entry, now = Date.now()) {
-		if (_dialogControlNativeWorkspaceTab === 'time') {
-			_pauseDialogTimeDurationForPanel(now);
-			return false;
-		}
-		if (!entry || entry.durationQualified || !entry.active) return false;
-		if (Math.max(0, Number(entry.visibleMs) || 0) + Math.max(0, Number(now) - Number(entry.startedAt || now)) < _getDialogTimePendingQualificationMs()) return false;
-		// Saving time covers the task session already open at submission. Merely
-		// leaving that task behind the time panel must not qualify it again later.
-		const accounted = _readDialogTimeVisits(_getDialogTimeContactDateKey(now)).find(row => row.taskId === entry.taskId);
-		if (accounted?.accountedAt >= Number(entry.sessionStartedAt || entry.startedAt || now)) {
-			entry.durationQualified = true;
-			return false;
-		}
-		if (_dialogTimePendingActivities.get(_dialogTimePendingActiveId) !== entry || !_syncDialogTimePendingLease(now)) return false;
-		if (Math.max(0, Number(entry.visibleMs) || 0) + Math.max(0, now - entry.startedAt) < _getDialogTimePendingQualificationMs()) return false;
-		const qualifiedAt = Number(entry.startedAt || now) + Math.max(0, _getDialogTimePendingQualificationMs() - (Number(entry.visibleMs) || 0));
-		if (!_queueDialogTimeContactEvent(entry, 'duration', qualifiedAt)) return false;
-		entry.qualify = true;
-		entry.qualifyReason = 'duration';
-		entry.durationQualified = true;
-		return true;
+	function _qualifyPendingDialogTimeDuration() {
+		// Reading/open/scroll never qualifies, irrespective of duration.
+		return false;
 	}
 
 	function _finishDialogTimePendingActivity() {
@@ -14247,6 +14220,7 @@ if (_presetChannel) {
 	}
 
 	function _stageDialogTimeActivity(activity = {}, options = {}) {
+		if (options.qualify !== true || options.reason === 'duration') return false;
 		// Time bookkeeping is not a visit to the task visible behind the modal.
 		// Real outgoing messages still pass through, including another open frame.
 		if (_dialogControlNativeWorkspaceTab === 'time' && options.qualify !== true) {
@@ -14337,6 +14311,7 @@ if (_presetChannel) {
 			let portalDateRequested = false;
 			const eligibilityByTask = new Map();
 			for (const event of pending.slice(0, 32)) {
+				if (event.reason === 'duration') { await _commitDialogTimeContactEvent(event, false); continue; }
 				if (String(_getCurrentBitrixUserId() || '') !== userId || !_isDialogTimeLocalCoordinator()) { retryNeeded = true; break; }
 				let resolvedEvent = event;
 				if (event.datePending) {
@@ -15786,65 +15761,131 @@ if (_presetChannel) {
 			_scheduleDialogTimeDeferredFlush(0);
 		}
 		if (_syncDialogTimePortalDay()) _scheduleDialogTimeBootstrap();
-		if (_dialogControlNativeWorkspaceTab === 'time') {
-			_pauseDialogTimeDurationForPanel();
-			return;
-		}
-		const activity = _getActiveDialogTimeActivity();
-		if (!activity) {
-			const pending = _dialogTimePendingActivities.get(_dialogTimePendingActiveId);
-			if (pending) {
-				_qualifyPendingDialogTimeDuration(pending);
-				pending.active = false;
-				if (pending.qualify) _scheduleDialogTimeDeferredFlush(0);
+		_finishDialogTimePendingActivity();
+	}
+
+	function _scheduleDialogTimeVisibleTitleRead(taskId) {
+		if (!_dialogTimeTaskChatDialogIds.has(taskId)) return;
+		_dialogTimeDirtyTitleTasks.add(taskId);
+		if (_dialogTimeDirtyTitleTasks.size > 512) _dialogTimeDirtyTitleTasks.delete(_dialogTimeDirtyTitleTasks.values().next().value);
+		if (_dialogTimeTitleReadTimer) return;
+		const scope = _getDialogTimeIdentityScopeKey();
+		_dialogTimeTitleReadTimer = setTimeout(async () => {
+			_dialogTimeTitleReadTimer = -1;
+			try {
+			const pending = [..._dialogTimeDirtyTitleTasks]; _dialogTimeDirtyTitleTasks.clear();
+			if (scope !== _getDialogTimeIdentityScopeKey() || !_isDialogTimeFrameActive()) return;
+			if (Date.now() - _dialogNativeLastUserActivityAt < 800) {
+				pending.forEach(_scheduleDialogTimeVisibleTitleRead); return;
 			}
-			_dialogTimePendingActiveId = '';
-			if (_dialogTimeOwnedActivityId) _closeDialogTimeActivitySession();
+			// Only rows currently materialized on screen, maximum four serial reads.
+			const visible = new Set(Array.from(document.querySelectorAll('.pena-native-remote-row[data-dialog-id],.bx-im-list-recent-item__wrap[data-dialog-id],.bx-messenger-cl-item[data-dialog-id]'))
+				.filter(row => row.getClientRects().length).map(row => normId(row.dataset.dialogId)));
+			let read = 0;
+			for (const id of pending) {
+				if (!visible.has(_dialogTimeTaskChatDialogIds.get(id))) continue;
+				if (read++ >= 4) { _scheduleDialogTimeVisibleTitleRead(id); continue; }
+				if (scope !== _getDialogTimeIdentityScopeKey() || !_isDialogTimeFrameActive()) break;
+				await _ensureDialogTimeTaskEligibility(id, { force:true, isCurrent:() => scope === _getDialogTimeIdentityScopeKey() && _isDialogTimeFrameActive() }).catch(() => null);
+			}
+			} finally {
+				_dialogTimeTitleReadTimer = null;
+				const next = _dialogTimeDirtyTitleTasks.values().next().value;
+				if (next) _scheduleDialogTimeVisibleTitleRead(next);
+			}
+		}, 1200);
+	}
+
+	function _queueDialogTimeTaskTitle(taskId, title) {
+		const id = String(taskId || ''), value = String(title || '').replace(/\s+/g, ' ').trim();
+		if (!/^[1-9]\d*$/.test(id) || !value || _dialogTimeTaskTitles.get(id) === value) return false;
+		_dialogTimeTaskTitles.set(id, value);
+		_dialogTimePendingTaskTitles.set(id, { title:value, scope:_getDialogTimeIdentityScopeKey() });
+		if (_dialogTimeTaskTitleTimer) return true;
+		_dialogTimeTaskTitleTimer = setTimeout(() => {
+			_dialogTimeTaskTitleTimer = null;
+			const updates = new Map([..._dialogTimePendingTaskTitles].filter(([, item]) => item.scope === _getDialogTimeIdentityScopeKey()));
+			_dialogTimePendingTaskTitles.clear();
+			if (!updates.size) return;
+			// One existing-cache pass per event burst; no catalog or elapsed request.
+			for (const meta of _getDialogRecentUniqueMeta()) {
+				const next = updates.get(String(meta.taskId || ''));
+				if (!next || meta.displayTitle === next.title) continue;
+				meta.displayTitle = next.title; meta.title = next.title.toLowerCase();
+				_markDialogRecentRepositoryDirty(meta.id);
+			}
+			for (const mode of ['chats','tasks']) {
+				const items = _getDialogControlItemsForMode(mode); let changed = false;
+				for (const item of items) {
+					if (_isDialogControlFolder(item)) continue;
+					const id = String(item.taskId || _dialogTimeTaskIdsByChatDialogId.get(normId(item.id)) || '');
+					const next = updates.get(id);
+					if (next && item.title !== next.title) { item.title = next.title; changed = true; }
+				}
+				if (changed) _saveDialogControlItemsForMode(mode, items);
+			}
+			_dialogRecentDataRevision++; _scheduleDialogRecentCacheWrite(80);
+			_notifyDialogRecentDataChanged(); _queueDialogTimeUiSync();
+		}, 80);
+		return true;
+	}
+
+	function _getDialogTimeNativeTaskMutation(result, config = {}, fallbackTaskId = '') {
+		if (!result || typeof result !== 'object' || result.error || result.errors?.length ||
+			(result.status && result.status !== 'success') || result.success === false) return null;
+		let urlAction = '';
+		if (config.url) {
+			try { const url = new URL(config.url, location.href); if (url.origin !== location.origin) return null; urlAction = url.searchParams.get('action') || ''; } catch { return null; }
+		}
+		const knownAction = String(config.action || urlAction);
+		if (knownAction && !/^tasks\./i.test(knownAction)) return null;
+		let data = config.data || {};
+		if (typeof data === 'string') {
+			if (data.length > 65536) return null;
+			try { data = JSON.parse(data); } catch { data = Object.fromEntries(new URLSearchParams(data)); }
+		}
+		if (!data || typeof data !== 'object') return null;
+		const action = String(knownAction || data.action || '');
+		const match = /^tasks\.(?:task|checklist)(?:\.(?:checklist|checklistitem|item))?\.(update|save|add|complete|renew|start|pause|defer|delete)$/i.exec(action);
+		if (!match) return null;
+		const fields = data.fields || data.FIELDS || data.data?.fields || {};
+		const task = result.data?.task || result.result?.task || result.task || {};
+		if (!(result.status === 'success' || result.success === true || result.result === true || task.id || task.ID)) return null;
+		const taskId = String(data.taskId ?? data.TASK_ID ?? data.task_id ?? data.data?.taskId ??
+			task.id ?? task.ID ?? fallbackTaskId);
+		if (!/^[1-9]\d*$/.test(taskId)) return null;
+		if ((task.id || task.ID) && String(task.id || task.ID) !== taskId) return null;
+		const checklist = /checklist/i.test(action);
+		if (!checklist && /\.delete$/i.test(action)) return null;
+		if (!checklist && /\.(?:update|save|add)$/i.test(action)) {
+			const workFields = new Set(['title','description','status','deadline','responsibleid','accomplices','auditors','priority','groupid','parentid','tags','ufTaskWebdavFiles'.toLowerCase()]);
+			const keys = [...Object.keys(fields), ...Object.keys(data).map(key => /^fields\[([^\]]+)\]$/i.exec(key)?.[1] || '')];
+			if (!keys.some(key => workFields.has(key.replace(/_/g, '').toLowerCase()))) return null;
+		}
+		return { taskId, title:String(task.title || task.TITLE || fields.title || fields.TITLE || data['fields[TITLE]'] || data['fields[title]'] || ''), reason:checklist ? 'checklist' : 'task-edit' };
+	}
+
+	function _armDialogTimeNativeActionEvents(BXNS, fallbackTaskId = '', isCurrent = () => true) {
+		if (!BXNS || typeof BXNS.addCustomEvent !== 'function') return;
+		const existing = _dialogTimeNativeActionNamespaces.get(BXNS);
+		if (existing) {
+			if (existing.fallbackTaskId) { existing.fallbackTaskId = fallbackTaskId; existing.isCurrent = isCurrent; }
 			return;
 		}
-		const taskId = String(activity.taskId || '');
-		const eligibility = _getFreshDialogTimeTaskEligibility(taskId);
-		if (eligibility === false) {
-			_stageDialogTimeActivity(activity, { passive: true });
-			_syncDialogTimePendingLease();
-			const candidate = _dialogTimePendingActivities.get(`task:${taskId}`);
-			if (candidate && _qualifyPendingDialogTimeDuration(candidate)) _scheduleDialogTimeDeferredFlush(0);
-			return;
-		}
-		_stageDialogTimeActivity(activity, { passive: true });
-		_syncDialogTimePendingLease();
-		const pending = _dialogTimePendingActivities.get(`task:${taskId}`);
-		if (pending && _qualifyPendingDialogTimeDuration(pending)) _scheduleDialogTimeDeferredFlush(0);
-		const dateKey = _getDialogTimeTodayKey();
-		let current = _readDialogTimeVisits(dateKey);
-		const id = `task:${taskId}`;
-		const existing = current.find(item => item.activityId === id);
-		if (!existing?.sessionActive) {
-			_scheduleDialogTimeDeferredFlush(1200);
-			return;
-		}
-		if (!_claimDialogTimeActivityLease(id)) return;
-		current = _PENA_TIME_CONTROL.syncActivitySession(current, id, Date.now());
-		const synced = current.find(item => item.activityId === id);
-		if (synced) {
-			synced.title = activity.title || synced.title;
-			synced.dialogId = activity.dialogId || synced.dialogId;
-		}
-		const lease = _readDialogTimeActivityLease();
-		if (lease?.frameId !== _dialogTimeFrameId || lease.activityId !== id) {
-			_dialogTimeOwnedActivityId = '';
-			return;
-		}
-		_writeDialogTimeVisits(fresh => {
-			const next = _PENA_TIME_CONTROL.syncActivitySession(fresh, id, Date.now());
-			return next.map(row => row.activityId === id ? { ...row, title: activity.title || row.title, dialogId: activity.dialogId || row.dialogId } : row);
-		}, dateKey, { lease });
-		if (eligibility == null && synced?.sessionQualified) {
-			_ensureDialogTimeTaskEligibility(taskId).then(enabled => {
-				if (enabled === false) _removeDialogTimeActivity(taskId);
-			}).catch(() => {});
-		}
-		if (_dialogControlNativeWorkspaceTab === 'time') _queueDialogTimeUiSync();
+		const context = { fallbackTaskId, isCurrent };
+		_dialogTimeNativeActionNamespaces.set(BXNS, context);
+		BXNS.addCustomEvent('onAjaxSuccess', (result, config) => {
+			if (!_isDialogTimeLocalCoordinator() || !context.isCurrent() || !config || typeof config !== 'object') return;
+			const action = _getDialogTimeNativeTaskMutation(result, config, context.fallbackTaskId);
+			if (!action || _dialogTimeNativeActionReceipts.has(config)) return;
+			_dialogTimeNativeActionReceipts.add(config);
+			const scope = _getDialogTimeIdentityScopeKey();
+			setTimeout(() => {
+				if (scope !== _getDialogTimeIdentityScopeKey() || !_isDialogTimeLocalCoordinator()) return;
+				if (action.title) _queueDialogTimeTaskTitle(action.taskId, action.title);
+				_rememberDialogTimeTaskVisit(action.taskId, action.title, _getDialogTimeTaskChatDialogId(action.taskId), { qualify:true, reason:action.reason });
+			}, 0);
+		});
 	}
 
 	function _armDialogTimeVisitTracking() {
@@ -15977,13 +16018,17 @@ if (_presetChannel) {
 				ready = true;
 				if (_dialogTimeSidePanelEventNamespaces.has(BXNS)) return;
 				_dialogTimeSidePanelEventNamespaces.add(BXNS);
+				_armDialogTimeNativeActionEvents(BXNS);
 				const captureSlider = event => {
-					if (!_isDialogTimeFrameActive() || _currentPanelMode !== 'tasks') return;
+					if (!_isDialogTimeFrameActive()) return;
 					let url = '';
 					try { url = String(event?.getSlider?.()?.getUrl?.() || ''); } catch {}
 					const taskId = _extractTaskIdFromTaskUrl(url);
 					const dialogId = taskId ? _getDialogTimeTaskChatDialogId(taskId) : '';
 					_dialogTimeActiveSidePanelTaskId = taskId || '';
+					if (taskId) {
+						try { _armDialogTimeNativeActionEvents(event?.getSlider?.()?.getWindow?.()?.BX, taskId, () => _dialogTimeActiveSidePanelTaskId === taskId); } catch {}
+					}
 					if (taskId) _rememberDialogTimeTaskVisit(taskId, '', dialogId, { takeover: true });
 					captureAfterRoute();
 				};
@@ -15995,6 +16040,12 @@ if (_presetChannel) {
 					const task = payload.task || payload.TASK || payload;
 					const id = String(task.taskId ?? task.TASK_ID ?? task.ID ?? task.id ?? payload.FIELDS_AFTER?.ID ?? '');
 					if (!/^\d+$/.test(id)) return;
+					const changedTitle = task.TITLE ?? task.title ?? payload.FIELDS_AFTER?.TITLE ?? payload.FIELDS_AFTER?.title;
+					if (typeof changedTitle === 'string') _queueDialogTimeTaskTitle(id, changedTitle);
+					else if (_dialogControlNativeWorkspaceTab !== 'time') _scheduleDialogTimeVisibleTitleRead(id);
+					const changedFields = payload.FIELDS_AFTER || task;
+					if (typeof changedTitle === 'string' && Object.keys(changedFields).every(key =>
+						['id','taskid','title','changedby','changeddate'].includes(key.replace(/_/g,'').toLowerCase()))) return;
 					if (!_isDialogTimeProjectTask(id)) _dialogTimeProjectCatalogDirty=true;
 					if (_dialogControlNativeWorkspaceTab !== 'time' && !_dialogTimePendingActivities.has('task:' + id) && !_isDialogTimeProjectTask(id)) return;
 					_dialogTimeTaskRevisions.set(id, (_dialogTimeTaskRevisions.get(id) || 0) + 1);

@@ -259,8 +259,8 @@
 		const firstVisitedAt = Math.max(0, Number(task.firstVisitedAt) || visitedAt);
 		const activeSeconds = Math.max(0, Number(task.activeSeconds) || 0);
 		const explicitVisits = task.visits != null ? Math.max(0, Number(task.visits) || 0) : null;
-		const visits = explicitVisits != null ? explicitVisits : (activeSeconds >= DEFAULT_QUALIFICATION_SECONDS ? 1 : 0);
-		const legacyQualifiedAt = visits > 0 && activeSeconds >= DEFAULT_QUALIFICATION_SECONDS ? visitedAt : 0;
+		const visits = explicitVisits != null ? explicitVisits : 0;
+		const legacyQualifiedAt = 0; // Elapsed reading time is not evidence of work.
 		return {
 			taskId,
 			activityId: `task:${taskId}`,
@@ -330,15 +330,17 @@
 	function applyQualifiedContact(items = [], event = {}) {
 		const merged = mergeVisitedTasks(items);
 		const task = normalizeVisitedTask({ ...event, visitedAt: event.qualifiedAt, visits: 0 });
-		if (!task || !event.eventId || !(Number(event.qualifiedAt) > 0)) return merged;
+		if (!task || !event.eventId || event.reason === 'duration' || !(Number(event.qualifiedAt) > 0)) return merged;
 		const previous = merged.find(item => item.taskId === task.taskId);
 		if (previous?.contactEvents.some(item => item.id === event.eventId)) return merged;
-		const baseVisits = previous?.contactEvents.length ? previous.contactBaseVisits : previous?.visits || 0;
-		const baseAt = previous?.contactEvents.length ? previous.contactBaseQualifiedAt : previous?.lastQualifiedAt || 0;
+		const passiveLegacy = previous?.lastQualificationReason === 'duration' && !previous.contactEvents.length;
+		const baseVisits = previous?.contactEvents.length ? previous.contactBaseVisits : passiveLegacy ? 0 : previous?.visits || 0;
+		const baseAt = previous?.contactEvents.length ? previous.contactBaseQualifiedAt : passiveLegacy ? 0 : previous?.lastQualifiedAt || 0;
 		const events = [...(previous?.contactEvents || []), { id: String(event.eventId), at: Number(event.qualifiedAt), reason: String(event.reason || 'message'), ...(Number(event.sessionStartedAt) > 0 ? { sessionStartedAt: Number(event.sessionStartedAt) } : {}) }]
 			.sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
 		let visits = baseVisits, lastAt = 0, lastReason = '';
 		for (const item of events) {
+			if (item.reason === 'duration') continue;
 			if (baseAt && Math.abs(item.at - baseAt) < DEFAULT_TOUCH_DEDUPE_MS) continue;
 			if (lastAt && item.at - lastAt < DEFAULT_TOUCH_DEDUPE_MS) continue;
 			visits++; lastAt = item.at; lastReason = item.reason;
@@ -363,17 +365,8 @@
 		active.visitedAt = Math.max(active.visitedAt || 0, now);
 	}
 
-	function qualifyActiveSession(items, now, qualificationSeconds = DEFAULT_QUALIFICATION_SECONDS) {
-		const threshold = Math.max(1, Number(qualificationSeconds) || DEFAULT_QUALIFICATION_SECONDS);
-		items.forEach(item => {
-			if (!item.sessionActive || item.sessionQualified) return;
-			const sessionSeconds = Math.max(0, item.activeSeconds - (item.sessionStartedActiveSeconds || 0));
-			if (sessionSeconds < threshold) return;
-			item.sessionQualified = true;
-			item.visits = Math.max(0, Number(item.visits) || 0) + 1;
-			item.lastQualifiedAt = Math.max(item.lastQualifiedAt || 0, now);
-			item.lastQualificationReason = 'duration';
-		});
+	function qualifyActiveSession() {
+		// Kept for session accounting callers; only explicit work events qualify.
 	}
 
 	function beginActivitySession(items = [], next = null, options = {}) {
@@ -473,7 +466,7 @@
 
 	function countPendingContacts(task, cutoffAt = task.accountedAt || 0) {
 		if (!task.contactEvents.length) {
-			if (!task.lastQualifiedAt || task.lastQualifiedAt <= cutoffAt) return 0;
+			if (task.lastQualificationReason === 'duration' || !task.lastQualifiedAt || task.lastQualifiedAt <= cutoffAt) return 0;
 			return Math.max(0, task.visits - task.accountedVisits);
 		}
 		const baseAt = task.contactBaseQualifiedAt;
@@ -482,7 +475,7 @@
 		for (const event of [...task.contactEvents].sort((a, b) => a.at - b.at || a.id.localeCompare(b.id))) {
 			// A covered old session is not a new touch and must not suppress an
 			// actual message sent just after its delayed duration qualification.
-			const coveredSession = event.reason === 'duration' && event.sessionStartedAt > 0 && event.sessionStartedAt <= cutoffAt;
+			const coveredSession = event.reason === 'duration';
 			if (coveredSession) continue;
 			if (baseAt && Math.abs(event.at - baseAt) < DEFAULT_TOUCH_DEDUPE_MS) continue;
 			if (lastAt && event.at - lastAt < DEFAULT_TOUCH_DEDUPE_MS) continue;

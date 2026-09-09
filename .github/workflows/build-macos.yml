@@ -248,11 +248,11 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' \
-            'Removes verified deleted dialogs from the current physical-proof blockers, so successful recovery clears Repeat immediately.' \
-            'Manual Repeat prioritizes native recovery over supplemental details and starts a fresh retry budget.' \
-            'Healthy routine head checks run every 120 seconds instead of 60; actual recovery and completeness checks retain their existing urgency.' \
-            'Project changes preserve the user-calendar cache key and the confirmed time snapshot.' \
-            'This release runs the entire registered regression suite, including native lists, time tracking and Chrome package checks.' \
+            'Contacts require outgoing task messages or successful native task/card/checklist/status changes. Passive reading never qualifies.' \
+            'Known passive-duration contacts are excluded from suggestions without changing saved time entries.' \
+            'Task titles update from existing events; title-only updates cause no elapsed reads or catalog walks.' \
+            'Healthy routine checks retain the 120-second interval.' \
+            'By user request, verification is limited to five targeted suites: work actions, contact journal, idle network, Chrome package and release integrity. The full registry was not run.' \
             'Controlled tests are not a live Bitrix latency measurement. The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \
             'Includes Windows EXE and Universal macOS DMG for Intel and Apple Silicon.' \
             > release-notes.md

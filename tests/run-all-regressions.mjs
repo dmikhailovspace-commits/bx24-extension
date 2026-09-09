@@ -37,6 +37,7 @@ if (Number.parseInt(process.versions.node.split('.')[0], 10) < minimumNodeMajor 
 }
 
 const suites = [
+	'time-work-actions-regression.mjs',
   'chrome-package-regression.mjs',
   'chrome-portal-worker-regression.mjs',
   'chrome-popup-regression.mjs',
