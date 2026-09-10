@@ -51,12 +51,12 @@ try{
     const delta=__resumeHarness.delta('chats',mark);
     return{counts,headRequests:counts.at(-1),delta,revision,finalRevision:headFrequencyProbe.revision(),policy:headFrequencyProbe.policy({}),errors:__PENA_NATIVE_PREFETCH__.status().metadataRetryModes};
    });
-   assert.equal(result.headRequests,label==='v128-head-policy'?12:6,JSON.stringify(result));
+   assert.equal(result.headRequests,label==='v128-head-policy'?12:3,JSON.stringify(result));
    assert.equal(result.delta.materialization.fullWalks,0);assert.equal(result.delta.movement.bottomVisits,0);assert.equal(result.delta.guardActivationTotal,0);
    assert.equal(result.finalRevision,result.revision);
    if(label==='healthy-head-policy'){
     const policy=await page.evaluate(()=>({healthy:headFrequencyProbe.policy({}),retry:headFrequencyProbe.retryPolicy(),invalid:headFrequencyProbe.invalidPolicy(),source:headFrequencyProbe.policy({sourceGeneration:-1}),online:headFrequencyProbe.policy({reason:'online-freshness'}),resume:headFrequencyProbe.policy({reason:'page-resume'}),tail:headFrequencyProbe.policy({tailProbe:true})}));
-    assert.deepEqual(policy,{healthy:120000,retry:60000,invalid:60000,source:60000,online:60000,resume:60000,tail:60000});
+    assert.deepEqual(policy,{healthy:240000,retry:60000,invalid:60000,source:60000,online:60000,resume:60000,tail:60000});
     const urgent=await page.evaluate(async()=>{headFrequencyProbe.resetFreshness();__resumeHarness.advanceClock(60010);const before=__resumeHarness.state().restCalls.filter(x=>(x.method==='im.recent.list'||x.method==='im.recent.get')).length;await headFrequencyProbe.run('online-freshness');return __resumeHarness.state().restCalls.filter(x=>(x.method==='im.recent.list'||x.method==='im.recent.get')).length-before;});
     assert.equal(urgent,1,'online recovery must retain the original one-minute freshness contract');result.policyCases=policy;result.onlineRequests=urgent;
     const dirty=await page.evaluate(async()=>{headFrequencyProbe.resetFreshness();const mark=__resumeHarness.mark('chats');await headFrequencyProbe.retry();const delta=__resumeHarness.delta('chats',mark),calls=__resumeHarness.state().restCalls.slice(mark.restCalls);return{recentReads:calls.filter(x=>x.method==='im.recent.list'||x.method==='im.recent.get').length,taskReads:calls.filter(x=>x.method==='tasks.task.list').length,walks:delta.materialization.fullWalks,guards:delta.guardActivationTotal};});
@@ -65,6 +65,6 @@ try{
    assert.deepEqual(errors,[]);report.runs.push({label,...result});
   }finally{await page.close();}
  }
- assert.equal(report.runs[0].headRequests/report.runs[1].headRequests,2);
- console.log('PASS healthy metadata frequency: 12 → 6 head requests, no physical walks; recovery policy unchanged');
+ assert.equal(report.runs[0].headRequests/report.runs[1].headRequests,4);
+ console.log('PASS healthy metadata frequency: 12 → 3 head requests, no physical walks; recovery policy unchanged');
 }finally{mkdirSync('tests/artifacts',{recursive:true});writeFileSync('tests/artifacts/native-healthy-metadata-frequency-regression.json',JSON.stringify(report,null,2)+'\n');await browser.close();await server.close();}

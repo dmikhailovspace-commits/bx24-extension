@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.132';
+	window.__ANITREC_RUNNING__ = '7.5.133';
 
-	const VER = '7.5.132';
+	const VER = '7.5.133';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -4023,7 +4023,7 @@
 			if (_dialogRecentProgress.full && requestedLimit === _dialogRecentActiveLoadLimit) {
 				return _dialogRecentSyncPromise;
 			}
-			if (!options.force && !options.full) return _dialogRecentSyncPromise;
+			if ((!options.force && !options.full) || (options.incrementalOnly === true && !options.full)) return _dialogRecentSyncPromise;
 			_dialogRecentQueuedOptions = Object.assign({}, _dialogRecentQueuedOptions || {}, options, {
 				force: true,
 				full: !!(options.full || _dialogRecentQueuedOptions?.full)
@@ -4294,6 +4294,23 @@
 				_ensureDialogRecentMandatoryMeta(commitTarget, mandatory);
 				const counters = await countersPromise;
 				if (counters) _applyDialogCounterSnapshot(commitTarget, counters, mandatory);
+				if (full && _isDialogControlNativePassThrough()) {
+					// REST recent is a projection, not proof of deletion from the native
+					// catalog. Merge after the last await so live updates win as well.
+					const retained = new Map(_dialogRecentMeta);
+					for (const meta of _getDialogRecentUniqueMeta(commitTarget)) {
+						const id = normId(meta?.id);
+						if (id) _setDialogRecentMeta(retained,
+							_mergeDialogNativeExpectedAuditMeta(_getDialogRecentMeta(id), meta, now));
+					}
+					// Rebind existing aliases in one linear pass. Otherwise a numeric
+					// alias may still expose the old object beside the updated chat ID.
+					for (const [alias, meta] of retained) {
+						const canonical = retained.get(normId(meta?.id));
+						if (canonical && canonical !== meta) retained.set(alias, canonical);
+					}
+					commitTarget = retained;
+				}
 				_replaceDialogRecentMeta(commitTarget);
 				const apiCompletedAt = Date.now();
 				if (full && fullCatalogComplete) {
@@ -4382,7 +4399,7 @@
 				});
 				if (full) {
 					_markDialogRecentRepositoryFullCommit({
-						confirmedReplace: fullCatalogComplete,
+						confirmedReplace: fullCatalogComplete && !_isDialogControlNativePassThrough(),
 						invalidateConfirmation: !fullCatalogComplete
 					});
 				}
@@ -4408,9 +4425,9 @@
 						: null
 				};
 			} catch (e) {
-				if (full && hadPreviousCatalog) {
-					_replaceDialogRecentMeta(previousFullMap);
-				} else if (full) {
+				// An existing catalog stayed live while this transaction was staged.
+				// Restoring its old map here would discard concurrent native updates.
+				if (full && !hadPreviousCatalog && !_countDialogRecentMeta()) {
 					const partialMap = nextFullMap?.size ? nextFullMap : previousFullMap;
 					_replaceDialogRecentMeta(partialMap);
 				}
@@ -7841,6 +7858,11 @@
 		return _DIALOG_NATIVE_RETRY_DELAYS_MS;
 	}
 
+	function _getDialogNativeMetadataRetryDelays() {
+		if (Array.isArray(window.__PENA_TEST_RECOVERY_RETRY_MS__)) return _getDialogNativeRecoveryDelays();
+		return [30000, 60000, 120000, 300000, 600000];
+	}
+
 	function _getDialogTaskCatalogTtlMs() {
 		const testTtl = Number(window.__PENA_TEST_DIALOG_CATALOG_TTL_MS__);
 		return Number.isFinite(testTtl) && testTtl >= 50
@@ -8084,7 +8106,7 @@
 		const targetMode = mode === 'tasks' ? 'tasks' : 'chats';
 		if (_dialogNativeMetadataRetryTimers.has(targetMode)) return;
 		const attempt = Math.max(0, Number(_dialogNativeMetadataRetryAttempts.get(targetMode)) || 0);
-		const delays = _getDialogNativeRecoveryDelays();
+		const delays = _getDialogNativeMetadataRetryDelays();
 		const delay = delays[Math.min(attempt, delays.length - 1)];
 		const retryAt = Date.now() + delay;
 		_dialogNativeMetadataRetryAttempts.set(targetMode, attempt + 1);
@@ -8427,7 +8449,23 @@
 			}
 		}
 		if (metadataAuditNeeded && _isDialogNativeSourceGenerationCurrent(mode, container, viewport, sourceGeneration)) {
-			const taskCatalogOutcomePromise = _syncDialogTaskCatalog({ force: true, deferMerge: true }).then(
+			const retry = _dialogNativeMetadataRetryStates.get(mode);
+			if (Number(retry?.retryAt) > Date.now()) {
+				return { healthy: true, metadataDeferred: true, reason: 'metadata-backoff', retryAt: retry.retryAt };
+			}
+			if (String(retry?.reason || '').startsWith('head-refresh-incomplete:')) {
+				// A failed head request must not expand into full recent/task audits.
+				const result = await _syncDialogRecentData({ force: true, incrementalOnly: true, silent: true, reason: 'head-retry' });
+				if (result?.backgroundFailed || result?.skipped || result?.discarded) {
+					_scheduleDialogNativeMetadataRetry(mode, retry.reason);
+					return { healthy: true, metadataDeferred: true };
+				}
+				_clearDialogNativeMetadataRetry(mode);
+				_dialogNativeBackgroundPendingModes.delete(mode);
+				_scheduleDialogTimeBootstrap(null);
+				return { healthy: true };
+			}
+			const taskCatalogOutcomePromise = _syncDialogTaskCatalog({ deferMerge: true }).then(
 				value => ({ value, error: null }),
 				error => ({ value: null, error })
 			);
@@ -9818,7 +9856,7 @@ let _dialogControlTitleLastSyncAt = 0;
 	const _DIALOG_RECENT_QUICK_MS = 15000;
 	const _DIALOG_NATIVE_TRAVERSAL_HARD_TIMEOUT_MS = 120000;
 	const _DIALOG_RECENT_REFRESH_STALE_MS = 60 * 1000;
-	const _DIALOG_RECENT_HEALTHY_HEAD_REFRESH_MS = 2 * 60 * 1000;
+	const _DIALOG_RECENT_HEALTHY_HEAD_REFRESH_MS = 4 * 60 * 1000;
 	const _DIALOG_CATALOG_CACHE_VERSION = 1;
 	const _DIALOG_API_WATERMARK_VERSION = 1;
 	const _DIALOG_RECENT_FULL_REFRESH_MS = 24 * 60 * 60 * 1000;

@@ -77,6 +77,9 @@ await page.addInitScript(() => {
 	window.__PENA_TEST_EAGER_MATERIALIZATION__ = true;
 	window.__PENA_TEST_NATIVE_EXPECTED_AUDIT__ = true;
 	window.__PENA_TEST_NATIVE_TASK_AUDIT__ = true;
+	// Exercise retry outcomes promptly; native-refresh-retention-regression
+	// separately verifies real production delays and focus/visibility backoff.
+	window.__PENA_TEST_RECOVERY_RETRY_MS__ = [1000, 2000, 5000, 15000, 30000, 60000];
 });
 const pageErrors = [];
 page.on('pageerror', error => pageErrors.push(String(error)));
@@ -2649,7 +2652,9 @@ try {
 	await page.mouse.click(410, 20);
 
 	await page.evaluate(() => localStorage.clear());
-	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&repositoryCache=1&repositoryFullProof=1&restFailCount=20&catalogRows=80&initialTop=28&headTtl=120`);
+	// Accelerate retry time only; the retention suite verifies production backoff
+	// and that focus cannot bypass it. Keep all cursor/ID proof assertions below.
+	await page.goto(`${base}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&repositoryCache=1&repositoryFullProof=1&restFailCount=20&catalogRows=80&initialTop=28&headTtl=120&recoveryRetryMs=1000`);
 	await page.waitForFunction(() => {
 		const status = window.__PENA_NATIVE_PREFETCH__?.status?.();
 		const manifest = window.getNativeRepositorySnapshot?.()?.manifest;

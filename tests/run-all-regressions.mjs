@@ -37,6 +37,9 @@ if (Number.parseInt(process.versions.node.split('.')[0], 10) < minimumNodeMajor 
 }
 
 const suites = [
+	'native-refresh-retention-regression.mjs',
+	'native-healthy-metadata-frequency-regression.mjs',
+	'run-native-regressions.mjs',
 	'task-opening-regression.mjs',
 	'time-work-actions-regression.mjs',
   'chrome-package-regression.mjs',
@@ -85,7 +88,6 @@ const suites = [
   'native-preservation-regression.mjs',
   'native-status-isolation-regression.mjs',
   'native-retry-action-regression.mjs',
-  'native-healthy-metadata-frequency-regression.mjs',
 	'native-progress-performance-regression.mjs',
 	'native-message-performance-regression.mjs',
   'native-dom-mutation-regression.mjs',
@@ -108,7 +110,6 @@ const suites = [
   'native-loading-race-regression.mjs',
 	'native-folder-dnd-regression.mjs',
 	'native-prefetch-cleanup-regression.mjs',
-  'run-native-regressions.mjs',
   'sort-anchor-regression.mjs',
   'recent-sync-regression.mjs',
   'dialog-repository-regression.mjs',
