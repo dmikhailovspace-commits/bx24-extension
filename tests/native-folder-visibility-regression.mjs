@@ -15,6 +15,14 @@ const probe = `
   index: buildChatElementIndex, live: _getDialogControlItemLiveMeta,
   syncTitle: _syncDialogControlItemTitleFromElement,
   merge: _mergeDialogRecentWithDomMeta,
+  seed: meta => _setDialogRecentMeta(_dialogRecentMeta, {..._getDialogRecentMeta(meta.id),...meta}),
+  capture: _captureDialogNativeWindow,
+  invalidate: _invalidateDialogControlDomReadCache,
+  view: _applyDialogControlNativeView,
+  get: _getDialogRecentMeta,
+  status: _scheduleDialogNativeStatusRefresh,
+  prefs: _setDialogControlViewPrefs,
+  notifyData: _notifyDialogRecentDataChanged,
   items: () => _getDialogControlItems(),
   item: row => _getDialogControlItemForNativeRow(row)
  };
@@ -40,6 +48,82 @@ async function scenario(name, run) {
  finally { await page.close(); }
 }
 try {
+ await scenario('unmapped recycled row keeps its display baseline through repeated decoration cleanup', async page => {
+  const result = await page.evaluate(() => {
+   const p=folderProbe,row=document.querySelector('.recent-host [data-id="chat225"]');
+   p.state(row,p.items().find(x=>x.id==='chat225'));
+   row.setAttribute('data-id','chat987659');
+   row.querySelector('.bx-im-chat-title__text').textContent='Unknown dialog';
+   const filter={folderId:'test',ids:new Set(['chat225']),titles:new Set()};
+   for(let i=0;i<3;i++) {
+    p.filter(row,filter);p.view(row.parentElement,{restoreDisplay:false,forceShow:true});
+   }
+   const hidden=getComputedStyle(row).display;
+   p.filter(row,null);
+   return {hidden,display:getComputedStyle(row).display};
+  });
+  assert.equal(result.hidden,'none');assert.notEqual(result.display,'none');
+ });
+ for(const reminder of [false,true]) await scenario('confirmed '+(reminder?'reminder':'unread count')+' survives 45-second DOM fallback expiry',async page=>{
+  const result=await page.evaluate(reminder=>{
+   const p=folderProbe,id='chat225',at=Date.now()-60000;
+   p.seed({id,unreadCount:reminder?0:7,hasUnread:!reminder,hasLater:reminder,hasMention:false,counterFetchedAt:at,counterConfirmedAt:at});
+   return p.merge(id,{id,unreadCount:0,hasUnread:false,hasLater:false,hasMention:false,observedAt:Date.now()});
+  },reminder);
+  assert.equal(result.unreadCount,reminder?0:7);assert.equal(result.hasLater,reminder);
+ });
+ await scenario('native window capture preserves a reminder hidden behind a numeric badge',async page=>{
+  const result=await page.evaluate(()=>{
+   const p=folderProbe,row=document.querySelector('.recent-host [data-id="chat225"]'),id='chat225';
+   const counter=row.querySelector('.bx-im-list-recent-item__counter_number')||row.appendChild(document.createElement('span'));
+   counter.className='bx-im-list-recent-item__counter_number';counter.textContent='4';
+   p.invalidate();
+   const at=Date.now()-60000;
+   p.seed({id,hasLater:true,hasUnread:true,unreadCount:4,counterFetchedAt:at,counterConfirmedAt:at});
+   const target=new Map(),state={mode:'chats',seen:new Set(),orderById:new Map(),startedAt:Date.now()};
+   p.capture(row.parentElement,target,state);
+   return target.get(id);
+  });
+  assert.equal(result.unreadCount,4);assert.equal(result.hasLater,true);
+ });
+ await scenario('native status changes still update and clear confirmed counters and reminders',async page=>{
+  await page.evaluate(()=>folderProbe.apply());
+  await page.waitForFunction(()=>{
+   const s=__PENA_NATIVE_PREFETCH__.status();return s.loadedModes.includes('chats')&&!s.originalActive&&!s.modeLoadPending;
+  },undefined,{timeout:30000});
+  await page.evaluate(()=>{
+   const p=folderProbe,id='chat225',at=Date.now()-60000;
+   p.seed({id,hasLater:true,hasUnread:true,unreadCount:3,counterFetchedAt:at,counterConfirmedAt:at});
+   p.prefs({unreadOnly:true});p.apply();
+  });
+  for(const [count,reminder] of [[6,true],[0,true],[0,false],[2,false]]) {
+   await page.evaluate(({count,reminder})=>{
+    const row=document.querySelector('.recent-host [data-id="chat225"]');
+    row.querySelectorAll('.bx-im-list-recent-item__counter_number').forEach(node=>node.remove());
+    if(count||reminder) {
+     const counter=document.createElement('span');
+     counter.className='bx-im-list-recent-item__counter_number'+(!count?' --no-counter':'');
+     counter.textContent=count?String(count):'';row.append(counter);
+    }
+    folderProbe.status(row.parentElement,['chat225'],30);
+   },{count,reminder});
+   await page.waitForFunction(({count,reminder})=>{
+    const meta=folderProbe.get('chat225');return meta.unreadCount===count&&meta.hasLater===reminder;
+   },{count,reminder},{timeout:5000});
+   await page.waitForFunction(expected=>{
+    const row=document.querySelector('.recent-host [data-id="chat225"]');return (getComputedStyle(row).display!=='none')===expected;
+   },!!(count||reminder),{timeout:5000});
+  }
+  for(const count of [0,8]) {
+   await page.evaluate(count=>{
+    folderProbe.seed({id:'chat225',unreadCount:count,hasUnread:count>0,hasLater:false,counterFetchedAt:Date.now(),counterConfirmedAt:Date.now()});
+    folderProbe.notifyData();
+   },count);
+   await page.waitForFunction(expected=>{
+    const row=document.querySelector('.recent-host [data-id="chat225"]');return (getComputedStyle(row).display!=='none')===expected;
+   },count>0,{timeout:5000});
+  }
+ });
  await scenario('replacing native search while a folder is active does not permanently hide other dialogs', async page => {
   const result = await page.evaluate(() => {
    const p=folderProbe, row=document.querySelector('.recent-host [data-id="chat5"]');

@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.134';
+	window.__ANITREC_RUNNING__ = '7.5.135';
 
-	const VER = '7.5.134';
+	const VER = '7.5.135';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -3966,7 +3966,10 @@
 		const recentCounterAt = Math.max(0, Number(recent.counterFetchedAt) || 0);
 		const countersFresh = recentCounterAt > 0 &&
 			Date.now() - recentCounterAt <= (_DIALOG_RECENT_QUICK_MS * 3);
-		if (countersFresh) {
+		// A rendered/recycled badge is not a new counter event. Keep confirmed
+		// state until a native status change or an API snapshot replaces it;
+		// elapsed time alone must not clear unread messages or a reminder.
+		if (Number(recent.counterConfirmedAt) > 0 || countersFresh) {
 			merged.unreadCount = Math.max(0, Number(recent.unreadCount) || 0);
 			merged.hasUnread = !!recent.hasUnread;
 			merged.hasLater = !!recent.hasLater;
@@ -3975,12 +3978,22 @@
 		return merged;
 	}
 
+	function _refreshDialogControlNativeUnreadFilter(container) {
+		if (!_isDialogControlNativePassThrough() ||
+			!(_getDialogControlViewPrefs().unreadOnly || filters.unreadOnly)) return;
+		// Decoration alone does not re-evaluate display. Apply the active
+		// projection after either a native counter event or a metadata update.
+		const nativeFolderFilter = _getDialogControlNativeFilter();
+		_getCurrentFilterRows(container).forEach(row => _applyDialogControlRowFilter(row, nativeFolderFilter));
+	}
+
 	function _notifyDialogRecentDataChanged() {
 		_dialogControlLastSig = '';
 		_invalidateDialogControlDomReadCache();
 		if (!IS_OL_FRAME && _isDialogControlNativeMode()) {
 			const container = findContainer();
 			_renderDialogControlNativeSwitcher(container, _getDialogControlItems());
+			_refreshDialogControlNativeUnreadFilter(container);
 			_scheduleDialogControlNativeView(container, { restoreDisplay: false });
 		} else if (filtersHost && document.body.contains(filtersHost)) {
 			_refreshDialogControlPanel(filtersHost);
@@ -3999,7 +4012,8 @@
 			}
 			// Bitrix already painted the row counter. Only the extension's unread-only
 			// view needs a row pass; folder/group badges use the catalog counter index.
-			if (_getDialogControlViewPrefs().unreadOnly) {
+			if (_getDialogControlViewPrefs().unreadOnly || filters.unreadOnly) {
+				_refreshDialogControlNativeUnreadFilter(container);
 				_scheduleDialogControlNativeView(container, { restoreDisplay: false });
 			}
 		} else if (filtersHost && document.body.contains(filtersHost)) {
@@ -6119,7 +6133,8 @@
 				lastAuthorOwn: nativeMessage?.own === true,
 				lastAuthorResolved: true,
 				hasUnread: !!dom.hasUnread,
-				hasLater: !!dom.hasLater,
+				// Bitrix hides the reminder dot behind the numeric unread badge.
+				hasLater: !!dom.hasLater || (!!dom.hasUnread && !!existing.hasLater),
 				hasMention: !!dom.hasMention,
 				unreadCount: Math.max(0, Number(dom.unreadCount) || 0),
 				counterStale: false,
@@ -20534,8 +20549,13 @@ if (_presetChannel) {
 		if (restoreDisplay && row.dataset.penaNativeOriginalDisplay !== undefined) {
 			row.style.display = row.dataset.penaNativeOriginalDisplay;
 		}
-		delete row.dataset.penaNativeFilterDisplay;
-		delete row.dataset.penaNativeOriginalDisplay;
+		// Unknown/recycled rows still belong to the active folder/search filter.
+		// Keep its baseline while removing decoration, otherwise our display:none
+		// becomes the "native" display on the next pass and the row stays hidden.
+		if (!options.preserveLayout || restoreDisplay) {
+			delete row.dataset.penaNativeFilterDisplay;
+			delete row.dataset.penaNativeOriginalDisplay;
+		}
 		delete row.dataset.penaNativeFolderId;
 		delete row.dataset.penaNativeOriginalOrder;
 		delete row.dataset.penaNativeDialogId;

@@ -248,12 +248,11 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' \
-            'Contacts require outgoing task messages or successful native task/card/checklist/status changes. Passive reading never qualifies.' \
-            'Known passive-duration contacts are excluded from suggestions without changing saved time entries.' \
-            'Task titles update from existing events; title-only updates cause no elapsed reads or catalog walks.' \
-            'Healthy routine checks retain the 120-second interval.' \
-            'Task opening preserves the native row handler and keeps task IDs separate from chat IDs. Observer failures cannot abort native request completion.' \
-            'Verified against the complete regression registry, including task navigation and real-action contact tests.' \
+            'Confirmed unread counters and read-later marks survive stale rendered badges and the former 45-second fallback.' \
+            'Numeric unread badges no longer erase a saved read-later mark.' \
+            'Unread filters update after native counter events and background API updates, so matching dialogs return to the list.' \
+            'Recycled-row cleanup preserves the original display state and no longer leaves dialogs hidden after changing folders.' \
+            'Verified against all 83 registered regression suites before either installer is built.' \
             'Controlled tests are not a live Bitrix latency measurement. The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \
             'Includes Windows EXE and Universal macOS DMG for Intel and Apple Silicon.' \
             > release-notes.md
