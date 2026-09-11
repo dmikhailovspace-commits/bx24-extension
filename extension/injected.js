@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.133';
+	window.__ANITREC_RUNNING__ = '7.5.134';
 
-	const VER = '7.5.133';
+	const VER = '7.5.134';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -725,7 +725,8 @@
 			if (!el) return null;
 			const now = performance.now();
 			const cached = _dialogControlLiveMetaCache.get(el);
-			if (cached && now - cached.at <= _DIALOG_CONTROL_DOM_CACHE_MS) return cached.meta;
+			if (cached && now - cached.at <= _DIALOG_CONTROL_DOM_CACHE_MS &&
+				normId(cached.meta?.id) === normId(getChatIdFromElement(el))) return cached.meta;
 			const meta = getItemMeta(el);
 			_dialogControlLiveMetaCache.set(el, { at: now, meta });
 			return meta;
@@ -2515,7 +2516,7 @@
 			'lastAuthorId', 'lastAuthorName', 'lastAuthorAvatarUrl', 'lastAuthorOwn', 'lastAuthorSystem', 'lastAuthorResolved', 'lastMessageStatus',
 			'lastMessageHasFile', 'lastMessageHasAttach', 'lastMessageSticker',
 			'lastMessageTs', 'lastMessageTsSource', 'nativeRecentRank', 'lastMessageId', 'lastReadMessageId', 'unreadCount', 'hasUnread', 'hasLater', 'hasMention',
-			'isTask', 'taskId', 'taskUrl', 'timeTrackingEnabled', 'taskCatalogFetchedAt', 'restDialogId', 'fetchedAt', 'counterFetchedAt', 'counterStale', 'detailFetchedAt', 'detailAttemptAt',
+			'isTask', 'taskId', 'taskUrl', 'timeTrackingEnabled', 'taskCatalogFetchedAt', 'restDialogId', 'fetchedAt', 'counterFetchedAt', 'counterConfirmedAt', 'counterStale', 'detailFetchedAt', 'detailAttemptAt',
 			'detailBlockedUntil', 'avatarResolved', 'availability', 'availabilityReason', 'availabilityCheckedAt', 'recentListFetchedAt', 'catalogSource'
 		];
 		const result = fields.reduce((serialized, field) => {
@@ -2738,7 +2739,7 @@
 				const counterSource = liveCounterAt === incomingCounterAt
 					? preferred
 					: (liveCounterAt > incomingCounterAt ? live : incoming);
-				for (const field of ['unreadCount', 'hasUnread', 'hasLater', 'hasMention', 'lastReadMessageId', 'counterFetchedAt', 'counterStale']) {
+				for (const field of ['unreadCount', 'hasUnread', 'hasLater', 'hasMention', 'lastReadMessageId', 'counterFetchedAt', 'counterConfirmedAt', 'counterStale']) {
 					if (counterSource[field] !== undefined) merged[field] = counterSource[field];
 				}
 				_setDialogRecentMeta(result, merged);
@@ -3235,8 +3236,10 @@
 	}
 
 	async function _fetchDialogCounterSnapshot() {
+		const startedAt = Date.now();
 		const page = await _callBxRestPageWithTimeout('im.counters.get', {}, 8000);
-		return _parseDialogCounterSnapshot(page.data);
+		const snapshot = _parseDialogCounterSnapshot(page.data);
+		return snapshot ? { ...snapshot, startedAt } : null;
 	}
 
 	async function _fetchDialogCounterSnapshotWithRetry(attempts = 3) {
@@ -3258,6 +3261,15 @@
 		if (!snapshot?.states) return false;
 		_ensureDialogRecentMandatoryMeta(target, mandatory);
 		_getDialogRecentUniqueMeta(target).forEach(meta => {
+			// A read, message or reminder observed while this request was pending
+			// is newer than its snapshot, even if the response arrived afterwards.
+			const requestStartedAt = Math.max(0, Number(snapshot.startedAt) || 0);
+			// Recent-list metadata can arrive during this same load with provisional
+			// counters. Only confirmed counter snapshots and actual user/native events
+			// outrank the dedicated counters endpoint.
+			const counterAt = Math.max(0, Number(meta.counterConfirmedAt) || 0);
+			if (requestStartedAt > 0 ? counterAt >= requestStartedAt :
+				counterAt > Math.max(0, Number(snapshot.fetchedAt) || 0)) return;
 			const id = normId(meta.id);
 			const restId = normId(meta.restDialogId);
 			const sgChatId = /^sg(\d+)$/i.exec(id)?.[1];
@@ -3275,11 +3287,12 @@
 			if (applyManual) meta.hasLater = !!state?.manualUnread;
 			if (applyCounts || applyManual) {
 				meta.counterFetchedAt = snapshot.fetchedAt;
+				meta.counterConfirmedAt = snapshot.fetchedAt;
 				meta.counterStale = false;
 			}
 			if (target === _dialogRecentMeta && _dialogRecentRepositoryReady) _markDialogRecentRepositoryDirty(id);
 		});
-		_dialogRecentCountersAt = snapshot.fetchedAt;
+		_dialogRecentCountersAt = Math.max(Number(_dialogRecentCountersAt) || 0, Number(snapshot.fetchedAt) || 0);
 		_dialogRecentCountersError = '';
 		return true;
 	}
@@ -3934,6 +3947,9 @@
 	}
 
 	function _mergeDialogRecentWithDomMeta(dialogId, domMeta) {
+		// An index can briefly retain a DOM node after Bitrix has recycled it.
+		// Never merge the new occupant's title/counters into the previous dialog.
+		if (domMeta?.id && normId(domMeta.id) !== normId(dialogId)) domMeta = null;
 		const recent = _getDialogRecentMeta(dialogId);
 		if (!recent) return domMeta;
 		if (!domMeta) return recent;
@@ -5608,7 +5624,7 @@
 		const incomingCounterAt = Math.max(0, Number(incomingMeta?.counterFetchedAt) || 0);
 		if (previousCounterAt > 0 && (previousCounterAt >= incomingCounterAt ||
 			(startedAt > 0 && previousCounterAt >= startedAt))) {
-			for (const field of ['unreadCount', 'hasUnread', 'hasLater', 'hasMention', 'lastReadMessageId', 'counterFetchedAt', 'counterStale']) {
+			for (const field of ['unreadCount', 'hasUnread', 'hasLater', 'hasMention', 'lastReadMessageId', 'counterFetchedAt', 'counterConfirmedAt', 'counterStale']) {
 				if (previous[field] !== undefined) mergedMeta[field] = previous[field];
 			}
 		}
@@ -6119,7 +6135,7 @@
 				// The DOM badge belongs to an older recycled row snapshot. A counter API or
 				// live head update received during this pass is authoritative even when the
 				// final counter recheck is temporarily unavailable.
-				for (const field of ['unreadCount', 'hasUnread', 'hasLater', 'hasMention', 'counterFetchedAt', 'counterStale']) {
+				for (const field of ['unreadCount', 'hasUnread', 'hasLater', 'hasMention', 'counterFetchedAt', 'counterConfirmedAt', 'counterStale']) {
 					if (existing[field] !== undefined) merged[field] = existing[field];
 				}
 			}
@@ -7600,6 +7616,7 @@
 				next.fetchedAt = checkedAt;
 				next.recentListFetchedAt = checkedAt;
 				next.counterFetchedAt = checkedAt;
+				next.counterConfirmedAt = checkedAt;
 				if (previous) next = _mergeDialogRecentMessageState(previous, next);
 			}
 			if (availability === 'unavailable') {
@@ -9013,6 +9030,7 @@
 				observedAt = Math.max(observedAt, Number(meta.observedAt) || Date.now());
 				Object.assign(previous, next, {
 					counterFetchedAt: Number(meta.observedAt) || observedAt,
+					counterConfirmedAt: Number(meta.observedAt) || observedAt,
 					counterStale: false
 				});
 				if (_dialogRecentRepositoryReady) _markDialogRecentRepositoryDirty(id);
@@ -10563,11 +10581,9 @@ if (_presetChannel) {
 			// Never dispatch into the native Bitrix search during startup. Even an
 			// empty input event switches some messenger builds into search mode.
 			_setInputValueNative(input, '', false);
-			const container = findContainer();
-			_getCurrentFilterRows(container).forEach(row => {
-				delete row.dataset.penaNativeOriginalDisplay;
-				delete row.dataset.penaNativeFilterDisplay;
-			});
+			// A remounted search field does not own the list's display baseline.
+			// Dropping it while a folder hides rows saves our own `none` as the
+			// native value on the next pass, making those dialogs stay hidden.
 		}
 		_restorePenaSearchInput(input, mode);
 		// Bitrix can focus its search field while mounting the messenger. Do not
@@ -12793,11 +12809,15 @@ if (_presetChannel) {
 
 	function _getDialogControlNativeRowIdentityKeys(row) {
 		if (!row) return [];
-		return Array.from(new Set([
+		const nativeIds = Array.from(new Set([
 			getChatIdFromElement(row),
-			_getRawDialogControlIdFromElement(row),
-			row.dataset?.penaNativeDialogId
+			_getRawDialogControlIdFromElement(row)
 		].map(value => normId(_normalizeDialogControlRestDialogId(value))).filter(Boolean)));
+		// Decoration belongs to the previous occupant when Bitrix recycles a row.
+		// It is only a fallback when the native row supplies no identity at all.
+		if (nativeIds.length) return nativeIds;
+		const decoratedId = normId(_normalizeDialogControlRestDialogId(row.dataset?.penaNativeDialogId));
+		return decoratedId ? [decoratedId] : [];
 	}
 
 	function _matchesDialogControlNativeFilter(row, meta, filter) {
@@ -20820,9 +20840,8 @@ if (_presetChannel) {
 		const nextDialogId = String(item.id || '');
 		const dialogChanged = !!row.dataset.penaNativeDialogId && normId(row.dataset.penaNativeDialogId) !== normId(nextDialogId);
 		if (dialogChanged) {
-			if (row.dataset.penaNativeOriginalDisplay !== undefined) row.style.display = row.dataset.penaNativeOriginalDisplay;
-			delete row.dataset.penaNativeOriginalDisplay;
-			delete row.dataset.penaNativeFilterDisplay;
+			// Filtering runs before decoration. Keep its decision for the new ID;
+			// restoring display here exposes foreign rows until the next refresh.
 			delete row.dataset.penaNativeBasePaddingLeft;
 			row.style.removeProperty('--pena-native-base-padding-left');
 		}
@@ -22106,7 +22125,8 @@ if (_presetChannel) {
 
 	function _syncDialogControlItemTitleFromElement(item, visibleChatIndex) {
 		if (!item || _isDialogControlFolder(item)) return false;
-		const el = visibleChatIndex?.get?.(normId(item.id)) || null;
+		const indexed = visibleChatIndex?.get?.(normId(item.id)) || null;
+		const el = indexed && normId(getChatIdFromElement(indexed)) === normId(item.id) ? indexed : null;
 		// Managed rows are projections of this model, never an input for it. Reading
 		// their text back creates a feedback loop when chat42 and user42 coexist.
 		if (el?.classList?.contains('pena-native-managed-row')) return false;
@@ -23351,6 +23371,7 @@ if (_presetChannel) {
 						recent.lastReadMessageId = Math.max(Number(recent.lastReadMessageId) || 0, readId);
 					}
 					recent.counterFetchedAt = Date.now();
+					recent.counterConfirmedAt = recent.counterFetchedAt;
 					recent.counterStale = false;
 					if (_dialogRecentRepositoryReady) _markDialogRecentRepositoryDirty(id);
 					_scheduleDialogRecentCacheWrite(80);

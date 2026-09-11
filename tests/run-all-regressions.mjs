@@ -37,6 +37,9 @@ if (Number.parseInt(process.versions.node.split('.')[0], 10) < minimumNodeMajor 
 }
 
 const suites = [
+	'notification-counter-race-regression.mjs',
+	'recent-sync-regression.mjs',
+	'native-folder-visibility-regression.mjs',
 	'native-refresh-retention-regression.mjs',
 	'native-healthy-metadata-frequency-regression.mjs',
 	'run-native-regressions.mjs',
@@ -111,7 +114,6 @@ const suites = [
 	'native-folder-dnd-regression.mjs',
 	'native-prefetch-cleanup-regression.mjs',
   'sort-anchor-regression.mjs',
-  'recent-sync-regression.mjs',
   'dialog-repository-regression.mjs',
   'native-cold-start-layout-regression.mjs',
   'native-lifecycle-stress-regression.mjs',

@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "7.5.133",
-  "release_date": "2026-09-10",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.133",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.133",
+  "version": "7.5.134",
+  "release_date": "2026-09-11",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.134",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.134",
   "extension_files": [
-    "worker-v7_5_133.js",
+    "worker-v7_5_134.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,7 +33,7 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.133/extension/injected.js",
-  "changelog": "v7.5.133: preserve native catalogs across refresh failures and partial projections; coalesce head checks; respect retry backoff; halve routine refresh frequency",
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.134/extension/injected.js",
+  "changelog": "v7.5.134: preserve folder visibility and recycled row identity; prevent stale counter responses from reverting reads, messages and reminders",
   "verification_profile": "full"
 }

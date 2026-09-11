@@ -449,7 +449,8 @@ try {
 			scrollTop: Number(viewport?.scrollTop || 0),
 			overlays: document.querySelectorAll('.pena-native-original-load-guard,.pena-native-load-guard').length,
 			counterText: document.querySelector('.recent-host [data-id="chat225"] .bx-im-list-recent-item__counter_number')?.textContent || '',
-			repositoryUnreadCount: Number(counterRecord?.unread?.count ?? counterRecord?.state?.unreadCount ?? -1)
+			repositoryUnreadCount: Number(counterRecord?.unread?.count ?? counterRecord?.state?.unreadCount ?? -1),
+			repositoryCounterConfirmedAt: Number(counterRecord?.state?.counterConfirmedAt) || 0
 		};
 	}, before.restCalls);
 
@@ -490,6 +491,7 @@ try {
 		`Counter update persisted more than its one dirty record: ${diagnostic}`);
 	assert.equal(after.counterText, String(messageCount), `Bitrix counter fixture did not reach its final value: ${diagnostic}`);
 	assert.equal(after.repositoryUnreadCount, messageCount, `Repository missed the targeted counter update: ${diagnostic}`);
+	assert.ok(after.repositoryCounterConfirmedAt > 0, 'Native counter confirmation must survive the repository patch');
 	assert.equal(countsAfter.cacheWrite || 0, 1, `Counter update was not coalesced into one cache write: ${diagnostic}`);
 	assert.equal(countsAfter.applyFilters || 0, 0, `Message burst reapplied all filters: ${diagnostic}`);
 	assert.equal(countsAfter.toolbarRebuild || 0, 0, `Message burst structurally rebuilt the toolbar: ${diagnostic}`);

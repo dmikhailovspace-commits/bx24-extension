@@ -73,6 +73,7 @@ try {
     assert.equal(metadata.get('chat1').unreadCount, 9);
     assert.equal(metadata.get('chat1').hasMention, true);
     assert.equal(metadata.get('chat1').hasLater, false);
+    assert.ok(metadata.get('chat1').counterConfirmedAt > 0, 'Reminder acknowledgement must fence pending counter reads');
     assert.deepEqual(state.calls.map(call => call.method), ['im.recent.unread']);
   });
   await phase('Read executes even when the cached list already looks read', async () => {
