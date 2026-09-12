@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.137';
+	window.__ANITREC_RUNNING__ = '7.5.138';
 
-	const VER = '7.5.137';
+	const VER = '7.5.138';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -3148,6 +3148,94 @@
 		});
 	}
 
+	function _getDialogNativeCounterContext() {
+		if (IS_OL_FRAME) return null;
+		const userId = _getDialogRecentCacheUserId();
+		let found = null;
+		for (const BXNS of _getBitrixNamespaces()) {
+			try {
+				const core = BXNS?.Messenger?.v2?.Application?.Core;
+				if (!userId || String(core?.getUserId?.()) !== userId) continue;
+				const store = core.getStore?.();
+				if (store?.state?.counters?.collection && typeof store.subscribe === 'function') {
+					found = { core, store, userId, host: location.host, BXNS }; break;
+				}
+			} catch {}
+		}
+		const previous = _dialogNativeCounterContext;
+		if (previous && (!found || previous.store !== found.store || previous.userId !== userId || previous.host !== location.host)) {
+			previous.unsubscribe?.();
+			clearTimeout(previous.timer);
+			_dialogNativeCounterContext = null;
+		}
+		if (!found) return null;
+		if (!_dialogNativeCounterContext) {
+			const context = _dialogNativeCounterContext = { ...found, states: new Map(), dirty: true, cleared: false };
+			context.unsubscribe = context.store.subscribe(mutation => {
+				if (!/^(?:counters\/|messages\/anchors\/)/.test(mutation?.type || '')) return;
+				if (/^counters\/clear/.test(mutation.type)) context.cleared = true;
+				context.dirty = true;
+				if (context.timer) return;
+				context.timer = setTimeout(() => {
+					context.timer = null;
+					if (_getDialogNativeCounterContext() !== context || !isInternalChatsDOM()) return;
+					let changed = false;
+					_getDialogRecentUniqueMeta().forEach(meta => {
+						const native = _getDialogNativeCounterMeta(meta.id, context);
+						if (!native || ['unreadCount', 'hasUnread', 'hasLater', 'hasMention'].every(key => meta[key] === native[key])) return;
+						Object.assign(meta, native, { counterFetchedAt: Date.now(), counterConfirmedAt: Date.now(), counterStale: false });
+						if (_dialogRecentRepositoryReady) _markDialogRecentRepositoryDirty(meta.id);
+						changed = true;
+					});
+					if (changed) {
+						_dialogRecentCountersAt = Math.max(_dialogRecentCountersAt, Date.now());
+						_dialogRecentCountersError = '';
+						_dialogRecentDataRevision += 1;
+						_scheduleDialogRecentCacheWrite(80);
+						_notifyDialogRecentCountersChanged();
+						_publishDialogRecentSyncState();
+					}
+				}, 80);
+			});
+		}
+		const context = _dialogNativeCounterContext;
+		const collection = context.store.state.counters.collection;
+		if (context.dirty || context.collection !== collection) {
+			const states = new Map();
+			Object.values(collection).forEach(record => {
+				if (!(Number(record?.chatId) > 0) || !Number.isFinite(record.counter) || typeof record.isMarkedAsUnread !== 'boolean') return;
+				states.set(String(record.chatId), { count: Math.max(0, record.counter), later: record.isMarkedAsUnread });
+			});
+			// Only an explicit native clear can turn a missing model record into zero.
+			// An uninitialised/partial model must not erase the persisted catalog.
+			if (context.cleared) context.states.forEach((_value, id) => {
+				if (!states.has(id)) states.set(id, { count: 0, later: false });
+			});
+			Object.values(collection).forEach(record => {
+				const parent = states.get(String(record?.parentChatId));
+				if (parent && Number.isFinite(record.counter)) parent.count += Math.max(0, record.counter);
+			});
+			context.states = states; context.collection = collection; context.dirty = false;
+		}
+		return context;
+	}
+
+	function _getDialogNativeCounterMeta(dialogId, context = _getDialogNativeCounterContext()) {
+		if (!context) return null;
+		try {
+			const id = normId(dialogId);
+			const chat = context.store.getters['chats/get']?.(_normalizeDialogControlRestDialogId(id));
+			const chatId = String(chat?.chatId || /^(?:chat|sg)(\d+)$/.exec(id)?.[1] || '');
+			const state = context.states.get(chatId);
+			if (!state) return null;
+			const anchorType = context.BXNS?.Messenger?.v2?.Const?.AnchorType?.mention;
+			const mentionGetter = context.store.getters['messages/anchors/isChatHasAnchorsWithType'];
+			const hasMention = anchorType !== undefined && typeof mentionGetter === 'function'
+				? !!mentionGetter(Number(chatId), anchorType) : !!_getDialogRecentMeta(id)?.hasMention;
+			return { unreadCount: state.count, hasUnread: state.count > 0 || hasMention, hasLater: state.later, hasMention };
+		} catch { return null; }
+	}
+
 	function _findDialogCounterField(root, name) {
 		if (!root || typeof root !== 'object') return { found: false, value: null };
 		const key = Object.keys(root).find(candidate => String(candidate).toUpperCase() === name);
@@ -3261,6 +3349,14 @@
 		if (!snapshot?.states) return false;
 		_ensureDialogRecentMandatoryMeta(target, mandatory);
 		_getDialogRecentUniqueMeta(target).forEach(meta => {
+			// Messenger v2 owns the counters rendered by Bitrix, including task chats,
+			// reminders and child counters absent from the legacy REST projection.
+			const native = _getDialogNativeCounterMeta(meta.id);
+			if (native) {
+				Object.assign(meta, native, { counterFetchedAt: Date.now(), counterConfirmedAt: Date.now(), counterStale: false });
+				if (target === _dialogRecentMeta && _dialogRecentRepositoryReady) _markDialogRecentRepositoryDirty(meta.id);
+				return;
+			}
 			// A read, message or reminder observed while this request was pending
 			// is newer than its snapshot, even if the response arrived afterwards.
 			const requestStartedAt = Math.max(0, Number(snapshot.startedAt) || 0);
@@ -3951,7 +4047,9 @@
 		// An index can briefly retain a DOM node after Bitrix has recycled it.
 		// Never merge the new occupant's title/counters into the previous dialog.
 		if (domMeta?.id && normId(domMeta.id) !== normId(dialogId)) domMeta = null;
-		const recent = _getDialogRecentMeta(dialogId);
+		const native = _getDialogNativeCounterMeta(dialogId);
+		const stored = _getDialogRecentMeta(dialogId);
+		const recent = native ? Object.assign({}, stored || domMeta || { id: normId(dialogId) }, native) : stored;
 		if (!recent) return domMeta;
 		if (!domMeta) return recent;
 		const merged = Object.assign({}, recent, domMeta, {
@@ -3970,7 +4068,7 @@
 		// A rendered/recycled badge is not a new counter event. Keep confirmed
 		// state until a native status change or an API snapshot replaces it;
 		// elapsed time alone must not clear unread messages or a reminder.
-		if (Number(recent.counterConfirmedAt) > 0 || countersFresh) {
+		if (native || Number(recent.counterConfirmedAt) > 0 || countersFresh) {
 			merged.unreadCount = Math.max(0, Number(recent.unreadCount) || 0);
 			merged.hasUnread = !!recent.hasUnread;
 			merged.hasLater = !!recent.hasLater;
@@ -9056,7 +9154,8 @@
 				const eventAt = request.ids.size ? request.observedById.get(id) : request.observedAt;
 				// A genuinely newer API/read event wins over a delayed DOM snapshot.
 				if (Number(previous.counterConfirmedAt) > eventAt) return;
-				const meta = getItemMeta(row);
+				const domMeta = getItemMeta(row);
+				const meta = Object.assign({}, domMeta, _getDialogNativeCounterMeta(id));
 				if (!meta || normId(meta.id) !== id) return;
 				const next = {
 					unreadCount: Math.max(0, Number(meta.unreadCount) || 0),
@@ -10021,6 +10120,7 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogNativePassThroughRefreshPending = false;
 	let _dialogNativeStatusRefreshTimer = null;
 	let _dialogNativeStatusRefreshRequest = null;
+	let _dialogNativeCounterContext = null;
 	let _dialogNativePassThroughApiResumePromise = null;
 	let _dialogNativePresentationRefreshTimer = null;
 	const _dialogNativePresentationRefreshRows = new Set();

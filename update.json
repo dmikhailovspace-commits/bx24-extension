@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "7.5.137",
+  "version": "7.5.138",
   "release_date": "2026-09-12",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.137",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.137",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.138",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.138",
   "extension_files": [
-    "worker-v7_5_137.js",
+    "worker-v7_5_138.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,7 +33,7 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.137/extension/injected.js",
-  "changelog": "v7.5.137: retain native counter events during list recovery and hidden windows; reconcile folder badges without overwriting newer read state",
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.138/extension/injected.js",
+  "changelog": "v7.5.138: use the native Messenger v2 counter model for folder unread, mentions and read-later; preserve live task counters across legacy REST refreshes",
   "verification_profile": "full"
 }

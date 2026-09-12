@@ -25,6 +25,7 @@ const context=vm.createContext({
  _getDialogRecentUniqueMeta:target=>[...new Set(target.values())],
  _isDialogControlFolder:item=>item.type==='folder',_isDialogControlItemUnavailable:()=>false,
  _getDialogControlItemLiveMeta:item=>context._dialogRecentMeta.get(item.id),
+ _getDialogNativeCounterMeta:()=>null,
  _callBxRestPageWithTimeout:()=>new Promise(resolve=>release=resolve),
  _parseDialogCounterSnapshot:data=>({...data,fetchedAt:now})
 });

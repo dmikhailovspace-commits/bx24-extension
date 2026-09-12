@@ -23,6 +23,7 @@ const probe = `
   status: _scheduleDialogNativeStatusRefresh,
   prefs: _setDialogControlViewPrefs,
   notifyData: _notifyDialogRecentDataChanged,
+  snapshot: data => _applyDialogCounterSnapshot(_dialogRecentMeta, {..._parseDialogCounterSnapshot(data),startedAt:Date.now()-1}),
   busy: (kind, value) => {
    if(kind==='health') _dialogNativeHealthProbeActive=value;
    if(kind==='traversal') _dialogNativeOriginalScrollActive=value;
@@ -35,17 +36,18 @@ const probe = `
 assert.ok(source.includes(anchor));
 const server = await startHarnessServer(), browser = await chromium.launch({headless:true});
 const report = {phases:[]};
-async function scenario(name, run) {
+async function scenario(name, run, mode = 'chats') {
  const page = await browser.newPage();
  const errors = collectPageErrors(page), started = performance.now();
  try {
   await page.route('**/extension/injected.js*', route => route.fulfill({contentType:'application/javascript', body:source.replace(anchor,anchor+probe)}));
-  await page.goto(server.baseUrl+'/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&nativeFirst=1&passThrough=1&activeFolder=1&skipInitialMount=1');
-  await page.waitForFunction(() => {
-   const folder=document.querySelector('.recent-host .pena-native-folder-tab[title="Тестовая папка"]');
-   const foreign=document.querySelector('.recent-host [data-id="chat5"]');
+  await page.goto(server.baseUrl+'/tests/native-consistency-harness.html?mode='+mode+'&nativeCatalog=1&nativeFirst=1&passThrough=1&activeFolder=1&skipInitialMount=1');
+  await page.waitForFunction(mode => {
+   const host=mode==='tasks'?'.task-host':'.recent-host';
+   const folder=document.querySelector(host+' .pena-native-folder-tab[title="Тестовая папка"]');
+   const foreign=document.querySelector(host+' [data-id="chat5"]');
    return window.folderProbe && folder?.classList.contains('--active') && foreign && getComputedStyle(foreign).display==='none';
-  });
+  }, mode);
   await run(page);
   assert.deepEqual(errors, []);
   report.phases.push({name,status:'PASS',ms:performance.now()-started});
@@ -53,6 +55,45 @@ async function scenario(name, run) {
  finally { await page.close(); }
 }
 try {
+ for(const mode of ['chats','tasks']) for(const reminder of [false,true]) await scenario(mode+' Messenger v2 '+(reminder?'reminder':'unread and mention')+' repairs a saved zero and survives the legacy REST projection',async page=>{
+  await page.evaluate(()=>folderProbe.apply());
+  await page.waitForFunction(()=>{const s=__PENA_NATIVE_PREFETCH__.status();return s.loadedModes.length>0&&!s.originalActive&&!s.modeLoadPending;});
+  await page.evaluate(reminder=>{
+   const row=document.querySelector('.test-host:not([hidden]) [data-id="chat225"]');
+   row.querySelectorAll('.bx-im-list-recent-item__counter_number,[class*="mention"]').forEach(el=>el.remove());
+   const badge=document.createElement('div');badge.className='bx-im-list-recent-item__counter_number'+(reminder?' --no-counter':'');badge.textContent=reminder?'':'1';row.append(badge);
+   if(!reminder){const marker=document.createElement('div');marker.className='bx-im-list-recent-item__mention';row.append(marker);}
+   folderProbe.seed({id:'chat225',isTask:true,taskId:'225',hasUnread:false,hasLater:false,hasMention:false,unreadCount:0,counterFetchedAt:Date.now(),counterConfirmedAt:Date.now()});
+   const listeners=new Set();
+   const store=window.testCounterStore={state:{counters:{collection:{225:{chatId:225,counter:reminder?0:1,isMarkedAsUnread:reminder}}}},mention:!reminder,userId:window.BX.message('USER_ID'),getters:{},subscribe(fn){listeners.add(fn);return()=>listeners.delete(fn)},emit(type){listeners.forEach(fn=>fn({type}))},listeners};
+   store.getters['chats/get']=id=>id==='chat225'?{chatId:225}:null;
+   store.getters['messages/anchors/isChatHasAnchorsWithType']=(id,type)=>id===225&&type==='mention'&&store.mention;
+   window.BX.Messenger??={};window.BX.Messenger.v2={Application:{Core:{getStore:()=>window.testCounterStore,getUserId:()=>window.testCounterStore.userId}},Const:{AnchorType:{mention:'mention'}}};
+   folderProbe.notifyData();
+  },reminder);
+  const count=()=>page.locator('.test-host:not([hidden]) .pena-native-folder-tab[data-native-folder-id="folder:test"] .pena-native-tab-count').textContent();
+  assert.equal(await count(),'1','Folder must use the same v2 state as the unchanged native badge');
+  await page.evaluate(()=>{folderProbe.snapshot({CHAT:{},DIALOG:{},CHAT_UNREAD:[],DIALOG_UNREAD:[]});folderProbe.notifyData();});
+  assert.equal(await count(),'1','An empty legacy REST projection must not erase v2 notifications');
+  assert.equal(await page.evaluate(()=>testCounterStore.listeners.size),1,'Only one native subscription');
+  // The row never mutates again: the model must update counters outside the DOM window too.
+  await page.evaluate(()=>{testCounterStore.state.counters.collection[225]={chatId:225,counter:4,isMarkedAsUnread:false};testCounterStore.mention=false;testCounterStore.emit('counters/setCounters');});
+  await page.waitForFunction(()=>folderProbe.get('chat225').unreadCount===4);
+  assert.equal(await count(),'4');
+  await page.evaluate(()=>{delete testCounterStore.state.counters.collection[225];testCounterStore.emit('counters/clearById');});
+  await page.waitForFunction(()=>folderProbe.get('chat225').unreadCount===0&&!folderProbe.get('chat225').hasLater);
+  assert.equal(await count(),'0','Native clear must beat the old rendered badge');
+  await page.evaluate(()=>{testCounterStore.state.counters.collection[225]={chatId:225,counter:0,isMarkedAsUnread:true};testCounterStore.emit('counters/setCounters');});
+  await page.waitForFunction(()=>folderProbe.get('chat225').hasLater);
+  assert.equal(await count(),'1');
+  // Parent totals match Bitrix ItemCounters, without adding child reminders to a parent.
+  await page.evaluate(()=>{testCounterStore.state.counters.collection[226]={chatId:226,parentChatId:225,counter:3,isMarkedAsUnread:false};testCounterStore.emit('counters/setCounters');});
+  await page.waitForFunction(()=>folderProbe.get('chat225').unreadCount===3);
+  assert.equal(await count(),'3');
+  await page.evaluate(()=>{testCounterStore.userId='999999';folderProbe.seed({id:'chat225',hasUnread:false,hasLater:false,hasMention:false,unreadCount:0,counterConfirmedAt:Date.now()});folderProbe.notifyData();});
+  assert.equal(await count(),'0','Another user cannot supply native counters');
+  assert.equal(await page.evaluate(()=>testCounterStore.listeners.size),0,'Old user subscription removed');
+ }, mode);
  for(const kind of ['health','traversal','prefetch']) await scenario('folder badge catches a native unread/mention update during '+kind,async page=>{
   await page.evaluate(()=>folderProbe.apply());
   await page.waitForFunction(()=>{

@@ -248,9 +248,9 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' \
-            'Folder counters now retain native unread and mention events received during list recovery instead of dropping the pending refresh.' \
-            'Pending updates resume when the source becomes available or the window becomes visible; stale identity/source events are discarded.' \
-            'Older API responses cannot overwrite pending counter events, and newer confirmed reads cannot be undone by a delayed DOM snapshot.' \
+            'Folder counters now read the same Messenger v2 counter and mention model as the native Bitrix list, including task chats and read-later marks.' \
+            'Native model changes update folder badges even when the dialog is outside the rendered window. Explicit native clears remove notifications.' \
+            'Legacy REST counter projections cannot overwrite a known native model state. Missing native records remain unknown until an explicit native clear.' \
             'Includes the random color fix from 7.5.136 and earlier unread/read-later fixes.' \
             'Verified against all 83 registered regression suites before either installer is built.' \
             'Controlled tests are not a live Bitrix latency measurement. The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \
