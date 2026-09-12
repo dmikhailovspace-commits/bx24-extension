@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "7.5.136",
+  "version": "7.5.137",
   "release_date": "2026-09-12",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.136",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.136",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.137",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.137",
   "extension_files": [
-    "worker-v7_5_136.js",
+    "worker-v7_5_137.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,7 +33,7 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.136/extension/injected.js",
-  "changelog": "v7.5.136: randomly choose a free folder or dialog color with a strong perceptual and hue difference from the current color",
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.137/extension/injected.js",
+  "changelog": "v7.5.137: retain native counter events during list recovery and hidden windows; reconcile folder badges without overwriting newer read state",
   "verification_profile": "full"
 }

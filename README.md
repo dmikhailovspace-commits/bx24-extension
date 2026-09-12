@@ -2,13 +2,13 @@
 
 Расширение PENA Agency для настольного Bitrix24. Добавляет папки, цветовые маркеры, поиск, фильтрацию и сортировку диалогов, сохраняя нативную ленту чатов.
 
-Текущая версия: **7.5.136**.
+Текущая версия: **7.5.137**.
 
 ## Установка
 
 - Windows: запустите актуальный `PENA_Agency_Windows_v*.exe` из `dist/`.
 - macOS Intel / Apple Silicon: откройте актуальный `PENA_Agency_macOS_Universal_v*.dmg` из `dist/`, затем запустите `PENA BX24 Installer.app`. Terminal не открывается.
-- Chrome: выполните `pnpm build:chrome` и загрузите папку `chrome-release/unpacked/` через «Загрузить распакованное расширение». Для публикации используйте `chrome-release/BX24_Chat_Sorter_Chrome_v7.5.136.zip`. Браузерная версия называется «Сортировщик чатов Bitrix24», подключает только выбранные HTTPS-порталы. [Установка и материалы Chrome Web Store](docs/chrome/README.md).
+- Chrome: выполните `pnpm build:chrome` и загрузите папку `chrome-release/unpacked/` через «Загрузить распакованное расширение». Для публикации используйте `chrome-release/BX24_Chat_Sorter_Chrome_v7.5.137.zip`. Браузерная версия называется «Сортировщик чатов Bitrix24», подключает только выбранные HTTPS-порталы. [Установка и материалы Chrome Web Store](docs/chrome/README.md).
 
 Подробная пользовательская инструкция находится в `guide.html`.
 

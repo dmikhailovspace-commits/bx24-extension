@@ -66,7 +66,9 @@ const instrumentInjected = rawSource => {
 	]) source = addOptionalEntryHook(source, signature, metric);
 
 	for (const [flushAnchor, metric, required] of [
-		['\t\t_dialogNativeStatusRefreshTimer = setTimeout(() => {', 'statusRefreshFlush', false],
+		[source.includes('\t\t\tconst request = _dialogNativeStatusRefreshRequest;')
+			? '\t\t\tconst request = _dialogNativeStatusRefreshRequest;'
+			: '\t\t_dialogNativeStatusRefreshTimer = setTimeout(() => {', 'statusRefreshFlush', false],
 		['\t\t_dialogNativePresentationRefreshTimer = setTimeout(() => {', 'presentationRefreshFlush', false],
 		['\t\t_dialogNativePassThroughRefreshTimer = setTimeout(() => {', 'passThroughRefreshFlush', true]
 	]) {

@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.136';
+	window.__ANITREC_RUNNING__ = '7.5.137';
 
-	const VER = '7.5.136';
+	const VER = '7.5.137';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -3267,7 +3267,8 @@
 			// Recent-list metadata can arrive during this same load with provisional
 			// counters. Only confirmed counter snapshots and actual user/native events
 			// outrank the dedicated counters endpoint.
-			const counterAt = Math.max(0, Number(meta.counterConfirmedAt) || 0);
+			const counterAt = Math.max(0, Number(meta.counterConfirmedAt) || 0,
+				_getPendingDialogNativeCounterAt(meta.id));
 			if (requestStartedAt > 0 ? counterAt >= requestStartedAt :
 				counterAt > Math.max(0, Number(snapshot.fetchedAt) || 0)) return;
 			const id = normId(meta.id);
@@ -8998,6 +8999,13 @@
 		}, Math.max(100, Number(delay) || 450));
 	}
 
+	function _getPendingDialogNativeCounterAt(dialogId) {
+		const pending = _dialogNativeStatusRefreshRequest;
+		if (!pending || pending.scopeKey !== _getDialogNativeExpectedAuditScopeKey(pending.mode) ||
+			!_isDialogNativeSourceGenerationCurrent(pending.mode, pending.container, pending.viewport, pending.sourceGeneration)) return 0;
+		return pending.ids.size ? (pending.observedById.get(normId(dialogId)) || 0) : pending.observedAt;
+	}
+
 	function _scheduleDialogNativeStatusRefresh(container = findContainer(), dialogIds = [], delay = 70) {
 		if (IS_OL_FRAME || !container?.isConnected || !_isDialogControlNativePassThrough()) return;
 		const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
@@ -9005,22 +9013,38 @@
 		if (!viewport?.isConnected || viewport === _dialogControlManagedViewport) return;
 		const sourceGeneration = _getDialogNativeSourceGeneration(mode, container, viewport);
 		const ids = new Set(Array.from(dialogIds || []).map(normId).filter(Boolean));
+		const eventAt = Date.now();
+		const scopeKey = _getDialogNativeExpectedAuditScopeKey(mode);
 		const current = _dialogNativeStatusRefreshRequest;
 		if (current && current.mode === mode && current.container === container && current.viewport === viewport &&
-			current.sourceGeneration === sourceGeneration) {
+			current.sourceGeneration === sourceGeneration && current.scopeKey === scopeKey) {
 			if (!current.ids.size || !ids.size) current.ids.clear();
 			else ids.forEach(id => current.ids.add(id));
+			ids.forEach(id => current.observedById.set(id, eventAt));
+			current.observedAt = eventAt;
 		} else {
-			_dialogNativeStatusRefreshRequest = { mode, container, viewport, sourceGeneration, ids };
+			_dialogNativeStatusRefreshRequest = { mode, container, viewport, sourceGeneration, scopeKey, ids,
+				observedAt: eventAt, observedById: new Map(Array.from(ids, id => [id, eventAt])) };
 		}
 		if (_dialogNativeStatusRefreshTimer) clearTimeout(_dialogNativeStatusRefreshTimer);
-		_dialogNativeStatusRefreshTimer = setTimeout(() => {
+		const refresh = () => {
 			_dialogNativeStatusRefreshTimer = null;
 			const request = _dialogNativeStatusRefreshRequest;
+			if (!request) return;
+			if (request.scopeKey !== _getDialogNativeExpectedAuditScopeKey(request.mode) ||
+				!_isDialogNativeSourceGenerationCurrent(request.mode, request.container, request.viewport, request.sourceGeneration)) {
+				_dialogNativeStatusRefreshRequest = null;
+				return;
+			}
+			// Keep the event until the guarded source is readable. Dropping it here
+			// leaves folder badges stale although Bitrix has already painted the count.
+			if (document.hidden) return;
+			if (_dialogNativePrefetchActive || _dialogNativeOriginalScrollActive ||
+				_dialogNativeOriginalScrollFinishing || _dialogNativeHealthProbeActive) {
+				_dialogNativeStatusRefreshTimer = setTimeout(refresh, 120);
+				return;
+			}
 			_dialogNativeStatusRefreshRequest = null;
-			if (!request || document.hidden || _dialogNativePrefetchActive || _dialogNativeOriginalScrollActive ||
-				_dialogNativeOriginalScrollFinishing || _dialogNativeHealthProbeActive ||
-				!_isDialogNativeSourceGenerationCurrent(request.mode, request.container, request.viewport, request.sourceGeneration)) return;
 			_invalidateDialogControlDomReadCache();
 			let changed = false;
 			let observedAt = 0;
@@ -9029,6 +9053,9 @@
 				if (!id || (request.ids.size && !request.ids.has(id))) return;
 				const previous = _getDialogRecentMeta(id);
 				if (!previous) return;
+				const eventAt = request.ids.size ? request.observedById.get(id) : request.observedAt;
+				// A genuinely newer API/read event wins over a delayed DOM snapshot.
+				if (Number(previous.counterConfirmedAt) > eventAt) return;
 				const meta = getItemMeta(row);
 				if (!meta || normId(meta.id) !== id) return;
 				const next = {
@@ -9058,7 +9085,9 @@
 			_scheduleDialogRecentCacheWrite(80);
 			_notifyDialogRecentCountersChanged(request.container);
 			_publishDialogRecentSyncState();
-		}, Math.max(30, Number(delay) || 70));
+		};
+		_dialogNativeStatusRefreshRequest.resume = refresh;
+		_dialogNativeStatusRefreshTimer = setTimeout(refresh, Math.max(30, Number(delay) || 70));
 	}
 
 	function _scheduleDialogNativePresentationRefresh(container = findContainer(), rows = [], delay = 500) {
@@ -9185,6 +9214,9 @@
 					return;
 				}
 				const hiddenFor = _dialogLifecycleHiddenAt ? Date.now() - _dialogLifecycleHiddenAt : 0;
+				if (_dialogNativeStatusRefreshRequest && !_dialogNativeStatusRefreshTimer) {
+					_dialogNativeStatusRefreshRequest.resume?.();
+				}
 				_dialogLifecycleHiddenAt = 0;
 				_dialogLifecycleLastHeartbeatAt = Date.now();
 				const longHidden = hiddenFor >= _getDialogLongHiddenMs();
@@ -30234,6 +30266,18 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 		};
 
 		obs = new MutationObserver((mutations) => {
+		if (!IS_OL_FRAME && _isDialogControlNativeMode() && _isDialogControlNativePassThrough()) {
+			// A recycled row carries an old rendered snapshot, not a new counter event.
+			// Its identity/counters are captured together by the native window pass.
+			const recycledRows = new Set(mutations
+				.filter(mutation => mutation.type === 'attributes' && rowIdentityAttributes.has(mutation.attributeName))
+				.map(getMutationOwnerRow).filter(Boolean));
+			const counterIds = new Set(mutations.filter(mutation =>
+				!recycledRows.has(getMutationOwnerRow(mutation)) && mutationTouchesBitrixCounterState(mutation))
+				.map(mutation => normId(getChatIdFromElement(getMutationOwnerRow(mutation))))
+				.filter(Boolean));
+			if (counterIds.size) _scheduleDialogNativeStatusRefresh(container, counterIds, 55);
+		}
 		if (_dialogNativePrefetchActive || _dialogNativeOriginalScrollActive) {
 			if (_dialogNativeOriginalScrollActive && !IS_OL_FRAME && _isDialogControlNativePassThrough() &&
 				mutations.some(mutationTouchesBitrixRowIdentity)) {
@@ -30244,10 +30288,6 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 			return;
 		}
 		if (!IS_OL_FRAME && _isDialogControlNativeMode() && _isDialogControlNativePassThrough()) {
-			const counterIds = new Set(mutations.filter(mutationTouchesBitrixCounterState)
-				.map(mutation => normId(getChatIdFromElement(getMutationOwnerRow(mutation))))
-				.filter(Boolean));
-			if (counterIds.size) _scheduleDialogNativeStatusRefresh(container, counterIds, 55);
 			if (mutations.some(mutationTouchesBitrixRowIdentity)) {
 				// Newly virtualized rows must inherit an active PENA search before they
 				// can flash unfiltered in the native list. Do not suppress this with the

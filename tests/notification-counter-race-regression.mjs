@@ -5,6 +5,7 @@ import vm from 'node:vm';
 
 const source=readFileSync(process.env.PENA_COUNTER_SOURCE || new URL('../extension/injected.js',import.meta.url),'utf8');
 const names=['_fetchDialogCounterSnapshot','_applyDialogCounterSnapshot','_getDialogControlNotificationStatus'];
+if(source.includes('function _getPendingDialogNativeCounterAt(')) names.push('_getPendingDialogNativeCounterAt');
 function extract(name) {
  const match=new RegExp('\\n\\t(?:async )?function '+name+'\\(').exec(source);
  assert.ok(match,name);
@@ -16,6 +17,9 @@ const context=vm.createContext({
  Date:{now:()=>now}, Map,Set,Math,Number,Object,
  _dialogRecentMeta:new Map(), _dialogRecentRepositoryReady:false,
  _dialogRecentCountersAt:0,_dialogRecentCountersError:'',
+ _dialogNativeStatusRefreshRequest:null,
+ _isDialogNativeSourceGenerationCurrent:()=>true,
+ _getDialogNativeExpectedAuditScopeKey:()=>'testscope',
  normId:id=>String(id||''),
  _getDialogRecentMandatoryItems:()=>new Map(),_ensureDialogRecentMandatoryMeta:()=>{},
  _getDialogRecentUniqueMeta:target=>[...new Set(target.values())],
@@ -37,6 +41,25 @@ function record(id,count,at,extra={}) {
 function snapshot(count,extra={}) {
  return {complete:true,coverage:{chatCounts:true,chatManual:true},states:new Map([['chat1',{unreadCount:count,manualUnread:false,countSeen:true,manualSeen:true}]]),...extra};
 }
+await phase('queued native counter event fences an older API response only for that dialog',async()=>{
+ context._dialogRecentMeta.clear();now=2000;
+ const first=record('chat1',0,500),other=record('chat2',7,500);
+ context._dialogNativeStatusRefreshRequest={scopeKey:'testscope',ids:new Set(['chat1']),observedById:new Map([['chat1',1500]]),observedAt:1500};
+ try {
+  const old=snapshot(9,{startedAt:1000,fetchedAt:2000});old.states.set('chat2',{unreadCount:2,countSeen:true,manualSeen:true});
+  context._applyDialogCounterSnapshot(context._dialogRecentMeta,old);
+  assert.equal(first.counterConfirmedAt,500);assert.equal(first.unreadCount,0);assert.equal(other.unreadCount,2);
+  context._applyDialogCounterSnapshot(context._dialogRecentMeta,snapshot(0,{startedAt:1600,fetchedAt:2100}));
+  assert.equal(first.counterConfirmedAt,2100,'A genuinely newer counter snapshot must still apply');
+ } finally {context._dialogNativeStatusRefreshRequest=null;}
+});
+for(const invalid of ['identity','source']) await phase('queued event from another '+invalid+' cannot fence current counters',async()=>{
+ context._dialogRecentMeta.clear();const item=record('chat1',0,500);
+ context._dialogNativeStatusRefreshRequest={scopeKey:invalid==='identity'?'oldscope':'testscope',ids:new Set(['chat1']),observedById:new Map([['chat1',1500]]),observedAt:1500};
+ context._isDialogNativeSourceGenerationCurrent=()=>invalid!=='source';
+ try {context._applyDialogCounterSnapshot(context._dialogRecentMeta,snapshot(2,{startedAt:1000,fetchedAt:2000}));assert.equal(item.unreadCount,2);}
+ finally {context._dialogNativeStatusRefreshRequest=null;context._isDialogNativeSourceGenerationCurrent=()=>true;}
+});
 for(const [name,before,live,reply] of [
  ['read during counter request cannot resurrect old notifications',9,0,9],
  ['new message during counter request cannot lose its notifications',0,4,0],

@@ -23,6 +23,11 @@ const probe = `
   status: _scheduleDialogNativeStatusRefresh,
   prefs: _setDialogControlViewPrefs,
   notifyData: _notifyDialogRecentDataChanged,
+  busy: (kind, value) => {
+   if(kind==='health') _dialogNativeHealthProbeActive=value;
+   if(kind==='traversal') _dialogNativeOriginalScrollActive=value;
+   if(kind==='prefetch') _dialogNativePrefetchActive=value;
+  },
   items: () => _getDialogControlItems(),
   item: row => _getDialogControlItemForNativeRow(row)
  };
@@ -48,6 +53,63 @@ async function scenario(name, run) {
  finally { await page.close(); }
 }
 try {
+ for(const kind of ['health','traversal','prefetch']) await scenario('folder badge catches a native unread/mention update during '+kind,async page=>{
+  await page.evaluate(()=>folderProbe.apply());
+  await page.waitForFunction(()=>{
+   const s=__PENA_NATIVE_PREFETCH__.status();return s.loadedModes.includes('chats')&&!s.originalActive&&!s.modeLoadPending;
+  },undefined,{timeout:30000});
+  await page.evaluate(()=>{
+   const p=folderProbe,row=document.querySelector('.recent-host [data-id="chat225"]');
+   row.querySelectorAll('.bx-im-list-recent-item__counter_number,[class*="mention"]').forEach(node=>node.remove());
+   p.seed({id:'chat225',unreadCount:0,hasUnread:false,hasLater:false,hasMention:false,counterFetchedAt:Date.now(),counterConfirmedAt:Date.now()});
+   p.notifyData();
+  });
+  await page.waitForTimeout(120);
+  await page.evaluate(kind=>{
+   folderProbe.busy(kind,true);
+   const row=document.querySelector('.recent-host [data-id="chat225"]');
+   const badge=document.createElement('span');badge.className='bx-im-list-recent-item__counter_number';badge.textContent='1';
+   const mention=document.createElement('span');mention.className='bx-im-list-recent-item__counter_mention';mention.textContent='@';
+   row.append(mention,badge);
+  },kind);
+  await page.waitForTimeout(220);
+  await page.evaluate(kind=>folderProbe.busy(kind,false),kind);
+  await page.waitForFunction(()=>{
+   const folder=document.querySelector('.recent-host .pena-native-folder-tab[data-native-folder-id="folder:test"]');
+   const meta=folderProbe.get('chat225');
+   return meta.unreadCount===1&&meta.hasMention&&folder?.querySelector('.pena-native-tab-count')?.textContent==='1';
+  },undefined,{timeout:2500});
+  assert.equal(await page.locator('.recent-host [data-id="chat225"] .bx-im-list-recent-item__counter_number').textContent(),'1');
+ });
+ for(const newerRead of [false,true]) await scenario('pending counter '+(newerRead?'cannot undo a newer read':'resumes after returning to the visible window'),async page=>{
+  await page.evaluate(()=>folderProbe.apply());
+  await page.waitForFunction(()=>{
+   const s=__PENA_NATIVE_PREFETCH__.status();return s.loadedModes.includes('chats')&&!s.originalActive&&!s.modeLoadPending;
+  },undefined,{timeout:30000});
+  await page.evaluate(newerRead=>{
+   folderProbe.seed({id:'chat225',unreadCount:0,hasUnread:false,hasLater:false,hasMention:false,counterFetchedAt:Date.now(),counterConfirmedAt:Date.now()});
+   folderProbe.notifyData();
+   if(newerRead)folderProbe.busy('health',true);
+   else {
+    Object.defineProperty(document,'hidden',{configurable:true,get:()=>true});
+    document.dispatchEvent(new Event('visibilitychange'));
+   }
+   const row=document.querySelector('.recent-host [data-id="chat225"]');
+   row.querySelectorAll('.bx-im-list-recent-item__counter_number').forEach(node=>node.remove());
+   const badge=document.createElement('span');badge.className='bx-im-list-recent-item__counter_number';badge.textContent='3';row.append(badge);
+  },newerRead);
+  await page.waitForTimeout(180);
+  await page.evaluate(newerRead=>{
+   if(newerRead)folderProbe.seed({id:'chat225',unreadCount:0,hasUnread:false,counterFetchedAt:Date.now(),counterConfirmedAt:Date.now()});
+   if(newerRead)folderProbe.busy('health',false);
+   else {
+    Object.defineProperty(document,'hidden',{configurable:true,get:()=>false});
+    document.dispatchEvent(new Event('visibilitychange'));
+   }
+  },newerRead);
+  if(newerRead){await page.waitForTimeout(300);assert.equal(await page.evaluate(()=>folderProbe.get('chat225').unreadCount),0);}
+  else await page.waitForFunction(()=>folderProbe.get('chat225').unreadCount===3,undefined,{timeout:2500});
+ });
  await scenario('unmapped recycled row keeps its display baseline through repeated decoration cleanup', async page => {
   const result = await page.evaluate(() => {
    const p=folderProbe,row=document.querySelector('.recent-host [data-id="chat225"]');
