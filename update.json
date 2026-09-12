@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "7.5.135",
+  "version": "7.5.136",
   "release_date": "2026-09-12",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.135",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.135",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.136",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.136",
   "extension_files": [
-    "worker-v7_5_135.js",
+    "worker-v7_5_136.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,7 +33,7 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.135/extension/injected.js",
-  "changelog": "v7.5.135: preserve confirmed unread counters and read-later marks; restore filtered dialogs after native or API updates and recycled-row cleanup",
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.136/extension/injected.js",
+  "changelog": "v7.5.136: randomly choose a free folder or dialog color with a strong perceptual and hue difference from the current color",
   "verification_profile": "full"
 }

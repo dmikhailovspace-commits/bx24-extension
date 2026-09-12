@@ -6,7 +6,7 @@ const extract=name=>{const start=source.indexOf(`\tfunction ${name}(`);assert(st
 const colors=['#4d9dff','#5dc87e','#f59e0b','#ef4444','#a855f7','#14b8a6','#f97316','#94a3b8'];
 let seed=0,reads=0;const items={chats:[],tasks:[]};
 const context=vm.createContext({crypto:{getRandomValues:array=>{array[0]=seed;return array;}},_getDialogControlItemsForMode:mode=>{reads++;return items[mode];},_getDialogControlItems:()=>items.chats,_getDialogControlColors:()=>colors,_isDialogControlFolder:item=>item.type==='folder'});
-for(const name of ['_isHexColor','_normalizeDialogControlColor','_hexToRgb','_rgbToHex','_hsvToRgb','_hsvToHex','_getDialogControlAssignedColor','_getDialogControlColorLab','_makeUnusedDialogControlColor'])if(source.includes(`\tfunction ${name}(`))vm.runInContext(extract(name),context);
+for(const name of ['_isHexColor','_normalizeDialogControlColor','_hexToRgb','_rgbToHex','_hsvToRgb','_hsvToHex','_rgbToHsv','_hexToHsv','_getDialogControlAssignedColor','_getDialogControlColorLab','_makeUnusedDialogControlColor'])if(source.includes(`\tfunction ${name}(`))vm.runInContext(extract(name),context);
 const pick=current=>context._makeUnusedDialogControlColor(current);
 const delta=(a,b)=>{const x=context._getDialogControlColorLab(a),y=context._getDialogControlColorLab(b);return Math.hypot(...x.map((v,i)=>v-y[i]));};
 const report={phases:[]};const phase=(name,fn)=>{const began=performance.now();const detail=fn();report.phases.push({name,status:'PASS',ms:performance.now()-began,detail});};
@@ -25,7 +25,7 @@ try{
   const assigned=['#c74c4c','#c74b4b','#c64c4c','#c84c4c'];
   items.chats=assigned.map((color,i)=>({id:'folder:'+i,type:'folder',color}));items.tasks=[];
   const result=pick('#d15c50');const distances=assigned.map(color=>delta(result,color));
-  assert(Math.min(...distances)>.12);assert(delta(result,'#d15c50')>=.12);return{result,distances};
+  assert(Math.min(...distances)>.12);assert(delta(result,'#d15c50')>=.20);return{result,distances};
  });
  phase('all eight occupied hue families remain distinguishable',()=>{
   items.chats=colors.map((color,i)=>({id:'folder:'+i,type:'folder',color}));
@@ -34,19 +34,45 @@ try{
  });
  phase('successive random clicks change hue perceptually without saving swatches',()=>{
   const initialPalette=colors.slice();let previous='#c74c4c';const sequence=[];
-  for(let i=0;i<18;i++){seed=(i*2654435761)>>>0;const result=pick(previous);assert(delta(result,previous)>=.12);assert(!items.chats.some(item=>item.color===result));sequence.push(result);previous=result;}
+  for(let i=0;i<18;i++){seed=(i*2654435761)>>>0;const result=pick(previous);assert(delta(result,previous)>=.20);assert(!items.chats.some(item=>item.color===result));sequence.push(result);previous=result;}
   assert(new Set(sequence).size>=10);assert.deepEqual(colors,initialPalette);return{distinct:new Set(sequence).size};
  });
  phase('4000 assignments have bounded cost and cannot return an occupied color',()=>{
   items.chats=Array.from({length:4000},(_,i)=>({id:'folder:'+i,type:'folder',color:'#'+(i*3971%0xffffff).toString(16).padStart(6,'0')}));items.tasks=[];reads=0;
   const began=performance.now();const result=pick('#4d9dff');const ms=performance.now()-began;
-  assert(!new Set(items.chats.map(item=>item.color)).has(result));assert(delta(result,'#4d9dff')>=.12);assert.equal(reads,2);assert(ms<250);return{result,ms,reads};
+  assert(!new Set(items.chats.map(item=>item.color)).has(result));assert(delta(result,'#4d9dff')>=.20);assert.equal(reads,2);assert(ms<250);return{result,ms,reads};
  });
- phase('spatial acceleration preserves the exhaustive farthest-color result',()=>{
+ phase('spatial acceleration preserves the exhaustive random pool result',()=>{
   const accelerated=context._makeUnusedDialogControlColor;
   const actual=pick('#4d9dff');
   vm.runInContext(extract('_makeUnusedDialogControlColor').replace('const cells=occupied.length>64 ? new Map() : null;','const cells=null;'),context);
   try{assert.equal(pick('#4d9dff'),actual);}finally{context._makeUnusedDialogControlColor=accelerated;}
+ });
+ phase('every chromatic draft switches hue family; neutral drafts change visibly',()=>{
+  items.chats=[];items.tasks=[];
+  let checked=0;
+  for(const current of [...colors,'#ff0000','#00ff00','#0000ff','#000000','#ffffff','#808080','#101010']){
+   for(let i=0;i<32;i++){
+    seed=(i*2654435761)>>>0;const result=pick(current);assert.match(result,/^#[0-9a-f]{6}$/);
+    assert(delta(result,current)>=.20,`${current} -> ${result} is too similar`);
+    const hsv=context._hexToHsv(current),next=context._hexToHsv(result);
+    if(hsv.s>=.15&&hsv.v>=.15){const gap=Math.abs(hsv.h-next.h);assert(Math.min(gap,360-gap)>=90,`${current} -> ${result} kept the hue family`);}
+    checked++;
+   }
+  }
+  return{checked};
+ });
+ phase('same draft produces varied random colors instead of one farthest tone',()=>{
+  items.chats=colors.map(color=>({type:'folder',color}));items.tasks=[];
+  const results=[];
+  for(let i=0;i<100;i++){seed=(i*2654435761)>>>0;results.push(pick('#4d9dff'));}
+  assert(new Set(results).size>=80);
+  assert(new Set(results.map(color=>Math.floor(context._hexToHsv(color).h/30))).size>=4);
+  return{distinct:new Set(results).size};
+ });
+ phase('unavailable crypto still changes a neutral draft',()=>{
+  const crypto=context.crypto;context.crypto=undefined;
+  try{const result=pick('#808080');assert(delta(result,'#808080')>=.20);}finally{context.crypto=crypto;}
  });
  phase('exhausted candidate set cannot fall back to an occupied preset',()=>{
   seed=0;items.chats=Array.from({length:512},(_,i)=>({type:'folder',color:context._hsvToHex(i*137.508%360,.55+i%6*.07,.68+Math.floor(i/6)%6*.058)}));items.tasks=[];

@@ -248,10 +248,10 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' \
-            'Confirmed unread counters and read-later marks survive stale rendered badges and the former 45-second fallback.' \
-            'Numeric unread badges no longer erase a saved read-later mark.' \
-            'Unread filters update after native counter events and background API updates, so matching dialogs return to the list.' \
-            'Recycled-row cleanup preserves the original display state and no longer leaves dialogs hidden after changing folders.' \
+            'Random color now samples free candidates instead of repeatedly choosing the farthest tone from the palette.' \
+            'Folder and dialog colors differ from the current draft by at least 0.20 Oklab and, for chromatic colors, 90 degrees of hue.' \
+            'Assigned colors remain reserved across chats and tasks; crowded palettes never relax the difference from the current draft.' \
+            'Includes the unread counter, read-later mark and filtered dialog fixes from 7.5.135.' \
             'Verified against all 83 registered regression suites before either installer is built.' \
             'Controlled tests are not a live Bitrix latency measurement. The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \
             'Includes Windows EXE and Universal macOS DMG for Intel and Apple Silicon.' \

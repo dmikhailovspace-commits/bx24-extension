@@ -5,6 +5,16 @@ import {startHarnessServer} from './lib/harness-server.mjs';
 const server=await startHarnessServer();
 const browser=await chromium.launch({headless:true});
 const report={phases:[]},failures=[];
+const hue=color=>{
+ const [r,g,b]=color.match(/[a-f\d]{2}/gi).map(value=>parseInt(value,16));
+ const max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min;
+ if(!d||d/max<.15||max/255<.15)return null;
+ return ((max===r?(g-b)/d:max===g?(b-r)/d+2:(r-g)/d+4)*60+360)%360;
+};
+const assertDifferentHue=(before,after)=>{
+ const first=hue(before),second=hue(after);
+ if(first!==null&&second!==null){const gap=Math.abs(first-second);assert(Math.min(gap,360-gap)>=90,`${before} -> ${after} kept the hue family`);}
+};
 try{
  for(const width of [1000,360])for(const kind of ['dialog','folder']){
   const page=await browser.newPage({viewport:{width,height:760}});
@@ -32,12 +42,19 @@ try{
    assert(after.palette.left>=11&&after.palette.right<=width-11&&after.palette.top>=11&&after.palette.bottom<=749,'Palette escaped viewport');
    assert(Math.abs(random.left-after.palette.left)<.5,'Random color moved palette horizontally');
    assert.match(random.color,/^#[0-9a-f]{6}$/);assert.notEqual(random.color,colorBefore);
+   assertDifferentHue(colorBefore,random.color);
    const assigned=await page.evaluate(({kind})=>JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats')||'[]').find(item=>item.id===(kind==='dialog'?'chat225':'folder:test'))?.color,{kind});
    assert.equal(assigned,random.color,'Random picker did not persist the selected marker');
    assert.deepEqual(await page.evaluate(()=>JSON.parse(localStorage.getItem('pena.dialogControlColors.v1')||'[]')),savedBefore,'Random click saved a swatch without Plus');
-   await palette.locator('.dialog-control-palette-tool.--random').click();await page.waitForTimeout(80);
-   const next=await palette.evaluate(p=>p.querySelector('.dialog-control-preview').style.getPropertyValue('--dialog-chip-color'));
-   assert.notEqual(next,random.color,'Second random click reused the current draft');
+   let next=random.color;
+   for(let click=0;click<6;click++){
+    const previous=next;
+    await palette.locator('.dialog-control-palette-tool.--random').click();await page.waitForTimeout(80);
+    next=await palette.evaluate(p=>p.querySelector('.dialog-control-preview').style.getPropertyValue('--dialog-chip-color'));
+    assertDifferentHue(previous,next);
+    const persisted=await page.evaluate(({kind})=>JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats')||'[]').find(item=>item.id===(kind==='dialog'?'chat225':'folder:test'))?.color,{kind});
+    assert.equal(persisted,next);
+   }
    await palette.locator('.dialog-control-swatch.--add').click();
    assert((await page.evaluate(()=>JSON.parse(localStorage.getItem('pena.dialogControlColors.v1')||'[]'))).includes(next),'Plus did not save the chosen random color');
    if(drift>.5)failures.push(`${kind}/${width}: palette moved left ${drift.toFixed(2)}px during its opening animation`);

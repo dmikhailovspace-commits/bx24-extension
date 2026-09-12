@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.135';
+	window.__ANITREC_RUNNING__ = '7.5.136';
 
-	const VER = '7.5.135';
+	const VER = '7.5.136';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -12495,6 +12495,7 @@ if (_presetChannel) {
 		const current=_normalizeDialogControlColor(currentColor);
 		if (current) used.add(current);
 		const currentLab=_getDialogControlColorLab(current);
+		const currentHsv=current ? _hexToHsv(current) : null;
 		const occupied=[...used].map(_getDialogControlColorLab).filter(Boolean);
 		const distance=(a,b)=>(a[0]-b[0])**2+(a[1]-b[1])**2+(a[2]-b[2])**2;
 		const cells=occupied.length>64 ? new Map() : null;
@@ -12503,32 +12504,42 @@ if (_presetChannel) {
 			const bucket=cells.get(key);
 			if (bucket) bucket.push(lab); else cells.set(key,[lab]);
 		}
-		let random=Math.random();
-		try { const value=new Uint32Array(1); crypto.getRandomValues(value); random=value[0]/0x100000000; } catch {}
-		let best='', bestDistance=-1;
-		// Bounded farthest-color search. Never fall back to an assigned preset.
+		const randomUnit=()=>{
+			try { const value=new Uint32Array(1); crypto.getRandomValues(value); return value[0]/0x100000000; } catch { return Math.random(); }
+		};
+		const random=randomUnit();
+		const choices=[];
+		const crowdedChoices=[];
+		// Random choice among distinct free colors, not the same global maximum.
+		// Crowded catalogs may relax spacing to other assignments, never to the draft.
 		for (let attempt=0;attempt<512;attempt++) {
 			const color=_hsvToHex((random*360+attempt*137.508)%360,.55+(attempt%6)*.07,.68+(Math.floor(attempt/6)%6)*.058).toLowerCase();
 			if (used.has(color)) continue;
 			const lab=_getDialogControlColorLab(color);
-			if (currentLab && distance(lab,currentLab)<.12**2) continue;
-			// A nearby occupied color proves this candidate cannot beat the current
-			// best. Dense catalogs avoid scanning thousands of assignments per hue.
-			if (cells && bestDistance>=0 && bestDistance<=.15**2) {
-				const radius=Math.ceil(Math.sqrt(bestDistance)/.05);
+			if (currentLab && distance(lab,currentLab)<.20**2) continue;
+			if (currentHsv && currentHsv.s>=.15 && currentHsv.v>=.15) {
+				const hueGap=Math.abs(_hexToHsv(color).h-currentHsv.h);
+				if (Math.min(hueGap,360-hueGap)<90) continue;
+			}
+			crowdedChoices.push(color);
+			const cutoff=.08**2;
+			// Dense catalogs only need a local check for occupied nearby tones.
+			if (cells) {
+				const radius=Math.ceil(Math.sqrt(cutoff)/.05);
 				const [cx,cy,cz]=lab.map(v=>Math.floor(v/.05));
 				let blocked=false;
 				nearby: for(let x=cx-radius;x<=cx+radius;x++)for(let y=cy-radius;y<=cy+radius;y++)for(let z=cz-radius;z<=cz+radius;z++){
 					const bucket=cells.get(`${x},${y},${z}`);
-					if(bucket?.some(other=>distance(lab,other)<=bestDistance)){blocked=true;break nearby;}
+					if(bucket?.some(other=>distance(lab,other)<cutoff)){blocked=true;break nearby;}
 				}
 				if (blocked) continue;
 			}
 			let nearest=Infinity;
-			for (const other of occupied) { nearest=Math.min(nearest,distance(lab,other)); if (nearest<=bestDistance) break; }
-			if (nearest>bestDistance) { best=color; bestDistance=nearest; }
+			for (const other of occupied) { nearest=Math.min(nearest,distance(lab,other)); if (nearest<cutoff) break; }
+			if (nearest>=.08**2) choices.push(color);
 		}
-		return best;
+		const pool=choices.length ? choices : crowdedChoices;
+		return pool.length ? pool[Math.floor(randomUnit()*pool.length)] : '';
 	}
 
 	function _stopDialogControlColorEyedropper(message = '', options = {}) {
