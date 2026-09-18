@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.138';
+	window.__ANITREC_RUNNING__ = '7.5.139';
 
-	const VER = '7.5.138';
+	const VER = '7.5.139';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -20706,13 +20706,7 @@ if (_presetChannel) {
 		delete row.dataset.penaNativeNeedsPosition;
 		row.querySelectorAll?.('.pena-native-color-label,.pena-native-avatar-ring').forEach(el => el.remove());
 		_clearDialogControlNativeAvatarLayers(row);
-		row.querySelectorAll?.('.pena-native-avatar-ring-host').forEach(el => {
-			el.classList.remove('pena-native-avatar-ring-host');
-			el.style.removeProperty('--pena-native-color');
-			el.style.removeProperty('--pena-native-avatar-ring-size');
-			el.style.removeProperty('--pena-native-avatar-ring-left');
-			el.style.removeProperty('--pena-native-avatar-ring-top');
-		});
+		_clearDialogControlNativeAvatarRingHosts(row);
 		if (row.dataset.penaNativePrevDraggable !== undefined) {
 			const prevDraggable = row.dataset.penaNativePrevDraggable;
 			if (prevDraggable && prevDraggable !== '__pena_none__') row.setAttribute('draggable', prevDraggable);
@@ -20954,6 +20948,17 @@ if (_presetChannel) {
 		return scored[0]?.candidate || avatar.parentElement || null;
 	}
 
+	function _clearDialogControlNativeAvatarRingHosts(row, keep = null) {
+		row.querySelectorAll?.('.pena-native-avatar-ring-host').forEach(el => {
+			if (el === keep) return;
+			el.classList.remove('pena-native-avatar-ring-host');
+			el.style.removeProperty('--pena-native-color');
+			el.style.removeProperty('--pena-native-avatar-ring-size');
+			el.style.removeProperty('--pena-native-avatar-ring-left');
+			el.style.removeProperty('--pena-native-avatar-ring-top');
+		});
+	}
+
 	function _ensureDialogControlNativeColorLabel(row, color = '') {
 		if (!row) return null;
 		const next = _normalizeDialogControlColor(color);
@@ -20963,19 +20968,16 @@ if (_presetChannel) {
 		if (!next) {
 			existing.forEach(el => el.remove());
 			_clearDialogControlNativeAvatarLayers(row);
-			row.querySelectorAll?.('.pena-native-avatar-ring-host').forEach(el => {
-				el.classList.remove('pena-native-avatar-ring-host');
-				el.style.removeProperty('--pena-native-color');
-				el.style.removeProperty('--pena-native-avatar-ring-size');
-				el.style.removeProperty('--pena-native-avatar-ring-left');
-				el.style.removeProperty('--pena-native-avatar-ring-top');
-			});
+			_clearDialogControlNativeAvatarRingHosts(row);
 			return null;
 		}
 		const avatar = _getDialogControlNativeAvatarElement(row);
 		if (!avatar) return null;
 		const host = _resolveDialogControlNativeAvatarRingHost(row, avatar);
 		if (!host) return null;
+		// A loading/recreated portrait may move the ring to a different native
+		// container. Release our styles on the previous host, including ancestors.
+		_clearDialogControlNativeAvatarRingHosts(row, host);
 		_addDialogControlNativeClasses(host, 'pena-native-avatar-ring-host');
 		host.style.setProperty('--pena-native-color', next);
 		let ring = existing.find(el => el.parentElement === host) || document.createElement('span');
@@ -28057,7 +28059,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .pena-native-chat-row.--pena-native-static-row{position:relative}
 .pena-native-chat-row-paint.--native-colored,.pena-native-chat-row-paint.--native-folder-colored{background:transparent!important}
 .pena-native-chat-row-paint{border-radius:inherit!important;background-clip:padding-box}
-.pena-native-avatar-ring-host{position:relative!important;overflow:visible!important;isolation:isolate!important}
+.pena-native-avatar-ring-host{position:relative!important;isolation:isolate!important}
 .pena-native-avatar-ring{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;transform:none!important;display:block!important;border:4px solid var(--pena-native-color,#3b82f6)!important;border-radius:999px!important;background:transparent!important;box-shadow:0 0 0 1px rgba(255,255,255,.96),inset 0 0 0 1px rgba(15,23,42,.42)!important;box-sizing:border-box!important;pointer-events:none!important;z-index:1!important}
 .pena-native-avatar-stack-host{isolation:isolate!important}
 .pena-native-avatar-native-overlay,.pena-native-avatar-stack-host [class*="typing" i],.pena-native-avatar-stack-host [class*="writing" i],.pena-native-avatar-stack-host [aria-label*="печатает" i]{z-index:7!important}

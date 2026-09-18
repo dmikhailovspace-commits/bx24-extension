@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { chromium } from 'playwright';
 import { startHarnessServer, collectPageErrors } from './lib/harness-server.mjs';
+import { checkNativeAvatarTransitions } from './lib/native-avatar-transitions.mjs';
 
 const sourcePath = process.env.PENA_DOM_AUDIT_SOURCE || new URL('../extension/injected.js', import.meta.url);
 const raw = readFileSync(sourcePath, 'utf8');
@@ -53,6 +54,7 @@ const source = raw.replace(anchor, `${anchor}
 			},
 			repaint() { _dialogControlNativeViewSig = ''; _applyDialogControlNativeView(findContainer(), { forceShow: true }); },
 			repairLayers(row, host) { _syncDialogControlNativeAvatarLayers(row, host); },
+			colorAvatar(row, color) { _ensureDialogControlNativeColorLabel(row, color); },
 			syncStableTracker() {
 				const originalRead = _readDialogTimeTracker;
 				_readDialogTimeTracker = () => ({ taskId: '123', pendingSeconds: 60 });
@@ -249,6 +251,13 @@ try {
  });
  await toolbarPage.close();
  Object.assign(result, toolbarResult);
+ result.avatarTransitions = await checkNativeAvatarTransitions(page);
+ for (const state of result.avatarTransitions) {
+  assert.equal(state.cornerExposesPhoto, false, `Native photo became square: ${JSON.stringify(state)}`);
+  assert.equal(state.geometryPreserved, true, `Native avatar geometry changed: ${JSON.stringify(state)}`);
+  assert.equal(state.typingVisible, true, `Native typing overlay was clipped: ${JSON.stringify(state)}`);
+  assert.equal(state.staleHosts, 0, `Replaced portrait retained ring styles: ${JSON.stringify(state)}`);
+ }
  assert.ok(result.rows >= 1000, `Large native row fixture was not materialized: ${JSON.stringify(result)}`);
  assert.ok(result.mutationRecords < result.rows, `Repeated projection flooded native observers: ${JSON.stringify(result)}`);
  assert.equal(result.toolbarScans, 0, `PENA toolbar classes triggered native route scans: ${JSON.stringify(result)}`);
