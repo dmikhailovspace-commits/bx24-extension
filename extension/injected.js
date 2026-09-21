@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.0';
+	window.__ANITREC_RUNNING__ = '8.0.1';
 
-	const VER = '8.0.0';
+	const VER = '8.0.1';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -20528,6 +20528,7 @@ if (_presetChannel) {
 		document.addEventListener('mousedown', handleNativeMultiSelectPress, true);
 		document.addEventListener('click', (e) => {
 			if (!_isDialogControlNativeMode() || _dialogControlActive) return;
+			if (e.target?.closest?.('[data-dialog-control-context-menu="1"],.dialog-control-palette,.pena-native-confirm-overlay')) return;
 			const row = _getDialogControlNativeEventRow(e.target);
 			if (suppressEyedropperGesture(e, true)) return;
 			if ((e.ctrlKey || e.metaKey || e.shiftKey) && row) {
@@ -23498,15 +23499,18 @@ if (_presetChannel) {
 	}
 
 	const _dialogControlReadActions = new Map();
-	function _runDialogControlReadStateAction(item, h, mode) {
+	function _runDialogControlReadStateAction(item, h, mode, options = {}) {
 		if (!item || _isDialogControlFolder(item)) return Promise.resolve(false);
 		const id = normId(item.id);
 		const scope = _getDialogNativeSharedAuditScopeKey() || location.host + ':self';
-		const isCurrent = () => scope === (_getDialogNativeSharedAuditScopeKey() || location.host + ':self');
+		const isCurrent = () => scope === (_getDialogNativeSharedAuditScopeKey() || location.host + ':self') && (!options.isCurrent || options.isCurrent());
 		const key = scope + ':' + id;
 		const previous = _dialogControlReadActions.get(key);
-		if (previous?.mode === mode) return previous.promise;
-		const operation = { mode, promise: null };
+		if (previous?.mode === mode && previous.isCurrent()) {
+			if (options.onPartial) previous.partialListeners.add(options.onPartial);
+			return previous.promise;
+		}
+		const operation = { mode, promise: null, isCurrent, partialListeners: new Set(options.onPartial ? [options.onPartial] : []) };
 		operation.promise = (previous?.promise || Promise.resolve()).catch(() => {}).then(async () => {
 			if (!isCurrent()) return false;
 			const targetEl = findChatElementById(id);
@@ -23548,11 +23552,12 @@ if (_presetChannel) {
 				_invalidateDialogControlDomReadCache();
 				_applyDialogControlItemDomState(id, h);
 				const partial = mode === 'read' && !result.reminderCleared;
-				_showDialogDockToast(mode === 'read' ? partial ? 'Сообщения прочитаны. Не удалось снять «прочитать позже»' : 'Сообщения прочитаны' : mode === 'clear-later' ? 'Отметка «прочитать позже» снята' : 'Отметка «прочитать позже» поставлена', partial ? 'danger' : 'ok');
-				_refreshDialogControlLaterState(h);
+				if (partial) operation.partialListeners.forEach(listener => listener(id));
+				if (!options.silent) _showDialogDockToast(mode === 'read' ? partial ? 'Сообщения прочитаны. Не удалось снять «прочитать позже»' : 'Сообщения прочитаны' : mode === 'clear-later' ? 'Отметка «прочитать позже» снята' : 'Отметка «прочитать позже» поставлена', partial ? 'danger' : 'ok');
+				if (!options.deferRefresh) _refreshDialogControlLaterState(h);
 				return true;
 			} catch (error) {
-				if (isCurrent()) _showDialogDockToast(mode === 'read' ? 'Не удалось прочитать сообщения' : 'Не удалось изменить отметку', 'danger');
+				if (isCurrent() && !options.silent) _showDialogDockToast(mode === 'read' ? 'Не удалось прочитать сообщения' : 'Не удалось изменить отметку', 'danger');
 				return false;
 			}
 		}).finally(() => {
@@ -23560,6 +23565,30 @@ if (_presetChannel) {
 		});
 		_dialogControlReadActions.set(key, operation);
 		return operation.promise;
+	}
+
+	async function _runDialogControlSelectedReadStateAction(items, h, action) {
+		const targets = Array.from(new Map(items.filter(item => item && !_isDialogControlFolder(item))
+			.map(item => [normId(item.id), { ...item }])).values());
+		if (!targets.length) return;
+		if (targets.length === 1) return _runDialogControlReadStateAction(targets[0], h, action);
+		const mode = _pMode();
+		const scope = _getDialogNativeSharedAuditScopeKey() || location.host + ':self';
+		const isCurrent = () => mode === _pMode() && scope === (_getDialogNativeSharedAuditScopeKey() || location.host + ':self');
+		let completed = 0;
+		const partial = new Set();
+		// Keep the menu's snapshot even when refresh/filtering changes selection.
+		// Sequential writes also preserve the existing per-dialog action queue.
+		for (const target of targets) {
+			if (!isCurrent()) return;
+			if (await _runDialogControlReadStateAction(target, h, action, { silent: true, deferRefresh: true, isCurrent, onPartial: id => partial.add(id) })) completed++;
+		}
+		if (!isCurrent()) return;
+		const title = action === 'read' ? 'Прочитано' : action === 'clear-later' ? 'Отметка снята' : 'Отмечено «прочитать позже»';
+		const detail = partial.size ? `. Не удалось снять отметку: ${partial.size}` : '';
+		_showDialogDockToast(`${title}: ${completed} из ${targets.length}${detail}`, completed < targets.length || partial.size ? 'danger' : 'ok');
+		_refreshDialogControlLaterState(h);
+		return { completed, total: targets.length, partial: partial.size };
 	}
 
 	function _markDialogControlItemLater(item, h = filtersHost) {
@@ -24156,6 +24185,9 @@ if (_presetChannel) {
 		event.stopImmediatePropagation?.();
 		_closeDialogControlPalettes(true);
 		_closeDialogControlContextMenu();
+		const allItems = _getDialogControlItems();
+		const targetIds = _getDialogControlMoveGroupIds(item.id, allItems);
+		const targetItems = targetIds.map(id => ({ ...(allItems.find(candidate => String(candidate.id) === id) || item) }));
 		const menu = document.createElement('div');
 		menu.className = 'dialog-control-context-menu';
 		menu.dataset.dialogControlContextMenu = '1';
@@ -24164,7 +24196,8 @@ if (_presetChannel) {
 		laterBtn.type = 'button';
 		laterBtn.className = 'dialog-control-context-item';
 		laterBtn.setAttribute('role', 'menuitem');
-		const removeLater = !!meta?.hasLater;
+		const removeLater = targetItems.every(target => !!(String(target.id) === String(item.id)
+			? meta : _getDialogControlEffectiveMeta(target))?.hasLater);
 		laterBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg><span></span>';
 		laterBtn.querySelector('span').textContent = removeLater ? 'Снять отметку «прочитать позже»' : 'Прочитать позже';
 		const readBtn = document.createElement('button');
@@ -24172,10 +24205,10 @@ if (_presetChannel) {
 		readBtn.className = 'dialog-control-context-item';
 		readBtn.setAttribute('role', 'menuitem');
 		readBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg><span>Прочитано</span>';
-		readBtn.title = 'Прочитать все сообщения диалога';
+		readBtn.title = targetItems.length > 1 ? 'Прочитать все сообщения выбранных диалогов' : 'Прочитать все сообщения диалога';
 		const colorDivider = document.createElement('div');
 		colorDivider.className = 'dialog-control-context-divider';
-		const colorTargetIds = _getDialogControlMoveGroupIds(item.id);
+		const colorTargetIds = targetIds;
 		const canControlColor = _canControlDialogItemColors(colorTargetIds);
 		const colorBtn = _makeDialogControlContextButton(
 			'dialog-control-context-color-marker',
@@ -24202,7 +24235,7 @@ if (_presetChannel) {
 		const segmentTitle = document.createElement('div');
 		segmentTitle.className = 'dialog-control-context-title';
 		segmentTitle.textContent = 'Группа';
-		const targetSegmentIds = _getDialogControlMoveGroupIds(item.id);
+		const targetSegmentIds = targetIds;
 		const currentSegmentId = String(item.segmentId || '');
 		const makeSegmentBtn = (segmentId, title) => {
 			const btn = document.createElement('button');
@@ -24233,7 +24266,7 @@ if (_presetChannel) {
 		const folderTitle = document.createElement('div');
 		folderTitle.className = 'dialog-control-context-title';
 		folderTitle.textContent = 'Папка';
-		const targetFolderIds = _getDialogControlMoveGroupIds(item.id);
+		const targetFolderIds = targetIds;
 		const currentFolderId = String(item.folderId || '');
 		const menuFolderSegmentId = String(item.segmentId || _getDialogControlActiveSegmentId() || '');
 		const menuItems = _getDialogControlItems();
@@ -24319,7 +24352,7 @@ if (_presetChannel) {
 			groupClearButtons.push(clearGroupDivider, clearGroupBtn);
 		}
 		const originalMenuActions = [];
-		if (!IS_OL_FRAME) {
+		if (!IS_OL_FRAME && targetItems.length === 1) {
 			const originalDivider = document.createElement('div');
 			originalDivider.className = 'dialog-control-context-divider';
 			const originalMenuBtn = _makeDialogControlContextButton(
@@ -24380,15 +24413,14 @@ if (_presetChannel) {
 			e.stopPropagation();
 			e.stopImmediatePropagation?.();
 			close();
-			if (removeLater) await _clearDialogControlItemLater(item, h);
-			else await _markDialogControlItemLater(item, h);
+			await _runDialogControlSelectedReadStateAction(targetItems, h, removeLater ? 'clear-later' : 'later');
 		});
 		readBtn.addEventListener('click', async (e) => {
 			e.preventDefault();
 			e.stopPropagation();
 			e.stopImmediatePropagation?.();
 			close();
-			await _markDialogControlItemRead(item, h);
+			await _runDialogControlSelectedReadStateAction(targetItems, h, 'read');
 		});
 		setTimeout(() => {
 			document.addEventListener('pointerdown', onPointerDown, true);
