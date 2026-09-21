@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "7.5.139",
-  "release_date": "2026-09-18",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v7.5.139",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.139",
+  "version": "8.0.0",
+  "release_date": "2026-09-21",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v8.0.0",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v8.0.0",
   "extension_files": [
-    "worker-v7_5_139.js",
+    "worker-v8_0_0.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,7 +33,7 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v7.5.139/extension/injected.js",
-  "changelog": "v7.5.139: preserve native avatar clipping while photos load; remove stale ring styles when Bitrix recreates the portrait container",
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v8.0.0/extension/injected.js",
+  "changelog": "v8.0.0: restore colored rings on photo avatars in ordinary chats; keep native rounding and typing overlays through photo and initials transitions",
   "verification_profile": "full"
 }

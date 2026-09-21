@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '7.5.139';
+	window.__ANITREC_RUNNING__ = '8.0.0';
 
-	const VER = '7.5.139';
+	const VER = '8.0.0';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -20909,7 +20909,9 @@ if (_presetChannel) {
 		const candidates = [];
 		const seen = new Set();
 		const add = candidate => {
-			if (!candidate || candidate === row || !row.contains(candidate) || seen.has(candidate)) return;
+			// Bitrix also uses __content on IMG itself. closest() can return that
+			// same void element, whose children never render; use its wrapper.
+			if (!candidate || candidate === avatar || candidate === row || !row.contains(candidate) || seen.has(candidate)) return;
 			seen.add(candidate);
 			candidates.push(candidate);
 		};

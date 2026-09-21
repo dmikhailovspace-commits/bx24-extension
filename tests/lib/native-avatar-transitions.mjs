@@ -69,3 +69,47 @@ export async function checkNativeAvatarTransitions(page) {
   return states;
  });
 }
+
+// Current Bitrix Avatar puts __content on the IMG itself, rather than on a
+// wrapper. Task/chat initials use a DIV with the very same class.
+export async function checkNativeImageRing(page) {
+ return page.evaluate(async () => {
+  const states = [];
+  const row = document.createElement('div');
+  row.style.cssText = 'position:fixed;left:600px;top:100px;width:100px;height:100px;z-index:2147483647;background:white';
+  document.body.append(row);
+  try {
+   for (const prefix of ['bx-im-avatar', 'bx-im-component-avatar']) {
+    row.innerHTML = '<div class="bx-im-list-recent-item__avatar_container" style="position:relative;width:48px;height:64px;display:flex;align-items:center"><div class="bx-im-list-recent-item__avatar_content" style="position:relative;width:48px;height:48px"><div class="' + prefix + '__container" style="position:relative;width:48px;height:48px"></div><span class="bx-im-avatar__typing" style="position:absolute;left:39px;top:39px;width:16px;height:16px;border-radius:50%;background:blue"></span></div></div>';
+    const container = row.querySelector('.' + prefix + '__container');
+    const typing = row.querySelector('.bx-im-avatar__typing');
+    let portrait = null;
+    for (const kind of ['initials', 'photo', 'fallback initials', 'replacement photo']) {
+     const next = document.createElement(kind.includes('photo') ? 'img' : 'div');
+     next.className = prefix + '__content ' + (next.tagName === 'IMG' ? '--image' : '--text');
+     next.style.cssText = 'display:block;width:100%;height:100%;border-radius:50%;background:#94a3b8;object-fit:cover';
+     if (next.tagName === 'IMG') {
+      next.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><path fill="red" d="M0 0h48v48H0z"/></svg>');
+      await next.decode();
+     } else next.textContent = 'SC';
+     if (portrait) portrait.replaceWith(next); else container.append(next);
+     portrait = next;
+     window.__PENA_DOM_AUDIT__.colorAvatar(row, '#ce3370');
+     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+     const ring = row.querySelector('.pena-native-avatar-ring');
+     const ringRect = ring?.getBoundingClientRect();
+     const rect = portrait.getBoundingClientRect();
+     states.push({ prefix, kind,
+      ringRendered: !!ring?.getClientRects().length && ringRect.width > 0 && ringRect.height > 0,
+      ringInsideImage: !!ring?.closest('img'),
+      geometryPreserved: !!ringRect && ['x','y','width','height'].every(key => Math.abs(ringRect[key] - rect[key]) < .1),
+      photoRounded: getComputedStyle(portrait).borderRadius === '50%',
+      typingVisible: document.elementFromPoint(rect.right + 4, rect.bottom + 4) === typing,
+      nativePortraitPreserved: container.contains(portrait) && (portrait.tagName !== 'IMG' || portrait.naturalWidth === 48)
+     });
+    }
+   }
+  } finally { row.remove(); }
+  return states;
+ });
+}

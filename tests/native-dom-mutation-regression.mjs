@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { chromium } from 'playwright';
 import { startHarnessServer, collectPageErrors } from './lib/harness-server.mjs';
-import { checkNativeAvatarTransitions } from './lib/native-avatar-transitions.mjs';
+import { checkNativeAvatarTransitions, checkNativeImageRing } from './lib/native-avatar-transitions.mjs';
 
 const sourcePath = process.env.PENA_DOM_AUDIT_SOURCE || new URL('../extension/injected.js', import.meta.url);
 const raw = readFileSync(sourcePath, 'utf8');
@@ -252,6 +252,15 @@ try {
  await toolbarPage.close();
  Object.assign(result, toolbarResult);
  result.avatarTransitions = await checkNativeAvatarTransitions(page);
+ result.nativeImageRings = await checkNativeImageRing(page);
+ for (const state of result.nativeImageRings) {
+  assert.equal(state.ringRendered, true, `Avatar ring is not painted: ${JSON.stringify(state)}`);
+  assert.equal(state.ringInsideImage, false, `Ring appended inside a void IMG: ${JSON.stringify(state)}`);
+  assert.equal(state.geometryPreserved, true, `Ring no longer follows the native portrait: ${JSON.stringify(state)}`);
+  assert.equal(state.photoRounded, true, `Photo lost its native rounding: ${JSON.stringify(state)}`);
+  assert.equal(state.typingVisible, true, `Native typing overlay was clipped: ${JSON.stringify(state)}`);
+  assert.equal(state.nativePortraitPreserved, true, `Native portrait was replaced: ${JSON.stringify(state)}`);
+ }
  for (const state of result.avatarTransitions) {
   assert.equal(state.cornerExposesPhoto, false, `Native photo became square: ${JSON.stringify(state)}`);
   assert.equal(state.geometryPreserved, true, `Native avatar geometry changed: ${JSON.stringify(state)}`);

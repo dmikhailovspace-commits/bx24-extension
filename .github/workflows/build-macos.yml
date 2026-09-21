@@ -248,9 +248,9 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' \
-            'Colored avatar rings preserve native portrait clipping, including photos inserted or loaded after the folder color is applied.' \
-            'Recreated portrait containers release stale ring styles. Native typing overlays retain their geometry and visibility.' \
-            'Includes the Messenger v2 counter fix from 7.5.138 and earlier random color fixes.' \
+            'Restores colored rings on photo avatars in ordinary chats. The ring attaches to a real container instead of inside the native IMG element.' \
+            'Covers photo-to-initials and initials-to-photo transitions for both native avatar class variants, preserving portrait geometry and typing overlays.' \
+            'Includes the native rounding fix from 7.5.139, Messenger v2 counters and earlier random color fixes.' \
             'Verified against all 83 registered regression suites before either installer is built.' \
             'Controlled tests are not a live Bitrix latency measurement. The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \
             'Includes Windows EXE and Universal macOS DMG for Intel and Apple Silicon.' \
