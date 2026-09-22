@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.1';
+	window.__ANITREC_RUNNING__ = '8.0.2';
 
-	const VER = '8.0.1';
+	const VER = '8.0.2';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -19314,6 +19314,7 @@ if (_presetChannel) {
 			'.bx-im-component-avatar__container img',
 			'.bx-im-avatar__content',
 			'.bx-im-component-avatar__content',
+			'.bx-im-base-ui-avatar__container .ui-avatar',
 			'.bx-im-list-recent-item__avatar_container',
 			'.bx-im-list-recent-item__avatar .bx-im-avatar__container',
 			'.bx-im-list-recent-item__avatar .bx-im-component-avatar__container',
@@ -19343,6 +19344,9 @@ if (_presetChannel) {
 				let score = ratio * 100 - index / 1000;
 				if (candidate.matches?.('img')) score += 180;
 				if (candidate.matches?.('.bx-im-avatar__content,.bx-im-component-avatar__content')) score += 150;
+				// Collab guests use SVG inside UI.Avatar, not the regular IMG/DIV
+				// component. Its square HTML host owns the portrait's exact bounds.
+				if (candidate.matches?.('.bx-im-base-ui-avatar__container .ui-avatar')) score += 150;
 				if (candidate.matches?.('.test-avatar,.pena-native-remote-avatar')) score += 120;
 				if (candidate.matches?.('.bx-im-component-avatar__container,.bx-im-avatar__container')) score += 80;
 				if (candidate.matches?.('.bx-im-list-recent-item__avatar_container')) score += 45;

@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { chromium } from 'playwright';
 import { startHarnessServer, collectPageErrors } from './lib/harness-server.mjs';
-import { checkNativeAvatarTransitions, checkNativeImageRing } from './lib/native-avatar-transitions.mjs';
+import { checkNativeAvatarTransitions, checkNativeImageRing, checkCollabAvatarRing } from './lib/native-avatar-transitions.mjs';
 
 const sourcePath = process.env.PENA_DOM_AUDIT_SOURCE || new URL('../extension/injected.js', import.meta.url);
 const raw = readFileSync(sourcePath, 'utf8');
@@ -253,6 +253,14 @@ try {
  Object.assign(result, toolbarResult);
  result.avatarTransitions = await checkNativeAvatarTransitions(page);
  result.nativeImageRings = await checkNativeImageRing(page);
+ result.collabImageRings = await checkCollabAvatarRing(page);
+ for (const state of result.collabImageRings) {
+  assert.equal(state.ringCount, state.phase === 'uncolored folder' ? 0 : 1, JSON.stringify(state));
+  for (const key of ['correctHost', 'geometryPreserved', 'nativeSvgPreserved', 'typingVisible']) {
+   assert.equal(state[key], true, `Collab ${key}: ${JSON.stringify(state)}`);
+  }
+  assert.equal(state.staleHosts, 0, `Collab stale ring host: ${JSON.stringify(state)}`);
+ }
  for (const state of result.nativeImageRings) {
   assert.equal(state.ringRendered, true, `Avatar ring is not painted: ${JSON.stringify(state)}`);
   assert.equal(state.ringInsideImage, false, `Ring appended inside a void IMG: ${JSON.stringify(state)}`);

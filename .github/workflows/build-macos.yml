@@ -248,10 +248,9 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' \
-            'Every PENA context-menu command uses the same captured multi-selection, including read, read-later, colors, groups and folders.' \
-            'Menu and palette clicks preserve selection. Mixed reminder states are marked together; all-marked selections offer removal.' \
-            'Bulk writes continue after individual failures, report one aggregate result and stop on account or mode changes. The single-dialog native menu remains available for one selected dialog.' \
-            'Includes the avatar-ring fix from 8.0.0 and earlier counter fixes.' \
+            'Fixes stretched avatar rings on collab users: the ring follows the native SVG avatar instead of the taller chat row.' \
+            'Preserves the native portrait, SVG mask and typing indicator when photos or avatar components are recreated.' \
+            'Includes all multi-selection context-menu actions from 8.0.1 and earlier avatar/counter fixes.' \
             'Verified against all 83 registered regression suites before either installer is built.' \
             'Controlled tests are not a live Bitrix latency measurement. The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \
             'Includes Windows EXE and Universal macOS DMG for Intel and Apple Silicon.' \
