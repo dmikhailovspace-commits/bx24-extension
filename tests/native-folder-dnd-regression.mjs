@@ -85,7 +85,27 @@ try {
 		colored: row.classList.contains('--native-colored')
 	})), { folderId: '', colored: false }, 'Dialog marker survived folder removal');
 	assert.deepEqual(pageErrors, [], `Page errors: ${pageErrors.join(' | ')}`);
-	console.log('PASS native folder DnD: aggregate reorder, no group binding, reload persistence and dialog unassign');
+	// Returning an uncolored dialog to a colored folder must not paint a marker.
+	await page.waitForTimeout(750);
+	await assignedRow.dragTo(folder);
+	await page.waitForFunction(() => document.querySelector('.recent-host .pena-native-chat-row[data-id="chat225"]')?.dataset.penaNativeFolderId === 'folder:test');
+	const assertNoInheritedMarker = async () => {
+		assert.equal((await storedItems()).find(item => item.id === 'folder:test')?.color, '#f59e0b', 'Moving a dialog changed the folder color');
+		assert.equal((await storedItems()).find(item => item.id === 'chat225')?.color || '', '', 'Folder color was written to the dialog');
+		assert.deepEqual(await assignedRow.evaluate(row => ({ color: row.dataset.penaNativeColor || '', rings: row.querySelectorAll('.pena-native-avatar-ring').length })),
+			{ color: '', rings: 0 }, 'Uncolored dialog inherited the folder marker');
+	};
+	await assertNoInheritedMarker();
+	await page.route('**/tests/native-consistency-harness.html?*', async route => {
+		const response = await route.fetch();
+		const html = (await response.text()).replace('localStorage.setItem(`pena.dialogControl.v1.${storageMode}`, JSON.stringify(items));', 'if (!localStorage.getItem(`pena.dialogControl.v1.${storageMode}`)) localStorage.setItem(`pena.dialogControl.v1.${storageMode}`, JSON.stringify(items));');
+		await route.fulfill({ response, body: html });
+	});
+	await page.reload();
+	await assignedRow.waitFor({ state: 'visible', timeout: 5000 });
+	await page.waitForFunction(() => document.querySelector('.recent-host .pena-native-chat-row[data-id="chat225"]')?.dataset.penaNativeFolderId === 'folder:test');
+	await assertNoInheritedMarker();
+	console.log('PASS native folder DnD: aggregate reorder, no group binding, reload persistence, dialog unassign and no inherited color');
 } finally {
 	await browser.close();
 	await server.close();

@@ -11,6 +11,17 @@ const pick=current=>context._makeUnusedDialogControlColor(current);
 const delta=(a,b)=>{const x=context._getDialogControlColorLab(a),y=context._getDialogControlColorLab(b);return Math.hypot(...x.map((v,i)=>v-y[i]));};
 const report={phases:[]};const phase=(name,fn)=>{const began=performance.now();const detail=fn();report.phases.push({name,status:'PASS',ms:performance.now()-began,detail});};
 try{
+ phase('folder colors never become dialog markers; explicit markers survive folder moves',()=>{
+  const folders=[{id:'f1',type:'folder',color:'#ff0000'},{id:'f2',type:'folder',color:'#0000ff'}];
+  const dialog={id:'chat1',folderId:'f1'};
+  const assigned=()=>context._getDialogControlAssignedColor(dialog,folders);
+  assert.equal(assigned(),'');
+  dialog.folderId='f2'; assert.equal(assigned(),'');
+  dialog.color='#22c55e'; assert.equal(assigned(),'#22c55e');
+  dialog.folderId='f1'; assert.equal(assigned(),'#22c55e');
+  folders[0].color='#a855f7'; assert.equal(assigned(),'#22c55e');
+  dialog.colorMode='none'; assert.equal(assigned(),'');
+ });
  phase('empty folder and inactive-mode assignments cannot be reused',()=>{
   items.chats=[{type:'folder',id:'folder:empty',color:'#c74c4c'}];items.tasks=[{type:'folder',id:'folder:other',color:'#c84c4c'}];
   const result=pick('#c94c4c');assert(!['#c74c4c','#c84c4c','#c94c4c',...colors].includes(result));

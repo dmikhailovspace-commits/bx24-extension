@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.2';
+	window.__ANITREC_RUNNING__ = '8.0.3';
 
-	const VER = '8.0.2';
+	const VER = '8.0.3';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -12596,9 +12596,7 @@ if (_presetChannel) {
 		const folder = items.find(candidate => _isDialogControlFolder(candidate) && String(candidate.id || '') === folderId);
 		if (!folder) return '';
 		if (item.colorMode === 'none') return '';
-		const ownColor = _normalizeDialogControlColor(item.color);
-		if (ownColor) return ownColor;
-		return _normalizeDialogControlColor(folder?.color);
+		return _normalizeDialogControlColor(item.color);
 	}
 
 	function _getDialogControlColorLab(color) {
@@ -19612,15 +19610,9 @@ if (_presetChannel) {
 		const availableItems = (Array.isArray(items) ? items : []).filter(_isDialogControlItemVisibleInManagedList);
 		const catalog = window.__PENA_NATIVE_CATALOG__;
 		if (catalog?.selectRows) {
-			const folderMap = _getDialogControlFolderMap(availableItems);
-			const colorAwareItems = availableItems.map(item => {
-				if (_isDialogControlFolder(item) || item?.color || item?.colorMode === 'none') return item;
-				const inherited = _normalizeDialogControlColor(folderMap.get(String(item?.folderId || ''))?.color);
-				return inherited ? { ...item, color: inherited } : item;
-			});
 			const prefs = _getDialogControlViewPrefs();
 			return catalog.selectRows({
-				items: colorAwareItems,
+				items: availableItems,
 				recentById: _dialogRecentMeta,
 				mode: _pMode(),
 				query: filters.query,
@@ -21017,9 +21009,8 @@ if (_presetChannel) {
 			delete row.dataset.penaNativeBasePaddingLeft;
 			row.style.removeProperty('--pena-native-base-padding-left');
 		}
-		const folderColor = _normalizeDialogControlColor(parentFolder?.color);
 		const itemColor = parentFolder ? _normalizeDialogControlColor(item.color) : '';
-		const effectiveColor = !parentFolder || item.colorMode === 'none' ? '' : (itemColor || folderColor);
+		const effectiveColor = item.colorMode === 'none' ? '' : itemColor;
 		const hasLightNativeBg = _isDialogControlLightNativeColor(effectiveColor);
 		_applyDialogControlNativeRowLayout(row);
 		if (row.dataset.penaNativePrevDraggable === undefined) {
@@ -21068,7 +21059,7 @@ if (_presetChannel) {
 		}
 		row.classList.toggle('--native-colored', !!effectiveColor);
 		row.classList.toggle('--native-folder-child', !!parentFolder);
-		row.classList.toggle('--native-folder-colored', !!effectiveColor && !!folderColor && !itemColor);
+		_removeDialogControlNativeClasses(row, '--native-folder-colored');
 		row.classList.toggle('--native-collapsed', !!parentFolder?.collapsed);
 		row.classList.toggle('--native-light-bg', hasLightNativeBg);
 		_ensureDialogControlNativeColorLabel(row, effectiveColor);

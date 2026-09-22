@@ -248,9 +248,9 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' \
-            'Fixes stretched avatar rings on collab users: the ring follows the native SVG avatar instead of the taller chat row.' \
-            'Preserves the native portrait, SVG mask and typing indicator when photos or avatar components are recreated.' \
-            'Includes all multi-selection context-menu actions from 8.0.1 and earlier avatar/counter fixes.' \
+            'Moving a dialog into a colored folder no longer assigns the folder color to its avatar ring.' \
+            'Explicit dialog colors survive moves between folders. Palettes and color sorting use only the dialog marker; folder colors remain independent.' \
+            'Includes the collab avatar fix from 8.0.2, multi-selection actions and earlier counter fixes.' \
             'Verified against all 83 registered regression suites before either installer is built.' \
             'Controlled tests are not a live Bitrix latency measurement. The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \
             'Includes Windows EXE and Universal macOS DMG for Intel and Apple Silicon.' \
