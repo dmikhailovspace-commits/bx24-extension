@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.4';
+	window.__ANITREC_RUNNING__ = '8.0.5';
 
-	const VER = '8.0.4';
+	const VER = '8.0.5';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -10336,8 +10336,6 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogControlNativeOriginalContextId = '';
 	let _dialogControlNativeOriginalContextUntil = 0;
 	let _dialogControlNativeMenuBridgeTicket = 0;
-	let _dialogControlNativeLastMultiSelectTs = 0;
-	let _dialogControlNativeLastMultiSelectId = '';
 	let _dialogControlDataRevision = 0;
 	let _dialogControlManagedRoot = null;
 	let _dialogControlManagedSource = null;
@@ -20555,7 +20553,30 @@ if (_presetChannel) {
 			// cannot move the fixed controls out of view.
 			e.preventDefault();
 		}, { capture: true, passive: false });
+		let multiSelectGesture = null;
+		const consumeMultiSelectGesture = (e) => {
+			const gesture = multiSelectGesture;
+			if (!gesture) return false;
+			if (gesture.scope !== _getDialogNativeSharedAuditScopeKey() || gesture.mode !== _pMode() ||
+				!gesture.source.isConnected || gesture.source !== findContainer() ||
+				(gesture.releasedUntil && Date.now() >= gesture.releasedUntil)) {
+				multiSelectGesture = null;
+				return false;
+			}
+			const row = _getDialogControlNativeEventRow(e.target);
+			// Vue may replace the pinned row while the button is down. Match the
+			// scoped dialog identity, not the lifetime of one DOM node.
+			if (!row || normId(getChatIdFromElement(row)) !== gesture.id) return false;
+			if (e.type === 'pointerup' || e.type === 'mouseup') gesture.releasedUntil = Date.now() + 650;
+			if (e.type === 'click') multiSelectGesture = null;
+			e.preventDefault();
+			e.stopPropagation();
+			e.stopImmediatePropagation?.();
+			return true;
+		};
 		const handleNativeMultiSelectPress = (e) => {
+			// Each new press is independent, even a fast second click on this row.
+			multiSelectGesture = null;
 			if (!_isDialogControlNativeMode() || _dialogControlActive) return false;
 			if (e.button != null && e.button !== 0) return false;
 			if (!(e.ctrlKey || e.metaKey || e.shiftKey)) return false;
@@ -20567,13 +20588,10 @@ if (_presetChannel) {
 			e.stopPropagation();
 			e.stopImmediatePropagation?.();
 			const id = String(item.id || '');
-			const now = Date.now();
-			_dialogControlNativeSuppressClickUntil = now + 650;
-			_dialogControlNativeSuppressClickRow = row;
-			_dialogControlNativeSuppressClickId = normId(id);
-			if (_dialogControlNativeLastMultiSelectId === id && now - _dialogControlNativeLastMultiSelectTs < 320) return true;
-			_dialogControlNativeLastMultiSelectId = id;
-			_dialogControlNativeLastMultiSelectTs = now;
+			multiSelectGesture = {
+				id: normId(id), source: findContainer(), mode: _pMode(),
+				scope: _getDialogNativeSharedAuditScopeKey(), releasedUntil: 0
+			};
 			if (e.shiftKey) _selectDialogControlMultiSelectionRange(id, _getDialogControlItems());
 			else _toggleDialogControlMultiSelection(id, _getDialogControlItems());
 			_syncDialogControlNativeMultiSelection();
@@ -20581,6 +20599,7 @@ if (_presetChannel) {
 			return true;
 		};
 		const suppressEyedropperGesture = (e, clear = false) => {
+			if (consumeMultiSelectGesture(e)) return true;
 			const pending = _dialogControlEyedropperClickToken;
 			if (pending && Date.now() >= pending.until) {
 				_dialogControlEyedropperClickToken = null;
@@ -20666,6 +20685,7 @@ if (_presetChannel) {
 		}, true);
 		document.addEventListener('drop', () => window.__PENA_INTERACTIONS__?.reset?.('drop'), true);
 		document.addEventListener('pointercancel', () => {
+			multiSelectGesture = null;
 			// Chromium emits pointercancel as part of a successfully started HTML5
 			// drag. The DataTransfer payload is protected during dragover, so the
 			// in-memory ids must live until drop/dragend instead of being discarded.
@@ -20675,6 +20695,7 @@ if (_presetChannel) {
 			_clearDialogControlNativeDropMarks();
 		}, true);
 		window.addEventListener('blur', () => {
+			multiSelectGesture = null;
 			window.__PENA_INTERACTIONS__?.reset?.('blur');
 			_dialogControlEyedropperClickToken = null;
 			_dialogControlNativeDraggingIds = [];
@@ -20682,6 +20703,7 @@ if (_presetChannel) {
 		});
 		document.addEventListener('keydown', (e) => {
 			if (!_isDialogControlNativeMode() || e.key !== 'Escape') return;
+			multiSelectGesture = null;
 			if (_clearDialogControlMultiSelection()) {
 				_syncDialogControlNativeMultiSelection();
 				_scheduleDialogControlPanelRender(filtersHost, 0);

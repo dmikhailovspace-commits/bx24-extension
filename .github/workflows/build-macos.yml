@@ -248,9 +248,9 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' \
-            'Chat search now finds portal employees even when there has been no previous conversation.' \
-            'Employee cards open native Bitrix chats. Search supports pagination and retry, ignores stale responses and never inserts directory results into the saved dialog catalog.' \
-            'Includes independent folder/dialog colors, collab avatar fixes, multi-selection actions and earlier counter fixes.' \
+            'Multi-selection now handles held Ctrl/Command/Shift clicks on pinned read tasks, including muted tasks and pin icons.' \
+            'One physical press changes selection once, even if Bitrix replaces the row before click. Rapid separate clicks toggle independently.' \
+            'Includes employee search, independent folder/dialog colors, collab avatar fixes, multi-selection actions and earlier counter fixes.' \
             'Verified against all 83 registered regression suites before either installer is built.' \
             'Controlled tests are not a live Bitrix latency measurement. The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \
             'Includes Windows EXE and Universal macOS DMG for Intel and Apple Silicon.' \
