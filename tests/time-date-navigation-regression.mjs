@@ -185,9 +185,9 @@ try {
     const box=overlay.getBoundingClientRect();
     return{width:innerWidth,total:panel.querySelector('.pena-native-time-total-value').textContent,today:document.querySelector('.pena-native-time-button-label').textContent,
      overlayVisible:!overlay.hidden,headInert:panel.querySelector('.pena-native-time-panel-head').inert,scrollInert:panel.querySelector('.pena-native-time-scroll').inert,
-     blur:getComputedStyle(panel.querySelector('.pena-native-time-scroll')).filter,left:box.left,right:box.right,scrollWidth:panel.scrollWidth,clientWidth:panel.clientWidth};
+     filter:getComputedStyle(panel.querySelector('.pena-native-time-scroll')).filter,opacity:Number(getComputedStyle(panel.querySelector('.pena-native-time-scroll')).opacity),left:box.left,right:box.right,scrollWidth:panel.scrollWidth,clientWidth:panel.clientWidth};
    });
-   assert.equal(snapshot.overlayVisible,true);assert.equal(snapshot.headInert,true);assert.equal(snapshot.scrollInert,true);assert.match(snapshot.blur,/blur/);
+   assert.equal(snapshot.overlayVisible,true);assert.equal(snapshot.headInert,true);assert.equal(snapshot.scrollInert,true);assert.equal(snapshot.filter,'none');assert.ok(snapshot.opacity>0&&snapshot.opacity<1,'Loading content stays visibly dimmed without a blur pass');
    assert.equal(snapshot.total,'—');assert.doesNotMatch(snapshot.today,/10\s*мин|10\s*м/);
    assert.ok(snapshot.left>=0&&snapshot.right<=width+1);assert.ok(snapshot.scrollWidth<=snapshot.clientWidth+1);
    await page.screenshot({path:`tests/artifacts/time-date-loading-${width}.png`});layouts.push(snapshot);
