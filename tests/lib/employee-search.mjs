@@ -26,10 +26,11 @@ export async function verifyEmployeeSearchIntegration(page, base) {
   panels:document.querySelectorAll('.pena-employee-search').length,
   outside:!document.querySelector('.pena-employee-search').closest('.pena-native-managed-list,.bx-im-list-recent__container'),
   stored:JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats')||'[]').some(item=>String(item.id).includes('987654')),
-  viewport:document.querySelector('.pena-native-list-scroll-viewport').getBoundingClientRect().height
+  viewport:document.querySelector('.pena-native-list-scroll-viewport').getBoundingClientRect().height,
+  contained:document.querySelector('.pena-native-list-scroll-viewport').getBoundingClientRect().bottom<=document.querySelector('.pena-native-folder-switcher-host').getBoundingClientRect().bottom+1
  }));
  assert.equal(state.calls,1,'Reconciliation must not repeatedly search');assert.equal(state.panels,1);
- assert.equal(state.outside,true);assert.equal(state.stored,false,'Directory search never changes persistent dialog catalog');assert.ok(state.viewport>80,JSON.stringify(state));
+ assert.equal(state.outside,true);assert.equal(state.stored,false,'Directory search never changes persistent dialog catalog');assert.ok(state.viewport>80,JSON.stringify(state));assert.equal(state.contained,true,'Native list must stay within the bounded host');
  await page.screenshot({path:'tests/artifacts/employee-search804.png'});
  await input.fill('');await page.waitForFunction(()=>!document.querySelector('.pena-employee-search'));
  await page.waitForFunction(()=>Array.from(document.querySelectorAll('.pena-native-chat-row')).filter(row=>getComputedStyle(row).display!=='none').length>1);
@@ -39,9 +40,10 @@ export async function verifyEmployeeSearch(browser, source) {
  const extract=name=>{const start=source.search(new RegExp('\\t(?:async )?function '+name+'\\('));assert.ok(start>=0,name);const next=/\n\t(?:async )?function /.exec(source.slice(start+1));return source.slice(start,next?start+1+next.index:undefined)};
  const page=await browser.newPage();
  try {
-  await page.setContent('<main style="display:flex;flex-direction:column;width:340px;height:600px"><header class="bx-im-list-container-recent__header_container"><input type="search"></header><div id="native-list"><div data-id="user1">Старый диалог</div></div></main>');
+  await page.setContent('<main style="display:flex;flex-direction:column;width:340px;height:600px"><header class="bx-im-list-container-recent__header_container"><input type="search"></header><div class="pena-native-folder-switcher"></div><div id="native-list"><div data-id="user1">Старый диалог</div></div></main>');
   await page.addStyleTag({content:readFileSync(new URL('../../extension/injected.css',import.meta.url),'utf8')});
   await page.addScriptTag({content:`let _penaEmployeeSearch=null;const IS_OL_FRAME=false,filters={query:''};window.mode='chats';window.scope='portal~7';window.calls=[];window.pending=[];window.opened=[];
+   const _dialogControlNativeSwitcherNode=document.querySelector('.pena-native-folder-switcher');function findContainer(){return document.getElementById('native-list')}
    function _pMode(){return window.mode} function _getDialogNativeSharedAuditScopeKey(){return window.scope} function _getBitrixListSearchInput(){return document.querySelector('input')}
    function _callBxRestReadPage(method,params,options){calls.push({method,params});return new Promise((resolve,reject)=>pending.push({resolve,reject,options}))}
    async function _openDialogControlViaBitrixApi(item){opened.push(item);return true}

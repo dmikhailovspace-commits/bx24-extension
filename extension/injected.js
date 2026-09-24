@@ -10694,9 +10694,12 @@ if (_presetChannel) {
 		const query = String(filters.query || '').trim();
 		const scope = _getDialogNativeSharedAuditScopeKey();
 		const header = input?.closest('.bx-im-list-container-recent__header_container');
-		const eligible = !IS_OL_FRAME && _pMode() === 'chats' && scope && query.length >= 2 && header?.isConnected;
+		const switcher = _dialogControlNativeSwitcherNode;
+		const host = switcher?.parentElement;
+		const eligible = !IS_OL_FRAME && _pMode() === 'chats' && scope && query.length >= 2 && header?.isConnected &&
+			switcher?.isConnected && host?.contains(findContainer());
 		const previous = _penaEmployeeSearch;
-		if (eligible && previous?.query === query && previous.scope === scope && previous.header === header && previous.panel.isConnected) return;
+		if (eligible && previous?.query === query && previous.scope === scope && previous.header === header && previous.panel.parentElement === host) return;
 		if (previous) { clearTimeout(previous.timer); previous.panel.remove(); }
 		_penaEmployeeSearch = null;
 		if (!eligible) return;
@@ -10704,8 +10707,10 @@ if (_presetChannel) {
 		panel.className = 'pena-employee-search';
 		panel.setAttribute('aria-label', 'Сотрудники');
 		// Keep directory results outside the native list and the persistent dialog catalog.
-		header.after(panel);
-		const state = { query, scope, header, panel, users: [], next: null, loading: true, error: '', timer: null };
+		// Share the bounded flex host with the folder switcher and native viewport,
+		// so results reduce available list height instead of overflowing its parent.
+		switcher.before(panel);
+		const state = { query, scope, header, host, panel, users: [], next: null, loading: true, error: '', timer: null };
 		_penaEmployeeSearch = state;
 		_renderPenaEmployeeSearch(state);
 		state.timer = setTimeout(() => _loadPenaEmployeeSearch(state, 0), 300);
@@ -10713,6 +10718,7 @@ if (_presetChannel) {
 
 	function _isPenaEmployeeSearchCurrent(state) {
 		return _penaEmployeeSearch === state && state.panel.isConnected && state.header.isConnected &&
+			state.panel.parentElement === state.host && state.host.contains(findContainer()) &&
 			_pMode() === 'chats' && state.scope === _getDialogNativeSharedAuditScopeKey() &&
 			state.query === String(filters.query || '').trim();
 	}
