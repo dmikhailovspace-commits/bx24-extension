@@ -335,6 +335,22 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .pena-native-folder-count{min-width:22px;height:18px;padding:0 6px;border-radius:999px;background:rgba(255,255,255,.08);display:inline-flex;align-items:center;justify-content:center;color:#c8d5e6;font:800 10px/18px system-ui,-apple-system,Segoe UI,Roboto,Arial}
 .pena-native-folder-count.--unread{background:rgba(239,68,68,.18);color:#ffd2d2}
 .pena-bitrix-list-search-sticky{position:sticky!important;top:0!important;z-index:24!important;background:#fff!important;box-sizing:border-box!important;overflow-anchor:none!important}
+.pena-employee-search{display:flex;flex-direction:column;flex:0 1 auto;min-height:0;max-height:240px;max-height:min(240px,32vh);background:#fff;color:#263241;border-bottom:1px solid #e4e8ee;overflow:hidden;overflow-anchor:none;font:13px/1.3 system-ui,-apple-system,Segoe UI,Roboto,Arial}
+.pena-employee-search-title{padding:7px 12px 4px;font-size:11px;font-weight:600;color:#68778d;flex:none}
+.pena-employee-search *{box-sizing:border-box;letter-spacing:normal;text-transform:none}
+.pena-employee-search-results{overflow:auto;min-height:0;overscroll-behavior:contain}
+.pena-employee-search-person{display:flex;align-items:center;gap:9px;width:100%;padding:7px 12px;border:0;background:transparent;text-align:left;font:inherit;color:inherit;cursor:pointer}
+.pena-employee-search-person:hover{background:#f0f6fb}
+.pena-employee-search-person:focus-visible{outline:2px solid #2f80ed;outline-offset:-2px}
+.pena-employee-search-person:disabled{opacity:.6;cursor:wait}
+.pena-employee-search-avatar{position:relative;display:flex;align-items:center;justify-content:center;flex:0 0 34px;width:34px;height:34px;border-radius:50%;overflow:hidden;background:#e2edf6;color:#466981;font-size:12px}
+.pena-employee-search-avatar img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:50%}
+.pena-employee-search-label{display:flex;flex-direction:column;gap:2px;min-width:0}
+.pena-employee-search-label>span,.pena-employee-search-label>small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pena-employee-search-label>small{font-size:11px;color:#68778d}
+.pena-employee-search-status{flex:none;padding:4px 12px;font-size:11px;color:#68778d}
+.pena-employee-search-status:empty{display:none}
+.pena-employee-search-status button{margin-left:6px;border:0;background:transparent;color:#2475bd;font:inherit;cursor:pointer}
 .pena-bitrix-list-system-toolbar-sticky{position:sticky!important;top:0!important;z-index:26!important;background:#fff!important;opacity:1!important;box-sizing:border-box!important;overflow-anchor:none!important}
 .pena-dialog-native-mode .bx-im-list-container-task__header_container,.pena-dialog-native-mode .bx-im-list-container-recent__header_container{position:relative!important;min-height:99px!important;padding-top:34px!important;flex:0 0 99px!important;background:#fff!important;box-sizing:border-box!important;overflow-anchor:none!important}
 .pena-extension-toolbar-controls{position:absolute;left:8px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:6px;max-width:calc(100% - 116px);height:28px;padding:2px 7px 2px 2px;border:1px solid #dfe5ec;border-radius:7px;background:#f7f9fb;color:#526071;box-shadow:0 1px 2px rgba(15,23,42,.04);box-sizing:border-box;z-index:2;white-space:nowrap}

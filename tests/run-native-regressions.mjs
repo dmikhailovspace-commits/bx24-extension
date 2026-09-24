@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { verifyEmployeeSearchIntegration } from './lib/employee-search.mjs';
 import { verifyTimeTimeoutRecovery } from './lib/native-time-timeout-recovery.mjs';
 import { selectTimeTrackerTask } from './lib/native-time-task-search.mjs';
 import { createReadStream, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -4077,6 +4078,7 @@ try {
 		throw new Error(`Metadata TTL reconcile did not refresh head/task indexes without rematerializing: ${JSON.stringify(diagnostic)}`, { cause: error });
 	}
 
+  await verifyEmployeeSearchIntegration(page, base);
   await page.goto(`${base}/tests/native-route-harness.html`);
 	await page.locator('.pena-native-folder-switcher').waitFor({ state: 'visible', timeout: 3000 });
   assert.equal((await readOutput(page)).switchers, 1);

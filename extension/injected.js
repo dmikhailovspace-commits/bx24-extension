@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.3';
+	window.__ANITREC_RUNNING__ = '8.0.4';
 
-	const VER = '8.0.3';
+	const VER = '8.0.4';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -10685,7 +10685,106 @@ if (_presetChannel) {
 		}
 		if (options.persist !== false) persistFilters({ excludeQuery: true });
 		if (changed || options.force) _schedulePenaSearchReconcile();
+		_syncPenaEmployeeSearch();
 		return changed;
+	}
+
+	let _penaEmployeeSearch = null;
+	function _syncPenaEmployeeSearch(input = _getBitrixListSearchInput()) {
+		const query = String(filters.query || '').trim();
+		const scope = _getDialogNativeSharedAuditScopeKey();
+		const header = input?.closest('.bx-im-list-container-recent__header_container');
+		const eligible = !IS_OL_FRAME && _pMode() === 'chats' && scope && query.length >= 2 && header?.isConnected;
+		const previous = _penaEmployeeSearch;
+		if (eligible && previous?.query === query && previous.scope === scope && previous.header === header && previous.panel.isConnected) return;
+		if (previous) { clearTimeout(previous.timer); previous.panel.remove(); }
+		_penaEmployeeSearch = null;
+		if (!eligible) return;
+		const panel = document.createElement('section');
+		panel.className = 'pena-employee-search';
+		panel.setAttribute('aria-label', 'Сотрудники');
+		// Keep directory results outside the native list and the persistent dialog catalog.
+		header.after(panel);
+		const state = { query, scope, header, panel, users: [], next: null, loading: true, error: '', timer: null };
+		_penaEmployeeSearch = state;
+		_renderPenaEmployeeSearch(state);
+		state.timer = setTimeout(() => _loadPenaEmployeeSearch(state, 0), 300);
+	}
+
+	function _isPenaEmployeeSearchCurrent(state) {
+		return _penaEmployeeSearch === state && state.panel.isConnected && state.header.isConnected &&
+			_pMode() === 'chats' && state.scope === _getDialogNativeSharedAuditScopeKey() &&
+			state.query === String(filters.query || '').trim();
+	}
+
+	async function _loadPenaEmployeeSearch(state, offset) {
+		if (!_isPenaEmployeeSearchCurrent(state)) return;
+		state.loading = true; state.error = ''; state.openError = ''; state.retryOffset = offset;
+		_renderPenaEmployeeSearch(state);
+		try {
+			const page = await _callBxRestReadPage('im.search.user.list', { FIND: state.query, OFFSET: offset, LIMIT: 20 },
+				{ attempts: 1, timeoutMs: 12000, isCurrent: () => _isPenaEmployeeSearchCurrent(state) });
+			if (!_isPenaEmployeeSearchCurrent(state)) return;
+			const rows = Array.isArray(page.data) ? page.data : page.data?.result;
+			if (!Array.isArray(rows)) throw new Error('Invalid employee search response');
+			const users = new Map(state.users.map(user => [user.id, user]));
+			for (const row of rows) {
+				const id = String(row?.id || '');
+				if (!/^[1-9]\d*$/.test(id) || row.bot === true || row.bot === 'Y' || row.connector === true || row.connector === 'Y') continue;
+				users.set(id, { id, name: String(row.name || [row.first_name, row.last_name].filter(Boolean).join(' ') || id),
+					position: String(row.work_position || ''), avatar: typeof row.avatar === 'string' ? row.avatar : '' });
+			}
+			state.users = [...users.values()];
+			state.next = Number.isInteger(page.next) && page.next > offset ? page.next : null;
+		} catch {
+			if (!_isPenaEmployeeSearchCurrent(state)) return;
+			state.error = 'Не удалось найти сотрудников';
+		} finally {
+			if (_isPenaEmployeeSearchCurrent(state)) { state.loading = false; _renderPenaEmployeeSearch(state); }
+		}
+	}
+
+	function _renderPenaEmployeeSearch(state) {
+		if (!_isPenaEmployeeSearchCurrent(state)) return;
+		const title = document.createElement('div');
+		title.className = 'pena-employee-search-title'; title.textContent = 'Сотрудники';
+		const content = document.createElement('div'); content.className = 'pena-employee-search-results';
+		for (const user of state.users) {
+			const button = document.createElement('button'); button.type = 'button'; button.className = 'pena-employee-search-person';
+			button.dataset.employeeId = user.id;
+			const avatar = document.createElement('span'); avatar.className = 'pena-employee-search-avatar';
+			avatar.textContent = user.name.trim().split(/\s+/).slice(0, 2).map(part => Array.from(part)[0]).join('');
+			try {
+				const url = user.avatar && new URL(user.avatar, location.href);
+				if (url && /^https?:$/.test(url.protocol)) {
+					const img = document.createElement('img'); img.alt = ''; img.src = url.href;
+					img.addEventListener('error', () => img.remove(), { once: true }); avatar.append(img);
+				}
+			} catch {}
+			const label = document.createElement('span'); label.className = 'pena-employee-search-label';
+			const name = document.createElement('span'); name.textContent = user.name; label.append(name);
+			if (user.position) { const position = document.createElement('small'); position.textContent = user.position; label.append(position); }
+			button.append(avatar, label);
+			button.addEventListener('click', async event => {
+				event.stopPropagation();
+				if (!_isPenaEmployeeSearchCurrent(state) || button.disabled) return;
+				button.disabled = true;
+				const opened = await _openDialogControlViaBitrixApi({ id: `user${user.id}`, dialogId: user.id }, { allowUnobserved: true });
+				if (!_isPenaEmployeeSearchCurrent(state)) return;
+				button.disabled = false;
+				if (!opened) { state.openError = 'Не удалось открыть чат. Попробуйте ещё раз'; _renderPenaEmployeeSearch(state); }
+			});
+			content.append(button);
+		}
+		const footer = document.createElement('div'); footer.className = 'pena-employee-search-status'; footer.setAttribute('role', 'status');
+		footer.textContent = state.loading ? 'Поиск…' : state.error || state.openError || (state.users.length ? '' : 'Сотрудники не найдены');
+		if (!state.loading && (state.next !== null || state.error)) {
+			const more = document.createElement('button'); more.type = 'button'; more.textContent = state.error ? 'Повторить' : 'Показать ещё';
+			more.addEventListener('click', () => { if (!state.loading) _loadPenaEmployeeSearch(state, state.error ? state.retryOffset : state.next); });
+			footer.append(more);
+		}
+		const scrollTop = state.panel.querySelector('.pena-employee-search-results')?.scrollTop || 0;
+		state.panel.replaceChildren(title, content, footer); content.scrollTop = scrollTop;
 	}
 
 	function _schedulePenaSearchReconcile() {
@@ -10794,6 +10893,7 @@ if (_presetChannel) {
 			}, true));
 		}
 		_preparePenaSearchInput(systemInput);
+		_syncPenaEmployeeSearch(systemInput);
 		const extensionInput = host?.querySelector?.('#anit_query') || null;
 		if (extensionInput && String(extensionInput.value || '') !== String(filters.query || '')) {
 			_setInputValueNative(extensionInput, filters.query, false);
@@ -19098,7 +19198,7 @@ if (_presetChannel) {
 		return observedAny ? false : null;
 	}
 
-	async function _openDialogControlViaBitrixApi(item) {
+	async function _openDialogControlViaBitrixApi(item, options = {}) {
 		const dialogId = _normalizeDialogControlRestDialogId(_getDialogControlRestDialogId(item?.id, null, item));
 		if (!dialogId) return false;
 		const topWin = _getSafeTopWindow();
@@ -19111,7 +19211,7 @@ if (_presetChannel) {
 				const resolved = result && typeof result.then === 'function' ? await result : result;
 				if (resolved !== false) {
 					const verified = await _verifyDialogControlOpened(dialogId, roots);
-					if (verified === true) return true;
+					if (verified === true || (verified === null && options.allowUnobserved === true)) return true;
 				}
 			} catch {}
 		}

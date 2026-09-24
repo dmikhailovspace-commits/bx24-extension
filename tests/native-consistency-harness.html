@@ -1208,10 +1208,12 @@
 	  const listRect = listViewport?.getBoundingClientRect?.();
 	  const activeHostRect = document.querySelector('.test-host:not([hidden])')?.getBoundingClientRect?.();
 	  if (listRect && activeHostRect && listRect.height > 0 && switcher && activeHost?.contains(switcher) && !switcher.classList.contains('--mounting') && Number(getComputedStyle(listViewport).opacity) > 0) {
-		const panelOffset = Math.round((switcherRect.top - activeHostRect.top) * 10) / 10;
+		// Employee results deliberately occupy space below the chat header only.
+		const employeeHeight = activeHost.querySelector('.pena-employee-search')?.getBoundingClientRect().height || 0;
+		const panelOffset = Math.round((switcherRect.top - activeHostRect.top - employeeHeight) * 10) / 10;
 		if (stablePanelOffset == null) stablePanelOffset = panelOffset;
 		else if (Math.abs(panelOffset - stablePanelOffset) > 1) panelShiftFrames += 1;
-		const offset = Math.round((listRect.top - activeHostRect.top) * 10) / 10;
+		const offset = Math.round((listRect.top - activeHostRect.top - employeeHeight) * 10) / 10;
 		if (!observedListOffsets.includes(offset)) observedListOffsets.push(offset);
 		const offsetMode = listViewport?.closest('.task-host') ? 'tasks' : 'chats';
 		if (!observedListOffsetsByMode[offsetMode].includes(offset)) observedListOffsetsByMode[offsetMode].push(offset);
