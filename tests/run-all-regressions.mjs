@@ -37,6 +37,8 @@ if (Number.parseInt(process.versions.node.split('.')[0], 10) < minimumNodeMajor 
 }
 
 const suites = [
+  'native-search-state-regression.mjs',
+  'native-lazy-list-regression.mjs',
 	'notification-counter-race-regression.mjs',
 	'recent-sync-regression.mjs',
 	'native-folder-visibility-regression.mjs',

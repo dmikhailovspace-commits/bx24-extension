@@ -1063,3 +1063,9 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 
 .pena-native-time-load-more { width:100%; min-height:32px; border:1px solid #d4def4; border-radius:8px; background:#f6f8ff; color:#2451ff; font:inherit; cursor:pointer; }
 .pena-native-time-load-more:hover { background:#edf2ff; }
+
+
+.pena-native-folder-status{position:absolute;bottom:10px;right:12px;z-index:20;padding:5px 9px;border-radius:6px;background:#fffffff2;color:#667085;font:12px/1.4 inherit;pointer-events:none}
+.pena-native-folder-status button{margin-left:8px;border:0;background:transparent;color:#2451ff;cursor:pointer;pointer-events:auto}
+
+.pena-native-filter-hidden{display:none!important}

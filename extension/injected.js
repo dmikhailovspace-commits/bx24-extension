@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.5';
+	window.__ANITREC_RUNNING__ = '8.0.10';
 
-	const VER = '8.0.5';
+	const VER = '8.0.10';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -567,7 +567,8 @@
 			_getSafeNestedDialogDataId(el),
 			el.getAttribute?.('data-userid'),
 			el.dataset?.userid,
-			el.querySelector?.('[data-userid]')?.getAttribute?.('data-userid')
+			el.querySelector?.('[data-userid]')?.getAttribute?.('data-userid'),
+			(el.matches?.('.bx-im-search-item__container') ? _getDialogNativeSearchRowId(el) : '')
 		];
 		return _normalizeDialogControlRestDialogId(values.find(value => String(value || '').trim()));
 	}
@@ -617,7 +618,7 @@
 	// `[data-user-id]`/`[data-entity-id]` as global row selectors: Bitrix and the
 	// document root use those attributes for unrelated identity metadata.
 	const _CHAT_LIST_ITEM_SELECTOR = '.bx-messenger-cl-item,.bx-im-list-recent-item__wrap,.bx-im-list-item,[data-dialog-id],[data-dialog-id-value],[data-dialogid]';
-	const _CHAT_SEARCH_ITEM_SELECTOR = '.bx-im-search-result-item,.bx-im-search-item,.bx-im-dialog-search-result-item,.bx-im-list-search-item,[data-dialog-id],[data-dialog-id-value],[data-dialogid]';
+	const _CHAT_SEARCH_ITEM_SELECTOR = '.bx-im-search-item__container,.bx-im-search-result-item,.bx-im-search-item,.bx-im-dialog-search-result-item,.bx-im-list-search-item,[data-dialog-id],[data-dialog-id-value],[data-dialogid]';
 
 	function _getOwnChatIdFromElement(el) {
 		if (!el) return '';
@@ -631,7 +632,8 @@
 			el.dataset?.dialogid ||
 			el.dataset?.id ||
 			el.getAttribute?.('data-userid') ||
-			el.dataset?.userid
+			el.dataset?.userid ||
+			(el.matches?.('.bx-im-search-item__container') ? _getDialogNativeSearchRowId(el) : '')
 		);
 	}
 
@@ -692,7 +694,8 @@
 				el.querySelector('[data-dialog-id]')?.getAttribute('data-dialog-id') ||
 				el.querySelector('[data-dialog-id-value]')?.getAttribute('data-dialog-id-value') ||
 				el.querySelector('[data-dialogid]')?.getAttribute('data-dialogid') ||
-				_getSafeNestedDialogDataId(el)
+				_getSafeNestedDialogDataId(el) ||
+				(el.matches?.('.bx-im-search-item__container') ? _getDialogNativeSearchRowId(el) : '')
 			);
 		}
 
@@ -1874,6 +1877,7 @@
 	}
 
 	function _isDialogRecentInteractionBlocked() {
+		if (_isDialogNativeLazyMode()) return false;
 		return !_dialogRecentInteractionGate.ready;
 	}
 
@@ -3531,6 +3535,8 @@
 	}
 
 	async function _refreshDialogRecentMandatoryDetails(target, currentWindowIds, mandatory = _getDialogRecentMandatoryItems(), options = {}) {
+		const detailScope = _getDialogNativeSharedAuditScopeKey();
+		const isCurrent = () => detailScope === _getDialogNativeSharedAuditScopeKey();
 		const now = Date.now();
 		const candidates = new Map();
 		Array.from(currentWindowIds || []).forEach(rawId => {
@@ -3580,6 +3586,7 @@
 		let unavailable = 0;
 		options.onStart?.(jobs.length);
 		await _runDialogRecentJobs(jobs, async ({ id, item, mode, isMandatory }) => {
+			if (!isCurrent()) return;
 			try {
 				const isChat = /^(?:chat|sg)\d+$/i.test(id);
 				const page = await _callBxRestPageWithTimeout(
@@ -3589,6 +3596,7 @@
 						: { ID: String(id).replace(/^user/i, '') },
 					8000
 				);
+				if (!isCurrent()) return;
 				const root = page.data?.result || page.data || {};
 				const entity = isChat ? (root.chat || root.dialog || root) : (root.user || root);
 				_assertDialogRecentDetailEntity(entity, id, isChat);
@@ -3712,6 +3720,7 @@
 				_setDialogRecentMeta(activeTarget, merged, [item?.dialogId, ...normalized.keys]);
 				updated += 1;
 			} catch (e) {
+				if (!isCurrent()) return;
 				failed += 1;
 				const activeTarget = target === _dialogRecentMeta ? target : _dialogRecentMeta;
 				const meta = activeTarget.get(id);
@@ -3731,13 +3740,14 @@
 				}
 			} finally {
 				completed += 1;
-				options.onProgress?.({ id, total: jobs.length, completed, updated, failed, unavailable });
+				if (isCurrent()) options.onProgress?.({ id, total: jobs.length, completed, updated, failed, unavailable });
 			}
 		});
 		return { total: jobs.length, completed, updated, failed, unavailable };
 	}
 
 	async function _runDialogRecentDetailPass(currentWindowIds = new Set(), options = {}) {
+		const detailScope = _getDialogNativeSharedAuditScopeKey();
 		const beforeSignature = _getDialogRecentRenderSignature();
 		const generation = _dialogRecentGeneration;
 		const previousProgress = _dialogRecentDetailProgress;
@@ -3776,6 +3786,7 @@
 				}
 			}
 		);
+		if (detailScope !== _getDialogNativeSharedAuditScopeKey()) return result;
 		_dialogRecentDetailProgress = result.total > 0
 			? { inFlight: false, ...result }
 			: { ...previousProgress, inFlight: false };
@@ -3796,6 +3807,14 @@
 	}
 
 	function _scheduleDialogRecentMandatoryDetails(currentWindowIds = new Set(), options = {}) {
+		const queueScope = _getDialogNativeSharedAuditScopeKey();
+		if (_dialogRecentDetailQueueScope !== queueScope) {
+			_dialogRecentDetailQueuedWindowIds.clear();
+			_dialogRecentDetailQueuedMandatoryIds.clear();
+			_dialogRecentDetailQueuedForceAccessRetry = false;
+			_dialogRecentDetailQueuedIncludeMandatory = false;
+			_dialogRecentDetailQueueScope = queueScope;
+		}
 		Array.from(currentWindowIds || []).forEach(id => {
 			const normalized = normId(id);
 			if (normalized) _dialogRecentDetailQueuedWindowIds.add(normalized);
@@ -3813,6 +3832,7 @@
 		_dialogRecentDetailSyncPromise = (async () => {
 			let aggregate = { total: 0, completed: 0, updated: 0, failed: 0, unavailable: 0 };
 			do {
+				if (_dialogRecentDetailQueueScope !== _getDialogNativeSharedAuditScopeKey()) break;
 				const windowIds = new Set(_dialogRecentDetailQueuedWindowIds);
 				const forceAccessRetry = _dialogRecentDetailQueuedForceAccessRetry;
 				const includeMandatory = _dialogRecentDetailQueuedIncludeMandatory;
@@ -4138,6 +4158,7 @@
 	}
 
 	async function _syncDialogRecentData(options = {}) {
+		if (_isDialogNativeLazyMode()) return _refreshDialogNativeVisibleWindow();
 		if (IS_OL_FRAME || !isInternalChatsDOM()) return { count: _dialogRecentMeta.size, skipped: true };
 		const syncMode = _pMode();
 		if (!_dialogRecentRepositoryReady) await _bootstrapDialogRecentRepository();
@@ -5427,6 +5448,7 @@
 	}
 
 	async function _runDialogRecentApiCatalogLoad(options = {}) {
+		if (_isDialogNativeLazyMode()) return _refreshDialogNativeVisibleWindow();
 		if (IS_OL_FRAME || !isInternalChatsDOM()) return { count: _countDialogRecentMeta(), skipped: true };
 		const container = findContainer();
 		if (!container) return { count: _countDialogRecentMeta(), skipped: true, unavailable: true };
@@ -6121,6 +6143,7 @@
 		const selector = '.bx-im-list-recent-item__wrap,.bx-im-list-item,.bx-messenger-cl-item,[data-dialog-id],[data-dialog-id-value],[data-dialogid],[data-chat-id],[data-user-id],[data-entity-id]';
 		return Array.from(container.querySelectorAll?.(selector) || []).filter(row => {
 			if (row.classList?.contains('pena-native-remote-row') || row.classList?.contains('pena-native-managed-row')) return false;
+			if (_isDialogNativeLazyMode() && row.closest?.('.bx-im-search-item__container,.bx-im-chat-search__container,.bx-im-search-result-item,.bx-im-search-item,.bx-im-dialog-search-result-item,.bx-im-list-search-item')) return false;
 			if (!_isUsableDialogCandidate(row, { allowNestedId: true })) return false;
 			const nestedOwner = row.parentElement?.closest?.(selector);
 			return !nestedOwner || !container.contains(nestedOwner);
@@ -6348,6 +6371,7 @@
 	}
 
 	async function _runDialogNativeSilentPrefetch(options = {}) {
+		if (_isDialogNativeLazyMode()) return _refreshDialogNativeVisibleWindow();
 		if (IS_OL_FRAME || !isInternalChatsDOM()) return { count: _countDialogRecentMeta(), skipped: true };
 		if (_dialogNativePrefetchPromise) return _dialogNativePrefetchPromise;
 		const container = findContainer();
@@ -6583,6 +6607,11 @@
 	}
 
 	function _syncDialogNativeOriginalLoadUi(container = findContainer()) {
+		if (_isDialogNativeLazyMode() && !_dialogNativeOriginalScrollActive) {
+			document.querySelectorAll('.pena-native-original-load-guard').forEach(node => node.remove());
+			document.querySelectorAll('.pena-native-original-loading-host').forEach(node => node.classList.remove('pena-native-original-loading-host'));
+			return null;
+		}
 		const mount = container ? _resolveDialogControlNativeMount(container, { requireStable: false }) : null;
 		const sourceViewport = mount?.sourceViewport || (container ? findInternalScrollContainer(container) : null);
 		const host = mount?.host || sourceViewport?.parentElement || null;
@@ -6651,6 +6680,7 @@
 	}
 
 	async function _runDialogNativeOriginalScrollLoad(options = {}) {
+		if (_isDialogNativeLazyMode()) return _refreshDialogNativeVisibleWindow();
 		const requestedContainer = options.sourceContainer?.isConnected ? options.sourceContainer : null;
 		if (IS_OL_FRAME || (!requestedContainer && !isInternalChatsDOM())) return { count: _countDialogRecentMeta(), skipped: true };
 		const testUnavailableAttempts = Math.max(0, Number(window.__PENA_TEST_NATIVE_SOURCE_UNAVAILABLE_COUNT__) || 0);
@@ -7574,6 +7604,11 @@
 	}
 
 	async function _refreshDialogRecentCatalog(options = {}) {
+		if (_isDialogNativeLazyMode()) {
+			const result = _refreshDialogNativeVisibleWindow();
+			const demand = await _loadDialogNativeFolderWindow(options.force === true);
+			return { ...result, ...demand, native: true, lazy: true };
+		}
 		// Dedicated regression/compatibility modes intentionally exercise the
 		// legacy REST and native-scroll contracts in isolation.
 		if (window.__PENA_FORCE_REST_CATALOG__ === true) {
@@ -7850,7 +7885,191 @@
 		})
 	});
 
+	// Folder pages are loaded by the mounted Bitrix component's own service.
+	// Bitrix owns cursors, model updates, native rendering and request deduplication.
+	const _dialogNativeFolderWindows = new WeakMap();
+	const _dialogNativePageServices = new WeakMap();
+	const _dialogNativePageRequests = new WeakMap();
+	let _dialogNativeFolderTimer = null;
+	let _dialogNativeFolderRun = null;
+	function _getDialogNativeFolderDemand() {
+		if (!_isDialogNativeLazyMode() || document.hidden || String(filters.query || '').trim()) return null;
+		const container = findContainer();
+		const filter = _getDialogControlNativeFilter();
+		if (!container || !filter || (!filter.folderId && !filter.segmentId && !filter.unreadOnly && !filters.unreadOnly)) return null;
+        const requested = new Set(Array.from(filter.ids || []).map(normId).filter(Boolean));
+        const groups = _getDialogControlItems().filter(item => !_isDialogControlFolder(item)).filter(item => {
+            if (filter.folderId || filter.segmentId) return _getDialogControlItemIdentityKeys(item).some(id => requested.has(id));
+            return _isDialogControlUnreadMeta(_getDialogControlEffectiveMeta(item.id));
+        }).map(_getDialogControlItemIdentityKeys).filter(group => group.length);
+        const ids = new Set(groups.flat());
+		if (!ids.size) return null;
+		const mode = _pMode();
+		const viewport = findInternalScrollContainer(container);
+		if (!viewport) return null;
+		const generation = _getDialogNativeSourceGeneration(mode, container, viewport);
+		const scope = _getDialogNativeExpectedAuditScopeKey(mode);
+		return { container, viewport, mode, generation, scope, ids, groups,
+			key: JSON.stringify([scope, generation, filter.segmentId, filter.folderId, [...ids].sort()]) };
+	}
+	function _findDialogNativeVueInstance(container, accept) {
+		const roots = new Set();
+		for (let node = _getDialogNativeSourceRows(container)[0] || container; node; node = node.parentElement) {
+			for (let instance = node.__vueParentComponent; instance; instance = instance.parent) {
+				const result = accept(instance); if (result) return result;
+			}
+			if (node.__vue_app__?._instance) roots.add(node.__vue_app__._instance);
+			if (node.__vue_app__ && node._vnode) roots.add(node._vnode);
+		}
+		// Production Vue may omit DOM devtools links. Core.createVue stores the
+		// mounted application on application.bitrixVue; walk its active vnode tree.
+		for (const BXNS of _getBitrixNamespaces()) {
+			const application = BXNS?.Messenger?.v2?.Application;
+			if (!application) continue;
+			for (const app of Object.values(application)) {
+				if (app?.bitrixVue?._instance) roots.add(app.bitrixVue._instance);
+				if (app?.bitrixVue?._container?._vnode) roots.add(app.bitrixVue._container._vnode);
+			}
+		}
+		const queue = [...roots]; const visited = new Set();
+		for (let index = 0; index < queue.length && visited.size < 4000; index += 1) {
+			const node = queue[index];
+			if (!node || typeof node !== 'object' || visited.has(node)) continue;
+			visited.add(node);
+			const result = accept(node); if (result) return result;
+			if (node.subTree) queue.push(node.subTree);
+			if (node.component) queue.push(node.component);
+			if (Array.isArray(node.children)) queue.push(...node.children);
+		}
+		return null;
+	}
+	function _findDialogNativePageService(demand) {
+		const { container, mode } = demand;
+		const cached = _dialogNativePageServices.get(container);
+		if (cached && cached.scope === demand.scope && !cached.instance?.isUnmounted &&
+			cached.instance?.proxy?.$el?.isConnected) return cached;
+		const accept = instance => {
+			const proxy = instance?.proxy;
+			const name = instance?.type?.name || proxy?.$options?.name;
+			if (instance?.isUnmounted || name !== (mode === 'tasks' ? 'TaskList' : 'RecentList') ||
+				!proxy?.$el?.isConnected || !(container.contains(proxy.$el) || proxy.$el.contains?.(container)) ||
+				typeof proxy.getRecentService !== 'function') return null;
+			const service = proxy.getRecentService();
+			if (typeof service?.loadNextPage !== 'function' ||
+				!(typeof service.hasMoreItemsToLoad === 'function' || typeof service.hasMoreItemsToLoad === 'boolean')) return null;
+			const result = { service, instance, scope: demand.scope,
+				busy: () => !!(proxy.isLoading || proxy.isLoadingNextPage || service.isLoading),
+				cursor: () => service.lastMessageDate ?? service.getQueryParams?.(false)?.filter?.lastMessageDate,
+				hasMore: () => typeof service.hasMoreItemsToLoad === 'function' ? service.hasMoreItemsToLoad() : service.hasMoreItemsToLoad };
+			_dialogNativePageServices.set(container, result);
+			return result;
+		};
+		return _findDialogNativeVueInstance(container, accept);
+	}
+
+	function _scheduleDialogNativeFolderWindow() {
+		if (_dialogNativeFolderTimer) return;
+		_dialogNativeFolderTimer = setTimeout(() => {
+			_dialogNativeFolderTimer = null;
+			_loadDialogNativeFolderWindow().catch(error => console.warn('[PENA] Native folder load:', error));
+		}, 120);
+	}
+	async function _loadDialogNativeFolderWindow(force = false) {
+		const demand = _getDialogNativeFolderDemand();
+		document.querySelectorAll('.pena-native-folder-status').forEach(node => {
+			if (!demand || node.dataset.demandKey !== demand.key) node.remove();
+		});
+		if (!demand) return { skipped: true };
+		if (_dialogNativeFolderRun) return _dialogNativeFolderRun;
+		const { container, viewport, mode, generation, scope, ids, groups, key } = demand;
+		let state = _dialogNativeFolderWindows.get(container);
+		if (!state || state.key !== key) {
+			state = { key, stopped: false };
+			_dialogNativeFolderWindows.set(container, state);
+		}
+		const current = () => scope === _getDialogNativeExpectedAuditScopeKey(mode) &&
+			_isDialogNativeSourceGenerationCurrent(mode, container, viewport, generation) && _getDialogNativeFolderDemand()?.key === key;
+		const nativeIds = () => new Set(_getDialogNativeSourceRows(container).flatMap(_getDialogControlNativeRowIdentityKeys));
+		const missing = () => { const present = nativeIds(); return groups.some(group => !group.some(id => present.has(id))); };
+		const status = (message, retry = false) => {
+			document.querySelectorAll('.pena-native-folder-status').forEach(node => node.remove());
+			if (!message || !current()) return;
+			const host = _resolveDialogControlNativeMount(container, { requireStable: false })?.host || viewport.parentElement;
+			if (!host) return;
+			const line = document.createElement('div');
+			line.className = 'pena-native-folder-status'; line.dataset.demandKey = key;
+			line.setAttribute('role', 'status'); line.textContent = message;
+			if (retry) {
+				const button = document.createElement('button'); button.type = 'button'; button.textContent = 'Повторить';
+				button.addEventListener('click', () => { _loadDialogNativeFolderWindow(true).catch(() => {}); });
+				line.appendChild(button);
+			}
+			host.appendChild(line);
+		};
+		if (!missing()) { status(''); return { found: true }; }
+		if (state.stopped && !force) return { skipped: true };
+		const bridge = _findDialogNativePageService(demand);
+		if (!bridge) {
+			state.stopped = true;
+			status('Не удалось подключить загрузку Bitrix', true);
+			return { unavailable: true };
+		}
+		state.stopped = false;
+		status('Загрузка диалогов…');
+		const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+		_dialogNativeFolderRun = (async () => {
+			// Defer once so the run is installed before any synchronous early return.
+			await pause(0);
+			let pages = 0, unchanged = 0;
+			try {
+				while (current() && missing()) {
+					if (!bridge.hasMore()) {
+						state.stopped = true; status('Часть диалогов не найдена');
+						return { exhausted: true, pages };
+					}
+					const pending = _dialogNativePageRequests.get(bridge.service);
+					if (!pending && bridge.busy()) { await pause(150); continue; }
+					const before = [...nativeIds()].join(',');
+					const cursor = bridge.cursor();
+					let request = pending;
+					if (!request) {
+						request = Promise.resolve().then(() => bridge.service.loadNextPage());
+						_dialogNativePageRequests.set(bridge.service, request);
+						const clear = () => { if (_dialogNativePageRequests.get(bridge.service) === request) _dialogNativePageRequests.delete(bridge.service); };
+						request.then(clear, clear);
+					}
+					let settled = false, failure;
+					request.then(() => { settled = true; }, error => { failure = error; settled = true; });
+					while (!settled && current()) await pause(50);
+					if (!current()) return { cancelled: true, pages };
+					if (failure) throw failure;
+					await pause(40); // Let Bitrix's reactive model render its native rows.
+					if (!current()) return { cancelled: true, pages };
+					_refreshDialogNativeVisibleWindow(); applyFilters(); pages += 1;
+					const progressed = before !== [...nativeIds()].join(',') || cursor !== bridge.cursor();
+					unchanged = progressed ? 0 : unchanged + 1;
+					if (unchanged >= 3 && bridge.hasMore() && missing()) throw new Error('Native pagination made no progress');
+				}
+				if (current()) status('');
+				return { found: current(), pages };
+			} catch (error) {
+				if (current()) { state.stopped = true; status('Не удалось загрузить диалоги', true); }
+				return { error: String(error?.message || error), pages };
+			} finally {
+				_dialogNativeFolderRun = null;
+				if (!current()) _scheduleDialogNativeFolderWindow();
+			}
+		})();
+		return _dialogNativeFolderRun;
+	}
+
 	function _refreshDialogNativeVisibleWindow() {
+		if (_isDialogNativeLazyMode() && String(filters.query || '').trim()) {
+			return { count: _countDialogRecentMeta(), skipped: true, search: true };
+		}
+		if (_isDialogNativeLazyMode() && _dialogControlManagedRoot?.isConnected) {
+			return { count: _countDialogRecentMeta(), skipped: true, folder: true };
+		}
 		if (window.__PENA_TEST_PERF_METRICS__) {
 			window.__PENA_TEST_PERF_METRICS__.visibleWindowRefreshes =
 				(Number(window.__PENA_TEST_PERF_METRICS__.visibleWindowRefreshes) || 0) + 1;
@@ -8513,6 +8732,14 @@
 	}
 
 	async function _runDialogWakeReconcile(reason = 'wake', options = {}) {
+		if (_isDialogNativeLazyMode()) {
+			if (document.hidden || !isInternalChatsDOM()) return { skipped: true };
+			const result = _refreshDialogNativeVisibleWindow();
+			// Today's task totals have their own scope and deduplicated bootstrap;
+			// returning to Messenger must keep it alive without walking chat history.
+			_scheduleDialogTimeBootstrap(null);
+			return result;
+		}
 		if (document.hidden || !isInternalChatsDOM()) return { skipped: true };
 		const container = findContainer();
 		const viewport = container ? findInternalScrollContainer(container) : null;
@@ -8924,6 +9151,19 @@
 	}
 
 	function _scheduleDialogNativeModeLoad(reason = 'mode-enter', delay = 80) {
+		if (_isDialogNativeLazyMode()) {
+			if (_dialogNativeModeLoadTimer) clearTimeout(_dialogNativeModeLoadTimer);
+			_dialogNativeModeLoadTimer = setTimeout(() => {
+				_dialogNativeModeLoadTimer = null;
+				if (!findContainer() || !isInternalChatsDOM()) return;
+				_refreshDialogNativeVisibleWindow();
+				if (!_dialogRecentInteractionGate.ready) _completeDialogRecentInteractionGate();
+				_setDialogNativeAttemptState(_pMode(), { state: 'idle', reason: 'native-lazy', completedAt: Date.now(), retryAt: 0, userActionRequired: false });
+				_publishDialogRecentSyncState();
+				_scheduleDialogTimeBootstrap();
+			}, Math.max(0, Number(delay) || 0));
+			return;
+		}
 		if (IS_OL_FRAME || window.__PENA_FORCE_REST_CATALOG__ === true) return;
 		const explicitFullIntent = reason === 'view-demand' || reason === 'cold-confirmation' ||
 			/^(?:retry:|wake-repair|source-ready-retry|online-recovery)/i.test(String(reason || '')) ||
@@ -10093,6 +10333,7 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogRecentQueuedOptions = null;
 	let _dialogRecentQueuedPromise = null;
 	let _dialogRecentDetailSyncPromise = null;
+	let _dialogRecentDetailQueueScope = '';
 	let _dialogRecentDetailQueued = false;
 	const _dialogRecentDetailQueuedWindowIds = new Set();
 	const _dialogRecentDetailQueuedMandatoryIds = new Set();
@@ -10462,12 +10703,12 @@ if (_presetChannel) {
 	const _penaSearchQueriesByMode = new Map();
 	const _BITRIX_SEARCH_QUERY_KEY = 'pena.nativeSearchQuery.v1';
 	function _readStoredBitrixSearchQuery(mode = _pMode()) {
-		try { return String(localStorage.getItem(`${_BITRIX_SEARCH_QUERY_KEY}.${mode}`) || ''); } catch { return ''; }
+		try { return String(localStorage.getItem(`${_BITRIX_SEARCH_QUERY_KEY}.${_isDialogNativeLazyMode() ? (_getDialogRecentCacheUserId() || "anonymous") + "." : ""}${mode}`) || ''); } catch { return ''; }
 	}
 	function _storeBitrixSearchQuery(value, mode = _pMode()) {
 		const next = String(value || '');
 		_penaSearchQueriesByMode.set(mode, next);
-		try { localStorage.setItem(`${_BITRIX_SEARCH_QUERY_KEY}.${mode}`, next); } catch {}
+		try { localStorage.setItem(`${_BITRIX_SEARCH_QUERY_KEY}.${_isDialogNativeLazyMode() ? (_getDialogRecentCacheUserId() || "anonymous") + "." : ""}${mode}`, next); } catch {}
 		return next;
 	}
 
@@ -10679,7 +10920,7 @@ if (_presetChannel) {
 		if (panelInput && String(panelInput.value || '') !== next) _setInputValueNative(panelInput, next, false);
 		if (options.syncInput !== false) {
 			const systemInput = _getBitrixListSearchInput();
-			if (systemInput && String(systemInput.value || '') !== next) _setInputValueNative(systemInput, next, false);
+			if (systemInput && String(systemInput.value || '') !== next) _setInputValueNative(systemInput, next, _isDialogNativeLazyMode());
 		}
 		if (options.persist !== false) persistFilters({ excludeQuery: true });
 		if (changed || options.force) _schedulePenaSearchReconcile();
@@ -10694,7 +10935,7 @@ if (_presetChannel) {
 		const header = input?.closest('.bx-im-list-container-recent__header_container');
 		const switcher = _dialogControlNativeSwitcherNode;
 		const host = switcher?.parentElement;
-		const eligible = !IS_OL_FRAME && _pMode() === 'chats' && scope && query.length >= 2 && header?.isConnected &&
+		const eligible = !_isDialogNativeLazyMode() && !IS_OL_FRAME && _pMode() === 'chats' && scope && query.length >= 2 && header?.isConnected &&
 			switcher?.isConnected && host?.contains(findContainer());
 		const previous = _penaEmployeeSearch;
 		if (eligible && previous?.query === query && previous.scope === scope && previous.header === header && previous.panel.parentElement === host) return;
@@ -10805,6 +11046,7 @@ if (_presetChannel) {
 	}
 
 	function _restorePenaSearchInput(input, mode = _pMode()) {
+		if (_isDialogNativeLazyMode()) return;
 		if (!input) return;
 		const value = String(_penaSearchQueriesByMode.has(mode)
 			? _penaSearchQueriesByMode.get(mode)
@@ -10813,6 +11055,7 @@ if (_presetChannel) {
 	}
 
 	function _preparePenaSearchInput(input) {
+		if (_isDialogNativeLazyMode()) return input;
 		if (!_isPenaNativeListSearchInput(input)) return null;
 		const mode = _pMode();
 		if (!_penaSearchQueriesByMode.has(mode)) {
@@ -10870,8 +11113,114 @@ if (_presetChannel) {
 		return input;
 	}
 
+	const _penaNativeSearchControllers = new WeakMap();
+	const _penaNativeSearchInputs = new WeakMap();
+	const _penaNativeSearchRowInstances = new WeakMap();
+	function _getDialogNativeSearchRowId(row) {
+		const entry = _penaNativeSearchRowInstances.get(row);
+		if (!entry || entry.instance.isUnmounted || entry.scope !== _getDialogNativeExpectedAuditScopeKey(_pMode())) return '';
+		return normId(entry.instance.props?.dialogId || entry.instance.proxy?.dialogId);
+	}
+	function _indexDialogNativeSearchRows(container) {
+		const rows = Array.from(container.querySelectorAll('.bx-im-search-item__container'));
+		if (!rows.some(row => !_getDialogNativeSearchRowId(row))) return;
+		const scope = _getDialogNativeExpectedAuditScopeKey(_pMode());
+		_findDialogNativeVueInstance(rows[0], instance => {
+			const row = instance?.proxy?.$el;
+			if (!instance?.isUnmounted && instance?.type?.name === 'SearchItem' &&
+				row?.matches?.('.bx-im-search-item__container') && container.contains(row)) {
+				_penaNativeSearchRowInstances.set(row, { instance, scope });
+			}
+			return null;
+		});
+	}
+	function _bindPenaNativeSearchController(input) {
+		if (!input || !_isPenaNativeListSearchInput(input)) return null;
+		const mode = _pMode(), scope = _getDialogNativeExpectedAuditScopeKey(mode);
+		const cached = _penaNativeSearchInputs.get(input);
+		if (cached?.scope === scope && !cached.instance.isUnmounted) return cached;
+		const instance = _findDialogNativeVueInstance(input, candidate => {
+			const name = candidate?.type?.name;
+			if (!candidate?.isUnmounted && name === (mode === 'tasks' ? 'TaskListContainer' : 'RecentListContainer') &&
+				candidate.proxy?.$el?.contains?.(input) && typeof candidate.proxy.onUpdateSearch === 'function' &&
+				typeof candidate.proxy.onCloseSearch === 'function') return candidate;
+			return null;
+		});
+		if (!instance) return null;
+		let state = _penaNativeSearchControllers.get(instance);
+		if (state?.scope === scope) {
+			const replaced = state.input !== input;
+			state.input = input; _penaNativeSearchInputs.set(input, state);
+			if (replaced && state.query) _setInputValueNative(input, state.query, true);
+			return state;
+		}
+		const previousScope = state?.scope;
+		state?.dispose();
+		const proxy = instance.proxy;
+		const originals = { onCloseSearch:proxy.onCloseSearch, onCloseRecentSearch:proxy.onCloseRecentSearch, onUpdateSearch:proxy.onUpdateSearch };
+		state = { scope, mode, input, instance, query: previousScope ? _readStoredBitrixSearchQuery(mode) : String(proxy.searchQuery || input.value || _readStoredBitrixSearchQuery(mode)) };
+		const current = () => _isPenaExtensionEnabled() && !instance.isUnmounted && scope === _getDialogNativeExpectedAuditScopeKey(mode) && mode === _pMode();
+		const remember = query => {
+			state.query = String(query || '');
+			if (current()) _setPenaSearchQuery(state.query, { syncInput:false, persist:false });
+		};
+		const close = function (...args) {
+			// Bitrix closes search after selecting a result or clicking the dialog.
+			// Keep the same native search model until the user explicitly clears it.
+			if (current() && state.query.trim()) return;
+			return originals.onCloseSearch.apply(this, args);
+		};
+		const clear = function (...args) {
+			if (current()) remember('');
+			return (originals.onCloseRecentSearch || originals.onCloseSearch).apply(this, args);
+		};
+		const update = function (query, ...args) {
+			if (current()) remember(query);
+			return originals.onUpdateSearch.call(this, query, ...args);
+		};
+		proxy.onCloseSearch = close; proxy.onCloseRecentSearch = clear; proxy.onUpdateSearch = update;
+		state.dispose = () => {
+			if (proxy.onCloseSearch === close) proxy.onCloseSearch = originals.onCloseSearch;
+			if (proxy.onCloseRecentSearch === clear) proxy.onCloseRecentSearch = originals.onCloseRecentSearch;
+			if (proxy.onUpdateSearch === update) proxy.onUpdateSearch = originals.onUpdateSearch;
+		};
+		_penaNativeSearchControllers.set(instance, state);
+		_penaNativeSearchInputs.set(input, state);
+		remember(state.query);
+		if (previousScope && !state.query) {
+			originals.onCloseSearch.call(proxy);
+			_setInputValueNative(input, '', true);
+		}
+		if (state.query && (!proxy.searchMode || proxy.searchQuery !== state.query || input.value !== state.query)) {
+			proxy.onUpdateSearch(state.query);
+			_setInputValueNative(input, state.query, true);
+		}
+		proxy.$forceUpdate?.(); // Refresh native event props that captured a bound method.
+		return state;
+	}
+
 	function _armPenaSearchFlow(host = filtersHost) {
 		const systemInput = _ensureBitrixListSearchSticky();
+		if (_isDialogNativeLazyMode()) {
+			const controller = _bindPenaNativeSearchController(systemInput);
+			if (systemInput && !_penaSearchPreparedInputs.has(systemInput)) {
+				_penaSearchPreparedInputs.add(systemInput);
+				delete systemInput.dataset.penaSearchOwner;
+				const observeQuery = () => {
+					if (systemInput !== _getBitrixListSearchInput()) return;
+					const activeController = _penaNativeSearchInputs.get(systemInput);
+					if (activeController && activeController.scope !== _getDialogNativeExpectedAuditScopeKey(_pMode())) return;
+					if (activeController) activeController.query = String(systemInput.value || '');
+					_setPenaSearchQuery(systemInput.value, { syncInput: false, persist: false });
+				};
+				// Observe without cancelling any native input, focus or keyboard event.
+				// Bitrix owns remote search and its result pagination in both modes.
+				['input', 'change', 'search'].forEach(type => systemInput.addEventListener(type, observeQuery, true));
+				if (!controller) observeQuery();
+			}
+			_syncPenaEmployeeSearch(systemInput);
+			return systemInput;
+		}
 		if (!_penaSearchFlowArmed) {
 			_penaSearchFlowArmed = true;
 			const isOwnedSearchEvent = event => {
@@ -11154,7 +11503,9 @@ if (_presetChannel) {
 		const domMeta = getItemMeta(el) || {};
 		const id = normId(domMeta.id || getChatIdFromElement(el));
 		const recent = _getDialogRecentMeta(id);
-		const effective = _getDialogControlEffectiveMeta(id, domMeta) || domMeta;
+		// Native SearchItem has no unread badge. Its missing badge is not a read event.
+		const isSearch = !!el?.closest?.('.bx-im-chat-search__container,.bx-im-search-item__container,.bx-im-search-result-item,.bx-im-search-item');
+		const effective = _getDialogControlEffectiveMeta(id, isSearch ? null : domMeta) || domMeta;
 		return Object.assign({}, effective, {
 			id: id || effective.id,
 			searchText: [
@@ -11172,7 +11523,7 @@ if (_presetChannel) {
 		const selector = `${_CHAT_LIST_ITEM_SELECTOR},${_CHAT_SEARCH_ITEM_SELECTOR}`;
 		return Array.from(new Set([
 			..._getDialogControlNativeRows(container),
-			...document.querySelectorAll(_CHAT_SEARCH_ITEM_SELECTOR)
+			...(_isDialogNativeLazyMode() ? container : document).querySelectorAll(_CHAT_SEARCH_ITEM_SELECTOR)
 		])).filter(el => {
 			if (!_isUsableDialogCandidate(el, { allowNestedId: true })) return false;
 			const nestedOwner = el.parentElement?.closest?.(selector);
@@ -11182,6 +11533,15 @@ if (_presetChannel) {
 
 	function _applyDialogControlRowFilter(el, nativeFolderFilter = null) {
 		if (!el) return false;
+		if (_isDialogNativeLazyMode()) {
+			const meta = _getDialogRowFilterMeta(el);
+			const searching = !!String(filters.query || '').trim();
+			const unread = _getDialogControlViewPrefs().unreadOnly || filters.unreadOnly;
+			let visible = searching ? (!unread || _isDialogControlUnreadMeta(meta)) : matchByFilters(meta);
+			if (visible && nativeFolderFilter) visible = _matchesDialogControlNativeFilter(el, meta, nativeFolderFilter);
+			el.classList.toggle('pena-native-filter-hidden', !visible);
+			return visible;
+		}
 		const meta = IS_OL_FRAME ? getItemMeta(el) : _getDialogRowFilterMeta(el);
 		let visible = matchByFilters(meta);
 		if (visible && nativeFolderFilter) visible = _matchesDialogControlNativeFilter(el, meta, nativeFolderFilter);
@@ -11204,6 +11564,7 @@ if (_presetChannel) {
 	_armPenaSearchFlow(filtersHost);
 	const container = findContainer();
 	if (!container) return;
+	if (_isDialogNativeLazyMode()) _indexDialogNativeSearchRows(container);
 	if (!IS_OL_FRAME) {
 		_dialogControlNativeFilterPass = true;
 		try {
@@ -11212,7 +11573,7 @@ if (_presetChannel) {
 			const nativeFolderFilter = _getDialogControlNativeFilter();
 			const demandedIds = new Set(Array.from(nativeFolderFilter?.ids || []).map(normId).filter(Boolean));
 			const normalizedQuery = _normalizeDialogControlTitle(filters.query || '');
-			if (normalizedQuery) {
+			if (normalizedQuery && !_isDialogNativeLazyMode()) {
 				_getDialogControlItemsForMode(mode).forEach(item => {
 					if (_isDialogControlFolder(item)) return;
 					const id = normId(item.id);
@@ -11220,12 +11581,16 @@ if (_presetChannel) {
 					if (id && title.includes(normalizedQuery)) demandedIds.add(id);
 				});
 			}
-			if (demandedIds.size) {
+			if (demandedIds.size && !_isDialogNativeLazyMode()) {
 				// Folder/search demand validates only the matching cached rows. Never
 				// fan out details for every controlled dialog merely because a view changed.
 				_scheduleDialogRecentMandatoryDetails(new Set(), { includeMandatory: false, mandatoryIds: demandedIds });
 			}
 			if (_isDialogControlNativePassThrough()) {
+				if (_isDialogNativeLazyMode()) {
+					_syncDialogControlNativeRemoteRows(container, _getDialogControlItems());
+					_scheduleDialogNativeFolderWindow();
+				}
 				const materialization = _dialogNativeMaterializedSources.get(mode);
 				if (_dialogControlNeedsCompleteNativeMaterialization(mode) &&
 					(!materialization || !_isDialogNativeMaterializationCurrent(mode, container))) {
@@ -11445,9 +11810,13 @@ if (_presetChannel) {
 		try {
 			const saved = JSON.parse(localStorage.getItem(_dialogControlViewKey(mode)) || '{}');
 			const sortMode = ['color', 'date'].includes(saved?.sortMode) ? saved.sortMode : 'date';
-			const sortDirection = ['asc', 'desc'].includes(saved?.sortDirection)
+			let sortDirection = ['asc', 'desc'].includes(saved?.sortDirection)
 				? saved.sortDirection
 				: (sortMode === 'color' ? 'asc' : 'desc');
+			if (_isDialogNativeLazyMode() && sortMode === 'date' && sortDirection === 'asc') {
+				sortDirection = 'desc';
+				localStorage.setItem(_dialogControlViewKey(mode), JSON.stringify({ ...saved, sortDirection }));
+			}
 			return { sortMode, sortDirection, unreadOnly: !!saved?.unreadOnly };
 		} catch {
 			return { sortMode: 'date', sortDirection: 'desc', unreadOnly: false };
@@ -11455,6 +11824,7 @@ if (_presetChannel) {
 	}
 
 	function _dialogControlNeedsCompleteNativeMaterialization(mode = _pMode()) {
+		if (_isDialogNativeLazyMode()) return false;
 		if (IS_OL_FRAME || !_isDialogControlNativePassThrough()) return false;
 		const prefs = _getDialogControlViewPrefs(mode);
 		if (String(filters.query || '').trim()) return true;
@@ -11477,11 +11847,21 @@ if (_presetChannel) {
 		const next = { ..._getDialogControlViewPrefs(mode), ...patch };
 		if (!['color', 'date'].includes(next.sortMode)) next.sortMode = 'date';
 		if (!['asc', 'desc'].includes(next.sortDirection)) next.sortDirection = next.sortMode === 'color' ? 'asc' : 'desc';
+		if (_isDialogNativeLazyMode() && next.sortMode === 'date') next.sortDirection = 'desc';
 		next.unreadOnly = !!next.unreadOnly;
 		try { localStorage.setItem(_dialogControlViewKey(mode), JSON.stringify(next)); } catch {}
 		_dialogControlLastSig = '';
 		_dialogControlNativeViewSig = '';
 		return next;
+	}
+
+	function _isDialogNativeLazyMode() {
+		// Full materialization remains available to explicit compatibility audits.
+		// Normal clients never scroll/crawl history to make the list interactive.
+		return !IS_OL_FRAME && window.__PENA_TEST_LEGACY_CATALOG__ !== true &&
+			window.__PENA_FORCE_REST_CATALOG__ !== true && window.__PENA_TEST_MANAGED_CATALOG__ !== true &&
+			window.__PENA_TEST_NATIVE_SCROLL__ !== true && window.__PENA_TEST_API_CATALOG__ !== true &&
+			window.__PENA_TEST_EAGER_MATERIALIZATION__ !== true;
 	}
 
 	function _isDialogControlNativePassThrough() {
@@ -11780,7 +12160,14 @@ if (_presetChannel) {
 		const id = String(dialogId || '');
 		if (!id) return false;
 		if (!(_dialogControlMultiSelected instanceof Set)) _dialogControlMultiSelected = new Set();
-		const dialogs = (Array.isArray(items) ? items : []).filter(item => !_isDialogControlFolder(item));
+		let dialogs = (Array.isArray(items) ? items : []).filter(item => !_isDialogControlFolder(item));
+		if (_isDialogNativeLazyMode() && String(filters.query || '').trim()) {
+			// A search range follows the visible Bitrix result order, never hidden
+			// catalog entries between the two selected IDs.
+			dialogs = _getDialogControlNativeRows(findContainer(), { includeSearch: true })
+				.filter(row => isVisibleElement(row))
+				.map(row => _ensureDialogControlItemFromElement(row, { silent: true, mark: false })).filter(Boolean);
+		}
 		const targetIdx = dialogs.findIndex(item => String(item.id) === id);
 		if (targetIdx < 0) return false;
 		_pruneDialogControlMultiSelection(items);
@@ -13025,6 +13412,7 @@ if (_presetChannel) {
 	}
 
 	function _getDialogControlNativeFilter() {
+		if (_isDialogNativeLazyMode() && String(filters.query || '').trim()) return { segmentId:'', folderId:'', ids:new Set(), titles:new Set(), unreadOnly:!!(_getDialogControlViewPrefs().unreadOnly || filters.unreadOnly) };
 		if (IS_OL_FRAME || !_isDialogControlNativeMode()) return null;
 		const viewPrefs = _getDialogControlViewPrefs();
 		const items = _getDialogControlItems();
@@ -13037,7 +13425,7 @@ if (_presetChannel) {
 			_setDialogControlNativeActiveFolderId('', { render: false, apply: false });
 			folderId = '';
 		}
-		if (!segmentId && !folderId && !viewPrefs.unreadOnly) return null;
+		if (!segmentId && !folderId && !viewPrefs.unreadOnly && !filters.unreadOnly) return null;
 		const ids = new Set();
 		const titles = new Set();
 		const titleCounts = new Map();
@@ -13053,7 +13441,7 @@ if (_presetChannel) {
 			const titleKey = _normalizeDialogControlTitle(item.title);
 			if (titleKey && titleCounts.get(titleKey) === 1) titles.add(titleKey);
 		});
-		return { segmentId, folderId, ids, titles, unreadOnly: viewPrefs.unreadOnly };
+		return { segmentId, folderId, ids, titles, unreadOnly: !!(viewPrefs.unreadOnly || filters.unreadOnly) };
 	}
 
 	function _getDialogControlItemIdentityKeys(item) {
@@ -18613,6 +19001,7 @@ if (_presetChannel) {
 				['desc', 'По убыванию', '<path d="M12 5v14M7 14l5 5 5-5"/>'],
 				['asc', 'По возрастанию', '<path d="M12 19V5M7 10l5-5 5 5"/>']
 			].forEach(([direction, title, icon]) => {
+				if (_isDialogNativeLazyMode() && viewPrefs.sortMode === 'date' && direction === 'asc') return;
 				const btn = document.createElement('button');
 				btn.type = 'button';
 				btn.dataset.penaSortDirection = direction;
@@ -19707,6 +20096,7 @@ if (_presetChannel) {
 	}
 
 	function _hasDialogControlManagedTransform() {
+		if (_isDialogNativeLazyMode()) return false;
 		return _isDialogControlNativeMode() && !IS_OL_FRAME && !_isDialogControlNativePassThrough();
 	}
 
@@ -19933,7 +20323,7 @@ if (_presetChannel) {
 		const managedNativeCatalogReady = !_isDialogControlNativePassThrough() && _dialogRecentMeta.size > 0 && (
 			_dialogNativePrefetchActive || _dialogNativePrefetchedModes.has(managedMode)
 		);
-		const ready = _isDialogRecentInteractionBlocked() || _dialogRecentLastFullAt > 0 || (_dialogRecentCacheLoaded && _dialogRecentMeta.size > 0) || (
+		const ready = _isDialogNativeLazyMode() || _isDialogRecentInteractionBlocked() || _dialogRecentLastFullAt > 0 || (_dialogRecentCacheLoaded && _dialogRecentMeta.size > 0) || (
 			_dialogRecentProgress.phase === 'full-sync' &&
 			_dialogRecentProgress.partial &&
 			_dialogRecentMeta.size > 0
@@ -20083,11 +20473,12 @@ if (_presetChannel) {
 		return root ? Array.from(root.querySelectorAll('.pena-native-managed-row')) : [];
 	}
 
-	function _getDialogControlNativeRows(container = findContainer()) {
+	function _getDialogControlNativeRows(container = findContainer(), { includeSearch = false } = {}) {
 		if (_dialogControlManagedRoot?.isConnected && (!container || container === _dialogControlManagedSource)) {
 			return Array.from(_dialogControlManagedRoot.querySelectorAll('.pena-native-managed-row'));
 		}
-		const selector = '.bx-im-list-recent-item__wrap,.bx-im-list-item,.bx-messenger-cl-item,[data-dialog-id],[data-dialog-id-value],[data-dialogid]';
+		if (includeSearch && container && _isDialogNativeLazyMode()) _indexDialogNativeSearchRows(container);
+		const selector = `${_CHAT_LIST_ITEM_SELECTOR}${includeSearch ? ',' + _CHAT_SEARCH_ITEM_SELECTOR : ''}`;
 		return Array.from(container?.querySelectorAll?.(selector) || []).filter(el => {
 			if (!_isUsableDialogCandidate(el, { allowNestedId: true })) return false;
 			const nestedOwner = el.parentElement?.closest?.(selector);
@@ -20176,6 +20567,7 @@ if (_presetChannel) {
 	}
 
 	function _applyDialogControlNativeSort(rowInfos, itemMap, itemTitleMap, folderMap, prefs, items) {
+		if (_isDialogNativeLazyMode() && (prefs.sortMode === 'date' || String(filters.query || '').trim())) return false;
 		const infos = (Array.isArray(rowInfos) ? rowInfos : []).filter(info => info?.row?.parentElement);
 		if (infos.length < 2) return false;
 		const mode = _pMode();
@@ -20354,7 +20746,7 @@ if (_presetChannel) {
 		const items = _getDialogControlItems();
 		const itemIndex = _buildDialogControlNativeItemIndex(items);
 		_pruneDialogControlMultiSelection(items);
-		_getDialogControlNativeRows(container).forEach(row => {
+		_getDialogControlNativeRows(container, { includeSearch: true }).forEach(row => {
 			const item = _getDialogControlItemForNativeRow(row, items, itemIndex);
 			const selected = !!item && _dialogControlMultiSelected.has(String(item.id));
 			row.classList.toggle('--native-multi-selected', selected);
@@ -20373,6 +20765,9 @@ if (_presetChannel) {
 			!_dialogControlManagedRoot?.contains?.(el)) return null;
 		const container = findContainer();
 		if (!container?.contains?.(el) && !_dialogControlManagedRoot?.contains?.(el)) return null;
+		// Search responses can arrive after the input reconciliation. Resolve the
+		// native props before the first right/Ctrl click, without waiting for paint.
+		if (el.closest?.('.bx-im-search-item__container') && container) _indexDialogNativeSearchRows(container);
 		const selector = '.bx-im-list-recent-item__wrap,.bx-im-list-item,.bx-messenger-cl-item,[data-dialog-id],[data-dialog-id-value],[data-dialogid]';
 		const row = getChatItemElement(el) ||
 			el.closest?.(selector) ||
@@ -20814,6 +21209,7 @@ if (_presetChannel) {
 			row.dataset.penaNativePrevDraggable === undefined &&
 			!row.classList.contains('--native-colored') && !row.classList.contains('--native-folder-child')) return;
 		const restoreDisplay = options.restoreDisplay !== false;
+		if (restoreDisplay) row.classList.remove('pena-native-filter-hidden');
 		if (restoreDisplay && row.dataset.penaNativeOriginalDisplay !== undefined) {
 			row.style.display = row.dataset.penaNativeOriginalDisplay;
 		}
@@ -20888,7 +21284,7 @@ if (_presetChannel) {
 		}
 		_dialogControlNativeViewSig = '';
 		_clearDialogControlManagedList(container);
-		const rows = _getDialogControlNativeRows(container);
+		const rows = _getDialogControlNativeRows(container, { includeSearch: true });
 		const oldNodes = Array.from(container.querySelectorAll('.pena-native-folder-header,.pena-native-row-folder-badge'));
 		if (oldNodes.length || rows.some(row => row.classList.contains('pena-native-chat-row') || row.dataset.penaNativeFolderId !== undefined)) {
 			_markDialogControlNativeMutation();
@@ -20903,7 +21299,7 @@ if (_presetChannel) {
 	}
 
 	function _isDialogControlNativeFilterVisible(row) {
-		return !!row && row.dataset.penaNativeFilterDisplay !== 'none';
+		return !!row && !row.classList.contains('pena-native-filter-hidden') && row.dataset.penaNativeFilterDisplay !== 'none';
 	}
 
 	function _makeDialogControlNativeFolderHeader(folder, status, visibleCount, folderColor) {
@@ -21168,7 +21564,7 @@ if (_presetChannel) {
 				_dialogControlNativeSuppressClickRow = row;
 				_dialogControlNativeSuppressClickId = normId(currentItem.id);
 				const itemIndex = _buildDialogControlNativeItemIndex(items);
-				_getDialogControlNativeRows().forEach(candidate => {
+				_getDialogControlNativeRows(findContainer(), { includeSearch: true }).forEach(candidate => {
 					const candidateItem = _getDialogControlItemForNativeRow(candidate, items, itemIndex);
 					candidate.classList.toggle('--native-dragging', !!candidateItem && _dialogControlNativeDraggingIds.includes(String(candidateItem.id)));
 				});
@@ -21181,7 +21577,7 @@ if (_presetChannel) {
 			row.addEventListener('dragend', () => {
 				window.__PENA_INTERACTIONS__?.end?.('drag');
 				_dialogControlNativeDraggingIds = [];
-				_getDialogControlNativeRows().forEach(candidate => candidate.classList.remove('--native-dragging'));
+				_getDialogControlNativeRows(findContainer(), { includeSearch: true }).forEach(candidate => candidate.classList.remove('--native-dragging'));
 				_clearDialogControlNativeDropMarks();
 			});
 		}
@@ -21224,7 +21620,12 @@ if (_presetChannel) {
 			_dialogControlManagedRoot?.isConnected &&
 			_dialogControlManagedSource === container
 		);
-		const rows = _getDialogControlNativeRows(container);
+		const rows = _getDialogControlNativeRows(container, { includeSearch: true });
+		const searchRows = rows.filter(row => row.matches?.('.bx-im-search-item__container'));
+		if (_isDialogNativeLazyMode() && searchRows.length) {
+			const nativeFilter = _getDialogControlNativeFilter();
+			searchRows.forEach(row => _applyDialogControlRowFilter(row, nativeFilter));
+		}
 		const oldNodes = Array.from(container.querySelectorAll('.pena-native-folder-header,.pena-native-row-folder-badge'));
 		if (rows.length || oldNodes.length) _markDialogControlNativeMutation();
 		oldNodes.forEach(el => el.remove());
@@ -21320,7 +21721,7 @@ if (_presetChannel) {
 			const scrollEl = findInternalScrollContainer(container);
 			const stableTop = Number(scrollEl?.scrollTop) || 0;
 			const stableLeft = Number(scrollEl?.scrollLeft) || 0;
-			const changed = _applyDialogControlNativeSort(rowInfos, itemMap, itemTitleMap, folderMap, viewPrefs, allItems);
+			const changed = _applyDialogControlNativeSort(rowInfos.filter(info => !searchRows.includes(info.row)), itemMap, itemTitleMap, folderMap, viewPrefs, allItems);
 			if (changed && scrollEl?.isConnected) {
 				scrollEl.scrollTop = stableTop;
 				scrollEl.scrollLeft = stableLeft;
@@ -21393,6 +21794,7 @@ if (_presetChannel) {
 			['desc', 'По убыванию', '<path d="M12 5v14M7 14l5 5 5-5"/>'],
 			['asc', 'По возрастанию', '<path d="M12 19V5M7 10l5-5 5 5"/>']
 		].forEach(([direction, label, icon]) => {
+			if (_isDialogNativeLazyMode() && _getDialogControlViewPrefs().sortMode === 'date' && direction === 'asc') return;
 			const btn = _makeDialogControlContextButton('dialog-control-context-sort', `<svg viewBox="0 0 24 24" aria-hidden="true">${icon}</svg>`, label);
 			btn.classList.toggle('--selected', _getDialogControlViewPrefs().sortDirection === direction);
 			btn.addEventListener('click', (e) => {
@@ -22431,7 +22833,11 @@ if (_presetChannel) {
 	function _getDialogControlItemLiveMeta(item, visibleChatIndex) {
 		if (!item || _isDialogControlFolder(item)) return null;
 		const el = visibleChatIndex?.get?.(normId(item.id)) || null;
-		return _getDialogControlEffectiveMeta(item, _getCachedDialogControlElementMeta(el));
+		// Folder rows are a projection of metadata, never a fresh counter source.
+		return _getDialogControlEffectiveMeta(item, (el?.classList?.contains('pena-native-managed-row') ||
+			el?.closest?.('.bx-im-chat-search__container,.bx-im-search-item__container,.bx-im-search-result-item,.bx-im-search-item') ||
+			(_dialogControlManagedRoot?.isConnected && _dialogControlManagedSource?.contains(el)))
+			? null : _getCachedDialogControlElementMeta(el));
 	}
 
 	function _getDialogControlItemFilterMeta(item, visibleChatIndex) {

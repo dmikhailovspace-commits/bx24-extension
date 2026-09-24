@@ -173,9 +173,9 @@ try {
   assert.equal(c._dialogTimeCache.get('portal~7:'+range.from+':'+range.to)?.data,null);assert.equal(c._dialogTimeBootstrapToken.scope,state.scope);
   assert.equal(c._dialogTimeBootstrapToken.phase,'ready');assert.equal(c._dialogTimeInFlight.size,0);
  });
- for(const held of [false,true])await phase(held?'default wake completes metadata and today while the native guard is held':'default native view starts metadata and today without inventing DOM proof',async()=>{
+ for(const lazy of [false,true])for(const held of [false,true])await phase(`${lazy?'incremental':'legacy'} wake keeps today's snapshot with guard=${held}`,async()=>{
   const {c,state,range}=fixture(),guard=held?deferred():null;
-  Object.assign(c,{isInternalChatsDOM:()=>true,findContainer:()=>({matches:()=>false}),findInternalScrollContainer:()=>({}),_getDialogNativeSourceGeneration:()=>1,
+  Object.assign(c,{_isDialogNativeLazyMode:()=>lazy,isInternalChatsDOM:()=>true,findContainer:()=>({matches:()=>false}),findInternalScrollContainer:()=>({}),_getDialogNativeSourceGeneration:()=>1,
    _dialogNativeAttemptStates:new Map(),_dialogControlNeedsCompleteNativeMaterialization:()=>false,_refreshDialogNativeVisibleWindow:()=>{},_setDialogNativeAttemptState:()=>{},_publishDialogRecentSyncState:()=>{},_dialogNativeOriginalScrollPromise:guard?.promise||null});
   c._dialogTimeCatalogCursor=0;vm.runInContext(extract('_runDialogWakeReconcile'),c);
   await c._runDialogWakeReconcile('periodic-freshness',{metadataOnly:true});

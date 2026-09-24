@@ -152,7 +152,7 @@ try{
  while(Date.now()-began<limit){
    await page.locator('#startup-native-input').press('a',{timeout:15000});
    await page.waitForTimeout(180);
-   done=await page.evaluate(()=>{const r=startupProbe.record();return r.complete&&r.taskTitles===4149&&r.entries===startupExpected.entries&&window.__resumeHarness.ready('chats');});
+   done=await page.evaluate(()=>{const r=startupProbe.record();return r.complete&&r.taskTitles===4149&&r.entries===startupExpected.entries&&(window.__PENA_RECENT_SYNC__?.gateReady === true);});
    if(done)break;
  }
  // Export only a small checkpoint while frame/CPU collection is active. A full
@@ -176,7 +176,7 @@ try{
  report.phases.push({name:'early open loads the complete own-day journal once through one full task catalog',status:exactRead(report.final)?'PASS':'FAIL'});
  const warmExtra=report.warm?commands(report.final).slice(report.initial.commandCount,report.warm.commandCount):[];
  report.phases.push({name:'warm reopen has complete cached totals, no elapsed rereads and no full catalog',status:done&&report.warm.record.seconds===19260&&report.warm.visible.statusPresent===false&&!warmExtra.some(c=>c.method==='task.elapseditem.getlist'||c.method==='tasks.task.list'&&!c.delta)?'PASS':'FAIL'});
- report.phases.push({name:'native physical source remains exactly 108 chats and one materialization pass',status:report.final.native.modes.chats.sourceComplete&&report.final.native.status.modeStates.chats.materialization.nativePassCount===1?'PASS':'FAIL'});
+ report.phases.push({name:'native source stays incremental with no history traversal',status:!report.final.native.modes.chats.sourceComplete&&report.final.native.modes.chats.observedIds.length===report.final.native.modes.chats.poolSize&&report.final.native.status.modeStates.chats.materialization.nativePassCount===0&&!commands(report.final).some(call=>call.method==='im.recent.list')?'PASS':'FAIL'});
  report.phases.push({name:'paired native interaction and browser CPU budgets',status:report.budgets.every(b=>b.pass)?'PASS':'FAIL'});
  assert(report.final.samples.length>=20&&report.off.samples.length===20&&report.final.samples.every(s=>s.trusted),'Real trusted input samples must complete in both arms');
  report.transport=transportSamples;
@@ -202,13 +202,13 @@ try{
  await page.goto(endpoint+'/tests/native-resume-recovery-harness.html?autoBootstrap=1');
  const hasBootstrap=await page.evaluate(()=>Boolean(window.__PENA_TIME_LOAD_DIAGNOSTICS__));
  if(hasBootstrap){
-   // Native auto-scrolling deliberately yields to trusted user activity. This
-   // separate control lets that first physical walk finish, then types during
+   // The native viewport is ready without a full traversal. This
+   // separate control waits for the initial view, then types during
    // the expensive catalog/elapsed preload while the time panel stays closed.
-   await page.waitForFunction(()=>__resumeHarness.ready('chats'),undefined,{timeout:30000});
+   await page.waitForFunction(()=>(window.__PENA_RECENT_SYNC__?.gateReady === true),undefined,{timeout:30000});
    report.closedPhysicalBeforeTyping=await page.evaluate(()=>({sourceComplete:__resumeHarness.sourceComplete('chats'),native:__PENA_NATIVE_PREFETCH__.status().modeStates.chats.materialization,phase:__PENA_TIME_LOAD_DIAGNOSTICS__.snapshot()}));
    const closedStart=Date.now();let complete=false;
-   while(Date.now()-closedStart<limit){await page.locator('#startup-native-input').press('c');await page.waitForTimeout(180);complete=await page.evaluate(()=>{const r=startupProbe.record();return r.complete&&r.taskTitles===4149&&r.entries===startupExpected.entries&&__resumeHarness.ready('chats');});if(complete)break;}
+   while(Date.now()-closedStart<limit){await page.locator('#startup-native-input').press('c');await page.waitForTimeout(180);complete=await page.evaluate(()=>{const r=startupProbe.record();return r.complete&&r.taskTitles===4149&&r.entries===startupExpected.entries&&(window.__PENA_RECENT_SYNC__?.gateReady === true);});if(complete)break;}
    report.closed=await page.evaluate(()=>startupProbe.snapshot());
    report.requestCounts.closed=counts(report.closed);
    report.phases.push({name:'closed first startup completes catalog and today before panel open',status:complete&&exactRead(report.closed)&&report.closed.visible.toolbar==='Сегодня 5:21'?'PASS':'FAIL'});
@@ -227,7 +227,7 @@ try{
  await page.route('**/extension/injected.js',route=>route.fulfill({contentType:'application/javascript',body:injected}));
  await page.route('**/extension/native-time-control.js',route=>route.fulfill({contentType:'application/javascript',body:model}));
  await page.goto(endpoint+'/tests/native-resume-recovery-harness.html?autoBootstrap=1&selectedProjects=1');
- await page.waitForFunction(()=>__resumeHarness.ready('chats')&&startupProbe.record().complete,undefined,{timeout:60000});
+ await page.waitForFunction(()=>(window.__PENA_RECENT_SYNC__?.gateReady === true)&&startupProbe.record().complete,undefined,{timeout:60000});
  report.selected=await page.evaluate(()=>startupProbe.snapshot());
  const selectedCalls=commands(report.selected),selectedElapsed=selectedCalls.filter(call=>call.method==='task.elapseditem.getlist');
  const selectedCatalog=selectedCalls.filter(call=>call.method==='tasks.task.list'&&Array.isArray(call.projectFilter));
@@ -244,7 +244,7 @@ try{
   await page.route('**/extension/injected.js',route=>route.fulfill({contentType:'application/javascript',body:injected}));
   await page.route('**/extension/native-time-control.js',route=>route.fulfill({contentType:'application/javascript',body:model}));
   await page.goto(endpoint+'/tests/native-resume-recovery-harness.html?autoBootstrap=1&selectedProjects=1&globalElapsed=unsupported');
-  await page.waitForFunction(()=>__resumeHarness.ready('chats')&&startupProbe.record().complete,undefined,{timeout:60000});
+  await page.waitForFunction(()=>(window.__PENA_RECENT_SYNC__?.gateReady === true)&&startupProbe.record().complete,undefined,{timeout:60000});
   report.unsupported=await page.evaluate(()=>startupProbe.snapshot());
   const fallback=counts(report.unsupported),fallbackCommands=commands(report.unsupported);
   const pointIds=fallbackCommands.filter(c=>c.method==='task.elapseditem.getlist'&&c.taskId!=='0').map(c=>c.taskId);

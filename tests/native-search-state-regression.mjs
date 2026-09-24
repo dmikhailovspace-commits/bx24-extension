@@ -1,0 +1,126 @@
+import assert from 'node:assert/strict';
+import {readFileSync,writeFileSync} from 'node:fs';
+import {chromium} from 'playwright';
+import {startHarnessServer,collectPageErrors} from './lib/harness-server.mjs';
+const raw=readFileSync(process.env.PENA_STABILITY_SOURCE || new URL('../extension/injected.js',import.meta.url),'utf8');
+const source=raw.replace('\tasync function boot() {',`\tasync function boot() {
+window.stability={apply:applyFilters,arm:_armPenaSearchFlow,query:()=>filters.query,stored:_readStoredBitrixSearchQuery,pending:()=>_dialogControlReadActions.size,selected:()=>[..._dialogControlMultiSelected],unread:value=>{_setDialogControlViewPrefs({unreadOnly:value});applyFilters()}, folder:_setDialogControlNativeActiveFolderId, items:_getDialogControlItems};`);
+const server=await startHarnessServer();const browser=await chromium.launch({headless:true});const report=[];
+try {
+ for(const mode of ['chats','tasks']) {
+ const page=await browser.newPage();const errors=collectPageErrors(page);
+ await page.route('**/extension/injected.js',route=>route.fulfill({contentType:'application/javascript',body:source}));
+ await page.goto(`${server.baseUrl}/tests/native-consistency-harness.html?mode=${mode}&lazyNative=1&nativeCatalog=1&nativeFirst=1&passThrough=1&eager=0&lazy=1&catalogRows=40&nativeService=1`);
+ await page.locator('.pena-native-folder-switcher').waitFor({state:'visible'});
+ await page.evaluate(()=>{BX.Vue3={BitrixVue:{install(){}}};});
+ await page.addScriptTag({url:`${server.baseUrl}/tests/fixtures/vendor/bitrix-vue-prod.js`});
+ await page.evaluate(mode=>{
+  const {createApp,h}=BX.Vue3;
+  const host=document.querySelector(mode==='tasks'?'.task-host':'.recent-host');
+  const oldInput=host.querySelector('input[type="search"]');const fieldRoot=document.createElement('div');oldInput.replaceWith(fieldRoot);
+  const list=host.querySelector('.bx-im-list-container-recent__elements,.bx-im-list-container-task__elements');
+  const resultRoot=document.createElement('div');list.prepend(resultRoot);
+  const SearchItem={name:'SearchItem',props:['dialogId'],render(){return h('div',{class:'bx-im-search-item__container',onClick:()=>{window.nativeOpened=this.dialogId;window.nativeSearch.onCloseSearch();}},[h('div',{class:'bx-im-search-item__avatar-container'},[h('div',{class:'bx-im-avatar__container',style:'width:42px;height:42px;border-radius:50%'},'U')]),h('span',{class:'bx-im-chat-title__text'+(this.dialogId==='708'?' --collab':'')},'Native '+this.dialogId)])}};
+  const results=createApp({data:()=>({ids:[]}),render(){return h('div',{class:'bx-im-chat-search__container'},this.ids.map(id=>h(SearchItem,{key:id,dialogId:id})));}}).mount(resultRoot);
+  const nativeRows=()=>[...list.querySelectorAll('.bx-im-list-recent-item__wrap')];
+  window.nativeSearchApp=createApp({
+   name:mode==='tasks'?'TaskListContainer':'RecentListContainer',
+   data:()=>({searchMode:false,searchQuery:'',inputValue:''}),
+   methods:{
+    onUpdateSearch(query){this.searchMode=true;this.searchQuery=query;this.inputValue=query;nativeRows().forEach(row=>{row.style.display=query?'none':row.style.display;});
+     if(!query){results.ids=[];setTimeout(()=>{if(!this.searchQuery)nativeRows().forEach(row=>row.style.display='');},80);return;}
+     const delay=query==='first'?650:query==='slow'?180:20;
+     setTimeout(()=>{if(this.searchQuery===query)results.ids=query==='other'?['chat77']:['chat225','chat5','707','708'];},delay);
+    },
+    onCloseSearch(){this.searchMode=false;this.searchQuery='';this.inputValue='';results.ids=[];nativeRows().forEach(row=>row.style.display='');},
+    onCloseRecentSearch(){this.onCloseSearch();}
+   },
+   render(){return h('div',[h('input',{type:'search',placeholder:mode==='tasks'?'Найти задачу':'Найти чат',value:this.inputValue,onInput:event=>this.onUpdateSearch(event.target.value),onKeydown:event=>{if(event.key==='Escape')this.onCloseRecentSearch();}}),h('button',{class:'native-clear',onClick:this.onCloseRecentSearch},'×')]);}
+  });
+  window.nativeSearch=nativeSearchApp.mount(fieldRoot);window.nativeSearchResults=results;
+  window.nativeTestList=list;stability.arm();
+ },mode);
+ const input=page.locator(`${mode==='tasks'?'.task-host':'.recent-host'} input[type="search"]`);
+ await input.fill('first');await page.locator('.bx-im-search-item__container').first().waitFor({state:'visible'});
+ await page.getByText('Native chat225',{exact:true}).click({button:'right'});
+ await page.locator('.dialog-control-context-menu').waitFor({state:'visible',timeout:1500});
+ await page.keyboard.press('Escape');
+ await page.getByText('Native chat225',{exact:true}).click();await page.waitForTimeout(100);
+ assert.equal(await input.inputValue(),'first','Opening a dialog preserves the query');
+ assert.equal(await page.evaluate(()=>nativeSearch.searchQuery),'first','Native model and field stay in sync');
+ assert.equal(await page.evaluate(()=>nativeOpened),'chat225');
+ await page.evaluate(()=>nativeSearch.onCloseSearch());await page.waitForTimeout(30);
+ assert.equal(await input.inputValue(),'first','Outside click does not erase sticky search');
+ assert.equal(await page.evaluate(()=>stability.stored()),'first','Query is saved under the same scoped key used for restoration');
+ await page.evaluate(()=>{
+  const root=nativeSearchApp._container;const component=nativeSearchApp._component;
+  nativeSearchApp.unmount();nativeSearchApp=BX.Vue3.createApp(component);nativeSearch=nativeSearchApp.mount(root);stability.arm();
+ });
+ await page.waitForTimeout(80);
+ assert.equal(await input.inputValue(),'first','Native remount restores the saved query');
+ // Unknown ordinary and collab users share the exact same actions and numeric
+ // REST identity. Do not pre-import search results into the recent catalog.
+ await page.evaluate(()=>{
+  window.searchWrites=[];const original=BX.rest.callMethod;
+  BX.rest.callMethod=function(method,params,callback){
+   if(!['im.dialog.read','im.recent.unread'].includes(method))return original.apply(this,arguments);
+   searchWrites.push({method,params});setTimeout(()=>callback({error:()=>null,data:()=>true}),1);
+  };
+ });
+ const ordinary=page.getByText('Native 707',{exact:true});const collab=page.getByText('Native 708',{exact:true});
+ assert.equal(await page.evaluate(()=>stability.items().some(item=>item.id==='user708')),false);
+ await collab.click({button:'right'});
+ const menu=page.locator('.dialog-control-context-menu');await menu.waitFor({state:'visible'});
+ await menu.getByRole('menuitem',{name:'Прочитать позже',exact:true}).click();
+ await page.waitForFunction(()=>!stability.pending()&&searchWrites.length===1);
+ assert.deepEqual(await page.evaluate(()=>searchWrites[0].params),{DIALOG_ID:'708',ACTION:'Y'});
+ await ordinary.click({modifiers:['Control']});await collab.click({modifiers:['Control']});
+ assert.deepEqual(await page.evaluate(()=>stability.selected().sort()),['user707','user708']);
+ assert.equal(await page.locator('.bx-im-search-item__container.--native-multi-selected').count(),2,'Search selection must be visible');
+ await collab.click({button:'right'});
+ await menu.getByRole('menuitem',{name:'Прочитать позже',exact:true}).click();
+ await page.waitForFunction(()=>!stability.pending()&&searchWrites.length===3);
+ assert.deepEqual(await page.evaluate(()=>searchWrites.slice(1).map(x=>x.params.DIALOG_ID).sort()),['707','708']);
+ await collab.click({button:'right'});
+ await menu.getByRole('menuitem',{name:'Снять отметку «прочитать позже»',exact:true}).click();
+ await page.waitForFunction(()=>!stability.pending()&&searchWrites.length===5);
+ await collab.click({button:'right'});
+ await menu.getByRole('menuitem',{name:'Прочитано',exact:true}).click();
+ await page.waitForFunction(()=>!stability.pending()&&searchWrites.length===9);
+ assert.deepEqual(await page.evaluate(()=>searchWrites.slice(5).filter(x=>x.method==='im.dialog.read').map(x=>x.params.DIALOG_ID).sort()),['707','708']);
+ await collab.click({button:'right'});
+ await menu.getByRole('menuitem',{name:'Добавить в новую папку',exact:true}).click();
+ await page.locator('.pena-native-confirm-input').fill('Search users');await page.getByRole('button',{name:'Создать',exact:true}).click();
+ assert.equal(await page.evaluate(()=>{const f=stability.items().find(x=>x.title==='Search users');return !!f&&['user707','user708'].every(id=>stability.items().find(x=>x.id===id)?.folderId===f.id)}),true);
+ await collab.click({button:'right'});await menu.getByRole('menuitem',{name:'Цветовой маркер',exact:true}).click();
+ await page.locator('.dialog-control-palette.--open .dialog-control-palette-tool.--random').click();
+ assert.equal(await page.evaluate(()=>{const a=stability.items().find(x=>x.id==='user707'),b=stability.items().find(x=>x.id==='user708');return /^#[a-f0-9]{6}$/.test(a.color)&&a.color===b.color}),true);
+ await page.waitForFunction(()=>document.querySelectorAll('.bx-im-search-item__container[data-pena-native-dialog-id^="user70"] .pena-native-avatar-ring').length===2, null, {timeout:1500});
+ assert.equal(await page.locator('.bx-im-search-item__container[draggable="true"]').count()>=2,true);
+ await page.keyboard.press('Escape');
+ await ordinary.click({modifiers:['Control']});await collab.click({modifiers:['Shift']});
+ assert.deepEqual(await page.evaluate(()=>stability.selected().sort()),['user707','user708'],'Shift selects visible search order, not hidden recent entries');
+ await page.keyboard.press('Escape');
+ await page.evaluate(()=>stability.unread(true));await page.waitForTimeout(80);
+ assert.equal(await page.getByText('Native chat225',{exact:true}).isVisible(),true);
+ assert.equal(await page.getByText('Native chat5',{exact:true}).isVisible(),false,'Unread filtering applies to real SearchItem without data-id');
+ await page.evaluate(()=>stability.unread(false));await page.waitForTimeout(60);
+ assert.equal(await page.getByText('Native chat5',{exact:true}).isVisible(),true,'Turning off unread restores the result');
+ await input.fill('slow');await input.fill('other');await page.waitForTimeout(250);
+ assert.equal(await page.locator('.bx-im-search-item__container:visible .bx-im-chat-title__text').allTextContents().then(a=>a.join(',')),'Native chat77','Late response cannot freeze the old query');
+ await input.fill('');await page.waitForTimeout(180);
+ const expected=await page.evaluate(()=>nativeTestList.querySelectorAll('.bx-im-list-recent-item__wrap').length);
+ assert.equal(await page.locator(`${mode==='tasks'?'.task-host':'.recent-host'} .bx-im-list-recent-item__wrap:visible`).count(),expected,'Delayed native reset does not poison the display baseline');
+ await input.fill('again');await page.waitForTimeout(60);
+ await page.locator(`${mode==='tasks'?'.task-host':'.recent-host'} .native-clear`).click();await page.waitForTimeout(80);
+ assert.equal(await input.inputValue(),'');assert.equal(await page.evaluate(()=>stability.query()),'','Native clear is explicit and persistent');
+ await input.fill('escape');await input.press('Escape');await page.waitForTimeout(80);
+ assert.equal(await input.inputValue(),'');assert.equal(await page.evaluate(()=>stability.query()),'');
+ await input.fill('private query');
+ await page.evaluate(()=>{window.currentBitrixUserId='8';stability.arm();});await page.waitForTimeout(80);
+ assert.equal(await input.inputValue(),'','Changing the account clears the previous account query');
+ assert.equal(await page.evaluate(()=>stability.stored()),'');
+ assert.deepEqual(errors,[]);report.push({mode,status:'PASS',stickySearch:true,nativeQuery:true,unreadSearch:true,lateResponse:true,clearRestoresNativeRows:true});await page.close();
+ }
+ console.log('PASS native search state: sticky selection, unread results, delayed reset, stale response, native clear and Escape');
+} finally {await browser.close();await server.close();writeFileSync(new URL('./artifacts/native-search-state-report.json',import.meta.url),JSON.stringify(report,null,2));}

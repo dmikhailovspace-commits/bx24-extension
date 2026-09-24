@@ -97,12 +97,19 @@ assert.deepEqual(
   'dist/ contains stale or unexpected release artifacts'
 );
 if (process.env.PENA_REQUIRE_RELEASE_ARTIFACTS === '1') {
+  const targets = process.env.PENA_RELEASE_TARGETS || 'windows,macos';
+  assert.ok(['windows,macos', 'windows'].includes(targets), 'Unknown release target profile');
+  if (targets === 'windows') {
+    assert.equal(update.distribution, 'local', 'Windows-only acceptance requires explicit local distribution');
+    assert.deepEqual(update.release_targets, ['windows']);
+  }
+  const requiredArtifacts = targets === 'windows' ? expectedReleaseArtifacts.slice(0, 2) : expectedReleaseArtifacts;
   assert.deepEqual(
     presentReleaseArtifacts,
-    expectedReleaseArtifacts.slice().sort(),
-    'current Windows and macOS installers with SHA-256 sidecars are required'
+    requiredArtifacts.slice().sort(),
+    'current installers with SHA-256 sidecars are required for every requested target'
   );
-  for (const artifactName of expectedReleaseArtifacts.filter(name => !name.endsWith('.sha256'))) {
+  for (const artifactName of requiredArtifacts.filter(name => !name.endsWith('.sha256'))) {
     const artifactPath = join(distDir, artifactName);
     const sidecarPath = `${artifactPath}.sha256`;
     const expectedHash = readFileSync(sidecarPath, 'utf8').trim().split(/\s+/)[0]?.toLowerCase();

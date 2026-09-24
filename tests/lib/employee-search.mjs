@@ -44,7 +44,7 @@ export async function verifyEmployeeSearch(browser, source) {
   await page.addStyleTag({content:readFileSync(new URL('../../extension/injected.css',import.meta.url),'utf8')});
   await page.addScriptTag({content:`let _penaEmployeeSearch=null;const IS_OL_FRAME=false,filters={query:''};window.mode='chats';window.scope='portal~7';window.calls=[];window.pending=[];window.opened=[];
    const _dialogControlNativeSwitcherNode=document.querySelector('.pena-native-folder-switcher');function findContainer(){return document.getElementById('native-list')}
-   function _pMode(){return window.mode} function _getDialogNativeSharedAuditScopeKey(){return window.scope} function _getBitrixListSearchInput(){return document.querySelector('input')}
+   function _isDialogNativeLazyMode(){return false} function _pMode(){return window.mode} function _getDialogNativeSharedAuditScopeKey(){return window.scope} function _getBitrixListSearchInput(){return document.querySelector('input')}
    function _callBxRestReadPage(method,params,options){calls.push({method,params});return new Promise((resolve,reject)=>pending.push({resolve,reject,options}))}
    async function _openDialogControlViaBitrixApi(item){opened.push(item);return true}
    ${['_syncPenaEmployeeSearch','_isPenaEmployeeSearchCurrent','_loadPenaEmployeeSearch','_renderPenaEmployeeSearch'].map(extract).join('\n')}

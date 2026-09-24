@@ -83,6 +83,9 @@
   window.timePortalDateKey = (at = Date.now()) => window.timePortalTimestamp(at).slice(0, 10);
 	document.querySelectorAll('.recent-host input[type="search"],.task-host input[type="search"]').forEach(input => { input.value = ''; });
 	const nativePassThrough = new URLSearchParams(location.search).get('passThrough') === '1';
+	// Existing scenarios explicitly audit the retained full-catalog engine.
+	// lazyNative=1 exercises the shipping incremental/native-search contract.
+	window.__PENA_TEST_LEGACY_CATALOG__ = new URLSearchParams(location.search).get('lazyNative') !== '1';
 	const fallbackAvatar = new URLSearchParams(location.search).get('fallbackAvatar') === '1';
 	if (nativePassThrough) {
 	  document.querySelectorAll('[data-id="chat225"] .test-avatar').forEach(avatar => {
@@ -287,9 +290,46 @@
 		list.closest('.bx-im-list-container-recent__scroll-container,.bx-im-list-container-task__scroll-container');
 	  if (!viewport) return;
 	  let loading = false;
+      let service = null;
+      if (new URLSearchParams(location.search).get('nativeService') === '1') {
+        window.nativeServiceCalls ||= [];
+        service = {
+          isLoading: false, lastMessageDate: '',
+          async loadNextPage() {
+            if (this.isLoading || !pending.length) return;
+            this.isLoading = true;
+            window.nativeServiceCalls.push({mode:modeKey, before:pending.length});
+            try {
+              await new Promise(resolve => setTimeout(resolve, window.nativeServiceDelay || 70));
+              if (window.nativeServiceFailNext) { window.nativeServiceFailNext = false; throw Error('Fixture network error'); }
+              if (window.nativeServiceStall) return;
+              const query = String(list.closest('.test-host')?.querySelector('input[type="search"]')?.value || '').trim().toLowerCase();
+              const rows = pending.splice(0, lazyChunk);
+              rows.forEach(row => {
+                if (query && !String(row.querySelector('.bx-im-chat-title__text')?.textContent || '').toLowerCase().includes(query)) row.style.display = 'none';
+                rowHost.appendChild(row);
+              });
+              this.lastMessageDate = rows.at(-1)?.dataset.id || this.lastMessageDate;
+            } finally { this.isLoading = false; }
+          }
+        };
+        if (modeKey === 'tasks') service.hasMoreItemsToLoad = () => pending.length > 0;
+        else Object.defineProperty(service, 'hasMoreItemsToLoad', {get:()=>pending.length > 0});
+        const instance = { type:{name:modeKey === 'tasks' ? 'TaskList' : 'RecentList'}, proxy:{$el:list, getRecentService:()=>service} };
+        if (modeKey === 'tasks') {
+          // The portal's production Vue omits __vueParentComponent and app._instance.
+          const root = list.closest('.test-host'); root.__vue_app__ = {_instance:null};
+          root._vnode = {component:{subTree:{children:[{component:instance}]}}};
+        }
+        else list.__vueParentComponent = instance;
+      }
 	  let postProofScheduled = false;
 	  viewport.addEventListener('scroll', () => {
+		// Native search has its own result pagination; collapsing the recent rows
+		// must not request another recent page while that search is open.
+		if (list.closest('.test-host')?.querySelector('input[type="search"]')?.value.trim()) return;
 		if (loading || viewport.scrollTop + viewport.clientHeight < viewport.scrollHeight - 2) return;
+        if (service) { service.loadNextPage().catch(() => {}); return; }
 		if (lazyAfterFirstPass && Number(window.__PENA_NATIVE_PREFETCH__?.status?.().materializationRevisions?.[modeKey] || 0) < 1) return;
 		if (!pending.length) {
 		  if (!postProofScheduled && postProofRows > 0) {
@@ -299,7 +339,12 @@
 		  return;
 		}
 		const append = () => {
-		  pending.splice(0, lazyChunk).forEach(row => rowHost.appendChild(row));
+		  const query = String(list.closest('.test-host')?.querySelector('input[type="search"]')?.value || '').trim().toLowerCase();
+		  pending.splice(0, lazyChunk).forEach(row => {
+			// A response already in flight renders against the current native query.
+			if (query && !String(row.querySelector('.bx-im-chat-title__text')?.textContent || '').toLowerCase().includes(query)) row.style.display = 'none';
+			rowHost.appendChild(row);
+		  });
 		  loading = false;
 		};
 		if (lazyDelay > 0) {

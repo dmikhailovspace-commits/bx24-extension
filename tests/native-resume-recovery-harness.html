@@ -98,6 +98,9 @@
     } catch {}
 
     window.__PENA_FORCE_REST_CATALOG__ = false;
+    // This harness audits the retained full traversal/recovery engine.
+    // Production incremental loading is covered by native-lazy-list-regression.
+    window.__PENA_TEST_LEGACY_CATALOG__ = true;
     window.__PENA_TEST_API_CATALOG__ = false;
     window.__PENA_TEST_MANAGED_CATALOG__ = false;
     window.__PENA_TEST_NATIVE_SCROLL__ = false;
