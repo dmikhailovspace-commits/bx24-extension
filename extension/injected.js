@@ -17436,9 +17436,9 @@ if (_presetChannel) {
 			trackedList.hidden = !_dialogTimeTrackedExpanded;
 			const emptyLabel = !data && (initializing || record?.status === 'loading') ? 'Загружаем записи…' : !data ? 'Записи ещё не загружены полностью' : 'За выбранную дату записей нет';
 			const rangeKey = _getDialogTimeCacheKey(visibleRange);
-			if (trackedList.dataset.penaRange !== rangeKey) { trackedList.dataset.penaRange = rangeKey; trackedList._penaLimit = 50; }
+			if (trackedList.dataset.penaRange !== rangeKey) { trackedList.dataset.penaRange = rangeKey; trackedList._penaLimit = 20; }
 			if (_dialogTimeTrackedExpanded) {
-				const limit = Math.max(50, trackedList._penaLimit || 50);
+				const limit = Math.max(20, trackedList._penaLimit || 20);
 				const shown = tracked.slice(0, limit);
 				// Keep an open editor mounted even if a new record moves it beyond
 				// the current window. Background waves never erase typed input.
@@ -17465,7 +17465,7 @@ if (_presetChannel) {
 					let more = trackedList.querySelector('.pena-native-time-load-more');
 					if (!more) {
 						more = document.createElement('button'); more.type = 'button'; more.className = 'pena-native-time-load-more';
-						more.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); trackedList._penaLimit = (trackedList._penaLimit || 50) + 50; _queueDialogTimeUiSync(); });
+						more.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); trackedList._penaLimit = (trackedList._penaLimit || 20) + 50; _queueDialogTimeUiSync(); });
 					}
 					const text = `Показать ещё ${Math.min(50, tracked.length - limit)}`;
 					if (more.textContent !== text) more.textContent = text;

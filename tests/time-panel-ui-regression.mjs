@@ -286,27 +286,27 @@ try {
  await phase('history shows all 120 cached entries in pages without REST, preserves nodes and protects a displaced editor',async()=>{
   await page.setViewportSize({width:1000,height:800});await page.evaluate(()=>{timeUiProbe.seedHistory(120);timeUiProbe.prepareOtherHistory();});
   const rows=page.locator('.pena-native-time-entry-row'),more=page.locator('.pena-native-time-load-more');
-  await page.waitForFunction(()=>document.querySelectorAll('.pena-native-time-entry-row').length===50);
+  await page.waitForFunction(()=>document.querySelectorAll('.pena-native-time-entry-row').length===20);
   assert.equal(await page.locator('.pena-native-time-tracked-total').textContent(),'2 ч');assert.equal(await page.locator('.pena-native-time-tracked-label').textContent(),'Записи · 120');
   const restBefore=await page.evaluate(()=>{window.originalHistoryRow=document.querySelector('.pena-native-time-entry-row');return{native:window.nativeRestCalls.length,elapsed:window.timeRestCalls.length};});
-  await more.click();await page.waitForFunction(()=>document.querySelectorAll('.pena-native-time-entry-row').length===100);
+  await more.click();await page.waitForFunction(()=>document.querySelectorAll('.pena-native-time-entry-row').length===70);
   assert.equal(await page.evaluate(()=>originalHistoryRow===document.querySelector('.pena-native-time-entry-row')),true);
   await more.click();await page.waitForFunction(()=>document.querySelectorAll('.pena-native-time-entry-row').length===120);
   assert.equal(await more.count(),0);assert.equal(await page.evaluate(()=>originalHistoryRow===document.querySelector('.pena-native-time-entry-row')),true);
   assert.equal(await page.locator('.pena-native-time-total-value').textContent(),'2 ч');
   assert.deepEqual(await page.evaluate(()=>({native:window.nativeRestCalls.length,elapsed:window.timeRestCalls.length})),restBefore,'load-more must expose cached entries without a new network read');
-  await page.locator('.pena-native-time-date-prev').click();await page.waitForFunction(()=>document.querySelectorAll('.pena-native-time-entry-row').length===50&&document.querySelector('.pena-native-time-entry-row')?.dataset.penaEntry.startsWith('101:80'));
-  await page.locator('.pena-native-time-date-next').click();await page.waitForFunction(()=>document.querySelectorAll('.pena-native-time-entry-row').length===50&&document.querySelector('.pena-native-time-entry-row')?.dataset.penaEntry.startsWith('101:90'));
+  await page.locator('.pena-native-time-date-prev').click();await page.waitForFunction(()=>document.querySelectorAll('.pena-native-time-entry-row').length===20&&document.querySelector('.pena-native-time-entry-row')?.dataset.penaEntry.startsWith('101:80'));
+  await page.locator('.pena-native-time-date-next').click();await page.waitForFunction(()=>document.querySelectorAll('.pena-native-time-entry-row').length===20&&document.querySelector('.pena-native-time-entry-row')?.dataset.penaEntry.startsWith('101:90'));
   await rows.last().locator('.pena-native-time-row-edit').click();await page.locator('.pena-native-time-entry-minutes').fill('17');
   const editingId=await page.evaluate(()=>{window.savedEditor=document.querySelector('.pena-native-time-entry-minutes');return savedEditor.closest('.pena-native-time-entry-row').dataset.penaEntry;});
   await page.evaluate(()=>timeUiProbe.prependHistory());
   assert.equal(await page.locator('.pena-native-time-entry-minutes').inputValue(),'17');assert.equal(await page.evaluate(()=>savedEditor===document.querySelector('.pena-native-time-entry-minutes')),true);
-  assert.equal(await rows.count(),51,'the edited 50th row must remain mounted when a new record moves it to position 51');
+  assert.equal(await rows.count(),21,'the edited 20th row must remain mounted when a new record moves it to position 21');
   assert.equal(await page.locator('.pena-native-time-entry-minutes').evaluate(node=>node.closest('.pena-native-time-entry-row').dataset.penaEntry),editingId);
   assert.equal(await page.locator('.pena-native-time-tracked-total').textContent(),'2 ч 1 мин');
   assert.equal(await page.locator('.pena-native-time-tracked-label').textContent(),'Записи · 121');
-  await page.locator('.pena-native-time-entry-cancel').click();await page.waitForFunction(()=>document.querySelectorAll('.pena-native-time-entry-row').length===50);
-  return{initial:50,expanded:[100,120],loadMoreRest:0,nodeRetained:true,rangeReset:50,displacedEditorRetained:true,draftMinutes:'17',totalAfterPrepend:'2 ч 1 мин'};
+  await page.locator('.pena-native-time-entry-cancel').click();await page.waitForFunction(()=>document.querySelectorAll('.pena-native-time-entry-row').length===20);
+  return{initial:20,expanded:[70,120],loadMoreRest:0,nodeRetained:true,rangeReset:20,displacedEditorRetained:true,draftMinutes:'17',totalAfterPrepend:'2 ч 1 мин'};
  });
  assert.deepEqual(errors,[]);
 } finally {
