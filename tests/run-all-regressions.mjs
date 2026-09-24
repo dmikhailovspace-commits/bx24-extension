@@ -37,6 +37,8 @@ if (Number.parseInt(process.versions.node.split('.')[0], 10) < minimumNodeMajor 
 }
 
 const suites = [
+  'native-startup-time-contention.mjs',
+  'native-mention-interference-regression.mjs',
   'native-search-state-regression.mjs',
   'native-lazy-list-regression.mjs',
 	'notification-counter-race-regression.mjs',
@@ -98,12 +100,10 @@ const suites = [
   'native-dom-mutation-regression.mjs',
   'toolbar-discovery-regression.mjs',
   'mention-search-ownership-regression.mjs',
-  'native-mention-interference-regression.mjs',
   'interaction-contention-regression.mjs',
 	'native-cold-task-interaction-performance-regression.mjs',
   'native-switcher-filter-regression.mjs',
   'startup-task-page-regression.mjs',
-  'native-startup-time-contention.mjs',
   'time-catalog-optimized-startup.mjs',
   'time-startup-cycle-regression.mjs',
   'native-shared-task-startup-regression.mjs',

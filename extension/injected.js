@@ -4936,12 +4936,13 @@
 				if (!current()) return false;
 				if (!result?.complete || result.discarded || result.headOnly || !Array.isArray(result.rows) ||
 					result.rows.some(task => !_matchesDialogTimeProjectTask(task))) throw new Error('Не удалось подтвердить полный список задач');
+				if (result.timeIndexScope !== _getDialogTimeIdentityScopeKey() &&
+					!await _publishDialogTimeTaskIndexInSlices(result.rows, null, current)) return false;
 				_dialogTimeProjectTaskIds = new Set(result.rows.map(task => String(task.ID ?? task.id)));
 				_dialogTimeCatalogScope = scope;
 				_dialogTimeCatalogCursor = result.startedAt || _dialogTaskCatalogFetchedAt;
 				_dialogTimeProjectCatalogDirty = false;
 				_pruneDialogTimeProjectSnapshots();
-				if (result.timeIndexScope !== _getDialogTimeIdentityScopeKey()) _publishDialogTimeTaskIndexRows(result.rows);
 				_queueDialogTimeUiSync();
 				return true;
 			}
@@ -4950,9 +4951,10 @@
 				const nativeRows=_getDialogTimeReusableNativeCatalog();
 				if (nativeRows) {
 					const selected=nativeRows.filter(_matchesDialogTimeProjectTask);
+					if (_dialogTaskCatalogLastResult.timeIndexScope !== _getDialogTimeIdentityScopeKey() &&
+						!await _publishDialogTimeTaskIndexInSlices(selected, null, current)) return false;
 					_dialogTimeProjectTaskIds=new Set(selected.map(task => String(task.ID ?? task.id)));
 					_dialogTimeCatalogScope=scope; _dialogTimeCatalogCursor=_dialogTaskCatalogLastResult.startedAt || _dialogTaskCatalogFetchedAt;
-					if (_dialogTaskCatalogLastResult.timeIndexScope !== _getDialogTimeIdentityScopeKey()) _publishDialogTimeTaskIndexRows(selected);
 					return true;
 				}
 			}
@@ -4983,6 +4985,7 @@
 					}
 				}
 				if (tail) {
+					if (!await _publishDialogTimeTaskIndexInSlices(rows, evidence, current)) return false;
 					const ids = since ? new Set(_dialogTimeProjectTaskIds) : new Set();
 					rows.forEach(task => ids.add(String(task.ID ?? task.id)));
 					_dialogTimeProjectTaskIds = ids;
@@ -4990,7 +4993,6 @@
 					_dialogTimeCatalogCursor = startedAt;
 					_dialogTimeProjectCatalogDirty = false;
 					_pruneDialogTimeProjectSnapshots();
-					_publishDialogTimeTaskIndexRows(rows, evidence);
 					_queueDialogTimeUiSync();
 					return true;
 				}
@@ -5160,7 +5162,23 @@
 		_dialogTimeCatalogPromise = run;
 		return run;
 	}
-	function _publishDialogTimeTaskIndexRows(rows = [], evidence = null) {
+	async function _publishDialogTimeTaskIndexInSlices(rows, evidence, isCurrent) {
+		const scope = _getDialogTimeIdentityScopeKey();
+		const current = () => scope === _getDialogTimeIdentityScopeKey() && isCurrent();
+		let changed = false;
+		for (let offset = 0; offset < rows.length; offset += 100) {
+			if (!current()) return false;
+			changed = _publishDialogTimeTaskIndexRows(rows.slice(offset, offset + 100), evidence, false) || changed;
+			// A partitioned catalog can contain thousands of rows. Let native input
+			// and paint run between small batches without rebuilding the panel per batch.
+			if (offset + 100 < rows.length) await _sleepDialogControl(0);
+		}
+		if (!current()) return false;
+		if (changed) _queueDialogTimeUiSync();
+		return true;
+	}
+
+	function _publishDialogTimeTaskIndexRows(rows = [], evidence = null, scheduleUi = true) {
 		let changed = false;
 		const scope = _getDialogTimeIdentityScopeKey();
 		// A catalog SUM is only a shortcut for an unseen journal. It cannot erase
@@ -5224,7 +5242,7 @@
 				_setDialogTimeTaskEligibility(taskId, enabled);
 			}
 		}
-		if (changed) _queueDialogTimeUiSync();
+		if (changed && scheduleUi) _queueDialogTimeUiSync();
 		return changed;
 	}
 
@@ -5390,7 +5408,9 @@
 					const partitioned = await _loadDialogTaskCatalogPartitionTail({ page, firstRows:batch, afterId:nextId, select, isCurrent:current, maxPages:maxPages-pages });
 					if (partitioned) {
 						rows.push(...partitioned.rows); pages += partitioned.pages; complete = true;
-						_publishDialogTimeTaskIndexRows(partitioned.rows, evidence);
+						if (!await _publishDialogTimeTaskIndexInSlices(partitioned.rows, evidence, current)) {
+							return { count:0, tasks:0, pages, complete:false, discarded:true, reason:'task-catalog-fenced', rows:[] };
+						}
 						break;
 					}
 				}
@@ -18893,7 +18913,6 @@ if (_presetChannel) {
 				const opening = _dialogControlNativeWorkspaceTab !== id;
 				_dialogControlNativeWorkspaceTab = opening ? id : '';
 				_dialogControlNativeSwitcherSig = '';
-				_renderDialogControlNativeSwitcher(container, source);
 				if (opening) {
 					const panelMode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
 					if (id === 'filters' && _dialogControlNeedsCompleteNativeMaterialization(panelMode)) {
@@ -18905,6 +18924,9 @@ if (_presetChannel) {
 						_refreshDialogNativeVisibleWindow();
 					}
 				}
+				// Capture native geometry before replacing the panel DOM. Doing it
+				// afterwards forces synchronous layout of the newly opened time panel.
+				_renderDialogControlNativeSwitcher(container, source);
 			});
 			return btn;
 		};

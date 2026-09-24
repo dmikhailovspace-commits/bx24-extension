@@ -149,7 +149,7 @@ try {
   assert.equal(await context._ensureDialogTimeProjectCatalog({force:true}),true);
   assert.equal(published.length,700);assert.equal(context._dialogTimeProjectTaskIds.size,700);
   assert.ok(calls.every(call=>Array.from(call.filter.GROUP_ID).join(',')==='10'));
-  assert.equal(evidences.length,1);assert.ok(evidences[0].revisions instanceof Map);
+  assert.ok(evidences.length>0);assert.equal(new Set(evidences).size,1,'All yielded batches retain the original evidence watermark');assert.ok(evidences[0].revisions instanceof Map);
   return {published:published.length,sourceFilteredRequests:calls.length};
  });
  await phase('partition high-watermark ordering and selected membership fail closed',async()=>{

@@ -1,10 +1,34 @@
 import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
+import {runInNewContext} from 'node:vm';
 import {chromium} from 'playwright';
 import {startHarnessServer,collectPageErrors} from './lib/harness-server.mjs';
 const source=readFileSync(new URL('../extension/injected.js',import.meta.url),'utf8');
 const anchor='async function _runDialogNativeExpectedCatalogAudit(mode, sourceGeneration, options = {}) {';
 assert.ok(source.includes(anchor));
+// A large index must yield to native events and fence the continuation when
+// the user/account or catalog owner changes during that yield.
+const indexCode=source.slice(source.indexOf('async function _publishDialogTimeTaskIndexInSlices('),source.indexOf('\n\tfunction _publishDialogTimeTaskIndexRows('));
+for(const interruption of ['none','account','owner']){
+ let scope='portal:user7',current=true,notifications=0;
+ const published=[],inputCheckpoints=[];
+ const publish=runInNewContext('('+indexCode.trim()+')',{
+  _getDialogTimeIdentityScopeKey:()=>scope,
+  _publishDialogTimeTaskIndexRows:rows=>{published.push(...rows);return true;},
+  _queueDialogTimeUiSync:()=>notifications++,
+  _sleepDialogControl:()=>new Promise(resolve=>setTimeout(()=>{
+   inputCheckpoints.push(published.length);
+   if(interruption==='account')scope='portal:user8';
+   if(interruption==='owner')current=false;
+   resolve();
+  },0))
+ });
+ const rows=Array.from({length:350},(_,i)=>i+1);
+ assert.equal(await publish(rows,null,()=>current),interruption==='none');
+ assert.ok(inputCheckpoints.length>0&&inputCheckpoints[0]<rows.length,'Native input must run before the whole index finishes');
+ assert.deepEqual(published,interruption==='none'?rows:rows.slice(0,inputCheckpoints[0]),'An obsolete continuation must publish nothing after the identity/owner switch');
+ assert.equal(notifications,interruption==='none'?1:0);
+}
 const server=await startHarnessServer(),browser=await chromium.launch({headless:true});
 const report={scope:'Existing task owner can enrich native physical proof without launching another task catalog',phases:[]};
 try{
