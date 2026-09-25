@@ -1,8 +1,8 @@
 // Release-specific MV3 entrypoint. Bitrix Desktop can retain the registered
 // worker URL across unpacked-extension updates, so every release gets a new
 // entry filename and an independently verifiable build/protocol marker.
-const PENA_WORKER_ENTRY = 'worker-v8_0_16.js';
-const PENA_WORKER_BUILD = '8.0.16';
+const PENA_WORKER_ENTRY = 'worker-v8_0_17.js';
+const PENA_WORKER_BUILD = '8.0.17';
 const PENA_WORKER_PROTOCOL = 'dialog-repository-v2';
 const manifestVersion = chrome.runtime.getManifest().version;
 

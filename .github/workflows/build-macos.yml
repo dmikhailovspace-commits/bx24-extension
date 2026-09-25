@@ -284,8 +284,8 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' \
-            'Fixes empty search stuck in native history after cached Bitrix callbacks, clearing and outside clicks.' \
-            'Empty search reconciles native state before paint; delayed callbacks cannot revive cleared queries. Nonempty search and query restoration remain available. Loaded-folder reopening is checked for redundant pagination.' \
+            'Fixes unrelated dialogs flashing in a selected folder when clearing native search.' \
+            'Folder and unread visibility are restored before paint; full metadata reconciliation remains batched. Frame checks cover text deletion, clear, Escape, native search events and cached callbacks in chats and tasks.' \
             'Folder pagination uses the mounted Bitrix service without forced scrolling or a blocking loader; saved folder membership is preserved.' \
             'The configured verification profile passed before packaging; the Chrome package is checked against the exact tested source.' \
             'Controlled tests are not a live Bitrix latency measurement. The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \

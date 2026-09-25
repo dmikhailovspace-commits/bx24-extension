@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.16';
+	window.__ANITREC_RUNNING__ = '8.0.17';
 
-	const VER = '8.0.16';
+	const VER = '8.0.17';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -11050,7 +11050,23 @@ if (_presetChannel) {
 		state.panel.replaceChildren(title, content, footer); content.scrollTop = scrollTop;
 	}
 
+	let _penaSearchVisibilityQueued = false;
 	function _schedulePenaSearchReconcile() {
+		// Native close reveals the recent list in the same turn. Restore its
+		// folder/unread projection before paint; the full refresh can stay batched.
+		if (_isDialogNativeLazyMode() && !String(filters.query || '').trim() && !_penaSearchVisibilityQueued) {
+			_penaSearchVisibilityQueued = true;
+			queueMicrotask(() => {
+				_penaSearchVisibilityQueued = false;
+				if (!_isPenaExtensionEnabled() || !_isDialogNativeLazyMode() || String(filters.query || '').trim()) return;
+				const container = findContainer();
+				if (!container) return;
+				_invalidateDialogControlDomReadCache();
+				const nativeFilter = _getDialogControlNativeFilter();
+				_getCurrentFilterRows(container).forEach(row => _applyDialogControlRowFilter(row, nativeFilter));
+				_applyDialogControlColorSort(container);
+			});
+		}
 		if (_penaSearchReconcileTimer) clearTimeout(_penaSearchReconcileTimer);
 		_penaSearchReconcileTimer = setTimeout(() => {
 			_penaSearchReconcileTimer = null;

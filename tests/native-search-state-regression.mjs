@@ -74,6 +74,29 @@ try {
   assert.equal(await page.evaluate(()=>focusNodes.every(row=>row.isConnected)),true,'Focus preserves original rows and avatars');
  }
  await page.evaluate(()=>{stability.folder('');stability.unread(false);});await page.waitForTimeout(100);
+ // Search temporarily exposes the global results. Clearing must restore the
+ // folder before the first paint, not merely converge after a debounce.
+ for(const unread of [false,true]) for(const clearVia of ['input','button','escape','search','cached']) {
+  await page.evaluate(unread=>{stability.folder('folder:test');stability.unread(unread);},unread);await page.waitForTimeout(60);
+  const expectedIds=await visibleIds();assert.ok(expectedIds.length);
+  await input.fill('slow');await page.waitForTimeout(240);
+  const frames=await page.evaluate(clearVia=>new Promise(resolve=>{
+   requestAnimationFrame(()=>{
+    const field=nativeSearch.$el.querySelector('input');
+    const clear=()=>{field.value='';field.dispatchEvent(new Event(clearVia==='search'?'search':'input',{bubbles:true}));};
+    if(clearVia==='button')nativeSearch.$el.querySelector('button').click();
+    else if(clearVia==='escape')field.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+    else {clear();if(clearVia==='cached'){nativeSubscribedUpdate('slow');nativeSubscribedOpen();}}
+    const frames=[];const sample=()=>{
+     frames.push([...nativeTestList.querySelectorAll('.bx-im-list-recent-item__wrap')].filter(row=>row.getBoundingClientRect().height>0).map(row=>row.dataset.id));
+     if(frames.length<8)requestAnimationFrame(sample);else resolve(frames);
+    };requestAnimationFrame(sample);
+   });
+  }),clearVia);
+  for(const ids of frames)assert.deepEqual(ids,expectedIds,`Clearing via ${clearVia} must restore folder/unread before every paint`);
+  assert.deepEqual(await visibleIds(),expectedIds);
+ }
+ await page.evaluate(()=>{stability.folder('');stability.unread(false);});await page.waitForTimeout(60);
  await input.fill('   ');await page.waitForTimeout(100);
  assert.deepEqual(await visibleIds(),baselineIds,'Whitespace-only input must preserve the native list');
  await input.fill('');
@@ -176,7 +199,7 @@ try {
  await page.evaluate(()=>{window.currentBitrixUserId='8';stability.arm();});await page.waitForTimeout(80);
  assert.equal(await input.inputValue(),'','Changing the account clears the previous account query');
  assert.equal(await page.evaluate(()=>stability.stored()),'');
- assert.deepEqual(errors,[]);report.push({mode,status:'PASS',cachedOpenCallback:true,cachedUpdateCallback:true,nativeSearchEventClear:true,emptyBlurWithoutInput:true,emptyFocusPreservesList:true,repeatedFocus:true,whitespacePreservesList:true,stickySearch:true,nativeQuery:true,unreadSearch:true,lateResponse:true,clearRestoresNativeRows:true,folderUnreadFocusMatrix:true,frameAudit:true,startupEmptySearchRecovery:true});await page.close();
+ assert.deepEqual(errors,[]);report.push({mode,status:'PASS',clearFolderFrameMatrix:true,cachedOpenCallback:true,cachedUpdateCallback:true,nativeSearchEventClear:true,emptyBlurWithoutInput:true,emptyFocusPreservesList:true,repeatedFocus:true,whitespacePreservesList:true,stickySearch:true,nativeQuery:true,unreadSearch:true,lateResponse:true,clearRestoresNativeRows:true,folderUnreadFocusMatrix:true,frameAudit:true,startupEmptySearchRecovery:true});await page.close();
  }
  console.log('PASS native search state: sticky selection, unread results, delayed reset, stale response, native clear and Escape');
 } finally {await browser.close();await server.close();writeFileSync(new URL('./artifacts/native-search-state-report.json',import.meta.url),JSON.stringify(report,null,2));}
