@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.11';
+	window.__ANITREC_RUNNING__ = '8.0.12';
 
-	const VER = '8.0.11';
+	const VER = '8.0.12';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -10485,8 +10485,6 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogControlOptimisticRead = new Map();
 	let _dialogControlNativeMutating = false;
 	let _dialogControlNativeMutatingTimer = null;
-	const _dialogControlNativeDateOrder = new Map();
-	const _dialogControlNativeCustomSortModes = new Set();
 	let _dialogControlNativeFilterPass = false;
 	let _dialogControlNativeSyncRaf = null;
 	let _dialogControlNativeSyncContainer = null;
@@ -11829,15 +11827,12 @@ if (_presetChannel) {
 	function _getDialogControlViewPrefs(mode = _pMode()) {
 		try {
 			const saved = JSON.parse(localStorage.getItem(_dialogControlViewKey(mode)) || '{}');
-			const sortMode = ['color', 'date'].includes(saved?.sortMode) ? saved.sortMode : 'date';
-			let sortDirection = ['asc', 'desc'].includes(saved?.sortDirection)
-				? saved.sortDirection
-				: (sortMode === 'color' ? 'asc' : 'desc');
-			if (_isDialogNativeLazyMode() && sortMode === 'date' && sortDirection === 'asc') {
-				sortDirection = 'desc';
-				localStorage.setItem(_dialogControlViewKey(mode), JSON.stringify({ ...saved, sortDirection }));
+			const next = { sortMode: 'date', sortDirection: 'desc', unreadOnly: !!saved?.unreadOnly };
+			// Retire saved custom ordering without changing the user's unread filter.
+			if ((saved?.sortMode || saved?.sortDirection) && (saved.sortMode !== 'date' || saved.sortDirection !== 'desc')) {
+				try { localStorage.setItem(_dialogControlViewKey(mode), JSON.stringify(next)); } catch {}
 			}
-			return { sortMode, sortDirection, unreadOnly: !!saved?.unreadOnly };
+			return next;
 		} catch {
 			return { sortMode: 'date', sortDirection: 'desc', unreadOnly: false };
 		}
@@ -11864,10 +11859,7 @@ if (_presetChannel) {
 	}
 
 	function _setDialogControlViewPrefs(patch = {}, mode = _pMode()) {
-		const next = { ..._getDialogControlViewPrefs(mode), ...patch };
-		if (!['color', 'date'].includes(next.sortMode)) next.sortMode = 'date';
-		if (!['asc', 'desc'].includes(next.sortDirection)) next.sortDirection = next.sortMode === 'color' ? 'asc' : 'desc';
-		if (_isDialogNativeLazyMode() && next.sortMode === 'date') next.sortDirection = 'desc';
+		const next = { ..._getDialogControlViewPrefs(mode), ...patch, sortMode: 'date', sortDirection: 'desc' };
 		next.unreadOnly = !!next.unreadOnly;
 		try { localStorage.setItem(_dialogControlViewKey(mode), JSON.stringify(next)); } catch {}
 		_dialogControlLastSig = '';
@@ -14205,14 +14197,6 @@ if (_presetChannel) {
 
 	function _syncDialogControlNativePreferenceControls(switcher, prefs = _getDialogControlViewPrefs()) {
 		if (!switcher) return;
-		switcher.querySelectorAll('[data-pena-sort-mode]').forEach(btn => {
-			btn.classList.toggle('--active', btn.dataset.penaSortMode === prefs.sortMode);
-			btn.setAttribute('aria-pressed', btn.dataset.penaSortMode === prefs.sortMode ? 'true' : 'false');
-		});
-		switcher.querySelectorAll('[data-pena-sort-direction]').forEach(btn => {
-			btn.classList.toggle('--active', btn.dataset.penaSortDirection === prefs.sortDirection);
-			btn.setAttribute('aria-pressed', btn.dataset.penaSortDirection === prefs.sortDirection ? 'true' : 'false');
-		});
 		const unreadInput = switcher.querySelector('.pena-native-unread-filter input');
 		if (unreadInput) unreadInput.checked = !!prefs.unreadOnly;
 	}
@@ -18973,13 +18957,6 @@ if (_presetChannel) {
 		if (_dialogControlNativeWorkspaceTab === 'filters') {
 			const filterPanel = document.createElement('div');
 			filterPanel.className = 'pena-native-filter-panel pena-native-command-popover';
-			const sortGroup = document.createElement('div');
-			sortGroup.className = 'pena-native-filter-group';
-			const sortLabel = document.createElement('span');
-			sortLabel.className = 'pena-native-filter-label';
-			sortLabel.textContent = 'Сортировка';
-			const sortOptions = document.createElement('div');
-			sortOptions.className = 'pena-native-sort-options';
 			const applyViewPreference = (patch, needsFilterPass = false) => {
 				const next = _setDialogControlViewPrefs(patch);
 				_syncDialogControlNativePreferenceControls(switcher, next);
@@ -18991,54 +18968,6 @@ if (_presetChannel) {
 				};
 				_requestDialogControlFrame(apply);
 			};
-			const markExplicitNativeSort = patch => {
-				const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
-				const current = _getDialogControlViewPrefs();
-				const changed = (patch.sortMode != null && patch.sortMode !== current.sortMode) ||
-					(patch.sortDirection != null && patch.sortDirection !== current.sortDirection);
-				// A same-value click on a cold native feed is just reaffirming Bitrix'
-				// default and must not reorder its canonical rows. Once a complete source
-				// has been proven, the same click is an explicit request to apply PENA's
-				// complete-catalog sort (including off-screen live updates).
-				if (changed || _dialogNativeMaterializedSources.has(mode)) {
-					_dialogControlNativeCustomSortModes.add(mode);
-				}
-			};
-			[['color', 'Цвет'], ['date', 'Дата']].forEach(([mode, label]) => {
-				const btn = document.createElement('button');
-				btn.type = 'button';
-				btn.textContent = label;
-				btn.dataset.penaSortMode = mode;
-				btn.setAttribute('aria-pressed', viewPrefs.sortMode === mode ? 'true' : 'false');
-				btn.classList.toggle('--active', viewPrefs.sortMode === mode);
-				btn.addEventListener('click', () => {
-					markExplicitNativeSort({ sortMode: mode });
-					applyViewPreference({ sortMode: mode });
-				});
-				sortOptions.appendChild(btn);
-			});
-			const directionOptions = document.createElement('div');
-			directionOptions.className = 'pena-native-sort-options pena-native-sort-direction-options';
-			[
-				['desc', 'По убыванию', '<path d="M12 5v14M7 14l5 5 5-5"/>'],
-				['asc', 'По возрастанию', '<path d="M12 19V5M7 10l5-5 5 5"/>']
-			].forEach(([direction, title, icon]) => {
-				if (_isDialogNativeLazyMode() && viewPrefs.sortMode === 'date' && direction === 'asc') return;
-				const btn = document.createElement('button');
-				btn.type = 'button';
-				btn.dataset.penaSortDirection = direction;
-				btn.title = title;
-				btn.setAttribute('aria-label', title);
-				btn.setAttribute('aria-pressed', viewPrefs.sortDirection === direction ? 'true' : 'false');
-				btn.classList.toggle('--active', viewPrefs.sortDirection === direction);
-				btn.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${icon}</svg>`;
-				btn.addEventListener('click', () => {
-					markExplicitNativeSort({ sortDirection: direction });
-					applyViewPreference({ sortDirection: direction });
-				});
-				directionOptions.appendChild(btn);
-			});
-			sortGroup.append(sortLabel, sortOptions, directionOptions);
 			const unreadLabel = document.createElement('label');
 			unreadLabel.className = 'pena-native-unread-filter';
 			const unreadInput = document.createElement('input');
@@ -19081,7 +19010,7 @@ if (_presetChannel) {
 				}
 			});
 			syncStatus.append(syncStatusText, syncButton);
-			filterPanel.append(_createDialogControlPopoverClose('Закрыть фильтры'), sortGroup, unreadLabel, syncStatus);
+			filterPanel.append(_createDialogControlPopoverClose('Закрыть фильтры'), unreadLabel, syncStatus);
 			workspaceTabs.appendChild(filterPanel);
 		}
 		if (_dialogControlNativeWorkspaceTab === 'time' && _PENA_TIME_CONTROL) {
@@ -20519,220 +20448,6 @@ if (_presetChannel) {
 		return uid;
 	}
 
-	function _getDialogControlNativeSortKey(info) {
-		if (!info?.row) return '';
-		if (info.id) return `id:${info.id}`;
-		if (info.titleKey) return `title:${info.titleKey}`;
-		return `row:${info.uid || _getDialogControlNativeRowUid(info.row)}`;
-	}
-
-	function _mergeDialogControlNativeSortKeys(savedKeys, currentKeys) {
-		const merged = Array.isArray(savedKeys) ? savedKeys.slice() : [];
-		const known = new Set(merged);
-		if (currentKeys.every(key => known.has(key))) return merged;
-		if (known.size === merged.length && new Set(currentKeys).size === currentKeys.length) {
-			// Link new window keys to their nearest known neighbour in linear time.
-			// Repeated indexOf/splice was quadratic on a large recycled native pool.
-			const head = { next: null }, nodes = new Map();
-			let tail = head;
-			for (const key of merged) {
-				const node = { key, previous: tail, next: null };
-				tail.next = node; tail = node; nodes.set(key, node);
-			}
-			const nextKnown = new Array(currentKeys.length);
-			let next = null;
-			for (let i = currentKeys.length - 1; i >= 0; i -= 1) {
-				nextKnown[i] = next;
-				if (nodes.has(currentKeys[i])) next = nodes.get(currentKeys[i]);
-			}
-			let previous = null;
-			currentKeys.forEach((key, index) => {
-				let node = nodes.get(key);
-				if (!node) {
-					const before = nextKnown[index];
-					const after = before ? before.previous : (previous || tail);
-					node = { key, previous: after, next: after.next };
-					if (after.next) after.next.previous = node;
-					else tail = node;
-					after.next = node; nodes.set(key, node);
-				}
-				previous = node;
-			});
-			const result = [];
-			for (let node = head.next; node; node = node.next) result.push(node.key);
-			return result;
-		}
-		// Ambiguous duplicate row identities retain the established merge rules.
-		currentKeys.forEach((key, index) => {
-			if (known.has(key)) return;
-			let insertAt = merged.length;
-			for (let next = index + 1; next < currentKeys.length; next += 1) {
-				const nextIndex = merged.indexOf(currentKeys[next]);
-				if (nextIndex >= 0) {
-					insertAt = nextIndex;
-					break;
-				}
-			}
-			if (insertAt === merged.length) {
-				for (let previous = index - 1; previous >= 0; previous -= 1) {
-					const previousIndex = merged.indexOf(currentKeys[previous]);
-					if (previousIndex >= 0) {
-						insertAt = previousIndex + 1;
-						break;
-					}
-				}
-			}
-			merged.splice(insertAt, 0, key);
-			known.add(key);
-		});
-		return merged;
-	}
-
-	function _applyDialogControlNativeSort(rowInfos, itemMap, itemTitleMap, folderMap, prefs, items) {
-		if (_isDialogNativeLazyMode() && (prefs.sortMode === 'date' || String(filters.query || '').trim())) return false;
-		const infos = (Array.isArray(rowInfos) ? rowInfos : []).filter(info => info?.row?.parentElement);
-		if (infos.length < 2) return false;
-		const mode = _pMode();
-		const restoreNativeOrder = prefs.sortMode === 'date' && prefs.sortDirection === 'desc';
-		let state = _dialogControlNativeDateOrder.get(mode);
-		const currentKeys = infos.map(_getDialogControlNativeSortKey);
-		if (!state) {
-			state = { keys: currentKeys.slice() };
-			_dialogControlNativeDateOrder.set(mode, state);
-		} else {
-			state.keys = _mergeDialogControlNativeSortKeys(state.keys, currentKeys);
-		}
-		// Default date-desc is Bitrix' own order. On a fresh page leave its DOM
-		// completely untouched; only restore our captured order after a custom sort
-		// has actually moved rows.
-		if (restoreNativeOrder && !_dialogControlNativeCustomSortModes.has(mode)) return false;
-		const dateRank = new Map(state.keys.map((key, index) => [key, index]));
-		const fallbackRank = new Map(currentKeys.map((key, index) => [key, index]));
-		const itemCache = new Map(), colorCache = new Map(), metaCache = new Map();
-		const getItem = info => {
-			if (!itemCache.has(info)) itemCache.set(info, (Array.isArray(info.ids) ? info.ids.map(id => itemMap.get(id)).find(Boolean) : null) || (info.id ? itemMap.get(info.id) : null) || (info.titleKey ? itemTitleMap.get(info.titleKey) : null) || null);
-			return itemCache.get(info);
-		};
-		const colorRank = info => {
-			if (!colorCache.has(info)) colorCache.set(info, _getDialogControlAssignedColor(getItem(info), items));
-			return colorCache.get(info);
-		};
-		const rank = info => {
-			const key = _getDialogControlNativeSortKey(info);
-			return dateRank.get(key) ?? (1000000 + (fallbackRank.get(key) || 0));
-		};
-		const dateMeta = info => {
-			if (metaCache.has(info)) return metaCache.get(info);
-			const ids = Array.from(new Set([info.id, ...(Array.isArray(info.ids) ? info.ids : [])].map(normId).filter(Boolean)));
-			const metas = ids.map(id => _getDialogRecentMeta(id)).filter(Boolean);
-			const meta = metas.find(meta => Number(meta.lastMessageTs) > 0) || metas[0] || null;
-			metaCache.set(info, meta);
-			return meta;
-		};
-		const displayedDates = new WeakMap();
-		const displayedDate = info => {
-			if (!info?.row) return 0;
-			if (!displayedDates.has(info.row)) displayedDates.set(info.row, _getDialogControlNativeDisplayedDate(info.row));
-			return displayedDates.get(info.row) || 0;
-		};
-		const messageDates = new WeakMap();
-		const messageDateRecord = info => {
-			if (messageDates.has(info)) return messageDates.get(info);
-			const nativeDisplayed = displayedDate(info);
-			const meta = dateMeta(info);
-			const item = getItem(info);
-			const metaDate = Number(meta?.lastMessageTs) || 0;
-			const metaSource = String(meta?.lastMessageTsSource || '');
-			const itemDate = Number(item?.lastMessageTs) || Number(item?.addedAt) || 0;
-			const itemSource = String(item?.lastMessageTsSource || '');
-			let record;
-			if (nativeDisplayed) record = { value: nativeDisplayed, source: 'native-display' };
-			else if (metaDate && metaSource && metaSource !== 'native-order') record = { value: metaDate, source: metaSource };
-			else if (itemDate) record = { value: itemDate, source: itemSource || 'catalog' };
-			else record = { value: metaDate, source: metaSource };
-			messageDates.set(info, record);
-			return record;
-		};
-		const messageDate = info => messageDateRecord(info).value;
-		const messageDateSource = info => messageDateRecord(info).source;
-		const nativeRank = info => {
-			const value = Number(dateMeta(info)?.nativeRecentRank);
-			return Number.isFinite(value) && value >= 0 ? value : null;
-		};
-		const valueDirection = prefs.sortDirection === 'asc' ? 1 : -1;
-		const recentRankDirection = prefs.sortDirection === 'desc' ? 1 : -1;
-		const desired = infos.slice().sort((a, b) => {
-			if (restoreNativeOrder) {
-				// Rows first materialized while a custom sort is active are absent from
-				// the original key snapshot. Their persisted message dates are the only
-				// trustworthy way to place them back into Bitrix' date-desc feed.
-				const aDate = messageDate(a);
-				const bDate = messageDate(b);
-				if (aDate && bDate && aDate !== bDate) return bDate - aDate;
-				if (!aDate && bDate) return 1;
-				if (aDate && !bDate) return -1;
-				const aNativeRank = nativeRank(a);
-				const bNativeRank = nativeRank(b);
-				if (aNativeRank != null && bNativeRank != null && aNativeRank !== bNativeRank) {
-					return aNativeRank - bNativeRank;
-				}
-				return rank(a) - rank(b);
-			}
-			if (prefs.sortMode === 'date') {
-				const aDate = messageDate(a);
-				const bDate = messageDate(b);
-				if (!aDate && !bDate) return (rank(a) - rank(b)) * recentRankDirection;
-				// Unknown dates never outrank dated rows in either direction.
-				if (!aDate) return 1;
-				if (!bDate) return -1;
-				const aSource = messageDateSource(a);
-				const bSource = messageDateSource(b);
-				const bothDisplayed = aSource === 'native-display' && bSource === 'native-display';
-				const bothReal = aSource && bSource && aSource !== 'native-order' && bSource !== 'native-order';
-				// Native labels are the closest match to the original Bitrix order. For
-				// metadata, only compare two real timestamps. A synthetic native-order
-				// value is a rank surrogate and cannot be compared to wall-clock time.
-				if ((bothDisplayed || bothReal) && aDate !== bDate) return (aDate - bDate) * valueDirection;
-				const aNativeRank = nativeRank(a);
-				const bNativeRank = nativeRank(b);
-				if (aNativeRank != null && bNativeRank != null && aNativeRank !== bNativeRank) {
-					return (aNativeRank - bNativeRank) * recentRankDirection;
-				}
-			}
-			if (prefs.sortMode === 'color') {
-				const aColor = colorRank(a);
-				const bColor = colorRank(b);
-				const byColor = !aColor && !bColor ? 0 : !aColor ? 1 : !bColor ? -1 : aColor.localeCompare(bColor) * valueDirection;
-				if (byColor) return byColor;
-			}
-			return (rank(a) - rank(b)) * recentRankDirection;
-		});
-		if (restoreNativeOrder) _dialogControlNativeCustomSortModes.delete(mode);
-		else _dialogControlNativeCustomSortModes.add(mode);
-		let changed = false;
-		const byParent = new Map();
-		infos.forEach(info => {
-			const parent = info.row.parentElement;
-			if (!byParent.has(parent)) byParent.set(parent, []);
-			byParent.get(parent).push(info.row);
-		});
-		byParent.forEach((currentRows, parent) => {
-			const rowSet = new Set(currentRows);
-			const desiredRows = desired.map(info => info.row).filter(row => row.parentElement === parent && rowSet.has(row));
-			if (currentRows.every((row, index) => row === desiredRows[index])) return;
-			changed = true;
-			const slots = currentRows.map(row => {
-				const slot = document.createComment('pena-native-sort-slot');
-				parent.insertBefore(slot, row);
-				return slot;
-			});
-			desiredRows.forEach((row, index) => slots[index]?.replaceWith(row));
-			slots.slice(desiredRows.length).forEach(slot => slot.remove());
-		});
-		if (changed) _markDialogControlNativeMutation();
-		return changed;
-	}
-
 	function _buildDialogControlNativeItemIndex(items = _getDialogControlItems()) {
 		const byId = new Map();
 		const byTitle = new Map();
@@ -21739,16 +21454,6 @@ if (_presetChannel) {
 			const parentFolder = item.folderId ? folderMap.get(String(item.folderId)) : null;
 			_applyDialogControlNativeRowState(row, item, parentFolder || null);
 		});
-		if (_isDialogControlNativePassThrough() && !_dialogNativeOriginalScrollActive) {
-			const scrollEl = findInternalScrollContainer(container);
-			const stableTop = Number(scrollEl?.scrollTop) || 0;
-			const stableLeft = Number(scrollEl?.scrollLeft) || 0;
-			const changed = _applyDialogControlNativeSort(rowInfos.filter(info => !searchRows.includes(info.row)), itemMap, itemTitleMap, folderMap, viewPrefs, allItems);
-			if (changed && scrollEl?.isConnected) {
-				scrollEl.scrollTop = stableTop;
-				scrollEl.scrollLeft = stableLeft;
-			}
-		}
 
 		container.classList.add('pena-native-container');
 		_syncDialogControlNativeMultiSelection(container);
@@ -21766,70 +21471,12 @@ if (_presetChannel) {
 
 	function _syncDialogControlViewButtons(dock = _dialogControlDock || document.getElementById('anit-dialog-control-dock')) {
 		const prefs = _getDialogControlViewPrefs();
-		const labels = { color: 'По цвету', date: 'По дате сообщения' };
-		const directions = { asc: 'по возрастанию', desc: 'по убыванию' };
-		const sortBtn = dock?.querySelector?.('.dialog-control-sort-btn');
-		if (sortBtn) {
-			sortBtn.classList.add('--active');
-			sortBtn.dataset.sortMode = prefs.sortMode;
-			sortBtn.dataset.sortDirection = prefs.sortDirection;
-			sortBtn.title = `Сортировка: ${labels[prefs.sortMode]}, ${directions[prefs.sortDirection]}`;
-		}
 		const unreadBtn = dock?.querySelector?.('.dialog-control-unread-btn');
 		if (unreadBtn) {
 			unreadBtn.classList.toggle('--active', prefs.unreadOnly);
 			unreadBtn.setAttribute('aria-pressed', prefs.unreadOnly ? 'true' : 'false');
 			unreadBtn.title = prefs.unreadOnly ? 'Показаны только непрочитанные' : 'Только непрочитанные';
 		}
-	}
-
-	function _showDialogControlSortMenu(event, h = filtersHost) {
-		event?.preventDefault?.();
-		event?.stopPropagation?.();
-		_closeDialogControlContextMenu();
-		const menu = document.createElement('div');
-		menu.className = 'dialog-control-context-menu';
-		menu.dataset.dialogControlContextMenu = '1';
-		menu.setAttribute('role', 'menu');
-		const title = document.createElement('div');
-		title.className = 'dialog-control-context-title';
-		title.textContent = 'Сортировка';
-		menu.appendChild(title);
-		let close = () => {};
-		[
-			['color', 'По цвету', '<circle cx="8" cy="8" r="3"/><circle cx="16" cy="8" r="3"/><circle cx="8" cy="16" r="3"/><circle cx="16" cy="16" r="3"/>'],
-			['date', 'По дате сообщения', '<circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/>']
-		].forEach(([mode, label, icon]) => {
-			const btn = _makeDialogControlContextButton('dialog-control-context-sort', `<svg viewBox="0 0 24 24" aria-hidden="true">${icon}</svg>`, label);
-			btn.classList.toggle('--selected', _getDialogControlViewPrefs().sortMode === mode);
-			btn.addEventListener('click', (e) => {
-				e.preventDefault();
-				e.stopPropagation();
-				_setDialogControlViewPrefs({ sortMode: mode });
-				close();
-				_renderDialogControlPanel(h);
-				applyFilters();
-			});
-			menu.appendChild(btn);
-		});
-		[
-			['desc', 'По убыванию', '<path d="M12 5v14M7 14l5 5 5-5"/>'],
-			['asc', 'По возрастанию', '<path d="M12 19V5M7 10l5-5 5 5"/>']
-		].forEach(([direction, label, icon]) => {
-			if (_isDialogNativeLazyMode() && _getDialogControlViewPrefs().sortMode === 'date' && direction === 'asc') return;
-			const btn = _makeDialogControlContextButton('dialog-control-context-sort', `<svg viewBox="0 0 24 24" aria-hidden="true">${icon}</svg>`, label);
-			btn.classList.toggle('--selected', _getDialogControlViewPrefs().sortDirection === direction);
-			btn.addEventListener('click', (e) => {
-				e.preventDefault();
-				e.stopPropagation();
-				_setDialogControlViewPrefs({ sortDirection: direction });
-				close();
-				_renderDialogControlPanel(h);
-				applyFilters();
-			});
-			menu.appendChild(btn);
-		});
-		close = _mountDialogControlContextMenu(menu, event);
 	}
 
 	function _isDialogControlNativeCompositionReady(container, mount) {
@@ -25391,9 +25038,6 @@ if (_presetChannel) {
 						<button type="button" class="dialog-control-columns-btn" title="Показать в две колонки" aria-pressed="false">
 							<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="6" height="14" rx="1.5"/><rect x="14" y="5" width="6" height="14" rx="1.5"/></svg>
 						</button>
-						<button type="button" class="dialog-control-sort-btn" title="Сортировка" aria-haspopup="menu">
-							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h11M8 12h8M8 18h5"/><path d="M4 4v16M2 18l2 2 2-2"/></svg>
-						</button>
 						<button type="button" class="dialog-control-unread-btn" title="Только непрочитанные" aria-pressed="false">
 							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4Z"/><path d="m5 7 7 6 7-6"/><circle cx="18.5" cy="5.5" r="2.5"/></svg>
 						</button>
@@ -25498,9 +25142,6 @@ if (_presetChannel) {
 			e.preventDefault();
 			e.stopPropagation();
 			_setDialogControlNativeMode(!_isDialogControlNativeMode());
-		});
-		dock.querySelector('.dialog-control-sort-btn')?.addEventListener('click', (e) => {
-			_showDialogControlSortMenu(e, panelHost);
 		});
 		dock.querySelector('.dialog-control-unread-btn')?.addEventListener('click', (e) => {
 			e.preventDefault();
@@ -28500,12 +28141,12 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-close:hover{border-color:rgba(255,255,255,.34);background:rgba(255,255,255,.08);transform:translateY(-1px)}
 #anit-dialog-control-dock .dialog-control-close.--active{border-color:rgba(77,157,255,.58);background:rgba(77,157,255,.16);color:#d7eaff}
 #anit-dialog-control-dock .dialog-control-actions{display:flex;align-items:center;justify-content:flex-start;gap:6px;width:100%;flex:0 0 auto;position:relative;flex-wrap:nowrap;max-width:100%;justify-self:stretch;margin-left:0;grid-row:2;grid-column:1}
-#anit-dialog-control-dock .dialog-control-mode-btn,#anit-dialog-control-dock .dialog-control-folder-add-btn,#anit-dialog-control-dock .dialog-control-clear-btn,#anit-dialog-control-dock .dialog-control-columns-btn,#anit-dialog-control-dock .dialog-control-sort-btn,#anit-dialog-control-dock .dialog-control-unread-btn,#anit-dialog-control-dock .dialog-control-native-btn{width:var(--pena-icon-size);height:var(--pena-icon-size);border:1px solid rgba(255,255,255,.18);border-radius:var(--pena-radius);background:rgba(255,255,255,.04);color:#fff;padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;box-sizing:border-box;flex:0 0 var(--pena-icon-size);transition:border-color .15s,background .15s,transform .15s}
-#anit-dialog-control-dock .dialog-control-mode-btn svg,#anit-dialog-control-dock .dialog-control-folder-add-btn svg,#anit-dialog-control-dock .dialog-control-clear-btn svg,#anit-dialog-control-dock .dialog-control-columns-btn svg,#anit-dialog-control-dock .dialog-control-sort-btn svg,#anit-dialog-control-dock .dialog-control-unread-btn svg,#anit-dialog-control-dock .dialog-control-native-btn svg{width:12px;height:12px;display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;opacity:.88;flex:0 0 12px;margin:auto}
-#anit-dialog-control-dock .dialog-control-mode-btn:hover,#anit-dialog-control-dock .dialog-control-folder-add-btn:hover,#anit-dialog-control-dock .dialog-control-clear-btn:hover,#anit-dialog-control-dock .dialog-control-columns-btn:hover,#anit-dialog-control-dock .dialog-control-sort-btn:hover,#anit-dialog-control-dock .dialog-control-unread-btn:hover,#anit-dialog-control-dock .dialog-control-native-btn:hover{border-color:rgba(255,255,255,.34);background:rgba(255,255,255,.08);transform:translateY(-1px)}
+#anit-dialog-control-dock .dialog-control-mode-btn,#anit-dialog-control-dock .dialog-control-folder-add-btn,#anit-dialog-control-dock .dialog-control-clear-btn,#anit-dialog-control-dock .dialog-control-columns-btn,#anit-dialog-control-dock .dialog-control-unread-btn,#anit-dialog-control-dock .dialog-control-native-btn{width:var(--pena-icon-size);height:var(--pena-icon-size);border:1px solid rgba(255,255,255,.18);border-radius:var(--pena-radius);background:rgba(255,255,255,.04);color:#fff;padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;box-sizing:border-box;flex:0 0 var(--pena-icon-size);transition:border-color .15s,background .15s,transform .15s}
+#anit-dialog-control-dock .dialog-control-mode-btn svg,#anit-dialog-control-dock .dialog-control-folder-add-btn svg,#anit-dialog-control-dock .dialog-control-clear-btn svg,#anit-dialog-control-dock .dialog-control-columns-btn svg,#anit-dialog-control-dock .dialog-control-unread-btn svg,#anit-dialog-control-dock .dialog-control-native-btn svg{width:12px;height:12px;display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;opacity:.88;flex:0 0 12px;margin:auto}
+#anit-dialog-control-dock .dialog-control-mode-btn:hover,#anit-dialog-control-dock .dialog-control-folder-add-btn:hover,#anit-dialog-control-dock .dialog-control-clear-btn:hover,#anit-dialog-control-dock .dialog-control-columns-btn:hover,#anit-dialog-control-dock .dialog-control-unread-btn:hover,#anit-dialog-control-dock .dialog-control-native-btn:hover{border-color:rgba(255,255,255,.34);background:rgba(255,255,255,.08);transform:translateY(-1px)}
 #anit-dialog-control-dock .dialog-control-mode-btn.--active{border-color:rgba(255,73,73,.58);background:rgba(255,73,73,.16);color:#ffd6d6}
 #anit-dialog-control-dock .dialog-control-columns-btn.--active{border-color:rgba(77,157,255,.5);background:rgba(77,157,255,.12);color:#d6e9ff}
-#anit-dialog-control-dock .dialog-control-sort-btn.--active,#anit-dialog-control-dock .dialog-control-unread-btn.--active{border-color:rgba(77,157,255,.58);background:rgba(77,157,255,.16);color:#d7eaff}
+#anit-dialog-control-dock .dialog-control-unread-btn.--active{border-color:rgba(77,157,255,.58);background:rgba(77,157,255,.16);color:#d7eaff}
 #anit-dialog-control-dock .dialog-control-native-btn{margin-left:auto;order:50}
 #anit-dialog-control-dock .dialog-control-native-btn svg{width:16px;height:16px;stroke-width:1.9}
 #anit-dialog-control-dock .dialog-control-native-btn.--active{border-color:rgba(93,200,126,.58);background:rgba(93,200,126,.14);color:#d9ffe4}
@@ -28593,14 +28234,6 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .pena-native-sync-chip::before{content:"";width:7px;height:7px;flex:0 0 7px;border-radius:50%;background:#94a3b8}.pena-native-sync-chip.--loading::before{width:9px;height:9px;flex-basis:9px;border:2px solid #bfdbfe;border-top-color:#2563eb;background:transparent;box-sizing:border-box;animation:pena-native-sync-spin .7s linear infinite}.pena-native-sync-chip.--ready{color:#17633c;background:#effaf4;border-color:rgba(22,163,74,.18)}.pena-native-sync-chip.--ready::before{background:#22a660}.pena-native-sync-chip.--warning{color:#8a4b08;background:#fff8e6;border-color:rgba(217,119,6,.28);cursor:pointer}.pena-native-sync-chip.--warning:hover{background:#ffefc2}.pena-native-sync-chip.--warning::before{background:#d97706}.pena-native-sync-chip.--error{color:#9f1239;background:#fff1f2;border-color:rgba(190,24,93,.18);cursor:pointer}.pena-native-sync-chip.--error:hover{background:#ffe4e6}.pena-native-sync-chip.--error::before{background:#e11d48}
 .pena-native-filter-group{display:flex;align-items:center;gap:8px;min-width:0}
 .pena-native-filter-label{color:#64748b;font:700 10px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial;text-transform:uppercase}
-.pena-native-sort-options{display:inline-flex;align-items:center;border:1px solid rgba(15,23,42,.12);border-radius:6px;overflow:hidden;background:#fff}
-.pena-native-sort-options button{height:24px;border:0;border-right:1px solid rgba(15,23,42,.1);background:transparent;color:#526174;padding:0 8px;font:700 10px/24px system-ui,-apple-system,Segoe UI,Roboto,Arial;cursor:pointer}
-.pena-native-sort-options button:last-child{border-right:0}
-.pena-native-sort-options button:hover{background:#f8fafc;color:#1d4ed8}
-.pena-native-sort-options button.--active{background:#dbeafe;color:#1d4ed8}
-.pena-native-sort-options button:disabled{cursor:not-allowed;opacity:.42;background:#f8fafc;color:#94a3b8}
-.pena-native-sort-direction-options button{width:28px;padding:0;display:inline-flex;align-items:center;justify-content:center}
-.pena-native-sort-direction-options button svg{width:13px;height:13px;display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .pena-native-unread-filter{display:flex;align-items:center;gap:7px;color:#475569;font:700 11px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial;cursor:pointer}
 .pena-native-unread-filter input{position:absolute;opacity:0;pointer-events:none}
 .pena-native-toggle-track{position:relative;width:28px;height:16px;border-radius:999px;background:#cbd5e1;transition:background-color .12s ease}

@@ -238,34 +238,11 @@ try {
 	await page.locator('.pena-native-folder-switcher').waitFor({ state: 'visible' });
 	await page.getByRole('button', { name: /Фильтры/ }).click();
 	const freshDefaultPanel = page.locator('.pena-native-filter-panel');
-	assert.deepEqual(await freshDefaultPanel.evaluate(panel => ({
-		date: panel.querySelector('[data-pena-sort-mode="date"]')?.classList.contains('--active') || false,
-		desc: panel.querySelector('[data-pena-sort-direction="desc"]')?.classList.contains('--active') || false,
-		unread: panel.querySelector('.pena-native-unread-filter input')?.checked || false,
-		persisted: localStorage.getItem('pena.dialogControlView.chats')
-	})), { date: true, desc: true, unread: false, persisted: null },
-	'Fresh profile does not default to Bitrix date order with newest first');
-	await freshDefaultPanel.getByRole('button', { name: 'Дата', exact: true }).click();
-	await page.evaluate(() => {
-		const labels = new Map([['chat225', '15:45'], ['chat5', '16:45']]);
-		for (const [id, label] of labels) {
-			const row = document.querySelector(`.recent-host .bx-im-list-recent-item__wrap[data-id="${id}"]`);
-			const date = document.createElement('span');
-			date.className = 'bx-im-list-recent-item__date';
-			date.textContent = label;
-			row?.appendChild(date);
-		}
-	});
-	const nativeDatePanel = page.locator('.pena-native-filter-panel');
-	await nativeDatePanel.getByRole('button', { name: 'По убыванию', exact: true }).click();
+	assert.equal(await freshDefaultPanel.locator('[data-pena-sort-mode],[data-pena-sort-direction]').count(),0);
+	assert.equal(await freshDefaultPanel.locator('.pena-native-unread-filter input').isChecked(),false);
+	const freshNativeIds = await visibleIds(page);
 	await page.waitForTimeout(200);
-	const directDateIds = () => page.evaluate(() => Array.from(document.querySelector('.recent-host .bx-im-list-container-recent__elements')?.children || [], row => row.getAttribute('data-id')));
-	let displayedDateIds = await directDateIds();
-	assert.ok(displayedDateIds.indexOf('chat225') < displayedDateIds.indexOf('chat5'), 'Default date descending changed the canonical Bitrix order');
-	await nativeDatePanel.getByRole('button', { name: 'По возрастанию', exact: true }).click();
-	await page.waitForTimeout(200);
-	displayedDateIds = await directDateIds();
-	assert.ok(displayedDateIds.indexOf('chat225') < displayedDateIds.indexOf('chat5'), 'Ascending native displayed time did not reverse 15:45/16:45');
+	assert.deepEqual(await visibleIds(page),freshNativeIds,'Opening filters must preserve native order');
 
   for (const mode of ['chats', 'tasks']) {
 		// Each fake portal scenario resets its backend journal. Isolate the matching
@@ -347,52 +324,12 @@ try {
 	assert.equal(await page.locator('.test-host:not([hidden]) .pena-native-managed-viewport').count(), 1, `Clearing unread filter dropped the complete ${mode} catalog`);
 	assert.ok((await visibleIds(page)).length > 2);
 	const nativeDateBaseline = await visibleIds(page);
-	await filterPanel.getByRole('button', { name: 'Дата', exact: true }).click();
-	await filterPanel.getByRole('button', { name: 'По возрастанию', exact: true }).click();
-	await page.waitForTimeout(150);
-	assert.deepEqual(await visibleIds(page), [...nativeDateBaseline].reverse(), `Date ascending did not reverse the native order in ${mode}`);
+	assert.equal(await filterPanel.locator('[data-pena-sort-mode],[data-pena-sort-direction]').count(),0);
 	await page.locator(mode === 'tasks' ? '.task-host .pena-native-container' : '.recent-host .pena-native-container').evaluate(list => {
 		list.replaceChildren(...Array.from(list.children, row => row.cloneNode(true)));
 	});
 	await page.waitForTimeout(500);
-	await filterPanel.getByRole('button', { name: 'По убыванию', exact: true }).click();
-	await page.waitForTimeout(150);
-	assert.deepEqual(await visibleIds(page), nativeDateBaseline, `Date descending did not survive a Bitrix row rebuild in ${mode}`);
-	await filterPanel.getByRole('button', { name: 'Цвет', exact: true }).click();
-	await filterPanel.getByRole('button', { name: 'По убыванию', exact: true }).click();
-	await page.waitForTimeout(150);
-	const sortViewport = page.locator(mode === 'tasks' ? '.task-host .pena-native-managed-viewport' : '.recent-host .pena-native-managed-viewport');
-	await sortViewport.waitFor({ state: 'visible' });
-	const descColors = await page.evaluate(() => (document.querySelector('.test-host:not([hidden]) .pena-native-managed-list')?._penaManagedState?.view || []).map(row => row.color).filter(Boolean));
-	assert.deepEqual(descColors, [...descColors].sort((a, b) => b.localeCompare(a)), `Color descending did not reorder ${mode}`);
-	const anchorBeforeSort = await sortViewport.evaluate(viewport => {
-		const rows = Array.from(viewport.querySelectorAll('.pena-native-managed-row'));
-		const target = rows[Math.max(0, Math.floor((rows.length - 1) / 2) - 1)];
-		viewport.scrollTop = Math.max(0, target.offsetTop + 8);
-		const viewportRect = viewport.getBoundingClientRect();
-		const anchor = rows.find(row => {
-			const rect = row.getBoundingClientRect();
-			return rect.bottom > viewportRect.top + 1 && rect.top < viewportRect.bottom - 1;
-		});
-		return { id: anchor.dataset.id, offset: anchor.getBoundingClientRect().top - viewport.getBoundingClientRect().top, scrollTop: viewport.scrollTop };
-	});
-	await filterPanel.getByRole('button', { name: 'По возрастанию', exact: true }).click();
-	await page.waitForTimeout(150);
-	const anchorAfterSort = await sortViewport.evaluate((viewport, id) => {
-		const anchor = viewport.querySelector(`.pena-native-managed-row[data-id="${id}"]`);
-		return { id: anchor?.dataset.id || '', offset: anchor ? anchor.getBoundingClientRect().top - viewport.getBoundingClientRect().top : Number.NaN, scrollTop: viewport.scrollTop };
-	}, anchorBeforeSort.id);
-	assert.equal(anchorAfterSort.id, anchorBeforeSort.id, `Visible color-sort anchor disappeared in ${mode}`);
-	assert.ok(
-		Math.abs(anchorAfterSort.offset - anchorBeforeSort.offset) < 1 || Math.abs(anchorAfterSort.scrollTop - anchorBeforeSort.scrollTop) < 1,
-		`Color direction changed both the anchor and physical scroll position in ${mode}: ${JSON.stringify({ anchorBeforeSort, anchorAfterSort })}`
-	);
-	const ascColors = await page.evaluate(() => (document.querySelector('.test-host:not([hidden]) .pena-native-managed-list')?._penaManagedState?.view || []).map(row => row.color).filter(Boolean));
-	assert.deepEqual(ascColors, [...ascColors].sort((a, b) => a.localeCompare(b)), `Color ascending did not reorder ${mode}`);
-	await filterPanel.getByRole('button', { name: 'По убыванию', exact: true }).click();
-	const prefs = await page.evaluate(currentMode => JSON.parse(localStorage.getItem(`pena.dialogControlView.${currentMode}`) || '{}'), mode);
-	assert.equal(prefs.sortMode, 'color');
-	assert.equal(prefs.sortDirection, 'desc');
+	assert.deepEqual(await visibleIds(page),nativeDateBaseline,'Native rebuild preserves the catalog order');
 	await page.mouse.click(410, 20);
 	await filterPanel.waitFor({ state: 'detached' });
 	assert.equal(await page.getByRole('button', { name: /Фильтры/ }).getAttribute('aria-expanded'), 'false');
@@ -1934,44 +1871,14 @@ try {
 	assert.ok(multiSelectAppearance.every(state => state.boxShadow !== 'none'), `Native multiselect lost its outline: ${JSON.stringify(multiSelectAppearance)}`);
 	await page.keyboard.press('Escape');
 	await page.waitForFunction(() => !document.querySelector('.recent-host .pena-native-chat-row.--native-multi-selected'));
-	const ascendingOrder = await page.locator('.recent-host .pena-native-chat-row').evaluateAll(rows => rows.map(row => row.dataset.id));
-	const ascendingDates = await page.evaluate(ids => {
-		const dates = new Map(JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats') || '[]')
-			.filter(item => item.type !== 'folder')
-			.map(item => [item.id, Number(item.addedAt) || 0]));
-		return ids.map(id => dates.get(id) || 0);
-	}, ascendingOrder);
-	assert.ok(ascendingDates.every((date, index) => index === 0 || ascendingDates[index - 1] <= date), `Saved ascending sort is not chronological after lazy rows appeared: ${JSON.stringify({ originalOrder, ascendingOrder, ascendingDates })}`);
+	const nativeOrderBeforeReload = await page.locator('.recent-host .pena-native-chat-row').evaluateAll(rows => rows.map(row => row.dataset.id));
 	await page.getByRole('button', { name: /Фильтры/ }).click();
-	await page.locator('.recent-host [data-pena-sort-direction="desc"]').click();
-	await page.waitForFunction(() => {
-		const dates = new Map(JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats') || '[]')
-			.filter(item => item.type !== 'folder')
-			.map(item => [item.id, Number(item.addedAt) || 0]));
-		const values = Array.from(document.querySelectorAll('.recent-host .pena-native-chat-row')).map(row => dates.get(row.dataset.id) || 0);
-		return values.length > 2 && values.every((date, index) => index === 0 || values[index - 1] >= date);
-	}, null, { timeout: 3000 });
-	const sortStress = await page.evaluate(async () => {
-		const viewport = document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container');
-		const list = document.querySelector('.recent-host .bx-im-list-container-recent__elements');
-		const initialTop = viewport.scrollTop;
-		const expectedIds = Array.from(list.querySelectorAll('.pena-native-chat-row')).map(row => row.dataset.id).sort();
-		const snapshots = [];
-		for (let index = 0; index < 24; index += 1) {
-			const mode = index % 2 ? 'date' : 'color';
-			const direction = index % 3 ? 'asc' : 'desc';
-			document.querySelector(`.recent-host [data-pena-sort-mode="${mode}"]`)?.click();
-			document.querySelector(`.recent-host [data-pena-sort-direction="${direction}"]`)?.click();
-			await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-			const ids = Array.from(list.querySelectorAll('.pena-native-chat-row')).map(row => row.dataset.id);
-			snapshots.push({ top: viewport.scrollTop, ids: ids.slice().sort(), unique: new Set(ids).size });
-		}
-		return { initialTop, expectedIds, snapshots };
-	});
-	assert.ok(sortStress.snapshots.every(snapshot => snapshot.top === sortStress.initialTop), `Sort stress moved native scrollTop: ${JSON.stringify(sortStress)}`);
-	assert.ok(sortStress.snapshots.every(snapshot => snapshot.unique === sortStress.expectedIds.length && JSON.stringify(snapshot.ids) === JSON.stringify(sortStress.expectedIds)), `Sort stress lost or duplicated rows: ${JSON.stringify(sortStress)}`);
-	await page.locator('.recent-host [data-pena-sort-mode="color"]').click();
-	await page.locator('.recent-host [data-pena-sort-direction="asc"]').click();
+	assert.equal(await page.locator('[data-pena-sort-mode],[data-pena-sort-direction]').count(),0);
+	for(let i=0;i<6;i++) {
+		await page.locator('.recent-host .pena-native-unread-filter').click();
+		await page.waitForTimeout(60);
+		assert.deepEqual(await page.locator('.recent-host .pena-native-chat-row').evaluateAll(rows=>rows.map(row=>row.dataset.id)),nativeOrderBeforeReload,'Unread toggle cannot reorder or duplicate source rows');
+	}
 	await page.evaluate(() => window.__PENA_NATIVE_PREFETCH__.runOriginal());
 	try {
 		await page.waitForFunction(() => {
@@ -1989,16 +1896,8 @@ try {
 		}));
 		throw new Error(`Manual native confirmation did not settle: ${JSON.stringify(diagnostic)}`, { cause: error });
 	}
-	await page.locator('.recent-host [data-pena-sort-mode="date"]').click();
-	await page.locator('.recent-host [data-pena-sort-direction="desc"]').click();
-	await page.waitForFunction(() => {
-		const dates = new Map(JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats') || '[]')
-			.filter(item => item.type !== 'folder')
-			.map(item => [item.id, Number(item.addedAt) || 0]));
-		const values = Array.from(document.querySelectorAll('.recent-host .pena-native-chat-row')).map(row => dates.get(row.dataset.id) || 0);
-		return values.length > 2 && values.every((date, index) => index === 0 || values[index - 1] >= date);
-	}, null, { timeout: 3000 });
 	const reloadedDateOrder = await page.locator('.recent-host .pena-native-chat-row').evaluateAll(rows => rows.map(row => row.dataset.id));
+	assert.deepEqual(reloadedDateOrder.filter(id=>nativeOrderBeforeReload.includes(id)),nativeOrderBeforeReload,'Manual loading preserves existing native order while appending new pages');
 	assert.equal(new Set(reloadedDateOrder).size, reloadedDateOrder.length, `Repeated loading duplicated rows: ${JSON.stringify({ originalOrder, reloadedDateOrder })}`);
 	await page.getByRole('button', { name: /Фильтры/ }).click();
 	await page.locator('.recent-host .pena-native-folder-tab').filter({ hasText: 'Тестовая папка' }).click();
@@ -2386,13 +2285,10 @@ try {
 	assert.deepEqual(healthyPanelAfter, { ...healthyPanelBefore, active: false, overlays: 0 },
 		`Opening the extension woke or moved an already healthy Bitrix list: ${JSON.stringify({ healthyPanelBefore, healthyPanelAfter })}`);
 	const nativeFirstFilterPanel = page.locator('.recent-host .pena-native-filter-panel');
-	await nativeFirstFilterPanel.getByRole('button', { name: 'Дата', exact: true }).click();
-	await nativeFirstFilterPanel.getByRole('button', { name: 'По возрастанию', exact: true }).click();
 	await page.waitForTimeout(180);
-	assert.deepEqual(await visibleIds(page), [...nativeFirstDateBaseline].reverse(), 'Production native date sort did not include the full materialized list');
-	await nativeFirstFilterPanel.getByRole('button', { name: 'По убыванию', exact: true }).click();
+	assert.deepEqual(await visibleIds(page), nativeFirstDateBaseline, 'Opening filters changed the full native list');
 	await page.waitForTimeout(180);
-	assert.deepEqual(await visibleIds(page), nativeFirstDateBaseline, 'Production native date sort did not restore descending order');
+	assert.deepEqual(await visibleIds(page), nativeFirstDateBaseline, 'Native order changed after opening filters');
 	assert.equal(await page.locator('.recent-host .bx-im-list-container-recent__scroll-container').evaluate(viewport => viewport.scrollTop), 32,
 		'Production date sorting moved the native viewport');
 	await page.mouse.click(410, 20);
@@ -2425,7 +2321,6 @@ try {
 		`Late visible rows moved the native viewport: ${JSON.stringify(lateMaterializationAfter)}`);
 	const stressFilterPanel = page.locator('.recent-host .pena-native-filter-panel');
 	await page.getByRole('button', { name: /Фильтры/ }).click();
-	await stressFilterPanel.getByRole('button', { name: 'По возрастанию', exact: true }).click();
 	for (const [index, start] of [42, 64, 86].entries()) {
 		const recycled = await page.evaluate(({ start }) => window.retargetNativePoolWithLateRows?.(start, 24, 2) || { knownIds: [], lateIds: [] }, { start });
 		assert.equal(recycled.knownIds.length, 22, `Same-node recycled batch ${index + 1} lost known rows`);
@@ -2441,21 +2336,19 @@ try {
 			active: window.__PENA_NATIVE_PREFETCH__?.status?.().originalActive === true,
 			lateIds: ids
 		}), recycled.lateIds);
-		assert.deepEqual([...batchState.ids.slice(0, 2)].sort(), [...recycled.lateIds].sort(),
-			`Same-node recycled batch ${index + 1} ignored ascending date sort: ${JSON.stringify(batchState)}`);
+		assert.deepEqual([...batchState.ids.slice(-2)].sort(), [...recycled.lateIds].sort(),
+			`Same-node recycled batch ${index + 1} changed native row order: ${JSON.stringify(batchState)}`);
 		assert.equal(batchState.top, lateMaterializationBefore.top,
 			`Same-node recycled batch ${index + 1} moved the native viewport: ${JSON.stringify(batchState)}`);
 		assert.equal(batchState.active, false,
 			`Same-node recycled batch ${index + 1} restarted full traversal: ${JSON.stringify(batchState)}`);
 	}
-	await stressFilterPanel.getByRole('button', { name: 'По убыванию', exact: true }).click();
 	await page.waitForTimeout(220);
 	const stressDescending = await page.evaluate(() => Array.from(document.querySelectorAll('.recent-host .pena-native-chat-row'))
 		.filter(row => getComputedStyle(row).display !== 'none')
 		.map(row => row.dataset.id));
 	assert.deepEqual([...stressDescending.slice(-2)].sort(), ['chat8006', 'chat8007'],
-		`Repeated recycled batches ignored descending date sort: ${JSON.stringify(stressDescending)}`);
-	await stressFilterPanel.getByRole('button', { name: 'По возрастанию', exact: true }).click();
+		`Repeated recycled batches changed native row order: ${JSON.stringify(stressDescending)}`);
 	await page.evaluate(() => {
 		window.setNativeRestDelay?.(1200);
 		window.__PENA_TEST_DIALOG_AUDIT_TTL_MS__ = 50;
@@ -2477,8 +2370,8 @@ try {
 		top: document.querySelector('.recent-host .bx-im-list-container-recent__scroll-container')?.scrollTop || 0
 	}));
 	assert.equal(auditInterim.apiActive, true, `REST audit finished before the late-row presentation check: ${JSON.stringify(auditInterim)}`);
-	assert.deepEqual([...auditInterim.ids.slice(0, 2)].sort(), [...auditRecycled.lateIds].sort(),
-		`Late recycled rows stayed unsorted while REST audit was active: ${JSON.stringify({ auditInterim, auditRecycled })}`);
+	assert.deepEqual([...auditInterim.ids.slice(-2)].sort(), [...auditRecycled.lateIds].sort(),
+		`Late recycled rows changed native order while REST audit was active: ${JSON.stringify({ auditInterim, auditRecycled })}`);
 	assert.equal(auditInterim.top, lateMaterializationBefore.top,
 		`Late rows during REST audit moved the native viewport: ${JSON.stringify(auditInterim)}`);
 	// The fixture delays each SDK response by 1.2 s. The shared two-request
@@ -2487,8 +2380,8 @@ try {
 	await page.waitForFunction(() => window.__PENA_NATIVE_PREFETCH__?.status?.().apiActive === false, null, { timeout: 10000 });
 	await page.waitForTimeout(220);
 	const auditFinalIds = await visibleIds(page);
-	assert.deepEqual([...auditFinalIds.slice(0, 2)].sort(), [...auditRecycled.lateIds].sort(),
-		`Late recycled rows lost date sort after REST audit completed: ${JSON.stringify({ auditFinalIds, auditRecycled })}`);
+	assert.deepEqual([...auditFinalIds.slice(-2)].sort(), [...auditRecycled.lateIds].sort(),
+		`Late recycled rows changed native order after REST audit completed: ${JSON.stringify({ auditFinalIds, auditRecycled })}`);
 	await page.mouse.click(410, 20);
 
 	await page.evaluate(() => localStorage.clear());
@@ -2578,10 +2471,8 @@ try {
 	await delayedColdSearch.fill('');
 	await page.getByRole('button', { name: /Фильтры/ }).click();
 	const delayedColdFilterPanel = page.locator('.recent-host .pena-native-filter-panel');
-	await delayedColdFilterPanel.getByRole('button', { name: 'Дата', exact: true }).click();
-	await delayedColdFilterPanel.getByRole('button', { name: 'По возрастанию', exact: true }).click();
 	await page.waitForTimeout(180);
-	assert.equal((await visibleIds(page))[0], 'chat1079', 'Oldest delayed dialog is not reachable through chronological sorting');
+	assert.equal((await visibleIds(page)).at(-1), 'chat1079', 'The delayed oldest row must remain at its native tail');
 	await page.mouse.click(410, 20);
 
 	await page.evaluate(() => localStorage.clear());
@@ -2614,11 +2505,9 @@ try {
 	await liveAuditSearch.fill('');
 	await page.getByRole('button', { name: /Фильтры/ }).click();
 	const liveAuditFilterPanel = page.locator('.recent-host .pena-native-filter-panel');
-	await liveAuditFilterPanel.getByRole('button', { name: 'Дата', exact: true }).click();
-	await liveAuditFilterPanel.getByRole('button', { name: 'По убыванию', exact: true }).click();
 	await page.waitForTimeout(150);
-	assert.equal((await visibleIds(page))[0], 'chat1079',
-		'Delayed full audit rolled back the live message date sort order');
+	assert.ok((await visibleIds(page)).includes('chat1079'),
+		'Delayed full audit lost the live native row');
 	await liveAuditFilterPanel.locator('.pena-native-unread-filter').click();
 	await page.waitForTimeout(120);
 	const liveUnreadState = await page.evaluate(() => {
@@ -4084,7 +3973,7 @@ try {
   assert.equal((await readOutput(page)).switchers, 1);
 
   assert.deepEqual(pageErrors, []);
-	console.log('PASS native regressions: complete native traversal, atomic timeout recovery, sorting, search, folders, markers and time tracking');
+	console.log('PASS native regressions: complete native traversal, atomic timeout recovery, native order, search, folders, markers and time tracking');
 	}
  } catch (error) {
 	const diagnostic = await page.evaluate(() => ({

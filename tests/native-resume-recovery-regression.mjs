@@ -95,8 +95,8 @@ const assertUiState = (actual, mode, label) => {
   assert.equal(actual.ui.query, 'needle', `${label}: ${mode} search query was reset`);
   assert.equal(actual.ui.inputValue, 'needle', `${label}: ${mode} native search field lost its value`);
   assert.equal(actual.ui.folderId, `folder:resume-${mode}`, `${label}: ${mode} folder was reset`);
-  assert.equal(actual.ui.sortMode, 'color', `${label}: ${mode} sort mode was reset`);
-  assert.equal(actual.ui.sortDirection, 'asc', `${label}: ${mode} sort direction was reset`);
+  assert.equal(actual.ui.sortMode, 'date', `${label}: ${mode} retired sort mode was restored`);
+  assert.equal(actual.ui.sortDirection, 'desc', `${label}: ${mode} retired sort direction was restored`);
 };
 
 const assertAnchor = (actual, expected, label) => {
@@ -797,8 +797,8 @@ try {
   assert.equal(snapshot.modes.chats.ui.folderId, 'folder:resume-chats', 'Oldest-dialog search reset the active folder');
   assert.match(snapshot.modes.chats.ui.query, /Самый старый needle chats/i, 'Oldest-dialog query was not retained by PENA search');
   assert.equal(snapshot.modes.chats.ui.inputValue, snapshot.modes.chats.ui.query, 'Native search field diverged from the retained query');
-  assert.equal(snapshot.modes.chats.ui.sortMode, 'color', 'Oldest-dialog search reset sorting');
-  assert.equal(snapshot.modes.chats.ui.sortDirection, 'asc', 'Oldest-dialog search reset sort direction');
+  assert.equal(snapshot.modes.chats.ui.sortMode, 'date', 'Oldest-dialog search reset sorting');
+  assert.equal(snapshot.modes.chats.ui.sortDirection, 'desc', 'Oldest-dialog search reset sort direction');
   assert.equal(snapshot.modes.chats.replacementRows, 0, 'Oldest-dialog search created replacement rows');
 
   // Remount a truly cold source while it is waiting at a temporary physical
