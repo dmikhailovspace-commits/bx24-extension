@@ -30,6 +30,9 @@ try {for(const mode of ['chats','tasks']) {
   assert.equal(await page.locator('[data-pena-sort-direction]').count(),0);await page.mouse.click(600,30);
   await page.evaluate(()=>{document.querySelector('.test-host:not([hidden]) [data-id="chat77"]').className='bx-im-list-recent-item__wrap';});
   await page.waitForFunction(()=>document.querySelector('.test-host:not([hidden]) [data-id="chat77"]').classList.contains('pena-native-sort-row'));
+  await page.evaluate(()=>{generalOrderParent.className='bx-im-list-recent__general_container';generalOrderParent.querySelector('[data-id="chat77"]').style.removeProperty('--pena-native-sort-order');});
+  await page.waitForFunction(()=>generalOrderParent.classList.contains('pena-native-sort-parent') && getComputedStyle(generalOrderParent.querySelector('[data-id="chat77"]')).order!=='0');
+  assert.deepEqual((await visual()).slice(0,5),['chat225','chat77','chat1000','chat5','chat1001'],'Native style/class replacement restores projection');
   const scroll=await page.evaluate(async()=>{
     const viewport=document.querySelector('.test-host:not([hidden]) [class*="__scroll-container"]');viewport.scrollTop=180;
     await new Promise(requestAnimationFrame);const before=viewport.scrollTop;orderAudit.color('chat5','#111111');orderAudit.paint();

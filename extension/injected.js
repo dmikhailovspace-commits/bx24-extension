@@ -30647,9 +30647,12 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 			// only their visibility in this microtask, before the browser can paint.
 			// Leave metadata capture, decoration and sorting on the existing schedule.
 			const changedRows = new Set();
+			let sortParentReset = false;
 			for (const mutation of mutations) {
 				if (mutation.type === 'attributes') {
+					if (mutation.attributeName === 'class' && String(mutation.oldValue || '').split(/\s+/).includes('pena-native-sort-parent') && !mutation.target.classList.contains('pena-native-sort-parent')) sortParentReset = true;
 					if (rowIdentityAttributes.has(mutation.attributeName) ||
+						(mutation.attributeName === 'style' && String(mutation.oldValue || '').includes('--pena-native-sort-order:') && mutation.target.classList.contains('pena-native-sort-row') && !mutation.target.style.getPropertyValue('--pena-native-sort-order')) ||
 						(mutation.attributeName === 'class' && String(mutation.oldValue || '').split(/\s+/).includes('pena-native-sort-row') && !mutation.target.classList.contains('pena-native-sort-row')) ||
 						(mutation.attributeName === 'class' &&
 							String(mutation.oldValue || '').split(/\s+/).includes('pena-native-filter-hidden') &&
@@ -30665,7 +30668,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 					}
 				}
 			}
-			if (changedRows.size && container === findContainer()) {
+			if ((changedRows.size || sortParentReset) && container === findContainer()) {
 				_applyDialogControlColorSort(container);
 				_invalidateDialogControlDomReadCache();
 				const nativeFilter = _getDialogControlNativeFilter();
