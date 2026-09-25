@@ -8,7 +8,9 @@ const source = raw.replace('\tasync function boot() {', `\tasync function boot()
   window.lazyAudit = {
     lazy: _isDialogNativeLazyMode, prefs: _getDialogControlViewPrefs,
     active: () => !!_dialogNativeFolderRun,
-    assign: id => { let item = _getDialogControlItems().find(item => item.id === id); if (!item) { item = {id, title:id}; _getDialogControlItems().push(item); } item.folderId = "folder:test"; _saveDialogControlItems(); },
+    folderId: _getDialogControlNativeActiveFolderId,
+    assign: (id, folderId = 'folder:test') => { let item = _getDialogControlItems().find(item => item.id === id); if (!item) { item = {id, title:id}; _getDialogControlItems().push(item); } item.folderId = folderId; _saveDialogControlItems(); },
+    addFolder: id => { _getDialogControlItems().push({id, type:'folder', title:id}); _saveDialogControlItems(); },
     items: _getDialogControlItems, meta: _getDialogRecentMeta,
     folder: id => _setDialogControlNativeActiveFolderId(id),
     apply: applyFilters, selected: () => [..._dialogControlMultiSelected],
@@ -42,6 +44,24 @@ try {
 
       await page.evaluate(() => { lazyAudit.assign('chat1025'); window.folderMembershipBefore = Object.fromEntries(lazyAudit.items().filter(item=>item.folderId).map(item=>[item.id,item.folderId])); window.original225 = document.querySelector('.test-host:not([hidden]) [data-id="chat225"]'); });
       await page.evaluate(() => { window.nativeServiceFailNext = true; });
+      await page.evaluate(() => {
+        window.folderPaintAudit = { frames: 0, leaks: [], running: true };
+        const inspect = () => {
+          const audit = window.folderPaintAudit;
+          if (!audit.running) return;
+          const folderId = lazyAudit.folderId();
+          if (folderId) {
+            audit.frames++;
+            const members = new Set(lazyAudit.items().filter(item => item.folderId === folderId).map(item => item.id));
+            const leaked = [...document.querySelectorAll('.test-host:not([hidden]) .bx-im-list-recent-item__wrap')]
+              .filter(row => !members.has(row.dataset.id) && getComputedStyle(row).display !== 'none')
+              .map(row => row.dataset.id);
+            if (leaked.length && audit.leaks.length < 5) audit.leaks.push(leaked);
+          }
+          requestAnimationFrame(inspect);
+        };
+        requestAnimationFrame(inspect);
+      });
       await page.locator('.pena-native-folder-tab[data-native-folder-id="folder:test"]').click();
       await page.locator('.pena-native-folder-status button').waitFor({state:'visible'});
       const failedCalls = await page.evaluate(() => nativeServiceCalls.length);
@@ -51,6 +71,9 @@ try {
       const old = host.locator('.bx-im-list-recent-item__wrap[data-id="chat1025"]');
       await old.waitFor({ state:'visible' });
       await page.waitForFunction(() => !lazyAudit.active());
+      const paintAudit = await page.evaluate(() => folderPaintAudit);
+      assert(paintAudit.frames > 0, 'Observe actual frames during folder opening and pagination');
+      assert.deepEqual(paintAudit.leaks, [], 'Foreign native rows must never be painted while a folder is active');
       assert.equal(await page.locator('.pena-native-managed-row,.pena-native-remote-row').count(), 0, 'Never substitute Bitrix rows');
       assert.equal(await page.evaluate(() => original225 === document.querySelector('.test-host:not([hidden]) [data-id="chat225"]')), true, 'Keep the original node and avatar');
       assert((await host.locator('.bx-im-list-recent-item__wrap').count()) < 100, 'Stop when requested rows are found');
@@ -58,6 +81,47 @@ try {
       assert.equal(await page.locator('.pena-native-folder-tab[data-native-folder-id="folder:test"] .pena-native-tab-count').textContent(), '3', 'Folder view must not erase the unread count of its hidden native source');
       const details = await page.evaluate(() => nativeRestCalls.filter(call => call.method === 'im.dialog.get').map(call => call.dialogId));
       assert.deepEqual(details, [], 'Bitrix loads its own row data; no parallel detail fan-out');
+      const recycled = await page.evaluate(async () => {
+        const frame = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const row = document.querySelector('.test-host:not([hidden]) [data-id="chat1025"]');
+        const title = row.querySelector('.bx-im-chat-title__text');
+        const savedTitle = title.textContent;
+        row.dataset.id = 'chat800001';
+        title.textContent = 'Recycled foreign dialog';
+        await frame();
+        const foreignHidden = getComputedStyle(row).display === 'none';
+        row.dataset.id = 'chat1025';
+        title.textContent = savedTitle;
+        await frame();
+        const memberVisible = getComputedStyle(row).display !== 'none';
+        const foreign = document.querySelector('.test-host:not([hidden]) [data-id="chat1007"]');
+        foreign.className = 'bx-im-list-recent-item__wrap'; // Vue replaces the native class binding.
+        await frame();
+        return { foreignHidden, memberVisible, reboundHidden: getComputedStyle(foreign).display === 'none' };
+      });
+      assert.deepEqual(recycled, { foreignHidden:true, memberVisible:true, reboundHidden:true });
+
+      await page.evaluate(() => {
+        lazyAudit.addFolder('folder:other');
+        lazyAudit.assign('chat1007', 'folder:other');
+        lazyAudit.assign('chat1100');
+        window.nativeServiceDelay = 250;
+        window.callsBeforeSwitch = nativeServiceCalls.length;
+        lazyAudit.apply();
+      });
+      await page.waitForFunction(() => nativeServiceCalls.length > callsBeforeSwitch);
+      await page.locator('.pena-native-folder-tab[data-native-folder-id="folder:other"]').click();
+      await page.waitForFunction(() => !lazyAudit.active());
+      await page.waitForTimeout(350); // The previous folder's in-flight page has arrived.
+      await host.locator('[data-id="chat1007"]').waitFor({state:'visible'});
+      const switchedAudit = await page.evaluate(() => {
+        folderPaintAudit.running = false;
+        window.nativeServiceDelay = 70;
+        window.folderMembershipBefore = Object.fromEntries(lazyAudit.items().filter(item=>item.folderId).map(item=>[item.id,item.folderId]));
+        return folderPaintAudit;
+      });
+      assert.deepEqual(switchedAudit.leaks, [], 'Recycling, class rebinding and late pages must respect the current folder before paint');
+      await page.evaluate(() => lazyAudit.folder('folder:test'));
       await old.click({ modifiers:['Control'], delay:800 });
       assert.deepEqual(await page.evaluate(() => lazyAudit.selected()), ['chat1025']);
       await page.keyboard.press('Escape');
@@ -146,7 +210,8 @@ try {
       await page.waitForFunction(() => !lazyAudit.active() && document.querySelector('.pena-native-folder-status')?.textContent.includes('не найдена'));
       assert.equal(await page.evaluate(() => lazyAudit.items().some(item => item.id === 'chat9000' && item.folderId === 'folder:test')), true, 'A native tail is not a tombstone for missing saved dialogs');
       assert.equal(await page.locator('.pena-native-original-load-guard,.pena-native-managed-row').count(), 0);
-      report.phases.push({ mode, status:'PASS', nativeRows:idsBefore.length, detailIds:details, nativeSearch:true, nativeServicePagination:true });
+      assert.deepEqual(errors, [], 'No page errors during native folder/search interactions');
+      report.phases.push({ mode, status:'PASS', nativeRows:idsBefore.length, detailIds:details, nativeSearch:true, nativeServicePagination:true, folderPaintFrames:switchedAudit.frames, foreignFrames:switchedAudit.leaks.length, recycledRows:true, latePageSwitch:true });
     } catch (error) {
       console.error(await page.evaluate(() => ({ query:document.querySelector('.test-host:not([hidden]) input')?.value, searchRuns:window.nativeSearchRuns, remote:document.querySelector('.test-remote-search')?.outerHTML, errors:window.__PENA_MANAGED_DEBUG__ })));
       console.error(errors);

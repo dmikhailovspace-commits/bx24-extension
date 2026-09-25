@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.10';
+	window.__ANITREC_RUNNING__ = '8.0.11';
 
-	const VER = '8.0.10';
+	const VER = '8.0.11';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -30953,6 +30953,39 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 		};
 
 		obs = new MutationObserver((mutations) => {
+		if (!IS_OL_FRAME && _isDialogNativeLazyMode() && _isDialogControlNativeMode() && _isDialogControlNativePassThrough()) {
+			// Bitrix inserts/recycles rows before the debounced catalog refresh. Apply
+			// only their visibility in this microtask, before the browser can paint.
+			// Leave metadata capture, decoration and sorting on the existing schedule.
+			const changedRows = new Set();
+			for (const mutation of mutations) {
+				if (mutation.type === 'attributes') {
+					if (rowIdentityAttributes.has(mutation.attributeName) ||
+						(mutation.attributeName === 'class' &&
+							String(mutation.oldValue || '').split(/\s+/).includes('pena-native-filter-hidden') &&
+							!mutation.target.classList.contains('pena-native-filter-hidden'))) {
+						const row = getMutationOwnerRow(mutation);
+						if (row) changedRows.add(row);
+					}
+				} else if (mutation.type === 'childList') {
+					for (const node of mutation.addedNodes) {
+						if (node.nodeType !== 1) continue;
+						if (node.matches(itemSel)) changedRows.add(node);
+						node.querySelectorAll(itemSel).forEach(row => changedRows.add(row));
+					}
+				}
+			}
+			if (changedRows.size && container === findContainer()) {
+				_invalidateDialogControlDomReadCache();
+				const nativeFilter = _getDialogControlNativeFilter();
+				changedRows.forEach(row => {
+					const owner = row.parentElement?.closest?.(itemSel);
+					if (container.contains(row) && (!owner || !container.contains(owner))) {
+						_applyDialogControlRowFilter(row, nativeFilter);
+					}
+				});
+			}
+		}
 		if (!IS_OL_FRAME && _isDialogControlNativeMode() && _isDialogControlNativePassThrough()) {
 			// A recycled row carries an old rendered snapshot, not a new counter event.
 			// Its identity/counters are captured together by the native window pass.
@@ -31081,7 +31114,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 }, 80);
 });
 
-	obs.observe(container, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'aria-hidden', 'title', 'aria-label', 'href', 'data-id', 'data-dialog-id', 'data-dialog-id-value', 'data-dialogid', 'data-chat-id', 'data-user-id', 'data-entity-id', 'data-counter', 'data-count', 'data-value', 'data-testid', 'data-test-id'] });
+	obs.observe(container, { childList: true, subtree: true, characterData: true, attributes: true, attributeOldValue: true, attributeFilter: ['class', 'style', 'hidden', 'aria-hidden', 'title', 'aria-label', 'href', 'data-id', 'data-dialog-id', 'data-dialog-id-value', 'data-dialogid', 'data-chat-id', 'data-user-id', 'data-entity-id', 'data-counter', 'data-count', 'data-value', 'data-testid', 'data-test-id'] });
 	log('observeContainer: подписан на DOM изменения');
 }
 
