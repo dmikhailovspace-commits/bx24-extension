@@ -77,18 +77,21 @@ const startRefresh = async page => {
 	);
   }, before);
 };
-const activateAscending = async page => {
-  const panel = await openFilters(page);
-  await panel.getByRole('button', { name: 'По возрастанию' }).click();
+// Reveal the fixture row through the ordinary virtual viewport; never reorder data.
+const revealManagedRow = async (page, id = 'chat9') => {
+  await closeFilters(page);
   await page.waitForFunction(() => window.__PENA_MANAGED_DEBUG__?.status === 'ready');
-	await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-	await page.evaluate(() => {
-	  const viewport = document.querySelector('.pena-native-managed-viewport');
-	  if (!viewport) return;
-	  viewport.scrollTop = 0;
-	  viewport.dispatchEvent(new Event('scroll'));
-	});
-	await page.waitForFunction(() => document.querySelector('.pena-native-remote-row[data-id="chat1"]'));
+  await page.waitForFunction(id => document.querySelector('.pena-native-managed-list')?._penaManagedState?.view?.some(item => String(item.id) === id), id);
+  await page.evaluate(id => {
+    const root = document.querySelector('.pena-native-managed-list');
+    const viewport = document.querySelector('.pena-native-managed-viewport');
+    const index = root?._penaManagedState?.view?.findIndex(item => String(item.id) === id);
+    if (!viewport || !(index >= 0)) throw new Error('Missing managed row: ' + id);
+    const rowHeight = root.querySelector('.pena-native-remote-row')?.getBoundingClientRect().height || 64;
+    viewport.scrollTop = Math.max(0, index * rowHeight - viewport.clientHeight / 2);
+    viewport.dispatchEvent(new Event('scroll'));
+  }, id);
+  await page.locator('.pena-native-remote-row[data-id="' + id + '"]').waitFor({state:'visible'});
 };
 const runScenario = async (name, test, query = '', expectedWindowCount = 401) => {
   if (onlyScenario && !name.toLowerCase().includes(onlyScenario)) return;
@@ -213,7 +216,7 @@ const runCacheFallbackScenario = async () => {
       `Legacy manifest suppressed its mandatory full API audit: ${JSON.stringify(legacyRecentCalls)}`
     );
     assertExactIds(await managedIds(page), expectedIds(1, 401), 'Cached catalog was not restored after REST failure');
-    await activateAscending(page);
+    await revealManagedRow(page);
     const avatar = page.locator('.pena-native-remote-row[data-id="chat9"] .pena-native-remote-avatar');
     try {
       await avatar.waitFor({ state: 'visible', timeout: 5000 });
@@ -718,7 +721,7 @@ try {
 	}, '?savedlimit=300&limitmigrated=1');
 
   await runScenario('object avatars render in script-loaded rows', async page => {
-    await activateAscending(page);
+    await revealManagedRow(page);
     const row = page.locator('.pena-native-remote-row[data-id="chat9"]');
     await row.waitFor({ state: 'visible' });
     const avatar = row.locator('.pena-native-remote-avatar');
@@ -732,7 +735,7 @@ try {
 		assert.ok(recentCalls.length > 0);
 		assert.ok(recentCalls.every(call => call.parseText === 'Y'), `Last-message parsing is disabled: ${JSON.stringify(recentCalls)}`);
 		assert.ok(recentCalls.every(call => call.getOriginalText === 'N'));
-		await activateAscending(page);
+		await revealManagedRow(page);
 		const row = page.locator('.pena-native-remote-row[data-id="chat9"]');
 		await row.waitFor({ state: 'visible' });
 		assert.equal(await row.locator('.pena-native-remote-message-copy').innerText(), 'Точная последняя реплика спикера');
@@ -746,7 +749,7 @@ try {
 	}, '?messagepreviewcase=1');
 
 	await runScenario('overlapping pages cannot erase a newer message preview', async page => {
-		await activateAscending(page);
+		await revealManagedRow(page);
 		const row = page.locator('.pena-native-remote-row[data-id="chat9"]');
 		await row.waitFor({ state: 'visible' });
 		const overlap = await row.evaluate(element => ({ text: element.querySelector('.pena-native-remote-message-copy')?.textContent || '', meta: element._penaRemoteMeta || null }));
@@ -754,7 +757,7 @@ try {
 	}, '?duplicatepreview=1');
 
 	await runScenario('partial duplicate keeps known author fields independently', async page => {
-		await activateAscending(page);
+		await revealManagedRow(page);
 		const row = page.locator('.pena-native-remote-row[data-id="chat9"]');
 		await row.waitFor({ state: 'visible' });
 		assert.match(await row.locator('.pena-native-remote-author-avatar').getAttribute('src'), /full-author-77\.png/);
@@ -762,7 +765,7 @@ try {
 	}, '?authormergecase=1');
 
 	await runScenario('outgoing preview uses the native self-author state', async page => {
-		await activateAscending(page);
+		await revealManagedRow(page);
 		const row = page.locator('.pena-native-remote-row[data-id="chat9"]');
 		await row.waitFor({ state: 'visible' });
 		assert.equal(await row.locator('.pena-native-remote-message-copy').innerText(), 'Моё последнее сообщение');
@@ -772,7 +775,7 @@ try {
 	}, '?ownmessagecase=1&userid=99');
 
   await runScenario('group avatar never falls back to the last message author', async page => {
-	await activateAscending(page);
+	await revealManagedRow(page);
 	const row = page.locator('.pena-native-remote-row[data-id="chat9"]');
 	await row.waitFor({ state: 'visible' });
 	const state = await avatarState(row.locator('.pena-native-remote-avatar'));
@@ -782,7 +785,7 @@ try {
 
   await runScenario('group without its own avatar uses initials instead of the author', async page => {
 	await page.waitForFunction(() => !window.__PENA_RECENT_SYNC__?.detailsInFlight);
-	await activateAscending(page);
+	await revealManagedRow(page);
 	const row = page.locator('.pena-native-remote-row[data-id="chat9"]');
 	await row.waitFor({ state: 'visible' });
 	const state = await avatarState(row.locator('.pena-native-remote-avatar'));
@@ -794,7 +797,7 @@ try {
 
 	await runScenario('short group payload resolves the chat avatar instead of the last author', async page => {
 		await page.waitForFunction(() => !window.__PENA_RECENT_SYNC__?.detailsInFlight);
-		await activateAscending(page);
+		await revealManagedRow(page);
 		const row = page.locator('.pena-native-remote-row[data-id="chat9"]');
 		await row.waitFor({ state: 'visible' });
 		await page.waitForFunction(() => document.querySelector('.pena-native-remote-row[data-id="chat9"] img')?.getAttribute('src')?.includes('short-group-chat-9.png'), null, { timeout: 3000 });
@@ -807,7 +810,7 @@ try {
 	const requests = fixtureAvatarRequests.get(page);
 	assert.ok(requests.some(url => url.endsWith('/native-chat-3.png')), 'Native chat image must use the controlled fixture transport');
 	assert.ok(requests.some(url => url.endsWith('/native-author-77.png')), 'Embedded author image must use the controlled fixture transport');
-	await activateAscending(page);
+	await revealManagedRow(page, 'chat3');
 	const row = page.locator('.pena-native-remote-row[data-id="chat3"]');
 	await row.waitFor({ state: 'visible' });
 	const state = await avatarState(row.locator('.pena-native-remote-avatar'));
@@ -816,7 +819,7 @@ try {
   }, '?nativeavatarcase=1');
 
   await runScenario('missing recent avatar is enriched once through dialog details', async page => {
-	await activateAscending(page);
+	await revealManagedRow(page);
 	await page.waitForFunction(() => window.__recentHarness.calls().filter(call => call.method === 'im.dialog.get' && call.dialogId === 'chat9').length === 1);
 	await page.waitForFunction(() => !window.__PENA_RECENT_SYNC__?.detailsInFlight);
 	const calls = await page.evaluate(() => window.__recentHarness.calls().filter(call => call.method === 'im.dialog.get' && call.dialogId === 'chat9').length);
@@ -830,7 +833,7 @@ try {
   }, '?recentnoavatar=1');
 
   await runScenario('failed avatar keeps its cached URL and stable initials', async page => {
-	await activateAscending(page);
+	await revealManagedRow(page);
 	const image = page.locator('.pena-native-remote-row[data-id="chat9"] .pena-native-remote-avatar-image');
 	await image.waitFor({ state: 'attached' });
 	await image.evaluate(element => {
@@ -863,7 +866,7 @@ try {
     await page.locator('#bitrix-search').fill('Начальный 01');
     await page.waitForFunction(() => document.querySelector('.pena-native-folder-tab[title="Сохранить"] .pena-native-tab-count')?.textContent === '7');
     await page.locator('#bitrix-search').fill('');
-    await activateAscending(page);
+    await revealManagedRow(page);
     const unread = page.locator('.pena-native-remote-row[data-id="chat9"] .pena-native-remote-counter');
     const manual = page.locator('.pena-native-remote-row[data-id="chat10"] .pena-native-remote-counter');
     const muted = page.locator('.pena-native-remote-row[data-id="chat11"] .pena-native-remote-counter');
@@ -894,13 +897,13 @@ try {
 	}, before);
 	assert.equal(await page.locator('.pena-native-folder-tab[title="Сохранить"] .pena-native-tab-count').innerText(), '7',
 	  'A partial successful counter response zero-filled an unrelated dialog');
-	await activateAscending(page);
+	await revealManagedRow(page);
 	assert.equal(await page.locator('.pena-native-remote-row[data-id="chat9"] .pena-native-remote-counter').innerText(), '3',
 	  'The explicit counter inside a partial response was not applied');
   }, '?custom=1&countercase=1');
 
   await runScenario('personal dialog avatar and counter normalization', async page => {
-    await activateAscending(page);
+    await revealManagedRow(page, 'user42');
     const row = page.locator('.pena-native-remote-row[data-id="user42"]');
     await row.waitFor({ state: 'visible' });
 	assert.match((await avatarState(row.locator('.pena-native-remote-avatar'))).src, /user-42\.png/);
@@ -908,7 +911,7 @@ try {
   }, '?usercase=1');
 
 	await runScenario('long titles reserve a fixed lane for unread notifications', async page => {
-		await activateAscending(page);
+		await revealManagedRow(page);
 		const row = page.locator('.pena-native-remote-row[data-id="chat9"]');
 		await row.waitFor({ state: 'visible' });
 		const geometry = await row.evaluate(element => {
@@ -937,7 +940,7 @@ try {
 	}, '?longtitlecounter=1');
 
 	await runScenario('invalid avatar tokens are never rendered as image URLs', async page => {
-		await activateAscending(page);
+		await revealManagedRow(page);
 		const avatar = page.locator('.pena-native-remote-row[data-id="chat9"] .pena-native-remote-avatar');
 		await avatar.waitFor({ state: 'visible' });
 		await page.waitForFunction(() => window.__recentHarness.calls().some(call => call.method === 'im.dialog.get' && call.dialogId === 'chat9'));
@@ -1099,7 +1102,7 @@ try {
   });
 
   await runScenario('unchanged refresh preserves managed row DOM', async page => {
-    await activateAscending(page);
+    await revealManagedRow(page);
     await page.locator('.pena-native-remote-row[data-id="chat9"]').waitFor({ state: 'visible' });
     await page.evaluate(() => {
       window.__unchangedManagedRow = document.querySelector('.pena-native-remote-row[data-id="chat9"]');
@@ -1395,7 +1398,7 @@ try {
   }, '?taskview=1&apicase=1');
 
   await runScenario('system message never borrows a user avatar', async page => {
-	await activateAscending(page);
+	await revealManagedRow(page);
 	const row = page.locator('.pena-native-remote-row[data-id="chat9"]');
 	await row.waitFor({ state: 'visible' });
 	const systemState = await row.evaluate(element => ({ text: element.querySelector('.pena-native-remote-message-copy')?.textContent || '', meta: element._penaRemoteMeta || null }));
