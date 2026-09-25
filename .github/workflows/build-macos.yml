@@ -38,7 +38,7 @@ jobs:
           PENA_TEST_FAIL_FAST: '1'
         run: |
           $profile = (Get-Content update.json -Raw | ConvertFrom-Json).verification_profile
-          if ($profile -in @('time-focused','marker-focused')) {
+          if ($profile -in @('time-focused','marker-focused','sort-focused')) {
             $env:PENA_TEST_PROFILE = $profile
             $env:PENA_TEST_SUITES = (Get-Content "tests/$profile-suites.json" -Raw | ConvertFrom-Json) -join ','
           } elseif ($profile -and $profile -ne 'full') { throw "Unknown verification profile: $profile" }
@@ -236,6 +236,9 @@ jobs:
       contents: write
 
     steps:
+      - name: Checkout verified release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Download verified installers
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -281,8 +284,8 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' \
-            'Allows explicit color markers on dialogs without folder membership, including native search and collab users.' \
-            'Markers survive removal from a folder and reload. Mixed multi-selection applies markers to all selected dialogs; explicit clearing remains available.' \
+            'Restores date and color sorting controls while preserving native Bitrix nodes and pinned sections.' \
+            'Color grouping follows live marker changes and pagination; date restores live Bitrix recency. Shift selection follows visible rows. The desktop update channel advances only after verified publication.' \
             'Folder pagination uses the mounted Bitrix service without forced scrolling or a blocking loader; saved folder membership is preserved.' \
             'The configured verification profile passed before packaging; the Chrome package is checked against the exact tested source.' \
             'Controlled tests are not a live Bitrix latency measurement. The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \
@@ -307,3 +310,8 @@ jobs:
             "chrome-release/BX24_Chat_Sorter_Chrome_v${GITHUB_REF_NAME#v}.zip.sha256" \
             "chrome-release/Chrome_Web_Store_Materials_v${GITHUB_REF_NAME#v}.zip" \
             "chrome-release/Chrome_Web_Store_Materials_v${GITHUB_REF_NAME#v}.zip.sha256"
+
+      - name: Advance desktop update channel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tools/publish-update-channel.mjs

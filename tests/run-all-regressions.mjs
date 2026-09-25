@@ -137,8 +137,8 @@ const runtimeFiles = JSON.parse(readFileSync(join(testsRoot, '../update.json'), 
 const sourceSha256 = Object.fromEntries(runtimeFiles.map(file => [file,createHash('sha256').update(readFileSync(join(testsRoot,'../extension',file))).digest('hex')]));
 const artifacts = join(testsRoot, 'artifacts');
 mkdirSync(artifacts, { recursive: true });
-const validationScope = requested.size ? (['time-focused','marker-focused'].includes(process.env.PENA_TEST_PROFILE) ? process.env.PENA_TEST_PROFILE : 'selected') : 'full';
-if (['time-focused','marker-focused'].includes(validationScope)) {
+const validationScope = requested.size ? (['time-focused','marker-focused','sort-focused'].includes(process.env.PENA_TEST_PROFILE) ? process.env.PENA_TEST_PROFILE : 'selected') : 'full';
+if (['time-focused','marker-focused','sort-focused'].includes(validationScope)) {
   const expected = JSON.parse(readFileSync(join(testsRoot, validationScope+'-suites.json'), 'utf8')).sort();
   if (JSON.stringify(selected.slice().sort()) !== JSON.stringify(expected)) throw new Error('Focused gate must run its exact registered suite set');
 }

@@ -6,11 +6,25 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import { createHash } from 'node:crypto';
+import { validateUpdatePublication } from '../tools/publish-update-channel.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = path => readFileSync(join(root, path), 'utf8');
 const manifest = JSON.parse(read('extension/manifest.json'));
 const update = JSON.parse(read('update.json'));
+const channelFixture = {
+  local: update, published: structuredClone(update), current: {version:'0.0.0'},
+  latest: {tag_name:'v'+update.version},
+  release: {tag_name:'v'+update.version,draft:false,prerelease:false,assets:
+    [`PENA_Agency_Windows_v${update.version}.exe`,`PENA_Agency_macOS_Universal_v${update.version}.dmg`,`BX24_Chat_Sorter_Chrome_v${update.version}.zip`]
+      .flatMap(name=>[name,name+'.sha256']).map(name=>({name,size:1,digest:'sha256:'+'a'.repeat(64)}))}
+};
+validateUpdatePublication(channelFixture);
+for (const change of [
+  f=>{f.current.version='999.0.0';}, f=>{f.release.draft=true;},
+  f=>{f.release.assets.pop();},f=>{f.latest.tag_name='v0.0.0';},
+  f=>{f.published.version='0.0.0';},f=>{f.release.assets[0].digest='';}
+]) {const fixture=structuredClone(channelFixture);change(fixture);assert.throws(()=>validateUpdatePublication(fixture));}
 const setup = read('installers/windows/setup.iss');
 const content = read('extension/content.js');
 const workerEntry = manifest.background?.service_worker || '';
@@ -222,7 +236,8 @@ assert.match(setup, /-InstallFrom/);
 assert.match(releaseWorkflow, /push:\s*\n\s*tags:\s*\n\s*- 'v\*'/, 'tag push does not start the installer release');
 assert.match(releaseWorkflow, /runs-on:\s*windows-2025/, 'release workflow does not build Windows on Windows');
 assert.match(releaseWorkflow, /runs-on:\s*macos-15/, 'release workflow does not build macOS on macOS');
-assert.equal((releaseWorkflow.match(/actions\/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1/g) || []).length, 3, 'all release jobs must checkout the tagged source with pinned checkout v7.0.1');
+assert.equal((releaseWorkflow.match(/actions\/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1/g) || []).length, 4, 'all release jobs must checkout the tagged source with pinned checkout v7.0.1');
+assert.match(releaseWorkflow, /Advance desktop update channel[\s\S]*node tools\/publish-update-channel.mjs/);
 assert.match(releaseWorkflow, /actions\/setup-node@820762786026740c76f36085b0efc47a31fe5020/);
 assert.match(releaseWorkflow, /node-version:\s*24\.19\.0/);
 assert.match(releaseWorkflow, /pnpm install --frozen-lockfile/);

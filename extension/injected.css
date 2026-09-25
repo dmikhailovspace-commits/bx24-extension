@@ -383,6 +383,11 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .pena-native-command-btn.--active .pena-native-command-chevron{transform:rotate(180deg)}
 .pena-native-command-popover{position:absolute!important;left:0;top:31px;width:min(310px,calc(100vw - 48px));max-height:min(360px,60vh);overflow:auto;margin:0!important;z-index:60;border-color:rgba(15,23,42,.16)!important;background:#fff!important;box-shadow:0 12px 28px rgba(15,23,42,.18),0 1px 2px rgba(15,23,42,.08);animation:pena-native-popover-in .12s ease-out both}
 @keyframes pena-native-popover-in{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}
+.pena-native-sort-controls{display:flex;gap:4px;flex:1 1 100%}
+.pena-native-sort-controls button{border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#475569;padding:5px 9px;cursor:pointer;font:600 11px system-ui}
+.pena-native-sort-controls button[aria-pressed="true"]{background:#eff6ff;border-color:#3b82f6;color:#1d4ed8}
+.pena-native-sort-parent{display:flex!important;flex-direction:column!important;overflow-anchor:none}
+.pena-native-sort-row{order:var(--pena-native-sort-order)!important;flex-shrink:0!important}
 .pena-native-filter-panel{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin:0 0 6px;padding:7px;border:1px solid rgba(15,23,42,.1);border-radius:6px;background:#f1f5f9;box-sizing:border-box}
 .pena-native-sync-status{display:flex;align-items:center;justify-content:space-between;gap:8px;flex:1 1 100%;min-width:0;padding-top:6px;border-top:1px solid rgba(15,23,42,.08);color:#64748b;font-size:10px;line-height:1.2}
 .pena-native-sync-status-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

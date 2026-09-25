@@ -11,7 +11,7 @@ const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const { files, manifest, sourceHashes } = chromeFiles();
 const expectedSuites = [...read('tests/run-all-regressions.mjs').toString().match(/const suites = \[([\s\S]*?)\];/)[1].matchAll(/'([^']+\.mjs)'/g)].map(match => match[1]).sort();
 const profile = json('update.json').verification_profile || 'full';
-assert.ok(['full','time-focused','marker-focused'].includes(profile),'Unknown verification profile');
+assert.ok(['full','time-focused','marker-focused','sort-focused'].includes(profile),'Unknown verification profile');
 const focused = profile !== 'full';
 const acceptedSuites = focused ? json('tests/'+profile+'-suites.json').sort() : expectedSuites;
 const full = json('tests/artifacts/regression-summary.json');

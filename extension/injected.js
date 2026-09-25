@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.14';
+	window.__ANITREC_RUNNING__ = '8.0.15';
 
-	const VER = '8.0.14';
+	const VER = '8.0.15';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -11831,15 +11831,8 @@ if (_presetChannel) {
 	function _getDialogControlViewPrefs(mode = _pMode()) {
 		try {
 			const saved = JSON.parse(localStorage.getItem(_dialogControlViewKey(mode)) || '{}');
-			const next = { sortMode: 'date', sortDirection: 'desc', unreadOnly: !!saved?.unreadOnly };
-			// Retire saved custom ordering without changing the user's unread filter.
-			if ((saved?.sortMode || saved?.sortDirection) && (saved.sortMode !== 'date' || saved.sortDirection !== 'desc')) {
-				try { localStorage.setItem(_dialogControlViewKey(mode), JSON.stringify(next)); } catch {}
-			}
-			return next;
-		} catch {
-			return { sortMode: 'date', sortDirection: 'desc', unreadOnly: false };
-		}
+			return { sortMode: saved?.sortMode === 'color' ? 'color' : 'date', sortDirection: 'desc', unreadOnly: !!saved?.unreadOnly };
+		} catch { return { sortMode: 'date', sortDirection: 'desc', unreadOnly: false }; }
 	}
 
 	function _dialogControlNeedsCompleteNativeMaterialization(mode = _pMode()) {
@@ -11863,7 +11856,8 @@ if (_presetChannel) {
 	}
 
 	function _setDialogControlViewPrefs(patch = {}, mode = _pMode()) {
-		const next = { ..._getDialogControlViewPrefs(mode), ...patch, sortMode: 'date', sortDirection: 'desc' };
+		const next = { ..._getDialogControlViewPrefs(mode), ...patch, sortDirection: 'desc' };
+		next.sortMode = next.sortMode === 'color' ? 'color' : 'date';
 		next.unreadOnly = !!next.unreadOnly;
 		try { localStorage.setItem(_dialogControlViewKey(mode), JSON.stringify(next)); } catch {}
 		_dialogControlLastSig = '';
@@ -12177,11 +12171,13 @@ if (_presetChannel) {
 		if (!id) return false;
 		if (!(_dialogControlMultiSelected instanceof Set)) _dialogControlMultiSelected = new Set();
 		let dialogs = (Array.isArray(items) ? items : []).filter(item => !_isDialogControlFolder(item));
-		if (_isDialogNativeLazyMode() && String(filters.query || '').trim()) {
+		if (_isDialogControlNativePassThrough()) {
 			// A search range follows the visible Bitrix result order, never hidden
 			// catalog entries between the two selected IDs.
 			dialogs = _getDialogControlNativeRows(findContainer(), { includeSearch: true })
 				.filter(row => isVisibleElement(row))
+				.map(row => ({ row, top: row.getBoundingClientRect().top }))
+				.sort((a, b) => a.top - b.top).map(entry => entry.row)
 				.map(row => _ensureDialogControlItemFromElement(row, { silent: true, mark: false })).filter(Boolean);
 		}
 		const targetIdx = dialogs.findIndex(item => String(item.id) === id);
@@ -14195,6 +14191,9 @@ if (_presetChannel) {
 
 	function _syncDialogControlNativePreferenceControls(switcher, prefs = _getDialogControlViewPrefs()) {
 		if (!switcher) return;
+		switcher.querySelectorAll('[data-pena-sort-mode]').forEach(button => {
+			button.setAttribute('aria-pressed', String(button.dataset.penaSortMode === prefs.sortMode));
+		});
 		const unreadInput = switcher.querySelector('.pena-native-unread-filter input');
 		if (unreadInput) unreadInput.checked = !!prefs.unreadOnly;
 	}
@@ -18966,6 +18965,15 @@ if (_presetChannel) {
 				};
 				_requestDialogControlFrame(apply);
 			};
+			const sortControls = document.createElement('div');
+			sortControls.className = 'pena-native-sort-controls';
+			for (const [mode, title] of [['date', 'По дате'], ['color', 'По цвету']]) {
+				const button = document.createElement('button');
+				button.type = 'button'; button.dataset.penaSortMode = mode; button.textContent = title;
+				button.setAttribute('aria-pressed', String(viewPrefs.sortMode === mode));
+				button.addEventListener('click', () => applyViewPreference({ sortMode: mode }));
+				sortControls.appendChild(button);
+			}
 			const unreadLabel = document.createElement('label');
 			unreadLabel.className = 'pena-native-unread-filter';
 			const unreadInput = document.createElement('input');
@@ -19008,7 +19016,7 @@ if (_presetChannel) {
 				}
 			});
 			syncStatus.append(syncStatusText, syncButton);
-			filterPanel.append(_createDialogControlPopoverClose('Закрыть фильтры'), unreadLabel, syncStatus);
+			filterPanel.append(_createDialogControlPopoverClose('Закрыть фильтры'), sortControls, unreadLabel, syncStatus);
 			workspaceTabs.appendChild(filterPanel);
 		}
 		if (_dialogControlNativeWorkspaceTab === 'time' && _PENA_TIME_CONTROL) {
@@ -20446,6 +20454,51 @@ if (_presetChannel) {
 		return uid;
 	}
 
+
+	// Presentation only: Vue retains its keyed children and native recent order.
+	// Pinned/general groups stay separate; loaders keep their native parent.
+	const _dialogControlColorSortStates = new WeakMap();
+	function _clearDialogControlColorSort(container) {
+		const previous = _dialogControlColorSortStates.get(container);
+		if (!previous) return;
+		previous.parents.forEach(parent => parent.classList.remove('pena-native-sort-parent'));
+		previous.rows.forEach(row => {
+			row.classList.remove('pena-native-sort-row');
+			row.style.removeProperty('--pena-native-sort-order');
+		});
+		_dialogControlColorSortStates.delete(container);
+	}
+	function _applyDialogControlColorSort(container, rows = null, items = _getDialogControlItems()) {
+		if (!container) return;
+		if (_getDialogControlViewPrefs().sortMode !== 'color' || String(filters.query || '').trim() || !_isDialogControlNativeMode()) {
+			_clearDialogControlColorSort(container); return;
+		}
+		rows = (rows || _getDialogControlNativeRows(container)).filter(row => !row.matches('.bx-im-search-item__container'));
+		const itemIndex = _buildDialogControlNativeItemIndex(items), groups = new Map();
+		for (const row of rows) {
+			const parent = row.parentElement;
+			if (!parent) continue;
+			if (!groups.has(parent)) groups.set(parent, []);
+			const color = _getDialogControlAssignedColor(_getDialogControlItemForNativeRow(row, items, itemIndex), items);
+			groups.get(parent).push({ row, color });
+		}
+		const next = { parents: new Set(groups.keys()), rows: new Set(rows) };
+		const previous = _dialogControlColorSortStates.get(container);
+		previous?.parents.forEach(parent => { if (!next.parents.has(parent)) parent.classList.remove('pena-native-sort-parent'); });
+		previous?.rows.forEach(row => { if (!next.rows.has(row)) { row.classList.remove('pena-native-sort-row'); row.style.removeProperty('--pena-native-sort-order'); } });
+		for (const [parent, entries] of groups) {
+			// Stable sort keeps native recency within each identical marker.
+			entries.sort((a, b) => !a.color ? (b.color ? 1 : 0) : !b.color ? -1 : a.color.localeCompare(b.color));
+			_addDialogControlNativeClasses(parent, 'pena-native-sort-parent');
+			entries.forEach(({ row }, index) => {
+				_addDialogControlNativeClasses(row, 'pena-native-sort-row');
+				const order = String(index - entries.length);
+				if (row.style.getPropertyValue('--pena-native-sort-order') !== order) row.style.setProperty('--pena-native-sort-order', order);
+			});
+		}
+		_dialogControlColorSortStates.set(container, next);
+	}
+
 	function _buildDialogControlNativeItemIndex(items = _getDialogControlItems()) {
 		const byId = new Map();
 		const byTitle = new Map();
@@ -21018,6 +21071,7 @@ if (_presetChannel) {
 			return [];
 		}
 		_dialogControlNativeViewSig = '';
+		_clearDialogControlColorSort(container);
 		_clearDialogControlManagedList(container);
 		const rows = _getDialogControlNativeRows(container, { includeSearch: true });
 		const oldNodes = Array.from(container.querySelectorAll('.pena-native-folder-header,.pena-native-row-folder-badge'));
@@ -21357,6 +21411,7 @@ if (_presetChannel) {
 		);
 		const rows = _getDialogControlNativeRows(container, { includeSearch: true });
 		const searchRows = rows.filter(row => row.matches?.('.bx-im-search-item__container'));
+		_applyDialogControlColorSort(container, rows, allItems);
 		if (_isDialogNativeLazyMode() && searchRows.length) {
 			const nativeFilter = _getDialogControlNativeFilter();
 			searchRows.forEach(row => _applyDialogControlRowFilter(row, nativeFilter));
@@ -28221,6 +28276,11 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .pena-native-command-btn.--active .pena-native-command-chevron{transform:rotate(180deg)}
 .pena-native-command-popover{position:absolute!important;left:0;top:31px;width:min(310px,calc(100vw - 48px));max-height:min(360px,60vh);overflow:auto;margin:0!important;z-index:60;border-color:rgba(15,23,42,.16)!important;background:#fff!important;box-shadow:0 12px 28px rgba(15,23,42,.18),0 1px 2px rgba(15,23,42,.08);animation:pena-native-popover-in .12s ease-out both}
 @keyframes pena-native-popover-in{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}
+.pena-native-sort-controls{display:flex;gap:4px;flex:1 1 100%}
+.pena-native-sort-controls button{border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#475569;padding:5px 9px;cursor:pointer;font:600 11px system-ui}
+.pena-native-sort-controls button[aria-pressed="true"]{background:#eff6ff;border-color:#3b82f6;color:#1d4ed8}
+.pena-native-sort-parent{display:flex!important;flex-direction:column!important;overflow-anchor:none}
+.pena-native-sort-row{order:var(--pena-native-sort-order)!important;flex-shrink:0!important}
 .pena-native-filter-panel{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin:0 0 6px;padding:7px;border:1px solid rgba(15,23,42,.1);border-radius:6px;background:#f1f5f9;box-sizing:border-box}
 .pena-native-sync-status{display:flex;align-items:center;justify-content:space-between;gap:8px;flex:1 1 100%;min-width:0;padding-top:6px;border-top:1px solid rgba(15,23,42,.08);color:#64748b;font-size:10px;line-height:1.2}
 .pena-native-sync-status-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -30590,6 +30650,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 			for (const mutation of mutations) {
 				if (mutation.type === 'attributes') {
 					if (rowIdentityAttributes.has(mutation.attributeName) ||
+						(mutation.attributeName === 'class' && String(mutation.oldValue || '').split(/\s+/).includes('pena-native-sort-row') && !mutation.target.classList.contains('pena-native-sort-row')) ||
 						(mutation.attributeName === 'class' &&
 							String(mutation.oldValue || '').split(/\s+/).includes('pena-native-filter-hidden') &&
 							!mutation.target.classList.contains('pena-native-filter-hidden'))) {
@@ -30605,6 +30666,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 				}
 			}
 			if (changedRows.size && container === findContainer()) {
+				_applyDialogControlColorSort(container);
 				_invalidateDialogControlDomReadCache();
 				const nativeFilter = _getDialogControlNativeFilter();
 				changedRows.forEach(row => {
