@@ -12171,9 +12171,9 @@ if (_presetChannel) {
 		if (!id) return false;
 		if (!(_dialogControlMultiSelected instanceof Set)) _dialogControlMultiSelected = new Set();
 		let dialogs = (Array.isArray(items) ? items : []).filter(item => !_isDialogControlFolder(item));
-		if (_isDialogControlNativePassThrough()) {
-			// A search range follows the visible Bitrix result order, never hidden
-			// catalog entries between the two selected IDs.
+		if (_isDialogControlNativePassThrough() && !_dialogControlManagedRoot?.isConnected) {
+			// Native ranges follow the visible order, including color projection and
+			// search. The legacy managed catalog retains its own model range.
 			dialogs = _getDialogControlNativeRows(findContainer(), { includeSearch: true })
 				.filter(row => isVisibleElement(row))
 				.map(row => ({ row, top: row.getBoundingClientRect().top }))
