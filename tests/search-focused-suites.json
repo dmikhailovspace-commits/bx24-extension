@@ -1,0 +1,18 @@
+[
+  "sort-anchor-regression.mjs",
+  "native-search-state-regression.mjs",
+  "native-folder-visibility-regression.mjs",
+  "chrome-package-regression.mjs",
+  "chrome-portal-worker-regression.mjs",
+  "chrome-popup-regression.mjs",
+  "chrome-browser-regression.mjs",
+  "native-catalog-model.mjs",
+  "read-state-regression.mjs",
+  "dialog-repository-regression.mjs",
+  "native-dom-mutation-regression.mjs",
+  "native-folder-dnd-regression.mjs",
+  "palette-color-model-regression.mjs",
+  "palette-color-regression.mjs",
+  "release-integrity.mjs",
+  "native-lazy-list-regression.mjs"
+]

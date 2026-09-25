@@ -141,6 +141,15 @@ try {
       await page.evaluate(() => { lazyAudit.apply(); window.dispatchEvent(new Event('focus')); });
       await page.waitForTimeout(350);
       assert.equal(await page.evaluate(() => nativeServiceCalls.length), stoppedCalls, 'Stop as soon as all folder members are present');
+      for (let repeat = 0; repeat < 3; repeat++) {
+        for (const folderId of ['folder:other', '', 'folder:test']) {
+          await page.evaluate(id => lazyAudit.folder(id), folderId);
+          await page.waitForTimeout(160);
+        }
+      }
+      assert.equal(await page.evaluate(() => nativeServiceCalls.length), stoppedCalls, 'Reopening already loaded folders must not repeat pagination');
+      assert.equal(await page.locator('.pena-native-folder-status').count(), 0, 'Loaded folders must not show a loading state');
+      assert.equal(await page.evaluate(() => original225 === document.querySelector('.test-host:not([hidden]) [data-id="chat225"]')), true);
       assert.equal(await page.evaluate(() => nativeScrollAudit.filter(event => event.top > 0).length), 0, 'Native pagination never scrolls the viewport');
       await page.evaluate(() => lazyAudit.folder(''));
       await page.waitForTimeout(150);

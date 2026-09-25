@@ -38,7 +38,7 @@ jobs:
           PENA_TEST_FAIL_FAST: '1'
         run: |
           $profile = (Get-Content update.json -Raw | ConvertFrom-Json).verification_profile
-          if ($profile -in @('time-focused','marker-focused','sort-focused')) {
+          if ($profile -in @('time-focused','marker-focused','sort-focused','search-focused')) {
             $env:PENA_TEST_PROFILE = $profile
             $env:PENA_TEST_SUITES = (Get-Content "tests/$profile-suites.json" -Raw | ConvertFrom-Json) -join ','
           } elseif ($profile -and $profile -ne 'full') { throw "Unknown verification profile: $profile" }
@@ -284,8 +284,8 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' \
-            'Restores date and color sorting controls while preserving native Bitrix nodes and pinned sections.' \
-            'Color grouping follows live marker changes and pagination; date restores live Bitrix recency. Shift selection follows visible rows. The desktop update channel advances only after verified publication.' \
+            'Fixes empty search stuck in native history after cached Bitrix callbacks, clearing and outside clicks.' \
+            'Empty search reconciles native state before paint; delayed callbacks cannot revive cleared queries. Nonempty search and query restoration remain available. Loaded-folder reopening is checked for redundant pagination.' \
             'Folder pagination uses the mounted Bitrix service without forced scrolling or a blocking loader; saved folder membership is preserved.' \
             'The configured verification profile passed before packaging; the Chrome package is checked against the exact tested source.' \
             'Controlled tests are not a live Bitrix latency measurement. The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \

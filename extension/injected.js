@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.15';
+	window.__ANITREC_RUNNING__ = '8.0.16';
 
-	const VER = '8.0.15';
+	const VER = '8.0.16';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -11156,7 +11156,7 @@ if (_presetChannel) {
 		if (!input || !_isPenaNativeListSearchInput(input)) return null;
 		const mode = _pMode(), scope = _getDialogNativeExpectedAuditScopeKey(mode);
 		const cached = _penaNativeSearchInputs.get(input);
-		if (cached?.scope === scope && !cached.instance.isUnmounted) return cached;
+		if (cached?.scope === scope && !cached.disposed && !cached.instance.isUnmounted) { cached.scheduleEmpty?.(); return cached; }
 		const instance = _findDialogNativeVueInstance(input, candidate => {
 			const name = candidate?.type?.name;
 			if (!candidate?.isUnmounted && name === (mode === 'tasks' ? 'TaskListContainer' : 'RecentListContainer') &&
@@ -11177,21 +11177,35 @@ if (_presetChannel) {
 		const proxy = instance.proxy;
 		const originals = { onOpenSearch:proxy.onOpenSearch, onCloseSearch:proxy.onCloseSearch, onCloseRecentSearch:proxy.onCloseRecentSearch, onUpdateSearch:proxy.onUpdateSearch };
 		state = { scope, mode, input, instance, query: previousScope ? _readStoredBitrixSearchQuery(mode) : String(proxy.searchQuery || input.value || _readStoredBitrixSearchQuery(mode)) };
-		const current = () => _isPenaExtensionEnabled() && !instance.isUnmounted && scope === _getDialogNativeExpectedAuditScopeKey(mode) && mode === _pMode();
+		const current = () => !state.disposed && _isPenaExtensionEnabled() && !instance.isUnmounted && scope === _getDialogNativeExpectedAuditScopeKey(mode) && mode === _pMode();
 		const remember = query => {
 			state.query = String(query || '');
 			if (current()) _setPenaSearchQuery(state.query, { syncInput:false, persist:false });
 		};
+		state.scheduleEmpty = () => {
+			if (state.emptyQueued || !current()) return;
+			state.emptyQueued = true;
+			queueMicrotask(() => {
+				state.emptyQueued = false;
+				if (!current() || !state.input?.isConnected || String(state.input.value || '').trim()) return;
+				if (state.query || String(filters.query || '')) remember('');
+				if (proxy.searchMode || proxy.searchQuery) {
+					originals.onCloseSearch.call(proxy);
+					_schedulePenaSearchReconcile();
+				}
+			});
+		};
 		const close = function (...args) {
 			// Bitrix closes search after selecting a result or clicking the dialog.
 			// Keep the same native search model until the user explicitly clears it.
-			if (current() && state.query.trim()) return;
+			if (current() && state.query.trim() && String(state.input.value || '').trim()) return;
+			if (current() && !String(state.input.value || '').trim()) remember('');
 			return originals.onCloseSearch.apply(this, args);
 		};
 		const open = function (...args) {
 			// Native focus opens recent search history and hides the full list.
 			// Keep focus/caret intact, but enter search only for an actual query.
-			if (current() && !String(state.input.value || '').trim()) return;
+			if (current() && !String(state.input.value || '').trim()) { state.scheduleEmpty(); return; }
 			return originals.onOpenSearch.apply(this, args);
 		};
 		const clear = function (...args) {
@@ -11200,7 +11214,9 @@ if (_presetChannel) {
 		};
 		const update = function (query, ...args) {
 			if (current()) {
-				if (!String(query || '').trim()) {
+				// An old debounced callback must not revive a query already cleared
+				// in the actual field (including the browser's native search event).
+				if (!String(query || '').trim() || !String(state.input.value || '').trim()) {
 					remember('');
 					return originals.onCloseSearch.call(this);
 				}
@@ -11210,7 +11226,12 @@ if (_presetChannel) {
 		};
 		if (typeof originals.onOpenSearch === 'function') proxy.onOpenSearch = open;
 		proxy.onCloseSearch = close; proxy.onCloseRecentSearch = clear; proxy.onUpdateSearch = update;
+		// EventEmitter subscriptions can retain the original bound method. Watch
+		// native state too: close after the whole native callback, before paint.
+		state.stopWatch = proxy.$watch?.(() => [proxy.searchMode, proxy.searchQuery], state.scheduleEmpty, { flush: 'post' });
 		const dispose = (unmounting = false) => {
+			state.disposed = true;
+			state.stopWatch?.();
 			if (proxy.onOpenSearch === open) proxy.onOpenSearch = originals.onOpenSearch;
 			if (proxy.onCloseSearch === close) proxy.onCloseSearch = originals.onCloseSearch;
 			if (proxy.onCloseRecentSearch === clear) proxy.onCloseRecentSearch = originals.onCloseRecentSearch;
@@ -11234,8 +11255,8 @@ if (_presetChannel) {
 			_setInputValueNative(input, '', true);
 		}
 		if (state.query && (!proxy.searchMode || proxy.searchQuery !== state.query || input.value !== state.query)) {
-			proxy.onUpdateSearch(state.query);
 			_setInputValueNative(input, state.query, true);
+			if (!proxy.searchMode || proxy.searchQuery !== state.query) proxy.onUpdateSearch(state.query);
 		}
 		proxy.$forceUpdate?.(); // Refresh native event props that captured a bound method.
 		return state;
@@ -11254,10 +11275,12 @@ if (_presetChannel) {
 					if (activeController && activeController.scope !== _getDialogNativeExpectedAuditScopeKey(_pMode())) return;
 					if (activeController) activeController.query = String(systemInput.value || '');
 					_setPenaSearchQuery(systemInput.value, { syncInput: false, persist: false });
+					activeController?.scheduleEmpty?.();
 				};
 				// Observe without cancelling any native input, focus or keyboard event.
 				// Bitrix owns remote search and its result pagination in both modes.
 				['input', 'change', 'search'].forEach(type => systemInput.addEventListener(type, observeQuery, true));
+				['focus', 'blur'].forEach(type => systemInput.addEventListener(type, () => _penaNativeSearchInputs.get(systemInput)?.scheduleEmpty?.(), true));
 				if (!controller) observeQuery();
 			}
 			_syncPenaEmployeeSearch(systemInput);

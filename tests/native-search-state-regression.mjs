@@ -26,11 +26,11 @@ try {
   window.nativeSearchApp=createApp({
    name:mode==='tasks'?'TaskListContainer':'RecentListContainer',
    data:()=>({searchMode:false,searchQuery:'',inputValue:''}),
-   created(){window.nativeSubscribedOpen=this.onOpenSearch;},
+   created(){window.nativeSubscribedOpen=this.onOpenSearch;window.nativeSubscribedUpdate=this.onUpdateSearch;},
    beforeUnmount(){window.nativeUnsubscribeMatched=this.onOpenSearch===window.nativeSubscribedOpen;},
    methods:{
     onOpenSearch(){this.searchMode=true;nativeRows().forEach(row=>row.style.display='none');results.ids=['chat225'];},
-    onUpdateSearch(query){this.searchMode=true;this.searchQuery=query;this.inputValue=query;nativeRows().forEach(row=>{row.style.display=query?'none':row.style.display;});
+    onUpdateSearch(query){this.searchMode=true;this.searchQuery=query;nativeRows().forEach(row=>{row.style.display=query?'none':row.style.display;});
      if(!query){results.ids=[];setTimeout(()=>{if(!this.searchQuery)nativeRows().forEach(row=>row.style.display='');},80);return;}
      const delay=query==='first'?650:query==='slow'?180:20;
      setTimeout(()=>{if(this.searchQuery===query)results.ids=query==='other'?['chat77']:['chat225','chat5','707','708'];},delay);
@@ -38,7 +38,7 @@ try {
     onCloseSearch(){this.searchMode=false;this.searchQuery='';this.inputValue='';results.ids=[];nativeRows().forEach(row=>row.style.display='');},
     onCloseRecentSearch(){this.onCloseSearch();}
    },
-   render(){return h('div',[h('input',{type:'search',placeholder:mode==='tasks'?'Найти задачу':'Найти чат',value:this.inputValue,onFocus:this.onOpenSearch,onClick:this.onOpenSearch,onInput:event=>this.onUpdateSearch(event.target.value),onKeydown:event=>{if(event.key==='Escape')this.onCloseRecentSearch();}}),h('button',{class:'native-clear',onClick:this.onCloseRecentSearch},'×')]);}
+   render(){return h('div',[h('input',{type:'search',placeholder:mode==='tasks'?'Найти задачу':'Найти чат',value:this.inputValue,onFocus:this.onOpenSearch,onClick:this.onOpenSearch,onInput:event=>{this.inputValue=event.target.value;this.onUpdateSearch(event.target.value);},onKeydown:event=>{if(event.key==='Escape')this.onCloseRecentSearch();}}),h('button',{class:'native-clear',onClick:this.onCloseRecentSearch},'×')]);}
   });
   window.nativeSearch=nativeSearchApp.mount(fieldRoot);window.nativeSearchResults=results;
   window.nativeTestList=list;
@@ -50,6 +50,11 @@ try {
  const rows=page.locator(`${mode==='tasks'?'.task-host':'.recent-host'} .bx-im-list-recent-item__wrap:visible`);
  const visibleIds=()=>rows.evaluateAll(nodes=>nodes.map(row=>row.dataset.id));
  const baselineIds=await visibleIds();
+ // Bitrix's EventEmitter retains the bound callback from created(), even after
+ // Vue event props have been refreshed. Exercise that bypass, not the wrapper.
+ await page.evaluate(()=>nativeSubscribedOpen());await input.blur();await page.mouse.click(700,500);await page.waitForTimeout(80);
+ assert.equal(await page.evaluate(()=>nativeSearch.searchMode),false,'Cached native open callback must not leave empty search active');
+ assert.deepEqual(await visibleIds(),baselineIds,'Empty native history must not replace dialogs after outside click');
  await input.click();await page.waitForTimeout(100);
  assert.deepEqual(await visibleIds(),baselineIds,'Empty search focus must preserve the native list');
  assert.equal(await input.evaluate(el=>document.activeElement===el),true,'Empty focus must keep the keyboard in the search field');
@@ -62,7 +67,7 @@ try {
    window.focusNodes=[...nativeTestList.querySelectorAll('.bx-im-list-recent-item__wrap')];
    const sample=()=>{if(!focusAudit)return;focusFrames.push(focusNodes.filter(row=>row.getBoundingClientRect().height>0).map(row=>row.dataset.id));requestAnimationFrame(sample);};sample();
   });
-  for(let n=0;n<3;n++) {await input.blur();await input.focus();await input.click();await page.waitForTimeout(30);}
+  for(let n=0;n<3;n++) {await input.blur();await input.focus();await input.click();await page.evaluate(()=>nativeSubscribedOpen());await page.waitForTimeout(30);}
   const frames=await page.evaluate(()=>{focusAudit=false;return focusFrames;});
   assert.ok(frames.length>=3);for(const ids of frames)assert.deepEqual(ids,filteredIds,'No frame may show a shortened list on empty focus');
   assert.deepEqual(await visibleIds(),filteredIds,'Repeated empty focus preserves folder and unread projection');
@@ -72,6 +77,18 @@ try {
  await input.fill('   ');await page.waitForTimeout(100);
  assert.deepEqual(await visibleIds(),baselineIds,'Whitespace-only input must preserve the native list');
  await input.fill('');
+ await input.fill('slow');
+ await input.evaluate(el=>{el.value='';el.dispatchEvent(new Event('search',{bubbles:true}));});
+ await input.blur();await page.mouse.click(700,500);await page.waitForTimeout(240);
+ assert.equal(await page.evaluate(()=>nativeSearch.searchMode),false,'Native clear without input must close search');
+ assert.equal(await page.evaluate(()=>stability.query()),'');
+ assert.deepEqual(await visibleIds(),baselineIds,'Late response cannot revive cleared search');
+ await page.evaluate(()=>{nativeSearch.onUpdateSearch('slow');nativeSubscribedUpdate('slow');nativeSubscribedOpen();});await page.waitForTimeout(220);
+ assert.equal(await page.evaluate(()=>nativeSearch.searchMode),false,'Delayed native callbacks cannot reopen empty search');
+ assert.deepEqual(await visibleIds(),baselineIds);
+ await input.fill('slow');await input.evaluate(el=>{el.value='';});await input.blur();await page.mouse.click(700,500);await page.waitForTimeout(230);
+ assert.equal(await page.evaluate(()=>nativeSearch.searchMode),false,'Blur repairs an empty field even without input/change');
+ assert.deepEqual(await visibleIds(),baselineIds);
  await input.fill('first');await page.locator('.bx-im-search-item__container').first().waitFor({state:'visible'});
  await page.getByText('Native chat225',{exact:true}).click({button:'right'});
  await page.locator('.dialog-control-context-menu').waitFor({state:'visible',timeout:1500});
@@ -159,7 +176,7 @@ try {
  await page.evaluate(()=>{window.currentBitrixUserId='8';stability.arm();});await page.waitForTimeout(80);
  assert.equal(await input.inputValue(),'','Changing the account clears the previous account query');
  assert.equal(await page.evaluate(()=>stability.stored()),'');
- assert.deepEqual(errors,[]);report.push({mode,status:'PASS',emptyFocusPreservesList:true,repeatedFocus:true,whitespacePreservesList:true,stickySearch:true,nativeQuery:true,unreadSearch:true,lateResponse:true,clearRestoresNativeRows:true,folderUnreadFocusMatrix:true,frameAudit:true,startupEmptySearchRecovery:true});await page.close();
+ assert.deepEqual(errors,[]);report.push({mode,status:'PASS',cachedOpenCallback:true,cachedUpdateCallback:true,nativeSearchEventClear:true,emptyBlurWithoutInput:true,emptyFocusPreservesList:true,repeatedFocus:true,whitespacePreservesList:true,stickySearch:true,nativeQuery:true,unreadSearch:true,lateResponse:true,clearRestoresNativeRows:true,folderUnreadFocusMatrix:true,frameAudit:true,startupEmptySearchRecovery:true});await page.close();
  }
  console.log('PASS native search state: sticky selection, unread results, delayed reset, stale response, native clear and Escape');
 } finally {await browser.close();await server.close();writeFileSync(new URL('./artifacts/native-search-state-report.json',import.meta.url),JSON.stringify(report,null,2));}
