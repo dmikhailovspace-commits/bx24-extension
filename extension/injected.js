@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.12';
+	window.__ANITREC_RUNNING__ = '8.0.13';
 
-	const VER = '8.0.12';
+	const VER = '8.0.13';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -11175,7 +11175,7 @@ if (_presetChannel) {
 		const previousScope = state?.scope;
 		state?.dispose();
 		const proxy = instance.proxy;
-		const originals = { onCloseSearch:proxy.onCloseSearch, onCloseRecentSearch:proxy.onCloseRecentSearch, onUpdateSearch:proxy.onUpdateSearch };
+		const originals = { onOpenSearch:proxy.onOpenSearch, onCloseSearch:proxy.onCloseSearch, onCloseRecentSearch:proxy.onCloseRecentSearch, onUpdateSearch:proxy.onUpdateSearch };
 		state = { scope, mode, input, instance, query: previousScope ? _readStoredBitrixSearchQuery(mode) : String(proxy.searchQuery || input.value || _readStoredBitrixSearchQuery(mode)) };
 		const current = () => _isPenaExtensionEnabled() && !instance.isUnmounted && scope === _getDialogNativeExpectedAuditScopeKey(mode) && mode === _pMode();
 		const remember = query => {
@@ -11188,24 +11188,48 @@ if (_presetChannel) {
 			if (current() && state.query.trim()) return;
 			return originals.onCloseSearch.apply(this, args);
 		};
+		const open = function (...args) {
+			// Native focus opens recent search history and hides the full list.
+			// Keep focus/caret intact, but enter search only for an actual query.
+			if (current() && !String(state.input.value || '').trim()) return;
+			return originals.onOpenSearch.apply(this, args);
+		};
 		const clear = function (...args) {
 			if (current()) remember('');
 			return (originals.onCloseRecentSearch || originals.onCloseSearch).apply(this, args);
 		};
 		const update = function (query, ...args) {
-			if (current()) remember(query);
+			if (current()) {
+				if (!String(query || '').trim()) {
+					remember('');
+					return originals.onCloseSearch.call(this);
+				}
+				remember(query);
+			}
 			return originals.onUpdateSearch.call(this, query, ...args);
 		};
+		if (typeof originals.onOpenSearch === 'function') proxy.onOpenSearch = open;
 		proxy.onCloseSearch = close; proxy.onCloseRecentSearch = clear; proxy.onUpdateSearch = update;
-		state.dispose = () => {
+		const dispose = (unmounting = false) => {
+			if (proxy.onOpenSearch === open) proxy.onOpenSearch = originals.onOpenSearch;
 			if (proxy.onCloseSearch === close) proxy.onCloseSearch = originals.onCloseSearch;
 			if (proxy.onCloseRecentSearch === clear) proxy.onCloseRecentSearch = originals.onCloseRecentSearch;
 			if (proxy.onUpdateSearch === update) proxy.onUpdateSearch = originals.onUpdateSearch;
+			if (!unmounting) {
+				const index = instance.bum?.indexOf(beforeUnmount) ?? -1;
+				if (index >= 0) instance.bum.splice(index, 1);
+			}
 		};
+		// Bitrix unsubscribes its original onOpenSearch callback in beforeUnmount.
+		// Restore method identity before that hook; do not mutate the hook array
+		// while Vue is iterating it, or the native cleanup hook would be skipped.
+		const beforeUnmount = () => dispose(true);
+		state.dispose = () => dispose();
+		(instance.bum ||= []).unshift(beforeUnmount);
 		_penaNativeSearchControllers.set(instance, state);
 		_penaNativeSearchInputs.set(input, state);
-		remember(state.query);
-		if (previousScope && !state.query) {
+		remember(state.query.trim() ? state.query : '');
+		if (!state.query && (previousScope || proxy.searchMode)) {
 			originals.onCloseSearch.call(proxy);
 			_setInputValueNative(input, '', true);
 		}

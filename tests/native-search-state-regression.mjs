@@ -26,7 +26,10 @@ try {
   window.nativeSearchApp=createApp({
    name:mode==='tasks'?'TaskListContainer':'RecentListContainer',
    data:()=>({searchMode:false,searchQuery:'',inputValue:''}),
+   created(){window.nativeSubscribedOpen=this.onOpenSearch;},
+   beforeUnmount(){window.nativeUnsubscribeMatched=this.onOpenSearch===window.nativeSubscribedOpen;},
    methods:{
+    onOpenSearch(){this.searchMode=true;nativeRows().forEach(row=>row.style.display='none');results.ids=['chat225'];},
     onUpdateSearch(query){this.searchMode=true;this.searchQuery=query;this.inputValue=query;nativeRows().forEach(row=>{row.style.display=query?'none':row.style.display;});
      if(!query){results.ids=[];setTimeout(()=>{if(!this.searchQuery)nativeRows().forEach(row=>row.style.display='');},80);return;}
      const delay=query==='first'?650:query==='slow'?180:20;
@@ -35,12 +38,40 @@ try {
     onCloseSearch(){this.searchMode=false;this.searchQuery='';this.inputValue='';results.ids=[];nativeRows().forEach(row=>row.style.display='');},
     onCloseRecentSearch(){this.onCloseSearch();}
    },
-   render(){return h('div',[h('input',{type:'search',placeholder:mode==='tasks'?'Найти задачу':'Найти чат',value:this.inputValue,onInput:event=>this.onUpdateSearch(event.target.value),onKeydown:event=>{if(event.key==='Escape')this.onCloseRecentSearch();}}),h('button',{class:'native-clear',onClick:this.onCloseRecentSearch},'×')]);}
+   render(){return h('div',[h('input',{type:'search',placeholder:mode==='tasks'?'Найти задачу':'Найти чат',value:this.inputValue,onFocus:this.onOpenSearch,onClick:this.onOpenSearch,onInput:event=>this.onUpdateSearch(event.target.value),onKeydown:event=>{if(event.key==='Escape')this.onCloseRecentSearch();}}),h('button',{class:'native-clear',onClick:this.onCloseRecentSearch},'×')]);}
   });
   window.nativeSearch=nativeSearchApp.mount(fieldRoot);window.nativeSearchResults=results;
-  window.nativeTestList=list;stability.arm();
+  window.nativeTestList=list;
+  // Messenger can focus the field before extension binding completes.
+  nativeSearch.onOpenSearch();stability.arm();
  },mode);
  const input=page.locator(`${mode==='tasks'?'.task-host':'.recent-host'} input[type="search"]`);
+
+ const rows=page.locator(`${mode==='tasks'?'.task-host':'.recent-host'} .bx-im-list-recent-item__wrap:visible`);
+ const visibleIds=()=>rows.evaluateAll(nodes=>nodes.map(row=>row.dataset.id));
+ const baselineIds=await visibleIds();
+ await input.click();await page.waitForTimeout(100);
+ assert.deepEqual(await visibleIds(),baselineIds,'Empty search focus must preserve the native list');
+ assert.equal(await input.evaluate(el=>document.activeElement===el),true,'Empty focus must keep the keyboard in the search field');
+ assert.equal(await page.evaluate(()=>nativeSearch.searchMode),false,'Empty focus must not open native search history');
+ for(const folder of ['', 'folder:test']) for(const unread of [false,true]) {
+  await page.evaluate(({folder,unread})=>{stability.folder(folder);stability.unread(unread);},{folder,unread});await page.waitForTimeout(100);
+  const filteredIds=await visibleIds();assert.ok(filteredIds.length,'Fixture must contain visible rows');
+  await page.evaluate(()=>{
+   window.focusFrames=[];window.focusAudit=true;
+   window.focusNodes=[...nativeTestList.querySelectorAll('.bx-im-list-recent-item__wrap')];
+   const sample=()=>{if(!focusAudit)return;focusFrames.push(focusNodes.filter(row=>row.getBoundingClientRect().height>0).map(row=>row.dataset.id));requestAnimationFrame(sample);};sample();
+  });
+  for(let n=0;n<3;n++) {await input.blur();await input.focus();await input.click();await page.waitForTimeout(30);}
+  const frames=await page.evaluate(()=>{focusAudit=false;return focusFrames;});
+  assert.ok(frames.length>=3);for(const ids of frames)assert.deepEqual(ids,filteredIds,'No frame may show a shortened list on empty focus');
+  assert.deepEqual(await visibleIds(),filteredIds,'Repeated empty focus preserves folder and unread projection');
+  assert.equal(await page.evaluate(()=>focusNodes.every(row=>row.isConnected)),true,'Focus preserves original rows and avatars');
+ }
+ await page.evaluate(()=>{stability.folder('');stability.unread(false);});await page.waitForTimeout(100);
+ await input.fill('   ');await page.waitForTimeout(100);
+ assert.deepEqual(await visibleIds(),baselineIds,'Whitespace-only input must preserve the native list');
+ await input.fill('');
  await input.fill('first');await page.locator('.bx-im-search-item__container').first().waitFor({state:'visible'});
  await page.getByText('Native chat225',{exact:true}).click({button:'right'});
  await page.locator('.dialog-control-context-menu').waitFor({state:'visible',timeout:1500});
@@ -56,6 +87,7 @@ try {
   const root=nativeSearchApp._container;const component=nativeSearchApp._component;
   nativeSearchApp.unmount();nativeSearchApp=BX.Vue3.createApp(component);nativeSearch=nativeSearchApp.mount(root);stability.arm();
  });
+ assert.equal(await page.evaluate(()=>nativeUnsubscribeMatched),true,'Restore native callback identity before Bitrix unmount cleanup');
  await page.waitForTimeout(80);
  assert.equal(await input.inputValue(),'first','Native remount restores the saved query');
  // Unknown ordinary and collab users share the exact same actions and numeric
@@ -120,7 +152,7 @@ try {
  await page.evaluate(()=>{window.currentBitrixUserId='8';stability.arm();});await page.waitForTimeout(80);
  assert.equal(await input.inputValue(),'','Changing the account clears the previous account query');
  assert.equal(await page.evaluate(()=>stability.stored()),'');
- assert.deepEqual(errors,[]);report.push({mode,status:'PASS',stickySearch:true,nativeQuery:true,unreadSearch:true,lateResponse:true,clearRestoresNativeRows:true});await page.close();
+ assert.deepEqual(errors,[]);report.push({mode,status:'PASS',emptyFocusPreservesList:true,repeatedFocus:true,whitespacePreservesList:true,stickySearch:true,nativeQuery:true,unreadSearch:true,lateResponse:true,clearRestoresNativeRows:true,folderUnreadFocusMatrix:true,frameAudit:true,startupEmptySearchRecovery:true});await page.close();
  }
  console.log('PASS native search state: sticky selection, unread results, delayed reset, stale response, native clear and Escape');
 } finally {await browser.close();await server.close();writeFileSync(new URL('./artifacts/native-search-state-report.json',import.meta.url),JSON.stringify(report,null,2));}
