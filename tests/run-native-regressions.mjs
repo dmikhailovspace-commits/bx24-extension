@@ -1990,12 +1990,12 @@ try {
 	await page.locator('.dialog-control-context-menu .dialog-control-context-folder').filter({ hasText: 'Без папки' }).click();
 	await page.waitForFunction(() => {
 		const item = JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats') || '[]').find(candidate => candidate.id === 'chat5');
-		return item && !item.folderId && item.color === undefined && item.colorMode === undefined;
+		return item && !item.folderId && item.color === '#4d9dff';
 	});
-	await page.waitForFunction(() => !document.querySelector('.recent-host .pena-native-chat-row[data-id="chat5"] .pena-native-avatar-ring'));
-	assert.equal(await rootColorRow.locator('.pena-native-avatar-ring').count(), 0, 'Dialog marker stayed after removing the folder');
+	await page.waitForFunction(() => document.querySelector('.recent-host .pena-native-chat-row[data-id="chat5"] .pena-native-avatar-ring'));
+	assert.equal(await rootColorRow.locator('.pena-native-avatar-ring').count(), 1, 'Dialog marker was lost after removing the folder');
 	await rootColorRow.click({ button: 'right' });
-	assert.equal(await page.locator('.dialog-control-context-menu .dialog-control-context-colors').count(), 0, 'Color controls stayed after removing the folder');
+	assert.equal(await page.locator('.dialog-control-context-menu .dialog-control-context-color-marker').count(), 1, 'Color controls missing outside a folder');
 	await page.keyboard.press('Escape');
 	const folderTab = page.locator('.recent-host .pena-native-folder-tab').filter({ hasText: 'Тестовая папка' });
 	await folderTab.click({ button: 'right' });
@@ -2108,16 +2108,16 @@ try {
 	await assignedNativeRow.dragTo(aggregateUnassignTarget);
 	await page.waitForFunction(() => {
 		const item = JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats') || '[]').find(candidate => candidate.id === 'chat225');
-		return item && !item.folderId && !item.color;
+		return item && !item.folderId && item.color === '#22c55e';
 	});
 	await page.waitForFunction(() => {
 		const row = document.querySelector('.recent-host .pena-native-chat-row[data-id="chat225"]');
-		return row && !row.dataset.penaNativeFolderId && !row.classList.contains('--native-colored');
+		return row && !row.dataset.penaNativeFolderId && row.classList.contains('--native-colored');
 	});
 	assert.deepEqual(await assignedNativeRow.evaluate(row => ({
 		folderId: row.dataset.penaNativeFolderId || '',
 		colored: row.classList.contains('--native-colored')
-	})), { folderId: '', colored: false }, 'Dropping a dialog on All folders did not remove its folder binding and marker');
+	})), { folderId: '', colored: true }, 'Dropping on All folders must preserve the independent marker');
 	assert.deepEqual(await page.evaluate(() => window.nativeScrollAudit || []), [],
 		'Unassigning a dialog through All folders moved the native viewport');
 

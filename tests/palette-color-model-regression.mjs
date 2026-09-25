@@ -20,6 +20,8 @@ try{
   dialog.color='#22c55e'; assert.equal(assigned(),'#22c55e');
   dialog.folderId='f1'; assert.equal(assigned(),'#22c55e');
   folders[0].color='#a855f7'; assert.equal(assigned(),'#22c55e');
+  delete dialog.folderId; assert.equal(assigned(),'#22c55e','Unfiled dialogs keep their explicit marker');
+  dialog.folderId='missing-folder'; assert.equal(assigned(),'#22c55e','A missing folder cannot erase a dialog marker');
   dialog.colorMode='none'; assert.equal(assigned(),'');
  });
  phase('empty folder and inactive-mode assignments cannot be reused',()=>{

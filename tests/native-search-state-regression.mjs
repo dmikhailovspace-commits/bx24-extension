@@ -102,6 +102,13 @@ try {
  const ordinary=page.getByText('Native 707',{exact:true});const collab=page.getByText('Native 708',{exact:true});
  assert.equal(await page.evaluate(()=>stability.items().some(item=>item.id==='user708')),false);
  await collab.click({button:'right'});
+ await page.locator('.dialog-control-context-color-marker').waitFor({state:'visible',timeout:1500});
+ await page.locator('.dialog-control-context-color-marker').click();
+ await page.locator('.dialog-control-palette.--open .dialog-control-swatch[data-color="#4d9dff"]').click();
+ await page.keyboard.press('Escape');
+ await page.waitForFunction(()=>document.querySelector('.bx-im-search-item__container[data-pena-native-dialog-id="user708"] .pena-native-avatar-ring'));
+ assert.equal(await page.evaluate(()=>{const item=stability.items().find(item=>item.id==='user708');return !item.folderId&&item.color==='#4d9dff';}),true,'Unfiled collab search result accepts and displays a marker');
+ await collab.click({button:'right'});
  const menu=page.locator('.dialog-control-context-menu');await menu.waitFor({state:'visible'});
  await menu.getByRole('menuitem',{name:'Прочитать позже',exact:true}).click();
  await page.waitForFunction(()=>!stability.pending()&&searchWrites.length===1);

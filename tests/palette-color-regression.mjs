@@ -63,5 +63,27 @@ try{
    await page.keyboard.press('Escape');await page.waitForTimeout(220);assert.equal(await page.locator('.dialog-control-palette').count(),0);
   }finally{await page.close();}
  }
- assert.deepEqual(failures,[]);console.log('PASS palette browser: four native anchor/animation/random scenarios');
+ for(const mode of ['chats','tasks']) {
+  const page=await browser.newPage();
+  try {
+   await page.route('**/tests/native-consistency-harness.html?*',async route=>{
+    const response=await route.fetch();const html=(await response.text()).replace('localStorage.setItem(`pena.dialogControl.v1.${storageMode}`, JSON.stringify(items));','if (!localStorage.getItem(`pena.dialogControl.v1.${storageMode}`)) localStorage.setItem(`pena.dialogControl.v1.${storageMode}`, JSON.stringify(items));');await route.fulfill({response,body:html});
+   });
+   await page.goto(server.baseUrl+'/tests/native-consistency-harness.html?mode='+mode+'&lazyNative=1&nativeCatalog=1&nativeFirst=1&passThrough=1&eager=0');
+   const host=page.locator(mode==='tasks'?'.task-host':'.recent-host');
+   const row=id=>host.locator('.pena-native-chat-row[data-id="'+id+'"]');
+   await row('chat5').waitFor();
+   const paint=async(id,color)=>{await row(id).click({button:'right'});await page.locator('.dialog-control-context-color-marker').click();await page.locator('.dialog-control-palette.--open .dialog-control-swatch'+(color?'[data-color="'+color+'"]':'.--clear')).click();await page.keyboard.press('Escape');};
+   const ring=async(id,color)=>{await page.waitForFunction(({id,color})=>{const el=document.querySelector('.test-host:not([hidden]) [data-id="'+id+'"]');return (el?.dataset.penaNativeColor||'')===color&&el.querySelectorAll('.pena-native-avatar-ring').length===(color?1:0);},{id,color});};
+   await paint('chat5','#4d9dff');await ring('chat5','#4d9dff');
+   await row('chat225').click({modifiers:['Control']});await row('chat5').click({modifiers:['Control']});
+   await paint('chat5','#ef4444');await ring('chat225','#ef4444');await ring('chat5','#ef4444');
+   await page.reload();await row('chat5').waitFor();await ring('chat5','#ef4444');await ring('chat225','#ef4444');
+   await row('chat225').click({button:'right'});await page.locator('.dialog-control-context-folder').filter({hasText:'Без папки'}).click();await ring('chat225','#ef4444');
+   await paint('chat5','');await ring('chat5','');await ring('chat225','#ef4444');
+   await page.reload();await row('chat5').waitFor();await ring('chat5','');await ring('chat225','#ef4444');
+   report.phases.push({mode,status:'PASS',unfiled:true,mixedMultiSelect:true,unassignPreservesColor:true,reload:true,explicitClear:true});
+  }finally{await page.close();}
+ }
+ assert.deepEqual(failures,[]);console.log('PASS palette browser: native anchors, random colors, unfiled markers, mixed selection, moves and reload');
 }finally{writeFileSync('tests/artifacts/palette-color-report.json',JSON.stringify(report,null,2));await browser.close();await server.close();}

@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.13';
+	window.__ANITREC_RUNNING__ = '8.0.14';
 
-	const VER = '8.0.13';
+	const VER = '8.0.14';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -11786,7 +11786,7 @@ if (_presetChannel) {
 			const raw = localStorage.getItem(modeKey);
 			const parsed = JSON.parse(raw || '[]');
 			_dialogControlItems[mode] = Array.isArray(parsed) ? parsed : [];
-			if (_migrateDialogControlItemIds(_dialogControlItems[mode]) || _enforceDialogControlFolderColorRule(_dialogControlItems[mode])) {
+			if (_migrateDialogControlItemIds(_dialogControlItems[mode])) {
 				_dialogControlStorageRaw[mode] = JSON.stringify(_dialogControlItems[mode]);
 				localStorage.setItem(modeKey, _dialogControlStorageRaw[mode]);
 			} else _dialogControlStorageRaw[mode] = raw || '[]';
@@ -11802,26 +11802,6 @@ if (_presetChannel) {
 		return item?.type === 'folder';
 	}
 
-	function _clearDialogControlItemColor(item) {
-		if (!item || _isDialogControlFolder(item)) return false;
-		const changed = item.color !== undefined || item.colorMode !== undefined;
-		delete item.color;
-		delete item.colorMode;
-		return changed;
-	}
-
-	function _enforceDialogControlFolderColorRule(items) {
-		if (!Array.isArray(items)) return false;
-		const folderIds = new Set(items.filter(_isDialogControlFolder).map(folder => String(folder.id || '')).filter(Boolean));
-		let changed = false;
-		items.forEach(item => {
-			if (_isDialogControlFolder(item)) return;
-			if (!item.folderId || !folderIds.has(String(item.folderId))) {
-				if (_clearDialogControlItemColor(item)) changed = true;
-			}
-		});
-		return changed;
-	}
 
 	function _dialogControlViewKey(mode = _pMode()) {
 		return `pena.dialogControlView.${mode === 'tasks' ? 'tasks' : 'chats'}`;
@@ -12245,9 +12225,8 @@ if (_presetChannel) {
 	function _canControlDialogItemColors(dialogIds, items = _getDialogControlItems()) {
 		const ids = new Set((Array.isArray(dialogIds) ? dialogIds : [dialogIds]).map(normId).filter(Boolean));
 		if (!ids.size) return false;
-		const folderMap = _getDialogControlFolderMap(items);
 		const targets = items.filter(item => !_isDialogControlFolder(item) && ids.has(normId(item.id)));
-		return targets.length === ids.size && targets.every(item => item.folderId && folderMap.has(String(item.folderId)));
+		return targets.length === ids.size;
 	}
 
 	function _normalizeDialogControlMoveIds(ids) {
@@ -13072,7 +13051,7 @@ if (_presetChannel) {
 		if (!id) return false;
 		const arr = _getDialogControlItems();
 		const item = arr.find(x => normId(x.id) === id);
-		if (!item || _isDialogControlFolder(item) || !item.folderId || !_getDialogControlFolderMap(arr).has(String(item.folderId))) return false;
+		if (!item || _isDialogControlFolder(item)) return false;
 		const next = _normalizeDialogControlColor(color);
 		if (next) {
 			item.color = next;
@@ -13093,9 +13072,8 @@ if (_presetChannel) {
 		const next = _normalizeDialogControlColor(color);
 		let changed = 0;
 		const items = _getDialogControlItems();
-		const folderMap = _getDialogControlFolderMap(items);
 		items.forEach(item => {
-			if (_isDialogControlFolder(item) || !ids.has(normId(item.id)) || !item.folderId || !folderMap.has(String(item.folderId))) return;
+			if (_isDialogControlFolder(item) || !ids.has(normId(item.id))) return;
 			const current = _normalizeDialogControlColor(item.color);
 			const explicitlyClear = item.colorMode === 'none';
 			if (next ? (current === next && !explicitlyClear) : explicitlyClear) return;
@@ -13118,10 +13096,6 @@ if (_presetChannel) {
 
 	function _getDialogControlAssignedColor(item, items = _getDialogControlItems()) {
 		if (!item || _isDialogControlFolder(item)) return '';
-		const folderId = String(item.folderId || '');
-		if (!folderId) return '';
-		const folder = items.find(candidate => _isDialogControlFolder(candidate) && String(candidate.id || '') === folderId);
-		if (!folder) return '';
 		if (item.colorMode === 'none') return '';
 		return _normalizeDialogControlColor(item.color);
 	}
@@ -21294,7 +21268,7 @@ if (_presetChannel) {
 			delete row.dataset.penaNativeBasePaddingLeft;
 			row.style.removeProperty('--pena-native-base-padding-left');
 		}
-		const itemColor = parentFolder ? _normalizeDialogControlColor(item.color) : '';
+		const itemColor = _normalizeDialogControlColor(item.color);
 		const effectiveColor = item.colorMode === 'none' ? '' : itemColor;
 		const hasLightNativeBg = _isDialogControlLightNativeColor(effectiveColor);
 		_applyDialogControlNativeRowLayout(row);
@@ -21747,7 +21721,7 @@ if (_presetChannel) {
 			const raw = localStorage.getItem(key) || '[]';
 			const parsed = JSON.parse(raw);
 			const items = Array.isArray(parsed) ? parsed : [];
-			if (_migrateDialogControlItemIds(items) || _enforceDialogControlFolderColorRule(items)) {
+			if (_migrateDialogControlItemIds(items)) {
 				_dialogControlStorageRaw[m] = JSON.stringify(items);
 				localStorage.setItem(key, _dialogControlStorageRaw[m]);
 			} else _dialogControlStorageRaw[m] = raw;
@@ -21763,7 +21737,6 @@ if (_presetChannel) {
 		if (!_dialogControlItems || Array.isArray(_dialogControlItems)) _dialogControlItems = {};
 		const localItems = Array.isArray(items) ? items : [];
 		_migrateDialogControlItemIds(localItems);
-		_enforceDialogControlFolderColorRule(localItems);
 		_dialogControlItems[m] = localItems;
 		try {
 			const key = `${_LS_DIALOG_CONTROL}.${m}`;
@@ -21774,7 +21747,6 @@ if (_presetChannel) {
 				const remoteItems = JSON.parse(storedRaw || '[]');
 				const merged = _mergeDialogControlStorageItems(baseItems, localItems, remoteItems);
 				localItems.splice(0, localItems.length, ...merged);
-				_enforceDialogControlFolderColorRule(localItems);
 			}
 			const nextRaw = JSON.stringify(localItems);
 			localStorage.setItem(key, nextRaw);
@@ -21795,7 +21767,7 @@ if (_presetChannel) {
 				const parsed = JSON.parse(raw);
 				if (!Array.isArray(parsed)) return;
 				const migratedIds = _migrateDialogControlItemIds(parsed);
-				const migrated = _enforceDialogControlFolderColorRule(parsed) || migratedIds;
+				const migrated = migratedIds;
 				const normalizedRaw = migrated ? JSON.stringify(parsed) : raw;
 				if (!_dialogControlItems || Array.isArray(_dialogControlItems)) _dialogControlItems = {};
 				_dialogControlItems[mode] = parsed;

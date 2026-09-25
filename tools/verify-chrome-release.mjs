@@ -10,17 +10,19 @@ const json = path => JSON.parse(read(path));
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const { files, manifest, sourceHashes } = chromeFiles();
 const expectedSuites = [...read('tests/run-all-regressions.mjs').toString().match(/const suites = \[([\s\S]*?)\];/)[1].matchAll(/'([^']+\.mjs)'/g)].map(match => match[1]).sort();
-const focused = process.argv.includes('--time-focused');
-const acceptedSuites = focused ? json('tests/time-focused-suites.json').sort() : expectedSuites;
+const profile = json('update.json').verification_profile || 'full';
+assert.ok(['full','time-focused','marker-focused'].includes(profile),'Unknown verification profile');
+const focused = profile !== 'full';
+const acceptedSuites = focused ? json('tests/'+profile+'-suites.json').sort() : expectedSuites;
 const full = json('tests/artifacts/regression-summary.json');
-assert.equal(full.state, 'passed', 'Full pnpm test gate must finish successfully');
+assert.equal(full.state, 'passed', 'Configured pnpm test gate must finish successfully');
 assert.deepEqual(full.suites.map(suite => suite.suite).sort(), acceptedSuites, 'Gate must match the explicit verification profile');
 if (focused) {
-  assert.equal(full.validationScope, 'time-focused');
-  assert.equal(json('update.json').verification_profile, 'time-focused');
+  assert.equal(full.validationScope, profile);
+  assert.equal(json('update.json').verification_profile, profile);
 }
 assert.ok(full.suites.every(suite => suite.status === 'PASS'));
-assert.deepEqual(full.sourceSha256, sourceHashes, 'Desktop source changed since full gate');
+assert.deepEqual(full.sourceSha256, sourceHashes, 'Desktop source changed since configured gate');
 const directory = json('chrome-release/build-manifest.json');
 assert.deepEqual(directory.sourceHashes, sourceHashes);
 assert.deepEqual(Object.keys(directory.files).sort(), [...files.keys()].sort());
@@ -60,7 +62,7 @@ for (const image of screenshots.screenshots) {
 const result = {
   status: 'PASS', version: manifest.version, checkedAt: new Date().toISOString(),
   zip: directory.zip, bytes: zip.length, sha256: hash(zip), files: files.size,
-  verificationScope: focused ? 'time-focused' : 'full',
+  verificationScope: profile,
   gate: { suites: full.suites.length, durationMs: full.durationMs, startedAt: full.startedAt, sourceSha256: full.sourceSha256, verificationSource: full.verificationSource || { kind: 'local' } },
   chrome: { workerScenarios: worker.phases.length, popupScenarios: popup.phases.length, browserScenarios: browser.phases.length },
   screenshots: screenshots.screenshots,

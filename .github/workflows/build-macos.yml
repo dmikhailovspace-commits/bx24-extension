@@ -38,9 +38,9 @@ jobs:
           PENA_TEST_FAIL_FAST: '1'
         run: |
           $profile = (Get-Content update.json -Raw | ConvertFrom-Json).verification_profile
-          if ($profile -eq 'time-focused') {
-            $env:PENA_TEST_PROFILE = 'time-focused'
-            $env:PENA_TEST_SUITES = (Get-Content tests/time-focused-suites.json -Raw | ConvertFrom-Json) -join ','
+          if ($profile -in @('time-focused','marker-focused')) {
+            $env:PENA_TEST_PROFILE = $profile
+            $env:PENA_TEST_SUITES = (Get-Content "tests/$profile-suites.json" -Raw | ConvertFrom-Json) -join ','
           } elseif ($profile -and $profile -ne 'full') { throw "Unknown verification profile: $profile" }
           pnpm test
           exit $LASTEXITCODE
@@ -281,10 +281,10 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' \
-            'Fixes context actions on delayed native search results, including ordinary and collab users without an existing recent dialog.' \
-            'Search preserves its query when opening a dialog. Unread filtering, visible multi-selection, Shift ranges, folder actions and color markers work on native search cards.' \
+            'Allows explicit color markers on dialogs without folder membership, including native search and collab users.' \
+            'Markers survive removal from a folder and reload. Mixed multi-selection applies markers to all selected dialogs; explicit clearing remains available.' \
             'Folder pagination uses the mounted Bitrix service without forced scrolling or a blocking loader; saved folder membership is preserved.' \
-            'All 85 registered regression suites passed before packaging; the Chrome package is checked against the tested source.' \
+            'The configured verification profile passed before packaging; the Chrome package is checked against the exact tested source.' \
             'Controlled tests are not a live Bitrix latency measurement. The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \
             'Includes Windows EXE, Universal macOS DMG for Intel and Apple Silicon, Chrome ZIP and Chrome Web Store submission materials. Store publication is separate.' \
             > release-notes.md

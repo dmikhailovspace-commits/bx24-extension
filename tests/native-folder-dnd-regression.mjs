@@ -73,7 +73,7 @@ try {
 		events: window.folderDndEvents || [],
 		scrollEvents: window.nativeScrollAudit || []
 	}));
-	assert.ok(unassigned.item && !unassigned.item.folderId && !unassigned.item.color,
+	assert.ok(unassigned.item && !unassigned.item.folderId && unassigned.item.color === '#22c55e',
 		`Dropping a dialog on All folders did not unassign it: ${JSON.stringify(unassigned)}`);
 	assert.equal(unassigned.events.some(event => event.type === 'pointercancel'), true,
 		'The harness did not reproduce Chromium pointercancel during HTML5 drag');
@@ -83,9 +83,11 @@ try {
 	assert.deepEqual(await assignedRow.evaluate(row => ({
 		folderId: row.dataset.penaNativeFolderId || '',
 		colored: row.classList.contains('--native-colored')
-	})), { folderId: '', colored: false }, 'Dialog marker survived folder removal');
+	})), { folderId: '', colored: true }, 'Dialog marker was lost on folder removal');
 	assert.deepEqual(pageErrors, [], `Page errors: ${pageErrors.join(' | ')}`);
-	// Returning an uncolored dialog to a colored folder must not paint a marker.
+	// Explicitly clear the independent marker before checking folder inheritance.
+ await assignedRow.click({button:'right'});await page.locator('.dialog-control-context-color-marker').click();await page.locator('.dialog-control-palette.--open .dialog-control-swatch.--clear').click();await page.keyboard.press('Escape');
+ // Returning an uncolored dialog to a colored folder must not paint a marker.
 	await page.waitForTimeout(750);
 	await assignedRow.dragTo(folder);
 	await page.waitForFunction(() => document.querySelector('.recent-host .pena-native-chat-row[data-id="chat225"]')?.dataset.penaNativeFolderId === 'folder:test');
