@@ -9,8 +9,8 @@
 - Release date: **2026-10-01**
 - Runtime files: **19**
 - Regression suites: **86**
-- Windows artifact: _not built_
-- macOS artifact: _not built_
+- Windows artifact: `dist/PENA_Agency_Windows_v8.0.20.exe` - SHA-256: `31C64CEF7808981E27DA2B50080AC3367ED61BED7B7DAA4A783DCCD11A6B8A31`
+- macOS artifact: `dist/PENA_Agency_macOS_Universal_v8.0.20.dmg` - SHA-256: `5A262146E0B85142963EF3C1653AC5ACCC3DACA0106E3D92EE506013B317D0E2`
 <!-- AUTO:END -->
 
 ## Назначение
@@ -27,6 +27,9 @@
 - Для 8.0.20 выбран сокращённый `time-focused`: ровно 16 связанных наборов в `tests/time-focused-suites.json`, включая новый live/cache тест, переключение дат, гонки записи, геометрию, старт и поставки. Полный пакет не запускается. Обе сборки и Chrome должны пройти этот профиль на одном релизном коммите. Живой портал и физический Mac не проверялись.
 
 - Попытка 8.0.19 (`bbb47c1814fa56755b8786c52c39ebe13baabcfe`, run `36900443078`) прошла 16/16 в CI, но не выпущена: Chrome verifier требует отчёты popup и portal worker, которых не было в том профиле. В 8.0.20 они включены вместо двух перекрывающихся наборов моделей/геометрии; их проверки также покрываются global/live и project-settings UI. Тег 8.0.19 не менялся.
+- 8.0.20 опубликована из неизменяемого коммита `15c1a2b89cbd05be13300f415a131f76bb5a9eb9`: https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v8.0.20. Run `36901348269` полностью успешен: CI 16/16 за 194,4 с, затем обе сборки и публикация. Локальный профиль 16/16 за 180,0 с и Chrome verifier также прошли.
+- Проверены все 8 файлов релиза, SHA-256/размеры GitHub, точное совпадение Chrome ZIP с протестированным runtime, версия EXE 8.0.20 и 19 файлов внутри HFS+ DMG. На macOS runner прошли hdiutil, plutil, executable/LF и обе архитектуры x86_64/arm64. В `dist` только текущие EXE/DMG с sidecar; `chrome-release` содержит канонический CI-пакет. Отчёт: `tests/artifacts/release-verification-8.0.20.json`.
+- Канал обоих desktop-updater обновлён только через `main/update.json`, коммит `a0b56064b4cd6c88c88818ee46409af69f85c0d1`. GitHub API и точный raw URL возвращают 8.0.20. Chrome Web Store, живой портал и физический Mac не проверялись.
 
 ## Изменения 8.0.18: режим «Без повторов»
 
