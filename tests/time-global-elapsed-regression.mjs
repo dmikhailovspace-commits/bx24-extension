@@ -222,5 +222,40 @@ await phase('one revoked task cannot block sentinel capability detection or disc
  await f.load();assert.equal(f.record().data.entryCount,80);assert.equal(f.record().hasCompleteSnapshot,true);
  return {accessibleRecordsPreserved:79,inaccessibleTasks:1,recoveryReads:1};
 });
+await phase('documented Desktop task access errors do not stop the journal at a missing task',async()=>{
+ const adapter=vm.createContext({_PENA_TIME_CONTROL:model});
+ vm.runInContext([extract('_createBxRestError'),extract('_normalizeBxRestPageResult'),extract('_getDialogTimeFriendlyError')].join('\n'),adapter);
+ let nativeError;
+ try { adapter._normalizeBxRestPageResult({error:()=>({getError:()=>({error:'ERROR_CORE',error_description:'0x000001'})}),error_description:()=>undefined}); } catch(error) { nativeError=error; }
+ assert.equal(nativeError.code,'ERROR_CORE');assert.equal(nativeError.message,'0x000001');
+ assert.equal(model.isElapsedAccessError(nativeError),true);assert.match(adapter._getDialogTimeFriendlyError(nativeError),/Нет доступа/);
+ for(const error of [{code:'ERROR_CORE',message:'0x000001'}, {code:'ERROR_CORE',description:'ACTION_NOT_ALLOWED'}, {code:'0x000001'}]) {
+  assert.equal(model.isElapsedAccessError(error),true,JSON.stringify(error));
+ }
+ assert.equal(model.isElapsedAccessError({code:'ERROR_CORE',message:'0x000100'}),false);
+ const calls=[];
+ const capability=await model.loadGlobalElapsedItems({...range,userId:7,probeTaskIds:[1,2],callPage:async params=>{
+  calls.push(params[0]);if(params[0]!==2)throw Object.assign(new Error('0x000001'),{code:'ERROR_CORE'});return{data:[]};
+ }});
+ assert.equal(capability.supported,false);assert.deepEqual(calls,[0,1,2]);
+ const f=fixture(80);f.api.state.mode='unsupported';f.api.state.rows=Array.from({length:80},(_,i)=>raw(i+1));
+ f.c._callDialogTimeElapsedPages=async params=>{
+  f.state.pointCalls.push(...params.map(p=>p[0]));
+  const partialPages=await Promise.all(params.map(p=>Number(p[0])===2?null:f.api.call(p)));
+  if(partialPages.includes(null))throw Object.assign(new Error('0x000001'),{code:'ERROR_CORE',partialPages,partialErrors:params.map(p=>Number(p[0])===2?{code:'ERROR_CORE',message:'0x000001'}:null)});
+  return partialPages;
+ };
+ await assert.rejects(f.load());assert.equal(f.record().data.entryCount,79);assert.equal(f.state.pointCalls.length,80);assert.equal(f.record().hasCompleteSnapshot,false);
+});
+await phase('selected day never waits for unrelated monthly global entries',async()=>{
+ const f=fixture(100);f.api.state.rows=[...Array.from({length:3000},(_,i)=>raw(i+1,1,7,'2026-09-07')),raw(3001,1)];
+ await f.load();assert.equal(f.record().data.totalSeconds,60);assert.equal(f.record().hasCompleteSnapshot,true);
+ assert.equal(f.api.state.calls.length,1);assert.equal(f.api.state.calls[0][2]['>=CREATED_DATE'],'2026-09-08T00:00:00');
+ await f.load();assert.equal(f.api.state.calls.length,1,'Ready date is cached');
+ f.c._dialogTimeRange={from:'2026-09-07',to:'2026-09-07'};
+ const adjacent=await f.c._loadDialogTimeRange(f.c._dialogTimeRange);assert.equal(adjacent.totalSeconds,3000*60);
+ assert.equal(adjacent.entryCount,3000,'A one-day proof must never mark the whole month complete');
+ return {unrelatedEntries:3000,selectedEntries:1,requests:1,previousMonthlyRequests:61};
+});
 mkdirSync(new URL('./artifacts/',import.meta.url),{recursive:true});writeFileSync(new URL('./artifacts/time-global-elapsed-regression.json',import.meta.url),JSON.stringify(report,null,2));
 for(const p of report.phases)console.log(`${p.status}: ${p.name}${p.error?'\n'+p.error:''}`);assert.equal(report.phases.filter(p=>p.status==='FAIL').length,0,'Global time regression failed');

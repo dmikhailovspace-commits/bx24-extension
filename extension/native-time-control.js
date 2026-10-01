@@ -715,7 +715,7 @@
 	// older portals can silently interpret the sentinel as an ordinary task ID.
 	function isElapsedAccessError(error) {
 		const detail = `${error?.code || ''} ${error?.message || ''} ${error?.description || ''}`;
-		return /access.?denied|not.?found|not.?allowed|(?:^|\W)0x(?:000004|100002)(?:\W|$)/i.test(detail);
+		return /access.?denied|not.?found|not.?allowed|(?:^|\W)0x(?:000001|000004|100002)(?:\W|$)/i.test(detail);
 	}
 	async function loadGlobalElapsedItems({ callPage, from, to, userId, utcOffsetMinutes, timeZone, knownItems = [], probeTaskId = '', probeTaskIds = [], supported = false, isCurrent = () => true, maxPages = 2000 } = {}) {
 		if (typeof callPage !== 'function') throw new TypeError('callPage is required');

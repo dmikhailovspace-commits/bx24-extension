@@ -208,6 +208,12 @@ try {
    return{busy:panel.getAttribute('aria-busy'),barHidden:overlay.querySelector('.pena-native-time-loading-bar').hidden,label:overlay.querySelector('.pena-native-time-loading-label').textContent};
   });
   assert.equal(error.busy,'false');assert.equal(error.barHidden,true);assert.match(error.label,/Не удалось/);
+  await page.evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.copiedTimeDiagnostics=text;}}}));
+  await page.locator('.pena-native-time-loading-diagnostics').click();
+  const diagnostics=JSON.parse(await page.evaluate(()=>window.copiedTimeDiagnostics));
+  assert.equal(diagnostics.time.errorCode,'TIMEOUT');assert.match(diagnostics.version,/^8\./);
+  assert.deepEqual(Object.keys(diagnostics).sort(),['rest','time','version']);
+  assert.ok(!JSON.stringify(diagnostics).includes('portal.test'));
   await page.locator('.pena-native-time-loading-continue').click();
   await page.waitForFunction(()=>document.querySelector('.pena-native-time-loading-overlay')?.hidden===true);
   const continued=await page.evaluate(()=>{

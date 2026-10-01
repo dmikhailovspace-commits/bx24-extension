@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.22';
+	window.__ANITREC_RUNNING__ = '8.0.23';
 
-	const VER = '8.0.22';
+	const VER = '8.0.23';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -14586,8 +14586,11 @@ if (_presetChannel) {
 	}
 
 	function _getDialogTimeFriendlyError(error, fallback = 'Не удалось получить затраченное время') {
-		const message = String(error?.message || error || '');
-		if (/access|denied|not allowed|0x100002|0x000004/i.test(message)) return 'Нет доступа к данным о затраченном времени';
+		const message = `${error?.code || ''} ${error?.message || error || ''} ${error?.description || ''}`.trim();
+		if (/^Не удалось проверить задачи:/.test(String(error?.message || ''))) return error.message;
+		if (/access|denied|not.?allowed|0x100002|0x000004|0x000001/i.test(message)) return 'Нет доступа к данным о затраченном времени';
+		if (/0x000100|INVALID_PARAMETERS|WRONG_ARGUMENTS/i.test(message)) return 'Bitrix24 не принял параметры запроса времени';
+		if (/QUERY_LIMIT|OPERATION_TIME_LIMIT|OVERLOAD|429/i.test(message)) return 'Лимит запросов Bitrix24. Повторите чуть позже';
 		if (/BX\.rest|BX24|недоступен/i.test(message)) return 'REST Bitrix24 пока не готов';
 		if (/время ожидания|timeout/i.test(message)) return 'Bitrix24 не ответил вовремя';
 		if (/период|диапазон|дней/i.test(message)) return message;
@@ -17854,7 +17857,7 @@ if (_presetChannel) {
 		const windows = _loadDialogTimeRange.windows ||= _PENA_TIME_CONTROL.createElapsedWindowCache();
 		// Use a valid fixed date so key normalization cannot change the namespace at midnight.
 		const windowScope = _getDialogTimeCacheKey({from:'2000-01-01',to:'2000-01-01'});
-		const readRange = windows.rangeFor(normalized);
+		let readRange = windows.rangeFor(normalized);
 		const publishWindow = (data, accepted, proofs) => {
 			windows.put(windowScope, readRange, data, accepted, proofs);
 			for (const [otherKey, record] of Array.from(_dialogTimeCache)) {
@@ -17893,6 +17896,9 @@ if (_presetChannel) {
 		if (globalTransport) globalTransport.capabilities ||= new Map();
 		const globalCapability = globalTransport?.capabilities.get(identity);
 		const tryGlobal = !!globalTransport && taskIds.length > 0 && (force || (!cached?.hasCompleteSnapshot && !cached?.globalSnapshotRead)) && globalCapability?.supported !== false;
+		// A cheap global day read must not turn into a blocking full-month scan.
+		// Legacy per-task batches still amortize their cost across adjacent days.
+		if (tryGlobal) readRange = normalized;
 		const collectEmptyLogEvidence = () => { for (const id of taskIds) {
 			const proof = _dialogTimeTaskLogEvidence.get(id);
 			const proofNow = Date.now();
@@ -18012,6 +18018,7 @@ if (_presetChannel) {
 					return data;
 				}
 				diagnostics.strategy = 'legacy'; diagnostics.fallbackReason = globalData.reason;
+				readRange = windows.rangeFor(normalized);
 				// A rejected global capability must not discard the catalog's scoped
 				// empty-log evidence and turn fallback into thousands of empty reads.
 				collectEmptyLogEvidence();
@@ -18054,6 +18061,9 @@ if (_presetChannel) {
 							const missing = params.map((_, index) => index).filter(index => !error.partialPages[index]);
 							if (!missing.length || !missing.every(index => _PENA_TIME_CONTROL.isElapsedAccessError(error.partialErrors[index]))) throw error;
 							missing.forEach(index => unavailable.set(String(params[index][0]), _getDialogTimeFriendlyError(error.partialErrors[index])));
+							diagnostics.unavailableTasks = (diagnostics.unavailableTasks || 0) + missing.length;
+							diagnostics.taskErrorCodes = [...new Set([...(diagnostics.taskErrorCodes || []), ...missing.map(index =>
+								String(error.partialErrors[index]?.code || 'REST_ERROR') + ':' + (String(error.partialErrors[index]?.message || '').match(/0x[0-9a-f]+|ACTION_NOT_ALLOWED/i)?.[0] || ''))])].slice(0,8);
 							return rememberDispatch(params.map((_, index) => error.partialPages[index] || { data: [], total: 0, next: null }));
 						}
 					}
@@ -18082,7 +18092,7 @@ if (_presetChannel) {
 			}
 			if (!current()) return _dialogTimeCache.get(key)?.data || null;
 			const unavailableCount = taskIds.filter(id => freshness[id]?.unavailable).length;
-			if (unavailableCount) throw new Error(`Не удалось проверить задачи: ${unavailableCount}. Остальные записи обновлены.`);
+			if (unavailableCount) throw Object.assign(new Error(`Не удалось проверить задачи: ${unavailableCount}. Итог неполный.`), {code:'TIME_TASKS_UNAVAILABLE'});
 			if (!pendingIds.length) _setDialogTimeCacheRecord(key, { ...base, status: 'ready', data, updatedAt: Date.now() });
 			_loadDialogTimeTaskTitles(data).catch(() => {});
 			return data;
@@ -18090,6 +18100,7 @@ if (_presetChannel) {
 			if (!current()) return _dialogTimeCache.get(key)?.data || null;
 			diagnostics.state = 'error';
 			diagnostics.errorCode = String(error?.code || 'TIME_READ_FAILED');
+			diagnostics.detailCode = String(error?.message || '').match(/0x[0-9a-f]+|ACTION_NOT_ALLOWED/i)?.[0] || '';
 			const latest = _dialogTimeCache.get(key) || base;
 			_setDialogTimeCacheRecord(key, { ...latest, status: 'error', error: _getDialogTimeFriendlyError(error), errorCode:diagnostics.errorCode, failedAt: Date.now(), failedTaskRevisions:attemptTaskRevisions });
 			throw error;
@@ -18103,6 +18114,16 @@ if (_presetChannel) {
 		});
 		_dialogTimeInFlight.set(key, request);
 		return request;
+	}
+
+	function _getDialogTimeDiagnosticReport() {
+		const read = _callDialogTimeGlobalElapsedPage.diagnostics;
+		const queue = _dialogRestQueue?.snapshot();
+		// Deliberate allowlist: never export task contents, IDs, portal, auth or URLs.
+		const fields = ['strategy','tasks','pendingTasks','pages','attemptedGlobalPages','fallbackReason','from','to','durationMs','state','errorCode','detailCode','unavailableTasks','taskErrorCodes'];
+		return JSON.stringify({ version:VER, time:read ? Object.fromEntries(fields.filter(key => read[key] != null).map(key => [key,read[key]])) : null,
+			rest:queue ? { active:queue.active, queued:queue.queued, cooldownMs:queue.cooldownMs,
+				samples:queue.samples.slice(-20).map(({method,queuedMs,durationMs,status,code}) => ({method,queuedMs,durationMs,status,code})) } : null }, null, 2);
 	}
 
 	function _refreshDialogTimePanel(range) {
@@ -18177,6 +18198,8 @@ if (_presetChannel) {
 		bar.removeAttribute('aria-valuenow');
 		overlay.querySelector('.pena-native-time-loading-retry').hidden = loading;
 		overlay.querySelector('.pena-native-time-loading-continue').hidden = loading;
+		const diagnostics = overlay.querySelector('.pena-native-time-loading-diagnostics');
+		if (diagnostics) diagnostics.hidden = loading;
 	}
 
 	function _createDialogControlPopoverClose(label = 'Закрыть панель') {
@@ -18743,7 +18766,14 @@ if (_presetChannel) {
 		loadingOverlay.append(loadingClose);
 		loadingOverlay.querySelector('.pena-native-time-loading-retry').addEventListener('click', () => {
 			panel._penaTimeInitialization.error = '';
-			_requestDialogTimeVisibleRange({ force:true });
+			const range = (_dialogTimeView === 'stats' || _dialogTimeView === 'stats30') ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
+			const record = _getDialogTimeRecord(range);
+			if (record) {
+				record.failedAt = 0;
+				for (const proof of Object.values(record.taskFreshness || {})) if (proof.unavailable) proof.at = 0;
+			}
+			// Retry missing pages; already verified tasks need no second full sweep.
+			_requestDialogTimeVisibleRange();
 		});
 		const continueWithoutTotal = document.createElement('button');
 		continueWithoutTotal.type = 'button';
@@ -18755,6 +18785,25 @@ if (_presetChannel) {
 			_queueDialogTimeUiSync();
 		});
 		loadingOverlay.querySelector('.pena-native-time-loading-card').append(continueWithoutTotal);
+		const copyDiagnostics = document.createElement('button');
+		copyDiagnostics.type = 'button';
+		copyDiagnostics.className = 'pena-native-time-loading-diagnostics';
+		copyDiagnostics.textContent = 'Скопировать диагностику';
+		copyDiagnostics.addEventListener('click', async () => {
+			const text = _getDialogTimeDiagnosticReport();
+			try {
+				if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+				else throw new Error('Clipboard unavailable');
+				copyDiagnostics.textContent = 'Диагностика скопирована';
+			} catch {
+				const field = document.createElement('textarea');
+				field.className = 'pena-native-time-loading-diagnostics-text';
+				field.value = text; field.readOnly = true; field.setAttribute('aria-label','Диагностика загрузки времени');
+				field.style.cssText = 'width:100%;height:100px;box-sizing:border-box';
+				copyDiagnostics.replaceWith(field); field.focus(); field.select();
+			}
+		});
+		loadingOverlay.querySelector('.pena-native-time-loading-card').append(copyDiagnostics);
 		panel.append(loadingOverlay);
 		const restoredTrackerSearch = _getDialogTimeTaskSearchState('tracker');
 		if (restoredTrackerSearch.loading && restoredTrackerSearch.query.trim() && !restoredTrackerSearch.selectedTask) {
