@@ -814,7 +814,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
   --pena-time-icon-h:32px;
   --pena-time-card-radius:8px;
   position:fixed!important;left:50%!important;top:50%!important;right:auto!important;bottom:auto!important;z-index:1;
-  display:grid;grid-template-rows:48px minmax(0,1fr);
+  display:grid;grid-template-rows:48px minmax(0,1fr) auto;
   width:min(960px,calc(100vw - 32px));height:min(720px,calc(100dvh - 32px));max-height:none;margin:0!important;padding:0;
   overflow:hidden;border:1px solid #d6deea!important;border-radius:16px;background:#f7f9fc!important;color:#182237;
   font-family:var(--pena-time-ui);box-shadow:0 24px 70px rgba(15,23,42,.28),0 3px 12px rgba(15,23,42,.12);
@@ -824,7 +824,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 .pena-native-time-panel button,.pena-native-time-panel select,.pena-native-time-panel input{font-family:var(--pena-time-ui);box-sizing:border-box}
 .pena-native-time-panel :is(button,a):focus-visible{outline:2px solid rgba(49,95,232,.72);outline-offset:2px}
 .pena-native-time-panel:focus{outline:none}
-.pena-native-time-panel.--read-blocked > :is(.pena-native-time-panel-head,.pena-native-time-scroll){opacity:.35;pointer-events:none;user-select:none}
+.pena-native-time-panel.--read-blocked > :is(.pena-native-time-panel-head,.pena-native-time-scroll,.pena-native-time-tracker){opacity:.35;pointer-events:none;user-select:none}
 .pena-native-time-loading-overlay{position:absolute;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(247,249,252,.78);box-sizing:border-box;outline:none;cursor:wait}
 .pena-native-time-loading-overlay[hidden]{display:none!important}
 .pena-native-time-loading-card{display:grid;gap:12px;width:min(320px,100%);padding:24px;border:1px solid #d7dfeb;border-radius:12px;background:#fff;box-shadow:0 8px 30px rgba(24,34,55,.08);text-align:center;box-sizing:border-box}
@@ -850,7 +850,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 .pena-native-time-project-button svg{display:block;flex:0 0 14px;width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .pena-native-time-project-settings{display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;gap:12px;min-width:0;min-height:0;height:100%;padding:12px;border:1px solid #d7dfeb;border-radius:8px;background:#fff;box-sizing:border-box}
 .pena-native-time-project-settings[hidden]{display:none!important}
-.pena-native-time-panel.pena-native-command-popover.--project-settings{width:min(640px,calc(100vw - 32px));height:min(440px,calc(100dvh - 32px));max-height:none}
+.pena-native-time-panel.--project-settings > .pena-native-time-tracker{display:none!important}
 .pena-native-time-panel.--project-settings .pena-native-time-scroll > :not(.pena-native-time-project-settings),.pena-native-time-panel.--project-settings .pena-native-time-view-tabs{display:none!important}
 .pena-native-time-panel.--project-settings .pena-native-time-scroll{display:block;overflow:hidden}
 .pena-native-time-project-heading{display:grid;gap:4px;min-width:0}
@@ -893,6 +893,10 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 .pena-native-time-scroll::-webkit-scrollbar-track{background:transparent}
 .pena-native-time-scroll::-webkit-scrollbar-thumb{border-radius:999px;background:#b7c2d1}
 .pena-native-time-scroll::-webkit-scrollbar-thumb:hover{background:#8e9caf}
+.pena-native-time-partial-warning{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:10px 12px;border:1px solid #edc779;border-radius:8px;background:#fff9ed;color:#74551b;font:500 12px/18px var(--pena-time-ui)}
+.pena-native-time-partial-warning[hidden]{display:none!important}
+.pena-native-time-partial-warning > span{flex:1 1 220px}
+.pena-native-time-partial-warning button{padding:4px 8px;border:1px solid #d7c59a;border-radius:6px;background:#fff;color:inherit;font:600 12px/18px var(--pena-time-ui);cursor:pointer}
 .pena-native-time-summary{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto 32px;align-items:center;gap:12px;height:80px;min-height:80px;margin:0;padding:16px;border:1px solid #cddaff;border-radius:var(--pena-time-card-radius);background:linear-gradient(135deg,#edf3ff 0%,#fff 72%);box-sizing:border-box}
 .pena-native-time-date-controls{display:flex;align-items:center;gap:8px}
 .pena-native-time-date-step,.pena-native-time-date-today{height:32px;border:1px solid #cbd6e6;border-radius:8px;background:#fff;color:#526178;cursor:pointer}
@@ -924,6 +928,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 .pena-native-time-body[hidden],.pena-native-time-manual-block[hidden],.pena-native-time-tracker[hidden],.pena-native-time-stats[hidden]{display:none!important}
 .pena-native-time-column{display:grid;align-content:start;gap:16px;min-width:0}
 .pena-native-time-tracker,.pena-native-time-manual{display:grid;gap:8px;padding:16px;border:1px solid #dce3ec;border-radius:var(--pena-time-card-radius);background:#fff;box-sizing:border-box}
+.pena-native-time-panel > .pena-native-time-tracker{min-height:0;max-height:min(320px,45dvh);margin:0 16px 16px;overflow-y:auto;overflow-x:hidden;scrollbar-width:thin}
 .pena-native-time-manual[hidden],.pena-native-time-tracker-info[hidden],.pena-native-time-tracker-hint[hidden]{display:none!important}
 .pena-native-time-tracker.--active{border-color:#8ed8af;background:#f3fbf6}
 .pena-native-time-tracker.--pending{border-color:#edc779;background:#fff9ed}
@@ -1027,8 +1032,9 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 .pena-native-time-title-tooltip[hidden]{display:none!important}
 @media(max-width:680px){
   .pena-native-time-modal{padding:8px}
-  .pena-native-time-panel.pena-native-command-popover{width:min(520px,calc(100vw - 16px));height:calc(100dvh - 16px);grid-template-rows:48px minmax(0,1fr)}
+  .pena-native-time-panel.pena-native-command-popover{width:min(520px,calc(100vw - 16px));height:calc(100dvh - 16px);grid-template-rows:48px minmax(0,1fr) auto}
   .pena-native-time-scroll{padding:8px}
+  .pena-native-time-panel > .pena-native-time-tracker{margin:0 8px 8px}
   .pena-native-time-summary{position:relative;top:auto;grid-template-columns:minmax(0,1fr) 32px;gap:8px;height:auto;min-height:104px;padding:8px}
   .pena-native-time-summary-main{grid-column:1;grid-row:1}
   .pena-native-time-summary-actions{grid-column:2;grid-row:1}
@@ -1039,9 +1045,8 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
   .pena-native-time-entry-save,.pena-native-time-entry-cancel{width:100%}
 }
 @media(max-width:420px){
-  .pena-native-time-panel.pena-native-command-popover{grid-template-rows:auto minmax(0,1fr)}
+  .pena-native-time-panel.pena-native-command-popover{grid-template-rows:auto minmax(0,1fr) auto}
   .pena-native-time-panel-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;height:auto;min-height:88px;padding:8px}
-  .pena-native-time-panel.--project-settings .pena-native-time-panel-head{min-height:48px}
   .pena-native-time-header-actions{grid-column:2;grid-row:1}
   .pena-native-time-view-tabs{grid-column:1/-1;grid-row:2;min-width:0}
   .pena-native-time-view-tab{flex:1}
@@ -1052,7 +1057,6 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
   .pena-native-time-project-button{width:32px;padding:0}
   .pena-native-time-project-button span{display:none}
   .pena-native-time-project-settings{gap:12px;padding:12px}
-  .pena-native-time-panel.pena-native-command-popover.--project-settings{width:min(520px,calc(100vw - 16px));height:min(440px,calc(100dvh - 16px));max-height:none}
   .pena-native-time-date-input{min-width:0;flex:1}
   .pena-native-time-date-today{display:none}
   .pena-native-time-stats-row{grid-template-columns:minmax(0,1fr) auto;gap:8px}

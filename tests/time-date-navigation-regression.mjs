@@ -47,6 +47,7 @@ try {
   state.rows.push({ID:'9000',TASK_ID:'405',USER_ID:'7',SECONDS:'1800',CREATED_DATE:model.addDays(today,-1)+'T13:00:00+03:00'});
   const result=params=>{
    const [taskId,order,filter,,nav]=params;
+   if(state.failTask&&String(taskId)===state.failTask)return{error:()=> 'ERROR_CORE',error_description:()=> '0x000001'};
    if(state.failDay&&state.failDay===dateProbe.range().from)return{error:()=> 'TIMEOUT',error_description:()=> 'Controlled journal timeout'};
    if(state.legacy&&Number(taskId)===0)return{error:()=> 'TASK_NOT_FOUND',error_description:()=> 'controlled unsupported sentinel'};
    let rows=state.rows.filter(row=>(!taskId||String(taskId)===row.TASK_ID)&&String(filter.USER_ID)===row.USER_ID&&
@@ -212,7 +213,7 @@ try {
   await page.locator('.pena-native-time-loading-diagnostics').click();
   const diagnostics=JSON.parse(await page.evaluate(()=>window.copiedTimeDiagnostics));
   assert.equal(diagnostics.time.errorCode,'TIMEOUT');assert.match(diagnostics.version,/^8\./);
-  assert.deepEqual(Object.keys(diagnostics).sort(),['rest','time','version']);
+  assert.deepEqual(Object.keys(diagnostics).sort(),['panel','rest','time','version']);
   assert.ok(!JSON.stringify(diagnostics).includes('portal.test'));
   await page.locator('.pena-native-time-loading-continue').click();
   await page.waitForFunction(()=>document.querySelector('.pena-native-time-loading-overlay')?.hidden===true);
@@ -248,8 +249,32 @@ try {
   const after=await page.evaluate(async()=>{await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));dateWarmObserver.disconnect();return{blocked:dateWarmBlocked,calls:dateBackend.calls.length};});
   assert.equal(after.blocked,false);assert.equal(after.calls,before);return{warmAdditionalCalls:after.calls-before,warmOverlayShown:after.blocked};
  });
+ await phase('one inaccessible legacy task keeps the panel usable; retry reads only it and clears the warning',async()=>{
+  await page.evaluate(()=>{
+   dateProbe.clear();dateProbe.legacy();dateBackend.legacy=true;dateBackend.failTask='101';
+   dateBackend.rows.push({ID:'9900',TASK_ID:'102',USER_ID:'7',SECONDS:'900',CREATED_DATE:dateBackend.today+'T12:00:00+03:00'});
+   dateProbe.select({from:dateBackend.today,to:dateBackend.today});
+  });
+  await page.waitForFunction(()=>dateProbe.record()?.errorCode==='TIME_TASKS_UNAVAILABLE'&&dateProbe.idle());
+  await page.waitForFunction(()=>!document.querySelector('.pena-native-time-panel').classList.contains('--read-blocked'));
+  assert.equal(await page.locator('.pena-native-time-total-value').innerText(),'—');
+  assert.equal(await seconds(),900);assert.equal(await page.locator('.pena-native-time-partial-warning').isVisible(),true);
+  await page.locator('.pena-native-time-partial-warning').getByRole('button',{name:'Диагностика',exact:true}).click();
+  const diagnostic=JSON.parse(await page.evaluate(()=>copiedTimeDiagnostics));
+  assert.equal(diagnostic.panel.unavailableTasks,1);assert.equal(diagnostic.panel.complete,false);assert.equal(diagnostic.time.errorCode,'TIME_TASKS_UNAVAILABLE');
+  await page.screenshot({path:'tests/artifacts/time-partial-usable.png'});
+  const before=await page.evaluate(()=>{dateBackend.failTask='';return dateBackend.calls.length;});
+  await page.locator('.pena-native-time-partial-warning').getByRole('button',{name:'Повторить',exact:true}).click();await ready();
+  await page.locator('.pena-native-time-partial-warning').waitFor({state:'hidden'});
+  assert.equal(await seconds(),1500);assert.equal(await page.locator('.pena-native-time-partial-warning').isVisible(),false);
+  const retryCalls=await page.evaluate(before=>dateBackend.calls.slice(before),before);
+  assert.ok(retryCalls.length>0&&retryCalls.every(call=>call.taskId==='101'));
+  assert.equal(await page.evaluate(()=>dateProbe.record().error),'');
+  assert.equal(await page.evaluate(()=>dateProbe.record().errorCode),'');
+  return {retainedSeconds:900,completeSeconds:1500,retriedTasks:[...new Set(retryCalls.map(call=>call.taskId))]};
+ });
  await phase('saving a narrower project selection never lets its preview marker block a complete read',async()=>{
-  await page.locator('.pena-native-time-date-today').click();await ready();
+  await page.evaluate(()=>dateProbe.select({from:dateBackend.today,to:dateBackend.today}));await ready();
   await page.locator('.pena-native-time-project-button').click();
   await page.locator('.pena-native-time-project-settings input[data-project-id="0"]').uncheck();
   await page.locator('.pena-native-time-project-save').click();await ready();

@@ -1,5 +1,5 @@
 [
-  "native-folder-visibility-regression.mjs",
+  "native-batch-backpressure.mjs",
   "chrome-popup-regression.mjs",
   "time-global-elapsed-regression.mjs",
   "time-date-navigation-regression.mjs",

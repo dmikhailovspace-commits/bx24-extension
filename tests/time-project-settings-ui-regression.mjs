@@ -51,7 +51,7 @@ try{
   const timeCatalogCalls=await page.evaluate(()=>window.nativeRestCalls.filter(c=>c.method==='tasks.task.list'&&(c.params?.filter?.GROUP_ID!=null||c.params?.filter?.['>GROUP_ID']!=null)));
   assert.deepEqual(timeCatalogCalls,[],'Unconfigured projects launched a time catalog crawl');
  });
- await phase('first setup has a compact uninterrupted selection list at 360 and 1280 pixels',async()=>{
+ await phase('first setup keeps the full workspace size at 360 and 1280 pixels',async()=>{
   assert.equal(await page.locator('.pena-native-time-project-title').innerText(),'Выберите проекты');
   const result=[];
   for(const width of [360,1280]){
@@ -64,7 +64,7 @@ try{
      checkboxOffsets:[...section.querySelectorAll('label')].map(label=>{const a=box(label),b=box(label.querySelector('input'));return Math.abs((a.top+a.bottom-b.top-b.bottom)/2);})};
    });
    assert(geometry.first.top-geometry.unassigned.bottom<=4,'Empty status left a gap between unassigned and projects');
-   assert(geometry.panel.height<460,'Two-project setup retained the full workspace height');assert(geometry.panel.bottom-geometry.section.bottom<=(width===360?9:17),'Blank space remains below the project form');
+   assert.equal(geometry.panel.height,width===360?744:720);assert(geometry.panel.bottom-geometry.section.bottom<=(width===360?9:17),'Blank space remains below the project form');
    assert.equal(geometry.statusHidden,true);assert.equal(geometry.statusHeight,0);assert(geometry.overflow<=1);assert(geometry.checkboxOffsets.every(offset=>offset<1));
    await page.screenshot({path:new URL(`time-project-settings-first-${width}.png`,artifacts).pathname.replace(/^\/(?=[A-Za-z]:)/,'')});result.push({width,geometry});
   }
@@ -160,12 +160,22 @@ try{
   assert.ok((await timeIds()).includes('303'),'Selecting unassigned tasks did not read the group-zero task');
   await openSettings();assert.equal(await page.locator('.pena-native-time-project-all input').isChecked(),true);assert.equal(await project('0').isChecked(),true);
  });
- await phase('settings size to their contents while retaining desktop and narrow viewport limits',async()=>{
+ await phase('projects and workspace have identical bounds on every open and cancel',async()=>{
   const result=[];
   for(const viewport of [{width:1280,height:900},{width:360,height:760}]){
    await page.setViewportSize(viewport);await page.waitForTimeout(180);
    const geometry=await page.locator('.pena-native-time-panel').evaluate(panel=>{const r=panel.getBoundingClientRect(),scroll=panel.querySelector('.pena-native-time-scroll');const section=scroll.querySelector('.pena-native-time-project-settings').getBoundingClientRect();return{width:r.width,height:r.height,left:r.left,right:r.right,top:r.top,bottom:r.bottom,bottomVoid:r.bottom-section.bottom,overflow:scroll.scrollWidth-scroll.clientWidth};});
-   assert.equal(geometry.width,viewport.width===360?344:640);assert(geometry.height>300&&geometry.height<460);assert(geometry.bottomVoid<=(viewport.width===360?9:17));assert.ok(geometry.overflow<=1);
+   assert.equal(geometry.width,viewport.width===360?344:960);assert.equal(geometry.height,viewport.width===360?744:720);assert(geometry.bottomVoid<=(viewport.width===360?9:17));assert.ok(geometry.overflow<=1);
+   const settingsBox=await page.locator('.pena-native-time-panel').boundingBox();
+   await page.locator('.pena-native-time-project-cancel').click();
+   assert.deepEqual(await page.locator('.pena-native-time-panel').boundingBox(),settingsBox);
+   const footer=await page.locator('.pena-native-time-tracker').boundingBox();
+   assert.ok(Math.abs(settingsBox.y+settingsBox.height-footer.y-footer.height-(viewport.width===360?9:17))<1);
+   await page.locator('.pena-native-time-scroll').evaluate(scroll=>{const filler=document.createElement('div');filler.className='test-long-list';filler.style.height='1600px';scroll.append(filler);scroll.scrollTop=1000;});
+   assert.deepEqual(await page.locator('.pena-native-time-tracker').boundingBox(),footer,'Content scrolling moved the bottom timer');
+   await page.locator('.test-long-list').evaluate(node=>node.remove());
+   await page.screenshot({path:new URL(`time-footer-${viewport.width}.png`,artifacts).pathname.replace(/^\/(?=[A-Za-z]:)/,'')});
+   await openSettings();assert.deepEqual(await page.locator('.pena-native-time-panel').boundingBox(),settingsBox);
    await page.screenshot({path:new URL(`time-project-settings-${viewport.width}.png`,artifacts).pathname.replace(/^\/(?=[A-Za-z]:)/,'')});
    result.push({viewport,geometry});
   }

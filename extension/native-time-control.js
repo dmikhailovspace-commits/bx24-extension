@@ -614,6 +614,7 @@
 		utcOffsetMinutes,
 		timeZone,
 		pageSize = DEFAULT_PAGE_SIZE,
+		batchSize = 50,
 		maxPages = DEFAULT_MAX_PAGES,
 		maxRangeDays = 366
 	} = {}) {
@@ -640,7 +641,7 @@
 			return Promise.all(paramsList.map((params, index) => callPage(params, jobs[index])));
 		};
 		while (queue.length) {
-			const wave = queue.splice(0, 50);
+			const wave = queue.splice(0, typeof callPages === 'function' ? Math.min(100, Math.max(1, Number(batchSize) || 50)) : 50);
 			const paramsList = wave.map(job => buildElapsedRequestParams({
 				taskId: job.taskId,
 				...range,

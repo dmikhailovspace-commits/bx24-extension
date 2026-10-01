@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.23';
+	window.__ANITREC_RUNNING__ = '8.0.24';
 
-	const VER = '8.0.23';
+	const VER = '8.0.24';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -17182,7 +17182,8 @@ if (_presetChannel) {
 		const visibleRange = (_dialogTimeView === 'stats' || _dialogTimeView === 'stats30') ? _getDialogTimeStatsRange() : selectedDay;
 		const record = _getDialogTimeRecord(visibleRange);
 		const rawData = _hasDialogTimeVerifiedData(record) ? record.data : null;
-		const data = record?.hasCompleteSnapshot === true && record.data?.coverage?.complete !== false ? _filterDialogTimeDataByEligibility(rawData) : null;
+		const completeData = record?.hasCompleteSnapshot === true && record.data?.coverage?.complete !== false;
+		const data = _filterDialogTimeDataByEligibility(rawData);
 		const initializing = panel._penaTimeInitialization?.pending === true;
 		const initializationError = panel._penaTimeInitialization?.error || (_dialogTimeProjectCatalogError?.scope === _getDialogTimeProjectScopeKey() ? _dialogTimeProjectCatalogError.message : '');
 		panel.classList.toggle('--loading', record?.status === 'loading');
@@ -17204,7 +17205,7 @@ if (_presetChannel) {
 			? `${_formatDialogTimeDate(visibleRange.from)} — ${_formatDialogTimeDate(visibleRange.to)}`
 			: (selectedDay.from === today.from ? 'Сегодня' : _formatDialogTimeDate(selectedDay.from));
 		const total = panel.querySelector('.pena-native-time-total-value');
-		if (total) total.textContent = data ? _PENA_TIME_CONTROL.formatDuration(data.totalSeconds) : '—';
+		if (total) total.textContent = data && completeData ? _PENA_TIME_CONTROL.formatDuration(data.totalSeconds) : '—';
 		const plural = (count, one, few, many) => {
 			const value = Math.abs(Number(count) || 0) % 100;
 			const last = value % 10;
@@ -17216,8 +17217,14 @@ if (_presetChannel) {
 		const rangeKey = `${visibleRange.from}:${visibleRange.to}`;
 		const manualReadError = _dialogTimeManualRefreshError?.scope === refreshScope && _dialogTimeManualRefreshError.rangeKey === rangeKey &&
 			!(record?.updatedAt > _dialogTimeManualRefreshError.failedAt) ? _dialogTimeManualRefreshError.message : '';
-		const readError = initializationError || record?.error || manualReadError;
+		const readError = record?.error || manualReadError || (!completeData ? initializationError : '');
 		const incomplete = !!data && (catalogIncomplete || record?.hasCompleteSnapshot !== true || data.coverage?.complete === false);
+		const partialWarning = panel.querySelector('.pena-native-time-partial-warning');
+		if (partialWarning) {
+			partialWarning.hidden = !incomplete;
+			partialWarning.querySelector('span').textContent = record?.errorCode === 'TIME_TASKS_UNAVAILABLE' ? record.error : `Итог неполный. Проверено ${data?.coverage?.checkedTasks || 0} из ${data?.coverage?.totalTasks || 0} задач.`;
+			partialWarning.querySelector('button').disabled = record?.status === 'loading';
+		}
 		const meta = panel.querySelector('.pena-native-time-meta');
 		if (meta) {
 			meta.textContent = data
@@ -17262,7 +17269,7 @@ if (_presetChannel) {
 				row.className = 'pena-native-time-stats-row';
 				row.innerHTML = '<span class="pena-native-time-stats-date"></span><strong class="pena-native-time-stats-duration"></strong><span class="pena-native-time-stats-entries"></span>';
 				row.querySelector('.pena-native-time-stats-date').textContent = _formatDialogTimeDate(dateKey);
-				row.querySelector('.pena-native-time-stats-duration').textContent = data ? _PENA_TIME_CONTROL.formatDuration(day.seconds || 0) : '—';
+				row.querySelector('.pena-native-time-stats-duration').textContent = data && completeData ? _PENA_TIME_CONTROL.formatDuration(day.seconds || 0) : '—';
 				row.querySelector('.pena-native-time-stats-entries').textContent = data ? `${day.entries || 0} ${plural(day.entries || 0, 'запись', 'записи', 'записей')}` : '…';
 				row.addEventListener('click', event => {
 					event.preventDefault();
@@ -17613,6 +17620,32 @@ if (_presetChannel) {
 	}
 
 	async function _callDialogTimeElapsedPages(paramsList, options = {}) {
+		// Use both existing REST lanes for large legacy journals. Each actual
+		// Bitrix batch still has at most 50 reads and shares the global rate limiter.
+		if (Array.isArray(paramsList) && paramsList.length > 50) {
+			const pages = new Array(paramsList.length), errors = new Array(paramsList.length);
+			let pressure = false;
+			const laneOptions = {...options,isCurrent:() => !pressure && (!options.isCurrent || options.isCurrent())};
+			for (let offset = 0; offset < paramsList.length; offset += 100) {
+				const chunks = [paramsList.slice(offset,offset+50),paramsList.slice(offset+50,offset+100)].filter(chunk => chunk.length);
+				const results = await Promise.allSettled(chunks.map(chunk => _callDialogTimeElapsedPages(chunk, laneOptions).catch(error => {
+					if (_isBxRestBatchPressureError(error)) pressure = true;
+					throw error;
+				})));
+				let failure = null;
+				results.forEach((result, index) => {
+					const start = offset + index * 50;
+					const values = result.status === 'fulfilled' ? result.value : result.reason?.partialPages || [];
+					for (let i=0; i<chunks[index].length; i++) {
+						pages[start+i] = values[i];
+						if (!values[i] && result.status === 'rejected') errors[start+i] = result.reason?.partialErrors?.[i] || result.reason;
+					}
+					if (result.status === 'rejected' && (!failure || _isBxRestBatchPressureError(result.reason))) failure = result.reason;
+				});
+				if (failure) throw Object.assign(failure, {partialPages:pages, partialErrors:errors});
+			}
+			return pages;
+		}
 		const jobs = (Array.isArray(paramsList) ? paramsList : []).map(params => ({
 			method: 'task.elapseditem.getlist', params
 		}));
@@ -17633,6 +17666,28 @@ if (_presetChannel) {
 				});
 				if (hadPartial) { error.partialPages = pages.slice(); error.partialErrors = errors.slice(); }
 				pending = pending.filter(item => !pages[item.index]);
+				// Confirm task-specific batch failures with one ordinary GET per
+				// failed task. Successful siblings are never fetched again.
+				if (attempt === 0 && options.verifyAccess === true && hadPartial && !_isBxRestBatchPressureError(error) &&
+					pending.length && pending.every(item => errors[item.index] &&
+						(_PENA_TIME_CONTROL.isElapsedAccessError(errors[item.index]) || errors[item.index].code === 'ERROR_CORE'))) {
+					let stopped = false, failure = null;
+					const retryOptions = {...options,isCurrent:() => !stopped && (!options.isCurrent || options.isCurrent())};
+					await _runDialogRecentJobs(pending, async item => {
+						if (stopped || (options.isCurrent && !options.isCurrent())) return;
+						try {
+							pages[item.index] = await _callBxRestPageWithTimeout(item.job.method,item.job.params,12000,retryOptions);
+							errors[item.index] = null;
+						} catch (individualError) {
+							individualError.elapsedIndividualConfirmed = true;
+							errors[item.index] = individualError;
+							if (!failure || _isBxRestBatchPressureError(individualError)) failure = individualError;
+							if (_isBxRestBatchPressureError(individualError)) stopped = true;
+						}
+					},2);
+					if (pages.filter(Boolean).length === jobs.length) return pages;
+					throw Object.assign(failure || error,{partialPages:pages,partialErrors:errors});
+				}
 				// Only explicitly failed, retryable subcalls may be retried. Preserve
 				// completed pages; never amplify a transport failure or server overload.
 				if (attempt > 0 || _isBxRestBatchPressureError(error) || !hadPartial || !_isBxRestReadRetryable(error)) throw error;
@@ -17737,7 +17792,7 @@ if (_presetChannel) {
 	let _dialogTimeElapsedEventTimer = null;
 	let _dialogTimeElapsedEventScope = '';
 	const _DIALOG_TIME_FIRST_WAVE_SIZE = 16;
-	const _DIALOG_TIME_WAVE_SIZE = 50;
+	const _DIALOG_TIME_WAVE_SIZE = 100;
 	function _invalidateDialogTimeTaskSnapshot(taskId) {
 		const id = String(taskId || '');
 		if (!/^\d+$/.test(id)) return false;
@@ -17882,6 +17937,7 @@ if (_presetChannel) {
 					coverage:{checkedTasks:Object.keys(shared.freshness).length,totalTasks:taskIds.length,complete:shared.complete} };
 				cached = { ...cached, range:normalized, data, status:'ready', taskFreshness:{...cached?.taskFreshness,...shared.freshness},
 					hasVerifiedData:true, hasCompleteSnapshot:shared.complete, updatedAt:Date.now() };
+				if (shared.complete) Object.assign(cached, {error:'',errorCode:'',failedAt:0});
 				_setDialogTimeCacheRecord(key, cached);
 			}
 		}
@@ -17934,8 +17990,10 @@ if (_presetChannel) {
 			cached.hasVerifiedData = true;
 			_queueDialogTimeUiSync();
 		}
-		if (cached?.data && !cached.hasCompleteSnapshot && hasCompleteCoverage()) {
+		if (cached?.data && !cached.hasCompleteSnapshot && !_dialogTimeInFlight.has(key) && hasCompleteCoverage()) {
 			cached.hasCompleteSnapshot = true;
+			cached.hasVerifiedData = true;
+			cached.status = 'ready'; cached.error = ''; cached.errorCode = ''; cached.failedAt = 0;
 			cached.data = { ...cached.data, coverage: { checkedTasks:taskIds.length, totalTasks:taskIds.length, complete:true } };
 			_queueDialogTimeUiSync();
 		}
@@ -17965,11 +18023,12 @@ if (_presetChannel) {
 		// is new evidence, but repeated reads of the same failed revision back off.
 		const attemptTaskRevisions = Object.fromEntries(pendingIds.map(id => [id, _dialogTimeTaskRevisions.get(id) || 0]));
 		const base = { ...cached, range: normalized, status: 'loading', data: cached?.data || null, hasVerifiedData:_hasDialogTimeVerifiedData(cached) || verifiedEmptyCatalog,
-			hasCompleteSnapshot:cached?.hasCompleteSnapshot === true || hasCompleteCoverage(), error: '', taskIdsKey, taskFreshness: freshness,
+			hasCompleteSnapshot:cached?.hasCompleteSnapshot === true || hasCompleteCoverage(), error: '', errorCode:'', failedAt:0, taskIdsKey, taskFreshness: freshness,
 			readRevision: revision, readScope:scope, readForce:force, readProgress: { completedTasks:0, totalTasks:pendingIds.length } };
 		_setDialogTimeCacheRecord(key, base);
 		_queueDialogTimeUiSync();
 		const diagnostics = { strategy:tryGlobal ? 'global' : (cached?.hasCompleteSnapshot && !force ? 'point' : 'legacy'), tasks:taskIds.length, pendingTasks:pendingIds.length, pages:0, attemptedGlobalPages:0, fallbackReason:globalCapability?.reason || '', from:normalized.from, to:normalized.to, startedAt:Date.now(), state:'loading', errorCode:'' };
+		base.diagnostics = diagnostics;
 		if (globalTransport) globalTransport.diagnostics = diagnostics;
 		const request = (async () => {
 			let data = cached?.data || { ..._PENA_TIME_CONTROL.aggregateElapsedItems([]), range: normalized, pages: 0, totalAvailable: 0,
@@ -18044,7 +18103,7 @@ if (_presetChannel) {
 				const unavailable = new Map();
 				const dispatchedAt = new Map();
 				const batch = await _PENA_TIME_CONTROL.loadElapsedItems({
-					from: readRange.from, to: readRange.to, userId, taskIds: wave,
+					from: readRange.from, to: readRange.to, userId, taskIds: wave, batchSize:100,
 					...(typeof _getDialogTimeCalendarZone === 'function' ? _getDialogTimeCalendarZone() : {}),
 					callPages: async params => {
 						const rememberDispatch = responses => {
@@ -18055,13 +18114,14 @@ if (_presetChannel) {
 							});
 							return responses;
 						};
-						try { return rememberDispatch(await _callDialogTimeElapsedPages(params, { isCurrent: current })); }
+						try { return rememberDispatch(await _callDialogTimeElapsedPages(params, { isCurrent: current, verifyAccess:true })); }
 						catch (error) {
 							if (_isBxRestBatchPressureError(error) || !error.partialPages || !error.partialErrors) throw error;
 							const missing = params.map((_, index) => index).filter(index => !error.partialPages[index]);
 							if (!missing.length || !missing.every(index => _PENA_TIME_CONTROL.isElapsedAccessError(error.partialErrors[index]))) throw error;
 							missing.forEach(index => unavailable.set(String(params[index][0]), _getDialogTimeFriendlyError(error.partialErrors[index])));
 							diagnostics.unavailableTasks = (diagnostics.unavailableTasks || 0) + missing.length;
+							diagnostics.confirmedTaskErrors = (diagnostics.confirmedTaskErrors || 0) + missing.filter(index => error.partialErrors[index]?.elapsedIndividualConfirmed).length;
 							diagnostics.taskErrorCodes = [...new Set([...(diagnostics.taskErrorCodes || []), ...missing.map(index =>
 								String(error.partialErrors[index]?.code || 'REST_ERROR') + ':' + (String(error.partialErrors[index]?.message || '').match(/0x[0-9a-f]+|ACTION_NOT_ALLOWED/i)?.[0] || ''))])].slice(0,8);
 							return rememberDispatch(params.map((_, index) => error.partialPages[index] || { data: [], total: 0, next: null }));
@@ -18117,13 +18177,31 @@ if (_presetChannel) {
 	}
 
 	function _getDialogTimeDiagnosticReport() {
-		const read = _callDialogTimeGlobalElapsedPage.diagnostics;
+		const range = (_dialogTimeView === 'stats' || _dialogTimeView === 'stats30') ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
+		const record = _getDialogTimeRecord(range);
+		const read = record?.diagnostics ? {...record.diagnostics,state:record.status,errorCode:record.errorCode || ''} : null;
 		const queue = _dialogRestQueue?.snapshot();
 		// Deliberate allowlist: never export task contents, IDs, portal, auth or URLs.
-		const fields = ['strategy','tasks','pendingTasks','pages','attemptedGlobalPages','fallbackReason','from','to','durationMs','state','errorCode','detailCode','unavailableTasks','taskErrorCodes'];
+		const fields = ['strategy','tasks','pendingTasks','pages','attemptedGlobalPages','fallbackReason','from','to','durationMs','state','errorCode','detailCode','unavailableTasks','taskErrorCodes','confirmedTaskErrors'];
 		return JSON.stringify({ version:VER, time:read ? Object.fromEntries(fields.filter(key => read[key] != null).map(key => [key,read[key]])) : null,
+			panel:{from:range.from,to:range.to,status:record?.status || 'empty',complete:record?.hasCompleteSnapshot === true && record.data?.coverage?.complete !== false,
+				errorCode:record?.errorCode || '',coverage:record?.data?.coverage || null,unavailableTasks:Object.values(record?.taskFreshness || {}).filter(proof => proof.unavailable).length},
 			rest:queue ? { active:queue.active, queued:queue.queued, cooldownMs:queue.cooldownMs,
 				samples:queue.samples.slice(-20).map(({method,queuedMs,durationMs,status,code}) => ({method,queuedMs,durationMs,status,code})) } : null }, null, 2);
+	}
+
+	async function _copyDialogTimeDiagnostics(button) {
+		const text = _getDialogTimeDiagnosticReport();
+		try {
+			if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+			await navigator.clipboard.writeText(text);
+			button.textContent = 'Диагностика скопирована';
+		} catch {
+			const field = document.createElement('textarea');
+			field.value = text; field.readOnly = true; field.setAttribute('aria-label','Диагностика загрузки времени');
+			field.style.cssText = 'width:100%;height:100px;box-sizing:border-box';
+			button.replaceWith(field); field.focus(); field.select();
+		}
 	}
 
 	function _refreshDialogTimePanel(range) {
@@ -18168,12 +18246,13 @@ if (_presetChannel) {
 		const complete = _hasDialogTimeVerifiedData(record) && record.hasCompleteSnapshot === true && record.data?.coverage?.complete !== false;
 		const loading = !panel._penaTimeProjectSettings && (manualRefreshing || (!complete && (initializing || catalogBusy || rangeOwner?.pending || record?.status === 'loading')));
 		const allowIncomplete = panel._penaTimeIncompleteViewKey === `${_getDialogTimeProjectScopeKey()}:${range.from}:${range.to}`;
-		const blocked = !panel._penaTimeProjectSettings && (loading || (!complete && !allowIncomplete));
+		const usablePartial = _hasDialogTimeVerifiedData(record) && record.data?.coverage?.checkedTasks > 0 && !initializing && !catalogBusy;
+		const blocked = !panel._penaTimeProjectSettings && (loading || (!complete && !allowIncomplete && !usablePartial));
 		const wasBlocked = !overlay.hidden;
 		overlay.hidden = !blocked;
 		panel.classList.toggle('--read-blocked', blocked);
 		panel.setAttribute('aria-busy', loading ? 'true' : 'false');
-		for (const node of [panel.querySelector('.pena-native-time-panel-head'), panel.querySelector('.pena-native-time-scroll')]) if (node) node.inert = blocked;
+		for (const node of [panel.querySelector('.pena-native-time-panel-head'), panel.querySelector('.pena-native-time-scroll'), panel.querySelector('.pena-native-time-tracker')]) if (node) node.inert = blocked;
 		if (!blocked) {
 			if (wasBlocked && overlay.contains(document.activeElement)) {
 				const previous = panel._penaTimeLoadingFocus;
@@ -18752,8 +18831,15 @@ if (_presetChannel) {
 		stats.append(statsHeader, statsList);
 		const scroll = document.createElement('div');
 		scroll.className = 'pena-native-time-scroll';
-		scroll.append(summaryGroup, stats, body, tracker);
-		panel.append(panelHeader, scroll);
+		const partialWarning = document.createElement('div');
+		partialWarning.className = 'pena-native-time-partial-warning';
+		partialWarning.hidden = true;
+		partialWarning.setAttribute('role','status');
+		partialWarning.innerHTML = '<span></span><button type="button">Повторить</button><button type="button">Диагностика</button>';
+		partialWarning.querySelectorAll('button')[0].addEventListener('click', () => panel.querySelector('.pena-native-time-loading-retry').click());
+		partialWarning.querySelectorAll('button')[1].addEventListener('click', event => _copyDialogTimeDiagnostics(event.currentTarget));
+		scroll.append(summaryGroup, partialWarning, stats, body);
+		panel.append(panelHeader, scroll, tracker);
 		const loadingOverlay = document.createElement('div');
 		loadingOverlay.className = 'pena-native-time-loading-overlay';
 		loadingOverlay.hidden = true;
@@ -18789,20 +18875,7 @@ if (_presetChannel) {
 		copyDiagnostics.type = 'button';
 		copyDiagnostics.className = 'pena-native-time-loading-diagnostics';
 		copyDiagnostics.textContent = 'Скопировать диагностику';
-		copyDiagnostics.addEventListener('click', async () => {
-			const text = _getDialogTimeDiagnosticReport();
-			try {
-				if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
-				else throw new Error('Clipboard unavailable');
-				copyDiagnostics.textContent = 'Диагностика скопирована';
-			} catch {
-				const field = document.createElement('textarea');
-				field.className = 'pena-native-time-loading-diagnostics-text';
-				field.value = text; field.readOnly = true; field.setAttribute('aria-label','Диагностика загрузки времени');
-				field.style.cssText = 'width:100%;height:100px;box-sizing:border-box';
-				copyDiagnostics.replaceWith(field); field.focus(); field.select();
-			}
-		});
+		copyDiagnostics.addEventListener('click', event => _copyDialogTimeDiagnostics(event.currentTarget));
 		loadingOverlay.querySelector('.pena-native-time-loading-card').append(copyDiagnostics);
 		panel.append(loadingOverlay);
 		const restoredTrackerSearch = _getDialogTimeTaskSearchState('tracker');
