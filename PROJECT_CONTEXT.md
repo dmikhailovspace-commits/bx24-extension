@@ -9,8 +9,8 @@
 - Release date: **2026-10-01**
 - Runtime files: **19**
 - Regression suites: **85**
-- Windows artifact: _not built_
-- macOS artifact: _not built_
+- Windows artifact: `dist/PENA_Agency_Windows_v8.0.18.exe` - SHA-256: `A812B27974CB52F935BBA7FD314523212486FABBF54150C8D5B5176141BD1DCD`
+- macOS artifact: `dist/PENA_Agency_macOS_Universal_v8.0.18.dmg` - SHA-256: `F1438FE34B80B1BD687C69C49FBD0F0E9735D2B832FCE18D1BE37A7F4BB5B75B`
 <!-- AUTO:END -->
 
 ## Назначение
@@ -23,6 +23,9 @@
 - Каждый диалог принадлежит одной папке и одной группе; группа существующей папки определяет принадлежность её детей. Папки без группы доступны из верхних «Несортированных». Потерянные ссылки на папку/группу не скрывают диалог. Переключение режима не переписывает назначения; неизвестные новые native rows остаются видимыми в корневом списке. Поиск сквозной, очистка возвращает выбранное представление.
 - Настройка `pena.dialogControlUnique.v1.<portalHost>~<userId>.<chats|tasks>` изолирована по порталу, пользователю и режиму. Изменения синхронизируются между окнами через storage; при переключении снимается мультивыбор. Перенос на несортированную группу снимает группу и папку; на несортированную папку — только папку, сохраняя группу и цвет.
 - Профиль проверки остаётся search-focused, те же 16 наборов; расширены native-catalog-model, native-folder-visibility, native-folder-dnd, native-lazy-list и native-search-state. Полный пакет не запускается. Выпуск Windows EXE, macOS Universal DMG и Chrome ZIP выполняется из одного коммита после проверки профиля и контекста. Живой портал и физический Mac не проверялись.
+
+- Выпуск 8.0.18 проверен и опубликован: исходный коммит `c4b2e3b42b6f9455dedd67a3fa0ac0a01f2a1e43`, неизменяемый тег `v8.0.18`, GitHub Actions `36890505425`. Финальный локальный профиль: 16/16 за 222,8 с; CI: тот же профиль 16/16 за 259,9 с, затем обе desktop-сборки и Chrome. Проверены все 8 опубликованных файлов, SHA-256 и размеры GitHub, точное совпадение Chrome ZIP с текущим runtime, версия EXE 8.0.18, HFS+ DMG и 19 встроенных runtime-файлов. На macOS runner проверены hdiutil, plist, x86_64/arm64, executable bits и LF. В dist только установщики 8.0.18 и их SHA-256; chrome-release содержит проверенный CI-пакет. Отчёт: tests/artifacts/release-verification-8.0.18.json.
+- Канал desktop-updater: только main/update.json, коммит `4f051e1395ef6a6f4b6285db24a76fd1d2610b2f`; GitHub API и точный raw URL возвращают 8.0.18. Публикация Chrome Web Store, живой портал и физический Mac не проверялись.
 
 ## Изменения 8.0.17: очистка поиска без вспышки чужих диалогов
 
