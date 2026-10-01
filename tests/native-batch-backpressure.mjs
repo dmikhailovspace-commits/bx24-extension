@@ -30,6 +30,16 @@ function setup(respond){
 const jobs=Array.from({length:50},(_,i)=>({method:'task.elapseditem.getlist',params:{TASKID:i+1}}));
 const success=value=>({error:()=>null,data:()=>value});
 try {
+ await phase('task diagnostics retain textual Desktop errors, distinguish unknown reasons and redact credentials',async()=>{
+  const {context}=setup(()=>{}),model=context._PENA_TIME_CONTROL;
+  const error=context._createBxRestError({error:()=>({getError:()=> 'ERROR_CORE',ex:{error_description:'Task not found'}})});
+  assert.equal(error.message,'Task not found');assert.equal(model.describeElapsedError(error).reason,'not-found-or-inaccessible');
+  assert.equal(model.describeElapsedError({code:'ERROR_CORE',message:'Access denied'}).reason,'access-denied');
+  assert.equal(model.describeElapsedError({code:'ERROR_CORE',message:'0x000100'}).reason,'parameters');
+  assert.equal(model.describeElapsedError({code:'ERROR_CORE'}).reason,'unknown');
+  const sanitized=model.describeElapsedError({code:'ERROR_CORE',message:'auth=secret https://portal.test/rest/token'});
+  assert.doesNotMatch(JSON.stringify(sanitized),/secret|portal\.test|\/rest\/token/);
+ });
  for(const code of ['QUERY_LIMIT_EXCEEDED','OPERATION_TIME_LIMIT','NETWORK_ERROR'])await phase(`50-read ${code} does not fan out or retry`,async()=>{
   const {context,calls}=setup((_jobs,callback)=>callback({error:()=>code}));
   await assert.rejects(context._callDialogTimeElapsedPages(jobs.map(j=>j.params)),e=>e.code===code);
@@ -85,7 +95,7 @@ try {
   await assert.rejects(context._callDialogTimeElapsedPages(Array.from({length:100},(_,i)=>({TASKID:i+1}))),error=>error.code==='ERROR_CORE'&&error.partialPages.filter(Boolean).length===99&&error.partialErrors[16].message==='0x000001');
   assert.equal(calls.batch.length,2);assert.equal(calls.single.length,0);
  });
- await phase('558 legacy tasks stay complete with at most two concurrent 50-read batches',async()=>{
+ await phase('558 legacy tasks stay complete with at most four concurrent 50-read batches',async()=>{
   let active=0,peak=0;
   const {context,calls}=setup((batch,callback)=>{
    active++;peak=Math.max(peak,active);
@@ -94,7 +104,7 @@ try {
   const params=Array.from({length:558},(_,i)=>({TASKID:i+1}));
   const rows=await context._callDialogTimeElapsedPages(params);
   assert.deepEqual(Array.from(rows,row=>row.data),params.map(row=>row.TASKID));
-  assert.equal(peak,2);assert.equal(active,0);assert.equal(calls.batch.length,12);assert.ok(calls.batch.every(batch=>batch.length<=50));
+  assert.equal(peak,4);assert.equal(active,0);assert.equal(calls.batch.length,12);assert.ok(calls.batch.every(batch=>batch.length<=50));
   return {tasks:558,batches:12,maxActive:peak,missing:0,duplicates:0};
  });
  await phase('a task-specific batch error recovers through one individual read without replaying siblings',async()=>{
@@ -109,15 +119,17 @@ try {
   await assert.rejects(context._callDialogTimeElapsedPages(jobs.map(j=>j.params),{verifyAccess:true}),error=>error.partialPages.filter(Boolean).length===49&&error.partialErrors[16].elapsedIndividualConfirmed===true&&error.partialErrors[16].message==='0x000001');
   assert.equal(calls.single.length,1);assert.equal(calls.batch.length,1);
  });
- await phase('parallel pressure drains the other lane and prevents all subsequent waves',async()=>{
+ await phase('parallel pressure drains the other three lanes and prevents all subsequent waves',async()=>{
   let active=0;
   const {context,calls}=setup((batch,callback,round)=>{
    active++;setTimeout(()=>{active--;callback(round===1?{error:()=> 'QUERY_LIMIT_EXCEEDED'}:Object.fromEntries(Object.entries(batch).map(([key,job])=>[key,success(job.params.TASKID)])));},round===1?2:20);
   });
-  await assert.rejects(context._callDialogTimeElapsedPages(Array.from({length:558},(_,i)=>({TASKID:i+1}))),error=>error.code==='QUERY_LIMIT_EXCEEDED'&&error.partialPages.filter(Boolean).length===50);
-  assert.equal(calls.batch.length,2);assert.equal(calls.single.length,0);assert.equal(active,0);
-  return {batches:2,retainedPages:50,stillActive:0};
+  await assert.rejects(context._callDialogTimeElapsedPages(Array.from({length:558},(_,i)=>({TASKID:i+1}))),error=>error.code==='QUERY_LIMIT_EXCEEDED'&&error.partialPages.filter(Boolean).length===150);
+  assert.equal(calls.batch.length,4);assert.equal(calls.single.length,0);assert.equal(active,0);
+  return {batches:4,retainedPages:150,stillActive:0};
  });
 } finally {
  mkdirSync('tests/artifacts',{recursive:true});writeFileSync('tests/artifacts/native-batch-backpressure-report.json',JSON.stringify({phases},null,2));console.log(JSON.stringify({phases},null,2));
 }
+
+await import('./native-rest-queue.mjs');

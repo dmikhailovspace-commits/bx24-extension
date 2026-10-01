@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.24';
+	window.__ANITREC_RUNNING__ = '8.0.25';
 
-	const VER = '8.0.24';
+	const VER = '8.0.25';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -1396,9 +1396,11 @@
 		// Stringifying it appends a description/status and loses retry classification.
 		const detail = typeof raw?.getError === 'function' ? raw.getError() : raw?.ex || raw;
 		const code = typeof detail === 'object' ? detail?.error || detail?.code || 'REST_ERROR' : detail;
-		const description = typeof res?.error_description === 'function'
+		const responseDescription = typeof res?.error_description === 'function'
 			? res.error_description() || detail?.error_description
 			: res?.error_description || detail?.error_description;
+		const description = responseDescription || raw?.ex?.error_description || res?.answer?.error_description ||
+			(typeof raw?.getDescription === 'function' ? raw.getDescription() : raw?.description || raw?.message);
 		const error = new Error(String(description || code || 'Ошибка Bitrix REST'));
 		error.code = String(code || '');
 		error.description = String(description || '');
@@ -1408,7 +1410,7 @@
 	let _dialogRestQueue = null;
 	function _scheduleBxRest(method, params, run, options = {}) {
 		if (!_dialogRestQueue && _PENA_TIME_CONTROL?.createRequestQueue) {
-			_dialogRestQueue = _PENA_TIME_CONTROL.createRequestQueue();
+			_dialogRestQueue = _PENA_TIME_CONTROL.createRequestQueue({batchConcurrency:4});
 			window.__PENA_REST_DIAGNOSTICS__ = { snapshot: () => ({ ..._dialogRestQueue.snapshot(), contacts: _getDialogTimeContactDiagnostics() }) };
 		}
 		const read = !/\.(?:add|update|delete|start|stop)$/.test(method) &&
@@ -17183,7 +17185,11 @@ if (_presetChannel) {
 		const record = _getDialogTimeRecord(visibleRange);
 		const rawData = _hasDialogTimeVerifiedData(record) ? record.data : null;
 		const completeData = record?.hasCompleteSnapshot === true && record.data?.coverage?.complete !== false;
-		const data = _filterDialogTimeDataByEligibility(rawData);
+		// A revoked task can retain an older cached journal. It must not inflate
+		// the confirmed subtotal while its current contents cannot be verified.
+		const visibleData = rawData && !completeData ? {...rawData,..._PENA_TIME_CONTROL.aggregateElapsedItems(
+			(rawData.items || []).filter(item => !record.taskFreshness?.[item.taskId]?.unavailable))} : rawData;
+		const data = _filterDialogTimeDataByEligibility(visibleData);
 		const initializing = panel._penaTimeInitialization?.pending === true;
 		const initializationError = panel._penaTimeInitialization?.error || (_dialogTimeProjectCatalogError?.scope === _getDialogTimeProjectScopeKey() ? _dialogTimeProjectCatalogError.message : '');
 		panel.classList.toggle('--loading', record?.status === 'loading');
@@ -17205,7 +17211,10 @@ if (_presetChannel) {
 			? `${_formatDialogTimeDate(visibleRange.from)} — ${_formatDialogTimeDate(visibleRange.to)}`
 			: (selectedDay.from === today.from ? 'Сегодня' : _formatDialogTimeDate(selectedDay.from));
 		const total = panel.querySelector('.pena-native-time-total-value');
-		if (total) total.textContent = data && completeData ? _PENA_TIME_CONTROL.formatDuration(data.totalSeconds) : '—';
+		if (total) {
+			total.textContent = data ? `${completeData ? '' : '≥ '}${_PENA_TIME_CONTROL.formatDuration(data.totalSeconds)}` : '—';
+			total.title = data && !completeData ? 'Учтённое время по загруженным записям. Полный итог пока неизвестен.' : '';
+		}
 		const plural = (count, one, few, many) => {
 			const value = Math.abs(Number(count) || 0) % 100;
 			const last = value % 10;
@@ -17224,6 +17233,7 @@ if (_presetChannel) {
 			partialWarning.hidden = !incomplete;
 			partialWarning.querySelector('span').textContent = record?.errorCode === 'TIME_TASKS_UNAVAILABLE' ? record.error : `Итог неполный. Проверено ${data?.coverage?.checkedTasks || 0} из ${data?.coverage?.totalTasks || 0} задач.`;
 			partialWarning.querySelector('button').disabled = record?.status === 'loading';
+			_renderDialogTimeFailures(partialWarning.querySelector('.pena-native-time-failures'),record);
 		}
 		const meta = panel.querySelector('.pena-native-time-meta');
 		if (meta) {
@@ -17269,7 +17279,8 @@ if (_presetChannel) {
 				row.className = 'pena-native-time-stats-row';
 				row.innerHTML = '<span class="pena-native-time-stats-date"></span><strong class="pena-native-time-stats-duration"></strong><span class="pena-native-time-stats-entries"></span>';
 				row.querySelector('.pena-native-time-stats-date').textContent = _formatDialogTimeDate(dateKey);
-				row.querySelector('.pena-native-time-stats-duration').textContent = data && completeData ? _PENA_TIME_CONTROL.formatDuration(day.seconds || 0) : '—';
+				row.querySelector('.pena-native-time-stats-duration').textContent = data ? `${completeData ? '' : '≥ '}${_PENA_TIME_CONTROL.formatDuration(day.seconds || 0)}` : '—';
+				row.querySelector('.pena-native-time-stats-duration').title = data && !completeData ? 'По загруженным записям. Полный итог дня пока неизвестен.' : '';
 				row.querySelector('.pena-native-time-stats-entries').textContent = data ? `${day.entries || 0} ${plural(day.entries || 0, 'запись', 'записи', 'записей')}` : '…';
 				row.addEventListener('click', event => {
 					event.preventDefault();
@@ -17620,14 +17631,14 @@ if (_presetChannel) {
 	}
 
 	async function _callDialogTimeElapsedPages(paramsList, options = {}) {
-		// Use both existing REST lanes for large legacy journals. Each actual
+		// Use up to four adaptive REST lanes for large legacy journals. Each actual
 		// Bitrix batch still has at most 50 reads and shares the global rate limiter.
 		if (Array.isArray(paramsList) && paramsList.length > 50) {
 			const pages = new Array(paramsList.length), errors = new Array(paramsList.length);
 			let pressure = false;
 			const laneOptions = {...options,isCurrent:() => !pressure && (!options.isCurrent || options.isCurrent())};
-			for (let offset = 0; offset < paramsList.length; offset += 100) {
-				const chunks = [paramsList.slice(offset,offset+50),paramsList.slice(offset+50,offset+100)].filter(chunk => chunk.length);
+			for (let offset = 0; offset < paramsList.length; offset += 200) {
+				const chunks = Array.from({length:4}, (_,lane) => paramsList.slice(offset+lane*50,offset+(lane+1)*50)).filter(chunk => chunk.length);
 				const results = await Promise.allSettled(chunks.map(chunk => _callDialogTimeElapsedPages(chunk, laneOptions).catch(error => {
 					if (_isBxRestBatchPressureError(error)) pressure = true;
 					throw error;
@@ -17792,7 +17803,7 @@ if (_presetChannel) {
 	let _dialogTimeElapsedEventTimer = null;
 	let _dialogTimeElapsedEventScope = '';
 	const _DIALOG_TIME_FIRST_WAVE_SIZE = 16;
-	const _DIALOG_TIME_WAVE_SIZE = 100;
+	const _DIALOG_TIME_WAVE_SIZE = 200;
 	function _invalidateDialogTimeTaskSnapshot(taskId) {
 		const id = String(taskId || '');
 		if (!/^\d+$/.test(id)) return false;
@@ -18103,7 +18114,7 @@ if (_presetChannel) {
 				const unavailable = new Map();
 				const dispatchedAt = new Map();
 				const batch = await _PENA_TIME_CONTROL.loadElapsedItems({
-					from: readRange.from, to: readRange.to, userId, taskIds: wave, batchSize:100,
+					from: readRange.from, to: readRange.to, userId, taskIds: wave, batchSize:200,
 					...(typeof _getDialogTimeCalendarZone === 'function' ? _getDialogTimeCalendarZone() : {}),
 					callPages: async params => {
 						const rememberDispatch = responses => {
@@ -18118,8 +18129,8 @@ if (_presetChannel) {
 						catch (error) {
 							if (_isBxRestBatchPressureError(error) || !error.partialPages || !error.partialErrors) throw error;
 							const missing = params.map((_, index) => index).filter(index => !error.partialPages[index]);
-							if (!missing.length || !missing.every(index => _PENA_TIME_CONTROL.isElapsedAccessError(error.partialErrors[index]))) throw error;
-							missing.forEach(index => unavailable.set(String(params[index][0]), _getDialogTimeFriendlyError(error.partialErrors[index])));
+							if (!missing.length || !missing.every(index => _PENA_TIME_CONTROL.isElapsedAccessError(error.partialErrors[index]) || error.partialErrors[index]?.code === 'ERROR_CORE')) throw error;
+							missing.forEach(index => unavailable.set(String(params[index][0]), _PENA_TIME_CONTROL.describeElapsedError(error.partialErrors[index])));
 							diagnostics.unavailableTasks = (diagnostics.unavailableTasks || 0) + missing.length;
 							diagnostics.confirmedTaskErrors = (diagnostics.confirmedTaskErrors || 0) + missing.filter(index => error.partialErrors[index]?.elapsedIndividualConfirmed).length;
 							diagnostics.taskErrorCodes = [...new Set([...(diagnostics.taskErrorCodes || []), ...missing.map(index =>
@@ -18134,7 +18145,7 @@ if (_presetChannel) {
 				accepted.forEach(id => { freshness[id] = { at: dispatchedAt.get(id) || waveStartedAt, revision: taskRevisions.get(id) }; });
 				publishWindow(batch, accepted, freshness);
 				const merged = _PENA_TIME_CONTROL.replaceElapsedTasks(data, windows.select(batch, normalized), accepted);
-				unavailable.forEach((error, id) => { freshness[id] = { at: dispatchedAt.get(id) || waveStartedAt, revision: taskRevisions.get(id), unavailable: error }; });
+				unavailable.forEach((failure, id) => { freshness[id] = { at: dispatchedAt.get(id) || waveStartedAt, revision: taskRevisions.get(id), unavailable: failure.message, failure }; });
 				offset += wave.length;
 				// Working-set discovery reads local metadata. Do it once at the tail,
 				// not again after every page of a large initial snapshot.
@@ -18176,17 +18187,43 @@ if (_presetChannel) {
 		return request;
 	}
 
+	function _getDialogTimeFailures(record) {
+		return Object.entries(record?.taskFreshness || {}).filter(([id,proof]) => /^[1-9]\d*$/.test(id) && proof.unavailable)
+			.map(([taskId,proof]) => ({taskId,...(proof.failure || _PENA_TIME_CONTROL.describeElapsedError(proof))}));
+	}
+	function _renderDialogTimeFailures(target,record) {
+		if (!target) return;
+		const failures = _getDialogTimeFailures(record);
+		const rows = failures.map(failure => ({...failure,title:_getDialogTimeTaskTitle(failure.taskId)}));
+		const key = JSON.stringify(rows);
+		target.hidden = !rows.length;
+		if (target._penaFailuresKey === key) return;
+		target._penaFailuresKey = key;
+		target.replaceChildren();
+		for (const failure of rows) {
+			const row = document.createElement('div'); row.className = 'pena-native-time-failure'; row.dataset.taskId = failure.taskId;
+			const link = document.createElement('a'); link.href = _buildTaskUrl(failure.taskId);
+			link.textContent = failure.title === `Задача #${failure.taskId}` ? failure.title : `${failure.title} · #${failure.taskId}`;
+			link.addEventListener('click',event => { event.preventDefault(); event.stopPropagation(); _openDialogTimeTask(failure.taskId,failure.title); });
+			const reason = document.createElement('div'); reason.textContent = failure.message;
+			const detail = document.createElement('small');
+			detail.textContent = `${failure.confirmed ? 'Отдельный запрос: ' : ''}${failure.code}${failure.serverMessage && failure.serverMessage !== failure.code ? ' · '+failure.serverMessage : ''}`;
+			row.append(link,reason,detail); target.append(row);
+		}
+	}
 	function _getDialogTimeDiagnosticReport() {
 		const range = (_dialogTimeView === 'stats' || _dialogTimeView === 'stats30') ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
 		const record = _getDialogTimeRecord(range);
 		const read = record?.diagnostics ? {...record.diagnostics,state:record.status,errorCode:record.errorCode || ''} : null;
 		const queue = _dialogRestQueue?.snapshot();
-		// Deliberate allowlist: never export task contents, IDs, portal, auth or URLs.
+		// Failed task IDs and sanitized server reasons are user-requested diagnostics.
+		// Never export titles, task contents, portal, auth or URLs.
 		const fields = ['strategy','tasks','pendingTasks','pages','attemptedGlobalPages','fallbackReason','from','to','durationMs','state','errorCode','detailCode','unavailableTasks','taskErrorCodes','confirmedTaskErrors'];
 		return JSON.stringify({ version:VER, time:read ? Object.fromEntries(fields.filter(key => read[key] != null).map(key => [key,read[key]])) : null,
 			panel:{from:range.from,to:range.to,status:record?.status || 'empty',complete:record?.hasCompleteSnapshot === true && record.data?.coverage?.complete !== false,
-				errorCode:record?.errorCode || '',coverage:record?.data?.coverage || null,unavailableTasks:Object.values(record?.taskFreshness || {}).filter(proof => proof.unavailable).length},
-			rest:queue ? { active:queue.active, queued:queue.queued, cooldownMs:queue.cooldownMs,
+				errorCode:record?.errorCode || '',coverage:record?.data?.coverage || null,unavailableTasks:Object.values(record?.taskFreshness || {}).filter(proof => proof.unavailable).length,
+				failedTasks:_getDialogTimeFailures(record)},
+			rest:queue ? { active:queue.active, queued:queue.queued, cooldownMs:queue.cooldownMs,batchConcurrency:queue.batchConcurrency,reducedReason:queue.reducedReason,
 				samples:queue.samples.slice(-20).map(({method,queuedMs,durationMs,status,code}) => ({method,queuedMs,durationMs,status,code})) } : null }, null, 2);
 	}
 
@@ -18279,6 +18316,7 @@ if (_presetChannel) {
 		overlay.querySelector('.pena-native-time-loading-continue').hidden = loading;
 		const diagnostics = overlay.querySelector('.pena-native-time-loading-diagnostics');
 		if (diagnostics) diagnostics.hidden = loading;
+		_renderDialogTimeFailures(overlay.querySelector('.pena-native-time-failures'),loading ? null : record);
 	}
 
 	function _createDialogControlPopoverClose(label = 'Закрыть панель') {
@@ -18835,7 +18873,7 @@ if (_presetChannel) {
 		partialWarning.className = 'pena-native-time-partial-warning';
 		partialWarning.hidden = true;
 		partialWarning.setAttribute('role','status');
-		partialWarning.innerHTML = '<span></span><button type="button">Повторить</button><button type="button">Диагностика</button>';
+		partialWarning.innerHTML = '<span></span><button type="button">Повторить</button><button type="button">Диагностика</button><div class="pena-native-time-failures" hidden></div>';
 		partialWarning.querySelectorAll('button')[0].addEventListener('click', () => panel.querySelector('.pena-native-time-loading-retry').click());
 		partialWarning.querySelectorAll('button')[1].addEventListener('click', event => _copyDialogTimeDiagnostics(event.currentTarget));
 		scroll.append(summaryGroup, partialWarning, stats, body);
@@ -18877,6 +18915,8 @@ if (_presetChannel) {
 		copyDiagnostics.textContent = 'Скопировать диагностику';
 		copyDiagnostics.addEventListener('click', event => _copyDialogTimeDiagnostics(event.currentTarget));
 		loadingOverlay.querySelector('.pena-native-time-loading-card').append(copyDiagnostics);
+		const failedTasks = document.createElement('div'); failedTasks.className = 'pena-native-time-failures'; failedTasks.hidden = true;
+		loadingOverlay.querySelector('.pena-native-time-loading-card').append(failedTasks);
 		panel.append(loadingOverlay);
 		const restoredTrackerSearch = _getDialogTimeTaskSearchState('tracker');
 		if (restoredTrackerSearch.loading && restoredTrackerSearch.query.trim() && !restoredTrackerSearch.selectedTask) {

@@ -897,6 +897,11 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 .pena-native-time-partial-warning[hidden]{display:none!important}
 .pena-native-time-partial-warning > span{flex:1 1 220px}
 .pena-native-time-partial-warning button{padding:4px 8px;border:1px solid #d7c59a;border-radius:6px;background:#fff;color:inherit;font:600 12px/18px var(--pena-time-ui);cursor:pointer}
+.pena-native-time-failures{flex:1 0 100%;display:grid;gap:8px;max-height:160px;overflow:auto;text-align:left;min-width:0;overflow-wrap:anywhere}
+.pena-native-time-failures[hidden]{display:none!important}
+.pena-native-time-failure{display:grid;gap:3px;border-top:1px solid #eadbbc;padding-top:8px;font:500 12px/18px var(--pena-time-ui)}
+.pena-native-time-failure a{color:#315fe8;text-decoration:underline;font-weight:600}
+.pena-native-time-failure small{font:400 11px/16px var(--pena-time-ui);color:#65748e}
 .pena-native-time-summary{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto 32px;align-items:center;gap:12px;height:80px;min-height:80px;margin:0;padding:16px;border:1px solid #cddaff;border-radius:var(--pena-time-card-radius);background:linear-gradient(135deg,#edf3ff 0%,#fff 72%);box-sizing:border-box}
 .pena-native-time-date-controls{display:flex;align-items:center;gap:8px}
 .pena-native-time-date-step,.pena-native-time-date-today{height:32px;border:1px solid #cbd6e6;border-radius:8px;background:#fff;color:#526178;cursor:pointer}

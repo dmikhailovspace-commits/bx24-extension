@@ -47,7 +47,7 @@ try {
   state.rows.push({ID:'9000',TASK_ID:'405',USER_ID:'7',SECONDS:'1800',CREATED_DATE:model.addDays(today,-1)+'T13:00:00+03:00'});
   const result=params=>{
    const [taskId,order,filter,,nav]=params;
-   if(state.failTask&&String(taskId)===state.failTask)return{error:()=> 'ERROR_CORE',error_description:()=> '0x000001'};
+   if((state.failTask&&String(taskId)===state.failTask)||state.failTasks?.includes(String(taskId)))return{error:()=> 'ERROR_CORE',error_description:()=> state.failDescription || 'Task not found'};
    if(state.failDay&&state.failDay===dateProbe.range().from)return{error:()=> 'TIMEOUT',error_description:()=> 'Controlled journal timeout'};
    if(state.legacy&&Number(taskId)===0)return{error:()=> 'TASK_NOT_FOUND',error_description:()=> 'controlled unsupported sentinel'};
    let rows=state.rows.filter(row=>(!taskId||String(taskId)===row.TASK_ID)&&String(filter.USER_ID)===row.USER_ID&&
@@ -189,7 +189,7 @@ try {
      filter:getComputedStyle(panel.querySelector('.pena-native-time-scroll')).filter,opacity:Number(getComputedStyle(panel.querySelector('.pena-native-time-scroll')).opacity),left:box.left,right:box.right,scrollWidth:panel.scrollWidth,clientWidth:panel.clientWidth};
    });
    assert.equal(snapshot.overlayVisible,true);assert.equal(snapshot.headInert,true);assert.equal(snapshot.scrollInert,true);assert.equal(snapshot.filter,'none');assert.ok(snapshot.opacity>0&&snapshot.opacity<1,'Loading content stays visibly dimmed without a blur pass');
-   assert.equal(snapshot.total,'—');assert.doesNotMatch(snapshot.today,/10\s*мин|10\s*м/);
+   assert.match(snapshot.total,/^≥ /);assert.doesNotMatch(snapshot.today,/10\s*мин|10\s*м/);
    assert.ok(snapshot.left>=0&&snapshot.right<=width+1);assert.ok(snapshot.scrollWidth<=snapshot.clientWidth+1);
    await page.screenshot({path:`tests/artifacts/time-date-loading-${width}.png`});layouts.push(snapshot);
   }
@@ -257,11 +257,22 @@ try {
   });
   await page.waitForFunction(()=>dateProbe.record()?.errorCode==='TIME_TASKS_UNAVAILABLE'&&dateProbe.idle());
   await page.waitForFunction(()=>!document.querySelector('.pena-native-time-panel').classList.contains('--read-blocked'));
-  assert.equal(await page.locator('.pena-native-time-total-value').innerText(),'—');
+  assert.equal(await page.locator('.pena-native-time-total-value').innerText(),'≥ 15 мин');
   assert.equal(await seconds(),900);assert.equal(await page.locator('.pena-native-time-partial-warning').isVisible(),true);
+  await page.evaluate(()=>{
+   const model=__PENA_TIME_CONTROL__,record=dateProbe.record();
+   const stale=model.normalizeElapsedItem({ID:'9910',TASK_ID:'101',USER_ID:'7',SECONDS:7200,CREATED_DATE:dateBackend.today+'T12:00:00+03:00'});
+   record.data={...record.data,...model.aggregateElapsedItems([...record.data.items,stale])};dateProbe.sync();
+  });
+  assert.equal(await page.locator('.pena-native-time-total-value').innerText(),'≥ 15 мин','Old records of the inaccessible task inflated the confirmed subtotal');
   await page.locator('.pena-native-time-partial-warning').getByRole('button',{name:'Диагностика',exact:true}).click();
   const diagnostic=JSON.parse(await page.evaluate(()=>copiedTimeDiagnostics));
   assert.equal(diagnostic.panel.unavailableTasks,1);assert.equal(diagnostic.panel.complete,false);assert.equal(diagnostic.time.errorCode,'TIME_TASKS_UNAVAILABLE');
+  assert.equal(diagnostic.panel.failedTasks[0].taskId,'101');assert.equal(diagnostic.panel.failedTasks[0].serverMessage,'Task not found');
+  assert.equal(diagnostic.panel.failedTasks[0].reason,'not-found-or-inaccessible');assert.equal(diagnostic.panel.failedTasks[0].confirmed,true);
+  const failure=page.locator('.pena-native-time-partial-warning .pena-native-time-failure');
+  assert.match(await failure.innerText(),/#101/);assert.match(await failure.innerText(),/не находит/);
+  assert.match(await failure.locator('a').getAttribute('href'),/\/tasks\/task\/view\/101\//);
   await page.screenshot({path:'tests/artifacts/time-partial-usable.png'});
   const before=await page.evaluate(()=>{dateBackend.failTask='';return dateBackend.calls.length;});
   await page.locator('.pena-native-time-partial-warning').getByRole('button',{name:'Повторить',exact:true}).click();await ready();
@@ -271,7 +282,30 @@ try {
   assert.ok(retryCalls.length>0&&retryCalls.every(call=>call.taskId==='101'));
   assert.equal(await page.evaluate(()=>dateProbe.record().error),'');
   assert.equal(await page.evaluate(()=>dateProbe.record().errorCode),'');
+  assert.equal(await page.locator('.pena-native-time-total-value').innerText(),'25 мин');
   return {retainedSeconds:900,completeSeconds:1500,retriedTasks:[...new Set(retryCalls.map(call=>call.taskId))]};
+ });
+ await phase('30-day partial statistics retain numerical subtotals and expose both failed tasks on desktop and mobile',async()=>{
+  await page.evaluate(()=>{dateProbe.clear();dateBackend.failTask='101';dateBackend.failTasks=['102'];dateBackend.failDescription='Access denied';});
+  await page.locator('.pena-native-time-view-tab[data-view="stats30"]').click();
+  await page.waitForFunction(()=>dateProbe.record()?.errorCode==='TIME_TASKS_UNAVAILABLE'&&dateProbe.idle());
+  await page.waitForFunction(()=>!document.querySelector('.pena-native-time-panel').classList.contains('--read-blocked'));
+  assert.equal(await page.locator('.pena-native-time-total-value').innerText(),'≥ 30 мин');
+  const numbers=await page.locator('.pena-native-time-stats-duration').allTextContents();
+  assert.equal(numbers.length,30);assert.ok(numbers.every(text=>text.startsWith('≥ ')));assert.ok(numbers.includes('≥ 30 мин'));
+  assert.equal(await page.locator('.pena-native-time-partial-warning .pena-native-time-failure').count(),2);
+  assert.match(await page.locator('.pena-native-time-partial-warning').innerText(),/не разрешает читать время/);
+  for(const width of [1000,360]){
+   await page.setViewportSize({width,height:800});
+   assert.ok(await page.locator('.pena-native-time-panel').evaluate(panel=>panel.scrollWidth<=panel.clientWidth+1));
+   await page.screenshot({path:`tests/artifacts/time-failed-tasks-${width}.png`});
+  }
+  await page.setViewportSize({width:1000,height:800});
+  await page.evaluate(()=>{dateBackend.failTask='';dateBackend.failTasks=[];dateBackend.failDescription='';});
+  await page.locator('.pena-native-time-partial-warning').getByRole('button',{name:'Повторить',exact:true}).click();await ready();
+  await page.locator('.pena-native-time-partial-warning').waitFor({state:'hidden'});
+  assert.ok((await page.locator('.pena-native-time-stats-duration').allTextContents()).every(text=>!text.includes('≥')));
+  return {days:30,failedTasks:2,confirmedSubtotal:1800,recovery:true};
  });
  await phase('saving a narrower project selection never lets its preview marker block a complete read',async()=>{
   await page.evaluate(()=>dateProbe.select({from:dateBackend.today,to:dateBackend.today}));await ready();

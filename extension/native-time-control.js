@@ -641,7 +641,7 @@
 			return Promise.all(paramsList.map((params, index) => callPage(params, jobs[index])));
 		};
 		while (queue.length) {
-			const wave = queue.splice(0, typeof callPages === 'function' ? Math.min(100, Math.max(1, Number(batchSize) || 50)) : 50);
+			const wave = queue.splice(0, typeof callPages === 'function' ? Math.min(200, Math.max(1, Number(batchSize) || 50)) : 50);
 			const paramsList = wave.map(job => buildElapsedRequestParams({
 				taskId: job.taskId,
 				...range,
@@ -717,6 +717,18 @@
 	function isElapsedAccessError(error) {
 		const detail = `${error?.code || ''} ${error?.message || ''} ${error?.description || ''}`;
 		return /access.?denied|not.?found|not.?allowed|(?:^|\W)0x(?:000001|000004|100002)(?:\W|$)/i.test(detail);
+	}
+	function describeElapsedError(error) {
+		const clean = value => String(value || '').replace(/https?:\/\/\S+/gi,'[URL]').replace(/\b(auth|access_token|refresh_token|authorization|client_secret)\s*[:=]\s*\S+/gi,'$1=[hidden]').replace(/[\u0000-\u001f]/g,' ').slice(0,300);
+		const code = clean(error?.code || 'REST_ERROR');
+		const serverMessage = clean(error?.description || error?.message || error?.unavailable || '');
+		const combined = `${code} ${serverMessage}`;
+		let reason = 'unknown', message = 'Bitrix24 не вернул записи времени. Причина не уточнена.';
+		if (/0x000100|INVALID.*PARAM/i.test(combined)) { reason='parameters'; message='Bitrix24 отклонил параметры запроса времени.'; }
+		else if (/0x000001|not.?found|не найден/i.test(combined)) { reason='not-found-or-inaccessible'; message='Bitrix24 не находит задачу или не разрешает её просмотр.'; }
+		else if (/access.?denied|not.?allowed|0x100002|0x000004|доступ.*запрещ|нет доступа/i.test(combined)) { reason='access-denied'; message='Bitrix24 не разрешает читать время этой задачи.'; }
+		else if (/TIMEOUT|NETWORK|CONNECTION/i.test(combined)) { reason='connection'; message='Не удалось дождаться ответа Bitrix24.'; }
+		return {code,serverMessage,reason,message,confirmed:error?.elapsedIndividualConfirmed === true};
 	}
 	async function loadGlobalElapsedItems({ callPage, from, to, userId, utcOffsetMinutes, timeZone, knownItems = [], probeTaskId = '', probeTaskIds = [], supported = false, isCurrent = () => true, maxPages = 2000 } = {}) {
 		if (typeof callPage !== 'function') throw new TypeError('callPage is required');
@@ -850,12 +862,15 @@
 
 	// Shared by all extension REST producers. Diagnostics contain timings and method
 	// names only; never task titles, messages, parameters or tokens.
-	function createRequestQueue({ concurrency = 2, spacingMs = 80, timeoutMs = 12000, cooldownMs = 15000, burst = 16, refillMs = 500 } = {}) {
+	function createRequestQueue({ concurrency = 2, batchConcurrency = concurrency, spacingMs = 80, timeoutMs = 12000, cooldownMs = 15000, burst = 16, refillMs = 500, slowBatchMs = 2500 } = {}) {
 		const queue = [], pending = new Map(), samples = [];
 		let active = 0, peak = 0, lastStart = 0, blockedUntil = 0, wake = null, deduplicated = 0;
 		let tokens = burst, replenishedAt = Date.now();
+		let batchLimit = Math.max(concurrency,Math.min(4,batchConcurrency)), reducedReason = '', baselineMs = 0, measured = 0, slowStreak = 0;
+		const isElapsedBatch = method => method === 'batch:task.elapseditem.getlist';
+		const reduce = reason => { if (batchLimit > concurrency) { batchLimit = concurrency; reducedReason = reason; } };
 		const pump = () => {
-			if (wake || active >= concurrency || !queue.length) return;
+			if (wake || !queue.length || active >= (isElapsedBatch(queue[0].method) ? batchLimit : concurrency)) return;
 			const now = Date.now();
 			tokens = Math.min(burst, tokens + Math.max(0, now - replenishedAt) / refillMs);
 			replenishedAt = now;
@@ -875,7 +890,17 @@
 				sample.durationMs = Date.now() - sample.startedAt;
 				sample.status = error ? 'error' : 'ok';
 				if (error) sample.code = String(error.code || 'REST_ERROR');
-				if (error && /TIMEOUT|QUERY_LIMIT|OPERATION_TIME_LIMIT|TOO_MANY|429|время ожидания/i.test(String(error.code || '') + ' ' + error.message)) blockedUntil = Date.now() + cooldownMs;
+				const pressure = error && /TIMEOUT|QUERY_LIMIT|OPERATION_TIME_LIMIT|TOO_MANY|429|время ожидания/i.test(String(error.code || '') + ' ' + error.message);
+				if (pressure) { blockedUntil = Date.now() + cooldownMs; reduce('server-pressure'); }
+				if (isElapsedBatch(job.method)) {
+					if (error && /NETWORK|CONNECTION|INTERNAL_SERVER|SERVICE_UNAVAILABLE/i.test(String(error.code || ''))) reduce('transport-error');
+					if (!error) {
+						const slow = sample.durationMs > Math.max(slowBatchMs, measured >= 4 ? baselineMs * 1.75 : slowBatchMs * 2);
+						slowStreak = slow ? slowStreak + 1 : 0;
+						if (slowStreak >= 2) reduce('slow-responses');
+						if (!slow) { baselineMs = measured ? baselineMs * .8 + sample.durationMs * .2 : sample.durationMs; measured++; }
+					}
+				}
 				active--; pending.delete(job.key);
 				if (error) job.reject(error); else job.resolve(value);
 				pump();
@@ -891,7 +916,7 @@
 				if (key) pending.set(key, promise);
 				pump(); return promise;
 			},
-			snapshot: () => ({ active, queued: queue.length, peak, deduplicated, cooldownMs: Math.max(0, blockedUntil - Date.now()), samples: samples.map(sample => ({ ...sample })) })
+			snapshot: () => ({ active, queued: queue.length, peak, deduplicated, batchConcurrency:batchLimit, reducedReason, cooldownMs: Math.max(0, blockedUntil - Date.now()), samples: samples.map(sample => ({ ...sample })) })
 		};
 	}
 
@@ -975,6 +1000,7 @@
 		loadTaskCatalogPartitions,
 		loadElapsedItems,
 		isElapsedAccessError,
+		describeElapsedError,
 		loadGlobalElapsedItems
 	});
 });
