@@ -7,6 +7,21 @@ import vm from 'node:vm';
 const require = createRequire(import.meta.url);
 const catalog = require('../extension/native-catalog.js');
 
+{
+	const items = [
+		{id:'f1',type:'folder',segmentId:'mine'}, {id:'f2',type:'folder'},
+		{id:'a',folderId:'f1',segmentId:'other'}, {id:'b',folderId:'f2',segmentId:'mine'},
+		{id:'c',segmentId:'mine'}, {id:'d'}, {id:'e',folderId:'deleted',segmentId:'deleted'},
+		{id:'f3',type:'folder',segmentId:'deleted'}, {id:'f',folderId:'f3'}
+	];
+	const before = JSON.stringify(items);
+	const placement = catalog.createPlacementIndex(items, [{id:'mine'},{id:'other'}]);
+	assert.deepEqual(items.filter(x=>x.type!=='folder').map(x=>[x.id,placement.segmentOf(x),placement.folderOf(x)]), [
+		['a','mine','f1'],['b','','f2'],['c','mine',''],['d','',''],['e','',''],['f','','f3']
+	]);
+	assert.equal(JSON.stringify(items), before, 'Presentation never rewrites assignments');
+}
+
 const {
 	buildIndex,
 	mergeRecentItems,

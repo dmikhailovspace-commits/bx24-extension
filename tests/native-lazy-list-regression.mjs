@@ -227,7 +227,27 @@ try {
       throw error;
     } finally { await page.close(); }
   }
-  console.log('PASS native lazy list: chats/tasks, native rows, native service pagination without scroll or blocking, remote search, counters and multi-select');
+  for (const mode of ['chats','tasks']) {
+    const page=await browser.newPage(), errors=collectPageErrors(page);
+    try {
+      await page.route('**/extension/injected.js',route=>route.fulfill({contentType:'application/javascript',body:source}));
+      await page.goto(`${server.baseUrl}/tests/native-consistency-harness.html?mode=${mode}&lazyNative=1&nativeCatalog=1&nativeFirst=1&passThrough=1&eager=0&lazy=1&catalogRows=80&nativeService=1`);
+      const host=page.locator(mode==='tasks'?'.task-host':'.recent-host');
+      await host.locator('.pena-native-unique-filter').waitFor();
+      await page.evaluate(()=>{lazyAudit.assign('chat1025');window.uniqueScrollStart=nativeScrollAudit.length;window.uniqueOriginal=document.querySelector('.test-host:not([hidden]) [data-id="chat5"]');});
+      await host.locator('.pena-native-unique-filter').click();
+      await host.locator('[data-id="chat1079"]').waitFor({state:'visible'});
+      await page.waitForFunction(()=>!lazyAudit.active());
+      assert.equal(await host.locator('[data-id="chat1025"]').isVisible(),false,'New pages cannot leak assigned dialogs into Unsorted');
+      assert.equal(await host.locator('[data-id="chat225"]').isVisible(),false);
+      assert.equal(await page.evaluate(()=>uniqueOriginal===document.querySelector('.test-host:not([hidden]) [data-id="chat5"]')),true);
+      assert.equal(await page.evaluate(()=>nativeScrollAudit.length),await page.evaluate(()=>uniqueScrollStart),'Unsorted uses native pagination without moving the viewport');
+      assert.equal(await page.locator('.pena-native-original-load-guard,.pena-native-managed-row').count(),0);
+      assert.deepEqual(errors,[]);
+      report.phases.push({mode,status:'PASS',uniqueNativePagination:true});
+    } finally {await page.close();}
+  }
+  console.log('PASS native lazy list: chats/tasks, native rows, native service pagination without scroll or blocking, remote search, counters, multi-select and unique view');
 } finally {
   await browser.close(); await server.close();
   mkdirSync(new URL('./artifacts/', import.meta.url), { recursive:true });

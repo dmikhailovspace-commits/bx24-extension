@@ -405,6 +405,11 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .pena-native-toggle-track::after{content:"";position:absolute;left:2px;top:2px;width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(15,23,42,.22);transition:transform .12s ease}
 .pena-native-unread-filter input:checked+.pena-native-toggle-track{background:#3b82f6}
 .pena-native-unread-filter input:checked+.pena-native-toggle-track::after{transform:translateX(12px)}
+.pena-native-unique-filter{display:flex;align-items:center;gap:7px;padding:5px 2px;color:#475569;font:700 11px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial;cursor:pointer;width:fit-content}
+.pena-native-unique-filter input{position:absolute;opacity:0;width:1px;height:1px}
+.pena-native-unique-filter input:checked+.pena-native-toggle-track{background:#3b82f6}
+.pena-native-unique-filter input:checked+.pena-native-toggle-track::after{transform:translateX(12px)}
+.pena-native-unique-filter input:focus-visible+.pena-native-toggle-track{outline:2px solid #2563eb;outline-offset:3px}
 .pena-native-control-panel{display:grid;gap:7px;margin:0 0 6px;padding:7px;border:1px solid rgba(15,23,42,.1);border-radius:6px;background:#f1f5f9;box-sizing:border-box}
 .pena-native-control-actions{display:flex;flex-wrap:wrap;gap:5px}
 .pena-native-control-actions button{height:25px;border:1px solid rgba(15,23,42,.14);border-radius:5px;background:#fff;color:#405067;padding:0 8px;font:700 10px/23px system-ui,-apple-system,Segoe UI,Roboto,Arial;cursor:pointer}

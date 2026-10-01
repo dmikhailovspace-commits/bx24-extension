@@ -107,7 +107,18 @@ try {
 	await assignedRow.waitFor({ state: 'visible', timeout: 5000 });
 	await page.waitForFunction(() => document.querySelector('.recent-host .pena-native-chat-row[data-id="chat225"]')?.dataset.penaNativeFolderId === 'folder:test');
 	await assertNoInheritedMarker();
-	console.log('PASS native folder DnD: aggregate reorder, no group binding, reload persistence, dialog unassign and no inherited color');
+	await page.locator('.recent-host .pena-native-unique-filter').click();
+	await assignedRow.waitFor({state:'hidden'});
+	await folder.click();
+	await assignedRow.waitFor({state:'visible'});
+	const unsorted = page.locator('.recent-host .pena-native-folder-tab[data-native-folder-id=""]');
+	await assignedRow.dragTo(unsorted);
+	await assignedRow.waitFor({state:'hidden'});
+	assert.equal((await storedItems()).find(item=>item.id==='chat225').folderId,undefined);
+	await unsorted.click();
+	await assignedRow.waitFor({state:'visible'});
+	assert.deepEqual(pageErrors, []);
+	console.log('PASS native folder DnD: aggregate reorder, no group binding, reload persistence, dialog unassign, no inherited color and unique view');
 } finally {
 	await browser.close();
 	await server.close();

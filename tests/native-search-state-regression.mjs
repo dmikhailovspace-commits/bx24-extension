@@ -4,7 +4,7 @@ import {chromium} from 'playwright';
 import {startHarnessServer,collectPageErrors} from './lib/harness-server.mjs';
 const raw=readFileSync(process.env.PENA_STABILITY_SOURCE || new URL('../extension/injected.js',import.meta.url),'utf8');
 const source=raw.replace('\tasync function boot() {',`\tasync function boot() {
-window.stability={apply:applyFilters,arm:_armPenaSearchFlow,query:()=>filters.query,stored:_readStoredBitrixSearchQuery,pending:()=>_dialogControlReadActions.size,selected:()=>[..._dialogControlMultiSelected],unread:value=>{_setDialogControlViewPrefs({unreadOnly:value});applyFilters()}, folder:_setDialogControlNativeActiveFolderId, items:_getDialogControlItems};`);
+window.stability={apply:applyFilters,arm:_armPenaSearchFlow,query:()=>filters.query,stored:_readStoredBitrixSearchQuery,pending:()=>_dialogControlReadActions.size,selected:()=>[..._dialogControlMultiSelected],unique:value=>{_setDialogControlViewPrefs({uniqueOnly:value});applyFilters()},unread:value=>{_setDialogControlViewPrefs({unreadOnly:value});applyFilters()}, folder:_setDialogControlNativeActiveFolderId, items:_getDialogControlItems};`);
 const server=await startHarnessServer();const browser=await chromium.launch({headless:true});const report=[];
 try {
  for(const mode of ['chats','tasks']) {
@@ -76,7 +76,8 @@ try {
  await page.evaluate(()=>{stability.folder('');stability.unread(false);});await page.waitForTimeout(100);
  // Search temporarily exposes the global results. Clearing must restore the
  // folder before the first paint, not merely converge after a debounce.
- for(const unread of [false,true]) for(const clearVia of ['input','button','escape','search','cached']) {
+ for(const unique of [false,true]) for(const unread of [false,true]) for(const clearVia of ['input','button','escape','search','cached']) {
+  await page.evaluate(value=>stability.unique(value),unique);
   await page.evaluate(unread=>{stability.folder('folder:test');stability.unread(unread);},unread);await page.waitForTimeout(60);
   const expectedIds=await visibleIds();assert.ok(expectedIds.length);
   await input.fill('slow');await page.waitForTimeout(240);
@@ -96,7 +97,7 @@ try {
   for(const ids of frames)assert.deepEqual(ids,expectedIds,`Clearing via ${clearVia} must restore folder/unread before every paint`);
   assert.deepEqual(await visibleIds(),expectedIds);
  }
- await page.evaluate(()=>{stability.folder('');stability.unread(false);});await page.waitForTimeout(60);
+ await page.evaluate(()=>{stability.unique(false);stability.folder('');stability.unread(false);});await page.waitForTimeout(60);
  await input.fill('   ');await page.waitForTimeout(100);
  assert.deepEqual(await visibleIds(),baselineIds,'Whitespace-only input must preserve the native list');
  await input.fill('');

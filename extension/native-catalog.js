@@ -461,7 +461,22 @@
 		return index * rowHeight + offset;
 	}
 
+	// A folder owns its children's group, including an explicitly ungrouped folder.
+	// Missing references fall back to the unsorted level without mutating saved data.
+	function createPlacementIndex(items, segments) {
+		const folders = new Map((items || []).filter(item => item.type === 'folder').map(item => [String(item.id), item]));
+		const groups = new Set((segments || []).map(group => String(group.id)));
+		const segmentOf = item => {
+			const folder = folders.get(String(item.folderId || ''));
+			const id = String((folder || item).segmentId || '');
+			return groups.has(id) ? id : '';
+		};
+		const folderOf = item => folders.has(String(item.folderId || '')) ? String(item.folderId) : '';
+		return { segmentOf, folderOf };
+	}
+
 	return Object.freeze({
+		createPlacementIndex,
 		buildIndex,
 		mergeRecentItems,
 		selectRows,

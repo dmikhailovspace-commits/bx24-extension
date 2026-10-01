@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.17';
+	window.__ANITREC_RUNNING__ = '8.0.18';
 
-	const VER = '8.0.17';
+	const VER = '8.0.18';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -7916,9 +7916,10 @@
 		if (!_isDialogNativeLazyMode() || document.hidden || String(filters.query || '').trim()) return null;
 		const container = findContainer();
 		const filter = _getDialogControlNativeFilter();
-		if (!container || !filter || (!filter.folderId && !filter.segmentId && !filter.unreadOnly && !filters.unreadOnly)) return null;
+		if (!container || !filter || (!filter.folderId && !filter.segmentId && !filter.uniqueOnly && !filter.unreadOnly && !filters.unreadOnly)) return null;
         const requested = new Set(Array.from(filter.ids || []).map(normId).filter(Boolean));
         const groups = _getDialogControlItems().filter(item => !_isDialogControlFolder(item)).filter(item => {
+            if (filter.uniqueOnly) return _getDialogControlItemIdentityKeys(item).some(id => requested.has(id)) && (!filter.unreadOnly || _isDialogControlUnreadMeta(_getDialogControlEffectiveMeta(item.id)));
             if (filter.folderId || filter.segmentId) return _getDialogControlItemIdentityKeys(item).some(id => requested.has(id));
             return _isDialogControlUnreadMeta(_getDialogControlEffectiveMeta(item.id));
         }).map(_getDialogControlItemIdentityKeys).filter(group => group.length);
@@ -7930,7 +7931,7 @@
 		const generation = _getDialogNativeSourceGeneration(mode, container, viewport);
 		const scope = _getDialogNativeExpectedAuditScopeKey(mode);
 		return { container, viewport, mode, generation, scope, ids, groups,
-			key: JSON.stringify([scope, generation, filter.segmentId, filter.folderId, [...ids].sort()]) };
+			key: JSON.stringify([scope, generation, filter.segmentId, filter.folderId, !!filter.uniqueOnly, [...ids].sort()]) };
 	}
 	function _findDialogNativeVueInstance(container, accept) {
 		const roots = new Set();
@@ -11870,8 +11871,25 @@ if (_presetChannel) {
 	function _getDialogControlViewPrefs(mode = _pMode()) {
 		try {
 			const saved = JSON.parse(localStorage.getItem(_dialogControlViewKey(mode)) || '{}');
-			return { sortMode: saved?.sortMode === 'color' ? 'color' : 'date', sortDirection: 'desc', unreadOnly: !!saved?.unreadOnly };
-		} catch { return { sortMode: 'date', sortDirection: 'desc', unreadOnly: false }; }
+			return { sortMode: saved?.sortMode === 'color' ? 'color' : 'date', sortDirection: 'desc', unreadOnly: !!saved?.unreadOnly, uniqueOnly: _getDialogControlUniqueOnly(mode) };
+		} catch { return { sortMode: 'date', sortDirection: 'desc', unreadOnly: false, uniqueOnly: _getDialogControlUniqueOnly(mode) }; }
+	}
+
+	function _dialogControlUniqueKey(mode = _pMode()) {
+		const scope = _getDialogRecentRepositoryScope();
+		return scope ? `pena.dialogControlUnique.v1.${scope.portalHost}~${scope.userId}.${mode === 'tasks' ? 'tasks' : 'chats'}` : '';
+	}
+
+	function _getDialogControlUniqueOnly(mode = _pMode()) {
+		try { const key = _dialogControlUniqueKey(mode); return !!key && localStorage.getItem(key) === '1'; } catch { return false; }
+	}
+
+	function _getDialogControlPlacementIndex(items) {
+		return window.__PENA_NATIVE_CATALOG__.createPlacementIndex(items, _getDialogControlSegments());
+	}
+
+	function _getDialogControlAllLabel(folder = false) {
+		return _getDialogControlUniqueOnly() ? 'Несортированные' : (folder ? 'Все папки' : 'Все группы');
 	}
 
 	function _dialogControlNeedsCompleteNativeMaterialization(mode = _pMode()) {
@@ -11898,10 +11916,14 @@ if (_presetChannel) {
 		const next = { ..._getDialogControlViewPrefs(mode), ...patch, sortDirection: 'desc' };
 		next.sortMode = next.sortMode === 'color' ? 'color' : 'date';
 		next.unreadOnly = !!next.unreadOnly;
-		try { localStorage.setItem(_dialogControlViewKey(mode), JSON.stringify(next)); } catch {}
+		try { const { uniqueOnly, ...saved } = next; localStorage.setItem(_dialogControlViewKey(mode), JSON.stringify(saved)); } catch {}
+		if (Object.prototype.hasOwnProperty.call(patch, 'uniqueOnly')) {
+			try { const key = _dialogControlUniqueKey(mode); if (key) localStorage.setItem(key, patch.uniqueOnly ? '1' : '0'); } catch {}
+			_dialogControlNativeSwitcherSig = '';
+		}
 		_dialogControlLastSig = '';
 		_dialogControlNativeViewSig = '';
-		return next;
+		return { ...next, uniqueOnly: _getDialogControlUniqueOnly(mode) };
 	}
 
 	function _isDialogNativeLazyMode() {
@@ -13432,6 +13454,10 @@ if (_presetChannel) {
 		const source = Array.isArray(items) ? items : [];
 		const id = String(segmentId || '');
 		const dialogs = source.filter(item => !_isDialogControlFolder(item));
+		if (_getDialogControlUniqueOnly()) {
+			const placement = _getDialogControlPlacementIndex(source);
+			return dialogs.filter(item => placement.segmentOf(item) === id);
+		}
 		if (!id) return dialogs;
 		const folderIdsInSegment = new Set(source
 			.filter(item => _isDialogControlFolder(item) && String(item.segmentId || '') === id)
@@ -13447,6 +13473,10 @@ if (_presetChannel) {
 		const source = Array.isArray(items) ? items : [];
 		const id = String(segmentId || '');
 		const folders = source.filter(_isDialogControlFolder);
+		if (_getDialogControlUniqueOnly()) {
+			const placement = _getDialogControlPlacementIndex(source);
+			return folders.filter(folder => placement.segmentOf(folder) === id);
+		}
 		if (!id) return folders;
 		const dialogItems = _getDialogControlNativeDialogItemsForSegment(source, id);
 		const folderIds = new Set(dialogItems.map(item => String(item.folderId || '')).filter(Boolean));
@@ -13470,23 +13500,29 @@ if (_presetChannel) {
 			_setDialogControlNativeActiveFolderId('', { render: false, apply: false });
 			folderId = '';
 		}
-		if (!segmentId && !folderId && !viewPrefs.unreadOnly && !filters.unreadOnly) return null;
+		if (!segmentId && !folderId && !viewPrefs.unreadOnly && !filters.unreadOnly && !viewPrefs.uniqueOnly) return null;
 		const ids = new Set();
 		const titles = new Set();
+		const excludedIds = new Set();
+		const placement = viewPrefs.uniqueOnly ? _getDialogControlPlacementIndex(items) : null;
+		const selected = new Set(segmentDialogs.filter(item => placement
+			? placement.folderOf(item) === folderId
+			: !folderId || String(item.folderId || '') === folderId));
 		const titleCounts = new Map();
 		items.forEach(item => {
 			if (_isDialogControlFolder(item)) return;
+			if (placement && !selected.has(item)) _getDialogControlItemIdentityKeys(item).forEach(id => excludedIds.add(id));
 			const titleKey = _normalizeDialogControlTitle(item.title);
 			if (!titleKey || _isDialogControlFallbackTitle(titleKey)) return;
 			titleCounts.set(titleKey, (titleCounts.get(titleKey) || 0) + 1);
 		});
 		segmentDialogs.forEach(item => {
-			if (folderId && String(item.folderId || '') !== folderId) return;
+			if (!selected.has(item)) return;
 			_getDialogControlItemIdentityKeys(item).forEach(id => ids.add(id));
 			const titleKey = _normalizeDialogControlTitle(item.title);
 			if (titleKey && titleCounts.get(titleKey) === 1) titles.add(titleKey);
 		});
-		return { segmentId, folderId, ids, titles, unreadOnly: !!(viewPrefs.unreadOnly || filters.unreadOnly) };
+		return { segmentId, folderId, ids, titles, excludedIds, uniqueOnly: !!viewPrefs.uniqueOnly, unreadOnly: !!(viewPrefs.unreadOnly || filters.unreadOnly) };
 	}
 
 	function _getDialogControlItemIdentityKeys(item) {
@@ -13516,11 +13552,14 @@ if (_presetChannel) {
 	function _matchesDialogControlNativeFilter(row, meta, filter) {
 		if (!filter) return true;
 		if (filter.unreadOnly && !_isDialogControlUnreadMeta(meta)) return false;
-		if (!filter.segmentId && !filter.folderId) return true;
+		if (!filter.segmentId && !filter.folderId && !filter.uniqueOnly) return true;
 		const identityKeys = Array.from(new Set([
 			normId(meta?.id),
 			..._getDialogControlNativeRowIdentityKeys(row)
 		].filter(Boolean)));
+		if (filter.uniqueOnly && identityKeys.some(id => filter.excludedIds?.has(id))) return false;
+		// New native rows have no saved assignment and belong in the root inbox.
+		if (filter.uniqueOnly && !filter.segmentId && !filter.folderId) return true;
 		if (identityKeys.some(id => filter.ids?.has?.(id))) return true;
 		const titleKeys = [
 			_normalizeDialogControlTitle(meta?.title),
@@ -14235,6 +14274,8 @@ if (_presetChannel) {
 		});
 		const unreadInput = switcher.querySelector('.pena-native-unread-filter input');
 		if (unreadInput) unreadInput.checked = !!prefs.unreadOnly;
+		const uniqueInput = switcher.querySelector('.pena-native-unique-filter input');
+		if (uniqueInput) uniqueInput.checked = !!prefs.uniqueOnly;
 	}
 
 	function _syncDialogRecentStatusControl(switcher) {
@@ -18802,12 +18843,22 @@ if (_presetChannel) {
 			.filter(_isDialogControlFolder)
 			.map(folder => [String(folder.id || ''), String(folder.segmentId || '')]));
 		const catalogOnlyIndex = new Map();
+		const placement = _getDialogControlUniqueOnly() ? _getDialogControlPlacementIndex(source) : null;
 
 		source.forEach(item => {
 			if (_isDialogControlFolder(item) || _isDialogControlItemUnavailable(item) ||
 				!_matchesDialogControlGlobalFilters(item, catalogOnlyIndex)) return;
 			const meta = _getDialogControlItemLiveMeta(item, catalogOnlyIndex);
 			if (!meta) return;
+			if (placement) {
+				const segmentId = placement.segmentOf(item), folderId = placement.folderOf(item);
+				addMeta(groupStatuses.get(segmentId), meta);
+				if (segmentId === activeSegmentId) {
+					if (!folderId) addMeta(segmentStatus, meta);
+					else addMeta(folderStatuses.get(folderId), meta);
+				}
+				return;
+			}
 			addMeta(groupStatuses.get(''), meta);
 			const memberships = new Set([
 				String(item.segmentId || ''),
@@ -18860,7 +18911,7 @@ if (_presetChannel) {
 		const groupStatuses = new Map();
 		groupTabs.forEach(group => {
 			const id = String(group.id || '');
-			const dialogs = group.isAll
+			const dialogs = group.isAll && !viewPrefs.uniqueOnly
 				? filteredDialogItems
 				: _getDialogControlNativeDialogItemsForSegment(source, id)
 					.filter(item => filteredDialogSet.has(item));
@@ -18868,7 +18919,10 @@ if (_presetChannel) {
 		});
 		const filteredSegmentDialogItems = segmentDialogItems
 			.filter(item => filteredDialogSet.has(item));
-		const segmentStatus = _getDialogControlNotificationStatus(filteredSegmentDialogItems, visibleChatIndex);
+		const placement = viewPrefs.uniqueOnly ? _getDialogControlPlacementIndex(source) : null;
+		const segmentStatus = _getDialogControlNotificationStatus(placement
+			? filteredSegmentDialogItems.filter(item => !placement.folderOf(item))
+			: filteredSegmentDialogItems, visibleChatIndex);
 		const folderStatuses = new Map();
 		segmentFolders.forEach(folder => {
 			const id = String(folder.id || '');
@@ -18877,6 +18931,7 @@ if (_presetChannel) {
 		});
 		const switcherSig = [
 			_pMode(),
+			viewPrefs.uniqueOnly ? 1 : 0,
 			activeSegmentId,
 			activeFolderId,
 			_dialogControlNativeWorkspaceTab,
@@ -19058,6 +19113,28 @@ if (_presetChannel) {
 			filterPanel.append(_createDialogControlPopoverClose('Закрыть фильтры'), sortControls, unreadLabel, syncStatus);
 			workspaceTabs.appendChild(filterPanel);
 		}
+		const uniqueLabel = document.createElement('label');
+		uniqueLabel.className = 'pena-native-unique-filter';
+		uniqueLabel.title = 'В «Несортированных» остаются диалоги без группы или папки. Поиск ищет везде.';
+		const uniqueInput = document.createElement('input');
+		uniqueInput.type = 'checkbox';
+		uniqueInput.checked = !!viewPrefs.uniqueOnly;
+		const uniqueToggle = document.createElement('span');
+		uniqueToggle.className = 'pena-native-toggle-track';
+		const uniqueText = document.createElement('span');
+		uniqueText.textContent = 'Без повторов';
+		uniqueInput.addEventListener('change', () => {
+			const next = _setDialogControlViewPrefs({ uniqueOnly: uniqueInput.checked });
+			const items = _getDialogControlItems();
+			const folder = items.find(item => _isDialogControlFolder(item) && String(item.id) === _getDialogControlNativeActiveFolderId());
+			if (next.uniqueOnly && folder) _setDialogControlActiveSegmentId(_getDialogControlPlacementIndex(items).segmentOf(folder));
+			_dialogControlMultiSelected.clear();
+			_renderDialogControlNativeSwitcher(container, items);
+			applyFilters();
+			switcher.querySelector('.pena-native-unique-filter input')?.focus({ preventScroll: true });
+		});
+		uniqueLabel.append(uniqueInput, uniqueToggle, uniqueText);
+		switcherContent.appendChild(uniqueLabel);
 		if (_dialogControlNativeWorkspaceTab === 'time' && _PENA_TIME_CONTROL) {
 			const timeModal = preservedTimeModal || _createDialogTimeModal();
 			workspaceTabs.appendChild(timeModal);
@@ -19268,8 +19345,8 @@ if (_presetChannel) {
 			btn.dataset.nativeSegmentId = id;
 			btn.dataset.nativeSegmentSortId = sortId;
 			btn.classList.toggle('--active', id === activeSegmentId || (!id && !activeSegmentId));
-			btn.textContent = group?.title || 'Все';
-			btn.title = group?.isAll ? 'Все группы' : (group?.title || 'Группа');
+			btn.textContent = group?.isAll && viewPrefs.uniqueOnly ? 'Несортированные' : (group?.title || 'Все');
+			btn.title = group?.isAll ? _getDialogControlAllLabel() : (group?.title || 'Группа');
 			const badge = document.createElement('span');
 			badge.className = 'pena-native-tab-count';
 			applyTabStatus(btn, badge, groupStatuses.get(id));
@@ -19328,7 +19405,7 @@ if (_presetChannel) {
 					if (_setDialogControlItemsSegment([folderId], id)) {
 						finishNativeDialogDrop(id
 							? `Папка перенесена в группу «${group?.title || 'Группа'}»`
-							: 'Папка перенесена в «Все»');
+							: (_getDialogControlUniqueOnly() ? 'Папка перенесена в «Несортированные»' : 'Папка перенесена в «Все»'));
 					} else {
 						clearNativeTabDrop();
 					}
@@ -19339,7 +19416,7 @@ if (_presetChannel) {
 					e.preventDefault();
 					e.stopPropagation();
 					if (_moveDialogControlNativeDialogsToGroup(dialogIds, id)) {
-						finishNativeDialogDrop(`Перенесено в группу «${group?.title || 'Все'}»`);
+						finishNativeDialogDrop(`Перенесено в группу «${group?.isAll && _getDialogControlUniqueOnly() ? 'Несортированные' : (group?.title || 'Все')}»`);
 					} else {
 						clearNativeTabDrop();
 					}
@@ -19399,8 +19476,8 @@ if (_presetChannel) {
 			folderIcon.innerHTML = _getDialogControlFolderRefIconSvg(folder?.icon || 'folder');
 			const folderLabel = document.createElement('span');
 			folderLabel.className = 'pena-native-folder-tab-label';
-			folderLabel.textContent = folder ? String(folder.title || 'Папка') : 'Все папки';
-			btn.title = folder ? String(folder.title || 'Папка') : 'Все папки в группе';
+			folderLabel.textContent = folder ? String(folder.title || 'Папка') : _getDialogControlAllLabel(true);
+			btn.title = folder ? String(folder.title || 'Папка') : (viewPrefs.uniqueOnly ? 'Диалоги без папки в этой группе' : 'Все папки в группе');
 			const status = folder ? folderStatuses.get(id) : segmentStatus;
 			const badge = document.createElement('span');
 			badge.className = 'pena-native-tab-count';
@@ -21853,6 +21930,14 @@ if (_presetChannel) {
 		if (_dialogControlStorageSyncArmed) return;
 		_dialogControlStorageSyncArmed = true;
 		window.addEventListener('storage', event => {
+			if (event.key && event.key === _dialogControlUniqueKey()) {
+				_dialogControlNativeSwitcherSig = '';
+				_dialogControlNativeViewSig = '';
+				_dialogControlMultiSelected.clear();
+				_renderDialogControlNativeSwitcher(findContainer(), _getDialogControlItems());
+				applyFilters();
+				return;
+			}
 			const match = String(event.key || '').match(/^pena\.dialogControl\.v1\.(chats|tasks)$/);
 			if (!match) return;
 			const mode = match[1];
@@ -23976,7 +24061,7 @@ if (_presetChannel) {
 		_closeDialogControlPalettes(true);
 		_closeDialogControlContextMenu();
 		const segmentId = String(group?.id || '');
-		const segmentTitleText = group?.isAll ? 'Все группы' : String(group?.title || 'Группа');
+		const segmentTitleText = group?.isAll ? _getDialogControlAllLabel() : String(group?.title || 'Группа');
 		const menu = document.createElement('div');
 		menu.className = 'dialog-control-context-menu';
 		menu.dataset.dialogControlContextMenu = '1';
@@ -24280,7 +24365,7 @@ if (_presetChannel) {
 		menu.setAttribute('role', 'menu');
 		const title = document.createElement('div');
 		title.className = 'dialog-control-context-title';
-		title.textContent = group?.isAll ? 'Все группы' : String(group?.title || 'Группа');
+		title.textContent = group?.isAll ? _getDialogControlAllLabel() : String(group?.title || 'Группа');
 		let close = () => {};
 		const actions = [title];
 		if (!group?.isAll && segmentId) {
@@ -24390,7 +24475,7 @@ if (_presetChannel) {
 		menu.setAttribute('role', 'menu');
 		const title = document.createElement('div');
 		title.className = 'dialog-control-context-title';
-		title.textContent = folder ? String(folder.title || 'Папка') : 'Все папки';
+		title.textContent = folder ? String(folder.title || 'Папка') : _getDialogControlAllLabel(true);
 		let close = () => {};
 		const actions = [title];
 		if (folderId) {
@@ -28335,6 +28420,11 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .pena-native-toggle-track::after{content:"";position:absolute;left:2px;top:2px;width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(15,23,42,.22);transition:transform .12s ease}
 .pena-native-unread-filter input:checked+.pena-native-toggle-track{background:#3b82f6}
 .pena-native-unread-filter input:checked+.pena-native-toggle-track::after{transform:translateX(12px)}
+.pena-native-unique-filter{display:flex;align-items:center;gap:7px;padding:5px 2px;color:#475569;font:700 11px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial;cursor:pointer;width:fit-content}
+.pena-native-unique-filter input{position:absolute;opacity:0;width:1px;height:1px}
+.pena-native-unique-filter input:checked+.pena-native-toggle-track{background:#3b82f6}
+.pena-native-unique-filter input:checked+.pena-native-toggle-track::after{transform:translateX(12px)}
+.pena-native-unique-filter input:focus-visible+.pena-native-toggle-track{outline:2px solid #2563eb;outline-offset:3px}
 .pena-native-control-panel{display:grid;gap:7px;margin:0 0 6px;padding:7px;border:1px solid rgba(15,23,42,.1);border-radius:6px;background:#f1f5f9;box-sizing:border-box}
 .pena-native-control-actions{display:flex;flex-wrap:wrap;gap:5px}
 .pena-native-control-actions button{height:25px;border:1px solid rgba(15,23,42,.14);border-radius:5px;background:#fff;color:#405067;padding:0 8px;font:700 10px/23px system-ui,-apple-system,Segoe UI,Roboto,Arial;cursor:pointer}

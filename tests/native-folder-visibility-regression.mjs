@@ -22,6 +22,15 @@ const probe = `
   get: _getDialogRecentMeta,
   status: _scheduleDialogNativeStatusRefresh,
   prefs: _setDialogControlViewPrefs,
+  save: _saveDialogControlItems, segments: _saveDialogControlSegments,
+  group: _setDialogControlActiveSegmentId,
+  render: () => _renderDialogControlNativeSwitcher(findContainer(), _getDialogControlItems()),
+  moveGroup: _moveDialogControlNativeDialogsToGroup, moveFolder: _moveDialogControlNativeDialogsToFolder,
+  removeFolder: _removeDialogControlFolder, removeGroup: _removeDialogControlSegment,
+  query: value => { filters.query=value; applyFilters(); },
+  uniqueKey: _dialogControlUniqueKey,
+  getPrefs: _getDialogControlViewPrefs,
+  counters: () => _syncDialogControlNativeCounterStatuses(_dialogControlNativeSwitcherNode, _getDialogControlItems()),
   notifyData: _notifyDialogRecentDataChanged,
   snapshot: data => _applyDialogCounterSnapshot(_dialogRecentMeta, {..._parseDialogCounterSnapshot(data),startedAt:Date.now()-1}),
   busy: (kind, value) => {
@@ -36,12 +45,13 @@ const probe = `
 assert.ok(source.includes(anchor));
 const server = await startHarnessServer(), browser = await chromium.launch({headless:true});
 const report = {phases:[]};
-async function scenario(name, run, mode = 'chats') {
+async function scenario(name, run, mode = 'chats', lazy = false) {
+ if(process.env.PENA_FOLDER_SCENARIO && !name.includes(process.env.PENA_FOLDER_SCENARIO)) return;
  const page = await browser.newPage();
  const errors = collectPageErrors(page), started = performance.now();
  try {
   await page.route('**/extension/injected.js*', route => route.fulfill({contentType:'application/javascript', body:source.replace(anchor,anchor+probe)}));
-  await page.goto(server.baseUrl+'/tests/native-consistency-harness.html?mode='+mode+'&nativeCatalog=1&nativeFirst=1&passThrough=1&activeFolder=1&skipInitialMount=1');
+  await page.goto(server.baseUrl+'/tests/native-consistency-harness.html?mode='+mode+'&nativeCatalog=1&nativeFirst=1&passThrough=1&activeFolder=1&skipInitialMount=1'+(lazy?'&lazyNative=1':''));
   await page.waitForFunction(mode => {
    const host=mode==='tasks'?'.task-host':'.recent-host';
    const folder=document.querySelector(host+' .pena-native-folder-tab[title="Тестовая папка"]');
@@ -52,9 +62,78 @@ async function scenario(name, run, mode = 'chats') {
   assert.deepEqual(errors, []);
   report.phases.push({name,status:'PASS',ms:performance.now()-started});
  } catch(error) { report.phases.push({name,status:'FAIL',error:String(error.stack),ms:performance.now()-started}); }
- finally { await page.close(); }
+ finally { console.log(report.phases.at(-1).status+' '+name); await page.close(); }
 }
 try {
+ for (const mode of ['chats','tasks']) await scenario(mode+' unique placement, counters, moves, search and persistence', async page => {
+  const host=mode==='tasks'?'.task-host':'.recent-host';
+  await page.evaluate(()=>{
+   const p=folderProbe, items=p.items();
+   p.segments([{id:'mine',title:'Моё'},{id:'other',title:'Другое'}]);
+   for(const item of items){delete item.segmentId;if(item.type!=='folder')delete item.folderId;}
+   items.find(x=>x.id==='folder:test').segmentId='mine';
+   for(const [id,segmentId,folderId] of [['chat225','mine','folder:test'],['chat5','mine',''],['chat77','','']]){
+    let item=items.find(x=>x.id===id);if(!item){item={id,title:'Диалог '+id.replace('chat','')};items.push(item);}
+    if(segmentId)item.segmentId=segmentId;if(folderId)item.folderId=folderId;
+   }
+   p.save();p.group('');p.select('');p.render();p.apply();
+  });
+  const row=id=>page.locator(host+' .bx-im-list-recent-item__wrap[data-id="'+id+'"]');
+  const unique=page.locator(host+' .pena-native-unique-filter');
+  assert.equal(await unique.locator('.pena-native-toggle-track').evaluate(el=>Math.round(el.getBoundingClientRect().width)),28,'The shipped CSS must render the toggle');
+  await unique.click();
+  await row('chat225').waitFor({state:'hidden'});await row('chat5').waitFor({state:'hidden'});await row('chat77').waitFor({state:'visible'});
+  assert.match(await page.locator(host+' .pena-native-group-tab[data-native-segment-id=""]').textContent(),/Несортированные/);
+  assert.equal(await page.locator(host+' .pena-native-folder-tab[data-native-folder-id="folder:test"]').count(),0);
+  await page.locator(host+' .pena-native-group-tab[data-native-segment-id="mine"]').click();
+  await row('chat5').waitFor({state:'visible'});await row('chat225').waitFor({state:'hidden'});await row('chat77').waitFor({state:'hidden'});
+  await page.locator(host+' .pena-native-folder-tab[data-native-folder-id="folder:test"]').click();
+  await row('chat225').waitFor({state:'visible'});await row('chat5').waitFor({state:'hidden'});
+  // Counters must agree on full render and the lightweight native update path.
+  await page.evaluate(()=>{
+   for(const item of folderProbe.items().filter(x=>x.type!=='folder'))folderProbe.seed({id:item.id,unreadCount:0,hasUnread:false,hasLater:false,hasMention:false,counterConfirmedAt:Date.now()});
+   folderProbe.seed({id:'chat225',unreadCount:4,hasUnread:true,counterConfirmedAt:Date.now()});
+   folderProbe.seed({id:'chat5',unreadCount:2,hasUnread:true,counterConfirmedAt:Date.now()});
+   folderProbe.render();
+  });
+  const badge=selector=>page.locator(host+' '+selector+' .pena-native-tab-count').textContent();
+  assert.equal(await badge('.pena-native-group-tab[data-native-segment-id="mine"]'),'6');
+  assert.equal(await badge('.pena-native-folder-tab[data-native-folder-id=""]'),'2');
+  assert.equal(await badge('.pena-native-folder-tab[data-native-folder-id="folder:test"]'),'4');
+  await page.evaluate(()=>{folderProbe.seed({id:'chat225',unreadCount:7,hasUnread:true,counterConfirmedAt:Date.now()});folderProbe.counters();});
+  assert.equal(await badge('.pena-native-group-tab[data-native-segment-id="mine"]'),'9');
+  assert.equal(await badge('.pena-native-folder-tab[data-native-folder-id=""]'),'2');
+  assert.equal(await badge('.pena-native-folder-tab[data-native-folder-id="folder:test"]'),'7');
+  await page.screenshot({path:'tests/artifacts/unique-'+mode+'.png'});
+  const otherMode=mode==='chats'?'tasks':'chats';
+  assert.equal(await page.evaluate(mode=>folderProbe.getPrefs(mode).uniqueOnly,otherMode),false);
+  await page.evaluate(()=>{window.savedUniqueUser=window.currentBitrixUserId;window.currentBitrixUserId='99999';});
+  assert.equal(await page.evaluate(()=>folderProbe.getPrefs().uniqueOnly),false);
+  await page.evaluate(()=>{window.currentBitrixUserId=window.savedUniqueUser;});
+  await page.evaluate(()=>folderProbe.query('Диалог'));
+  await row('chat77').waitFor({state:'visible'});
+  await page.evaluate(()=>folderProbe.query(''));
+  await row('chat77').waitFor({state:'hidden'});await row('chat225').waitFor({state:'visible'});
+  const assignments=()=>page.evaluate(()=>folderProbe.items().map(x=>[x.id,x.folderId||'',x.segmentId||'']));
+  const before=await assignments();await unique.click();assert.deepEqual(await assignments(),before);
+  await page.locator(host+' .pena-native-group-tab[data-native-segment-id=""]').click();
+  await row('chat225').waitFor({state:'visible'});await row('chat5').waitFor({state:'visible'});
+  await unique.click();
+  await page.evaluate(()=>{folderProbe.moveGroup(['chat225'],'');folderProbe.render();folderProbe.apply();});
+  await row('chat225').waitFor({state:'visible'});
+  await page.evaluate(()=>{folderProbe.moveFolder(['chat225'],'folder:test','mine');folderProbe.render();folderProbe.apply();});
+  await row('chat225').waitFor({state:'hidden'});
+  await page.evaluate(()=>{folderProbe.removeFolder('folder:test');folderProbe.group('mine');folderProbe.render();folderProbe.apply();});
+  await row('chat225').waitFor({state:'visible'});
+  await page.evaluate(()=>{folderProbe.removeGroup('mine');folderProbe.group('');folderProbe.render();folderProbe.apply();});
+  await row('chat225').waitFor({state:'visible'});await row('chat5').waitFor({state:'visible'});
+  await page.evaluate(()=>{localStorage.setItem(folderProbe.uniqueKey(),'0');window.dispatchEvent(new StorageEvent('storage',{key:folderProbe.uniqueKey(),newValue:'0'}));});
+  assert.equal(await unique.locator('input').isChecked(),false);
+  await unique.click();
+  const savedKey=await page.evaluate(()=>folderProbe.uniqueKey());assert.match(savedKey,/~\d+\.(chats|tasks)$/);
+  await page.reload();await page.waitForFunction(()=>!!window.folderProbe);
+  await unique.waitFor();assert.equal(await unique.locator('input').isChecked(),true);
+ }, mode, true);
  for(const mode of ['chats','tasks']) for(const reminder of [false,true]) await scenario(mode+' Messenger v2 '+(reminder?'reminder':'unread and mention')+' repairs a saved zero and survives the legacy REST projection',async page=>{
   await page.evaluate(()=>folderProbe.apply());
   await page.waitForFunction(()=>{const s=__PENA_NATIVE_PREFETCH__.status();return s.loadedModes.length>0&&!s.originalActive&&!s.modeLoadPending;});
