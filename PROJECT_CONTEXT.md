@@ -9,8 +9,8 @@
 - Release date: **2026-10-01**
 - Runtime files: **19**
 - Regression suites: **87**
-- Windows artifact: _not built_
-- macOS artifact: _not built_
+- Windows artifact: `dist/PENA_Agency_Windows_v8.0.22.exe` - SHA-256: `64A0AEA97F206770AADFA1662DB5A5F6E9BBAD5E1F76A6E066FA227282ACD3EE`
+- macOS artifact: `dist/PENA_Agency_macOS_Universal_v8.0.22.dmg` - SHA-256: `A12F6B4333DC0BFEE90CFF05BE26950C5ED4EE5BE05EB4BD96A7D55949BA30EE`
 <!-- AUTO:END -->
 
 ## Назначение
@@ -29,6 +29,10 @@
 - Сокращённый профиль `time-focused` содержит ровно 16 наборов, включая доставку/согласие, разделы каталога, время, live/cache, геометрию, четыре Chrome-проверки и release-integrity. В macOS job дополнительно выполняется настоящий shell updater в изолированном HOME с управляемыми скачиваниями: согласие, смена worker, сбой и rollback, native framing. Полный пакет не запускается. Физический Mac и живой портал не проверялись.
 
 - Попытка 8.0.21 (`4c5e636537e356bfa3845da3e685c4b3389d7abc`, run `36907062484`) прошла 16/16 за 176,17 с в CI и Windows/Chrome, но публикация остановлена проверкой native messaging на macOS. BSD od читает stdin с опережением, поэтому заголовок теперь читает dd ровно по 4 байта. Тег 8.0.21 не менялся; исправление выпускается как 8.0.22.
+
+- 8.0.22 опубликована из неизменяемого коммита `bdf35fc4148ccf5b5bfb6065d4e4be083a8635c8`: https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v8.0.22. Run `36907932835` полностью успешен: CI 16/16 за 161,534 с, Windows EXE, macOS Universal DMG, Chrome ZIP и публикация. Локально перед выпуском выполнены связанные проверки доставки и release-integrity; полный пакет не запускался.
+- На macOS runner отдельно прошли: смена worker при обновлении, запрет установки без согласия/с устаревшим согласием, сохранение версии при неудачном скачивании и реальный native framing. Затем hdiutil, HFS+/UDZO, plutil, executable/LF и x86_64/arm64. Скачанные 8 release assets сверены по SHA-256/размерам GitHub; проверены ProductVersion EXE, точные 19 runtime-файлов и updater в DMG, Chrome ZIP побайтно совпадает с проверенным runtime. Отчёт: `tests/artifacts/release-verification-8.0.22.json`. В dist только текущие четыре desktop-файла, chrome-release содержит канонический CI-пакет. Пользовательские исходные скриншоты Chrome не менялись.
+- Канал обоих desktop-updater опубликован только через `main/update.json`, коммит `29eae448c6d99d887f0fb316cb8b726d870bcef3`; GitHub API и точный raw URL возвращают 8.0.22. Chrome Web Store не публиковался; живой портал и физический Mac не проверялись. Для старых macOS установок с неработающим updater нужна однократная установка DMG вручную.
 
 ## Изменения 8.0.20: быстрые даты, актуальное время и стабильная настройка
 
