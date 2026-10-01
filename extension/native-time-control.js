@@ -641,7 +641,7 @@
 			return Promise.all(paramsList.map((params, index) => callPage(params, jobs[index])));
 		};
 		while (queue.length) {
-			const wave = queue.splice(0, typeof callPages === 'function' ? Math.min(200, Math.max(1, Number(batchSize) || 50)) : 50);
+			const wave = queue.splice(0, typeof callPages === 'function' ? Math.min(150, Math.max(1, Number(batchSize) || 50)) : 50);
 			const paramsList = wave.map(job => buildElapsedRequestParams({
 				taskId: job.taskId,
 				...range,
@@ -866,7 +866,7 @@
 		const queue = [], pending = new Map(), samples = [];
 		let active = 0, peak = 0, lastStart = 0, blockedUntil = 0, wake = null, deduplicated = 0;
 		let tokens = burst, replenishedAt = Date.now();
-		let batchLimit = Math.max(concurrency,Math.min(4,batchConcurrency)), reducedReason = '', baselineMs = 0, measured = 0, slowStreak = 0;
+		let batchLimit = Math.max(concurrency,Math.min(3,batchConcurrency)), reducedReason = '', baselineMs = 0, measured = 0, slowStreak = 0;
 		const isElapsedBatch = method => method === 'batch:task.elapseditem.getlist';
 		const reduce = reason => { if (batchLimit > concurrency) { batchLimit = concurrency; reducedReason = reason; } };
 		const pump = () => {
@@ -935,6 +935,7 @@
 		return {
 			rangeFor, select,
 			clear: () => windows.clear(),
+			forgetTask: taskId => { for (const record of windows.values()) delete record.freshness[String(taskId)]; },
 			put(scope, range, data, taskIds, freshness) {
 				const key = `${scope}|${range.from}|${range.to}`;
 				const previous = windows.get(key);

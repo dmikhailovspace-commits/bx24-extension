@@ -95,7 +95,7 @@ try {
   await assert.rejects(context._callDialogTimeElapsedPages(Array.from({length:100},(_,i)=>({TASKID:i+1}))),error=>error.code==='ERROR_CORE'&&error.partialPages.filter(Boolean).length===99&&error.partialErrors[16].message==='0x000001');
   assert.equal(calls.batch.length,2);assert.equal(calls.single.length,0);
  });
- await phase('558 legacy tasks stay complete with at most four concurrent 50-read batches',async()=>{
+ await phase('558 legacy tasks stay complete with at most three concurrent 50-read batches',async()=>{
   let active=0,peak=0;
   const {context,calls}=setup((batch,callback)=>{
    active++;peak=Math.max(peak,active);
@@ -104,7 +104,7 @@ try {
   const params=Array.from({length:558},(_,i)=>({TASKID:i+1}));
   const rows=await context._callDialogTimeElapsedPages(params);
   assert.deepEqual(Array.from(rows,row=>row.data),params.map(row=>row.TASKID));
-  assert.equal(peak,4);assert.equal(active,0);assert.equal(calls.batch.length,12);assert.ok(calls.batch.every(batch=>batch.length<=50));
+  assert.equal(peak,3);assert.equal(active,0);assert.equal(calls.batch.length,12);assert.ok(calls.batch.every(batch=>batch.length<=50));
   return {tasks:558,batches:12,maxActive:peak,missing:0,duplicates:0};
  });
  await phase('a task-specific batch error recovers through one individual read without replaying siblings',async()=>{
@@ -119,14 +119,14 @@ try {
   await assert.rejects(context._callDialogTimeElapsedPages(jobs.map(j=>j.params),{verifyAccess:true}),error=>error.partialPages.filter(Boolean).length===49&&error.partialErrors[16].elapsedIndividualConfirmed===true&&error.partialErrors[16].message==='0x000001');
   assert.equal(calls.single.length,1);assert.equal(calls.batch.length,1);
  });
- await phase('parallel pressure drains the other three lanes and prevents all subsequent waves',async()=>{
+ await phase('parallel pressure drains the other two lanes and prevents all subsequent waves',async()=>{
   let active=0;
   const {context,calls}=setup((batch,callback,round)=>{
    active++;setTimeout(()=>{active--;callback(round===1?{error:()=> 'QUERY_LIMIT_EXCEEDED'}:Object.fromEntries(Object.entries(batch).map(([key,job])=>[key,success(job.params.TASKID)])));},round===1?2:20);
   });
-  await assert.rejects(context._callDialogTimeElapsedPages(Array.from({length:558},(_,i)=>({TASKID:i+1}))),error=>error.code==='QUERY_LIMIT_EXCEEDED'&&error.partialPages.filter(Boolean).length===150);
-  assert.equal(calls.batch.length,4);assert.equal(calls.single.length,0);assert.equal(active,0);
-  return {batches:4,retainedPages:150,stillActive:0};
+  await assert.rejects(context._callDialogTimeElapsedPages(Array.from({length:558},(_,i)=>({TASKID:i+1}))),error=>error.code==='QUERY_LIMIT_EXCEEDED'&&error.partialPages.filter(Boolean).length===100);
+  assert.equal(calls.batch.length,3);assert.equal(calls.single.length,0);assert.equal(active,0);
+  return {batches:3,retainedPages:100,stillActive:0};
  });
 } finally {
  mkdirSync('tests/artifacts',{recursive:true});writeFileSync('tests/artifacts/native-batch-backpressure-report.json',JSON.stringify({phases},null,2));console.log(JSON.stringify({phases},null,2));

@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.25';
+	window.__ANITREC_RUNNING__ = '8.0.26';
 
-	const VER = '8.0.25';
+	const VER = '8.0.26';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -1410,7 +1410,7 @@
 	let _dialogRestQueue = null;
 	function _scheduleBxRest(method, params, run, options = {}) {
 		if (!_dialogRestQueue && _PENA_TIME_CONTROL?.createRequestQueue) {
-			_dialogRestQueue = _PENA_TIME_CONTROL.createRequestQueue({batchConcurrency:4});
+			_dialogRestQueue = _PENA_TIME_CONTROL.createRequestQueue({batchConcurrency:3});
 			window.__PENA_REST_DIAGNOSTICS__ = { snapshot: () => ({ ..._dialogRestQueue.snapshot(), contacts: _getDialogTimeContactDiagnostics() }) };
 		}
 		const read = !/\.(?:add|update|delete|start|stop)$/.test(method) &&
@@ -4717,6 +4717,7 @@
 	}
 
 	function _getDialogTimeTaskEligibilityForDisplay(taskId) {
+		if (_isDialogTimeTaskExcluded(taskId)) return false;
 		const fresh = _getFreshDialogTimeTaskEligibility(taskId);
 		if (fresh != null) return fresh;
 		// Keep already rendered totals stable while the bounded title/eligibility
@@ -4781,7 +4782,7 @@
 		return preference.all || preference.ids.includes(String(groupId));
 	}
 	function _isDialogTimeProjectTask(taskId) {
-		return !!_dialogTimeCatalogCursor && _dialogTimeCatalogScope === _getDialogTimeProjectScopeKey() && _dialogTimeProjectTaskIds.has(String(taskId));
+		return !_isDialogTimeTaskExcluded(taskId) && !!_dialogTimeCatalogCursor && _dialogTimeCatalogScope === _getDialogTimeProjectScopeKey() && _dialogTimeProjectTaskIds.has(String(taskId));
 	}
 	function _getDialogTimeContactExceptionTaskIds(range = _getDialogTimeSelectedRange(), { includeReceipts = false, visits = null } = {}) {
 		const ids = new Set();
@@ -4807,6 +4808,7 @@
 	}
 	function _isDialogTimeWritableTask(taskId, dateKey = _getDialogTimeSelectedRange()?.from) {
 		const id = String(taskId || '');
+		if (_isDialogTimeTaskExcluded(id)) return false;
 		if (!/^\d+$/.test(id) || !_getDialogTimeIdentityScopeKey() || !_getDialogTimeProjectScopeKey()) return false;
 		return _isDialogTimeProjectTask(id) || _getDialogTimeContactExceptionTaskIds({from:dateKey,to:dateKey}).has(id);
 	}
@@ -5126,6 +5128,44 @@
 		load();
 	}
 
+	function _isDialogTimeTaskExcluded(taskId) {
+		const id = String(taskId), scope = _getDialogTimeIdentityScopeKey();
+		const proof = _isDialogTimeTaskExcluded.proofs?.get(`${scope}:${id}`);
+		return !!proof && Date.now() - proof.at < 300000 && proof.revision === (_dialogTimeTaskRevisions.get(id) || 0);
+	}
+	async function _confirmDialogTimeTaskUnavailable(taskId, options = {}) {
+		const id = String(taskId), identity = _getDialogTimeIdentityScopeKey();
+		const revision = _dialogTimeTaskRevisions.get(id) || 0;
+		const current = () => identity === _getDialogTimeIdentityScopeKey() && revision === (_dialogTimeTaskRevisions.get(id) || 0) && (!options.isCurrent || options.isCurrent());
+		if (_isDialogTimeTaskExcluded(id)) return true;
+		try {
+			await _callBxRestPageWithTimeout('tasks.task.get',{taskId:Number(id),select:['ID','TITLE']},12000,{isCurrent:current});
+			return false;
+		} catch (error) {
+			// A time-journal denial alone does not prove the task is invisible.
+			// Never exclude tasks on network/auth/scope/parameter or generic errors.
+			const code = String(error?.code || ''), message = String(error?.description || error?.message || '');
+			const taskError = /^(?:0|ERROR_CORE|TASK_NOT_FOUND|NOT_FOUND|0x000001|0x000004|0x100002)$/i.test(code) ||
+				(code === 'ACCESS_DENIED' && /^(?:access denied\.?|доступ запрещен\.?)$/i.test(message));
+			if (!current() || !taskError || !_PENA_TIME_CONTROL.isElapsedAccessError(error) || /method|метод/i.test(message)) return false;
+			(_isDialogTimeTaskExcluded.proofs ||= new Map()).set(`${identity}:${id}`,{at:Date.now(),revision});
+			_loadDialogTimeRange.windows?.forgetTask(id);
+			_dialogTimeTaskLogEvidence.delete(id);
+			for (const [key,record] of Array.from(_dialogTimeCache)) {
+				if (!record.data || !record.range || key !== _getDialogTimeCacheKey(record.range)) continue;
+				const allowed = _getDialogTimeWorkingTaskIds(record.range), freshness = {...record.taskFreshness};
+				delete freshness[id];
+				const checkedTasks = allowed.filter(task => freshness[task] && !freshness[task].unavailable && freshness[task].revision === (_dialogTimeTaskRevisions.get(task) || 0)).length;
+				const complete = checkedTasks === allowed.length;
+				const data = {...record.data,..._PENA_TIME_CONTROL.replaceElapsedTasks(record.data,{items:[]},[id]),coverage:{checkedTasks,totalTasks:allowed.length,complete}};
+				const recovered = complete && (!record.error || record.errorCode === 'TIME_TASKS_UNAVAILABLE');
+				_setDialogTimeCacheRecord(key,{...record,data,taskFreshness:freshness,hasCompleteSnapshot:complete,
+					...(recovered ? {error:'',errorCode:'',failedAt:0,status:record.status === 'loading' ? 'loading' : 'ready'} : {})});
+				if (key !== options.key) _dialogTimeRangeRevisions.set(key,(_dialogTimeRangeRevisions.get(key)||0)+1);
+			}
+			return true;
+		}
+	}
 	function _getDialogTimeWorkingTaskIds(range = _dialogTimeRange) {
 		const scope = _getDialogTimeProjectScopeKey();
 		if (!scope || !_getDialogTimeIdentityScopeKey()) return [];
@@ -5138,7 +5178,7 @@
 		if (pending?.scope === _getDialogTimeIdentityScopeKey() && inRange(pending.dateKey) && /^\d+$/.test(String(pending.taskId))) ids.add(String(pending.taskId));
 		const tracker = _readDialogTimeTracker({fresh:true});
 		if (tracker && (inRange(tracker.dateKey) || tracker.saveSegments?.some(segment => inRange(segment.dateKey)))) ids.add(String(tracker.taskId));
-		return Array.from(ids).filter(id => !_receiveDialogTimeElapsedMutation.deleted?.has(`${_getDialogTimeIdentityScopeKey()}:${id}`)).sort((a,b) => Number(a)-Number(b));
+		return Array.from(ids).filter(id => !_isDialogTimeTaskExcluded(id) && !_receiveDialogTimeElapsedMutation.deleted?.has(`${_getDialogTimeIdentityScopeKey()}:${id}`)).sort((a,b) => Number(a)-Number(b));
 	}
 	function _getDialogTaskKeysetCursor(rows, afterId = 0) {
 		let cursor = Number(afterId) || 0;
@@ -15493,7 +15533,9 @@ if (_presetChannel) {
 
 	function _filterDialogTimeDataByEligibility(data) {
 		// Eligibility gates new work, not entries already confirmed by Bitrix.
-		return data || null;
+		if (!data) return null;
+		const items = (data.items || []).filter(item => !_isDialogTimeTaskExcluded(item.taskId));
+		return items.length === (data.items || []).length ? data : {...data,..._PENA_TIME_CONTROL.aggregateElapsedItems(items)};
 	}
 
 	function _readDialogTimeManualDraft() {
@@ -17631,14 +17673,14 @@ if (_presetChannel) {
 	}
 
 	async function _callDialogTimeElapsedPages(paramsList, options = {}) {
-		// Use up to four adaptive REST lanes for large legacy journals. Each actual
+		// Use up to three adaptive REST lanes for large legacy journals. Each actual
 		// Bitrix batch still has at most 50 reads and shares the global rate limiter.
 		if (Array.isArray(paramsList) && paramsList.length > 50) {
 			const pages = new Array(paramsList.length), errors = new Array(paramsList.length);
 			let pressure = false;
 			const laneOptions = {...options,isCurrent:() => !pressure && (!options.isCurrent || options.isCurrent())};
-			for (let offset = 0; offset < paramsList.length; offset += 200) {
-				const chunks = Array.from({length:4}, (_,lane) => paramsList.slice(offset+lane*50,offset+(lane+1)*50)).filter(chunk => chunk.length);
+			for (let offset = 0; offset < paramsList.length; offset += 150) {
+				const chunks = Array.from({length:3}, (_,lane) => paramsList.slice(offset+lane*50,offset+(lane+1)*50)).filter(chunk => chunk.length);
 				const results = await Promise.allSettled(chunks.map(chunk => _callDialogTimeElapsedPages(chunk, laneOptions).catch(error => {
 					if (_isBxRestBatchPressureError(error)) pressure = true;
 					throw error;
@@ -17803,7 +17845,7 @@ if (_presetChannel) {
 	let _dialogTimeElapsedEventTimer = null;
 	let _dialogTimeElapsedEventScope = '';
 	const _DIALOG_TIME_FIRST_WAVE_SIZE = 16;
-	const _DIALOG_TIME_WAVE_SIZE = 200;
+	const _DIALOG_TIME_WAVE_SIZE = 150;
 	function _invalidateDialogTimeTaskSnapshot(taskId) {
 		const id = String(taskId || '');
 		if (!/^\d+$/.test(id)) return false;
@@ -18114,7 +18156,7 @@ if (_presetChannel) {
 				const unavailable = new Map();
 				const dispatchedAt = new Map();
 				const batch = await _PENA_TIME_CONTROL.loadElapsedItems({
-					from: readRange.from, to: readRange.to, userId, taskIds: wave, batchSize:200,
+					from: readRange.from, to: readRange.to, userId, taskIds: wave, batchSize:150,
 					...(typeof _getDialogTimeCalendarZone === 'function' ? _getDialogTimeCalendarZone() : {}),
 					callPages: async params => {
 						const rememberDispatch = responses => {
@@ -18130,8 +18172,16 @@ if (_presetChannel) {
 							if (_isBxRestBatchPressureError(error) || !error.partialPages || !error.partialErrors) throw error;
 							const missing = params.map((_, index) => index).filter(index => !error.partialPages[index]);
 							if (!missing.length || !missing.every(index => _PENA_TIME_CONTROL.isElapsedAccessError(error.partialErrors[index]) || error.partialErrors[index]?.code === 'ERROR_CORE')) throw error;
-							missing.forEach(index => unavailable.set(String(params[index][0]), _PENA_TIME_CONTROL.describeElapsedError(error.partialErrors[index])));
-							diagnostics.unavailableTasks = (diagnostics.unavailableTasks || 0) + missing.length;
+							await _runDialogRecentJobs(missing,async index => {
+								const id = String(params[index][0]);
+								if (await _confirmDialogTimeTaskUnavailable(id,{key,isCurrent:current})) {
+									const position = taskIds.indexOf(id); if (position >= 0) taskIds.splice(position,1);
+									workingTaskIdSet.delete(id); delete freshness[id];
+									data = {...data,..._PENA_TIME_CONTROL.replaceElapsedTasks(data,{items:[]},[id])};
+									diagnostics.excludedTasks = (diagnostics.excludedTasks || 0)+1;
+								} else unavailable.set(id,_PENA_TIME_CONTROL.describeElapsedError(error.partialErrors[index]));
+							},2);
+							diagnostics.unavailableTasks = (diagnostics.unavailableTasks || 0) + missing.filter(index => unavailable.has(String(params[index][0]))).length;
 							diagnostics.confirmedTaskErrors = (diagnostics.confirmedTaskErrors || 0) + missing.filter(index => error.partialErrors[index]?.elapsedIndividualConfirmed).length;
 							diagnostics.taskErrorCodes = [...new Set([...(diagnostics.taskErrorCodes || []), ...missing.map(index =>
 								String(error.partialErrors[index]?.code || 'REST_ERROR') + ':' + (String(error.partialErrors[index]?.message || '').match(/0x[0-9a-f]+|ACTION_NOT_ALLOWED/i)?.[0] || ''))])].slice(0,8);
@@ -18141,7 +18191,7 @@ if (_presetChannel) {
 				});
 				if (!current()) return _dialogTimeCache.get(key)?.data || null;
 				const accepted = new Set(wave.filter(id => workingTaskIdSet.has(id) && !unavailable.has(id) && taskRevisions.get(id) === (_dialogTimeTaskRevisions.get(id) || 0)));
-				if (accepted.size) base.hasVerifiedData = true;
+				if (accepted.size || !taskIds.length) base.hasVerifiedData = true;
 				accepted.forEach(id => { freshness[id] = { at: dispatchedAt.get(id) || waveStartedAt, revision: taskRevisions.get(id) }; });
 				publishWindow(batch, accepted, freshness);
 				const merged = _PENA_TIME_CONTROL.replaceElapsedTasks(data, windows.select(batch, normalized), accepted);
@@ -18188,7 +18238,7 @@ if (_presetChannel) {
 	}
 
 	function _getDialogTimeFailures(record) {
-		return Object.entries(record?.taskFreshness || {}).filter(([id,proof]) => /^[1-9]\d*$/.test(id) && proof.unavailable)
+		return Object.entries(record?.taskFreshness || {}).filter(([id,proof]) => /^[1-9]\d*$/.test(id) && proof.unavailable && !_isDialogTimeTaskExcluded(id))
 			.map(([taskId,proof]) => ({taskId,...(proof.failure || _PENA_TIME_CONTROL.describeElapsedError(proof))}));
 	}
 	function _renderDialogTimeFailures(target,record) {
@@ -18218,7 +18268,7 @@ if (_presetChannel) {
 		const queue = _dialogRestQueue?.snapshot();
 		// Failed task IDs and sanitized server reasons are user-requested diagnostics.
 		// Never export titles, task contents, portal, auth or URLs.
-		const fields = ['strategy','tasks','pendingTasks','pages','attemptedGlobalPages','fallbackReason','from','to','durationMs','state','errorCode','detailCode','unavailableTasks','taskErrorCodes','confirmedTaskErrors'];
+		const fields = ['strategy','tasks','pendingTasks','pages','attemptedGlobalPages','fallbackReason','from','to','durationMs','state','errorCode','detailCode','unavailableTasks','taskErrorCodes','confirmedTaskErrors','excludedTasks'];
 		return JSON.stringify({ version:VER, time:read ? Object.fromEntries(fields.filter(key => read[key] != null).map(key => [key,read[key]])) : null,
 			panel:{from:range.from,to:range.to,status:record?.status || 'empty',complete:record?.hasCompleteSnapshot === true && record.data?.coverage?.complete !== false,
 				errorCode:record?.errorCode || '',coverage:record?.data?.coverage || null,unavailableTasks:Object.values(record?.taskFreshness || {}).filter(proof => proof.unavailable).length,
@@ -28641,9 +28691,9 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .pena-native-managed-viewport.--pena-catalog-locked>.pena-native-managed-list{filter:blur(2px);opacity:.48;pointer-events:none!important;user-select:none!important}
 .pena-native-traversal-active .bx-im-list-recent-item__wrap,.pena-native-traversal-active .bx-im-list-item,.pena-native-traversal-active .bx-messenger-cl-item{visibility:hidden!important;pointer-events:none!important}
 .pena-native-traversal-active .pena-native-traversal-visible{visibility:visible!important;pointer-events:auto!important}
-.pena-native-load-guard{position:absolute;inset:0;z-index:40;display:flex;align-items:flex-start;justify-content:center;padding:22px 14px 14px;background:rgba(255,255,255,.7);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);box-sizing:border-box;cursor:wait;overflow:hidden}
+.pena-native-load-guard{position:absolute;inset:0;z-index:40;display:flex;align-items:flex-start;justify-content:center;padding:22px 14px 14px;background:rgba(255,255,255,.7);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);box-sizing:border-box;cursor:default;overflow:hidden}
 .pena-native-load-guard[hidden]{display:none!important}.pena-native-load-card{width:min(280px,calc(100% - 20px));padding:14px;border:1px solid #dbe3ec;border-radius:7px;background:#fff;color:#263241;box-shadow:0 8px 22px rgba(15,23,42,.12);box-sizing:border-box}.pena-native-load-heading{font:700 13px/18px system-ui,-apple-system,Segoe UI,Roboto,Arial;color:#263241}.pena-native-load-progress{height:5px;margin-top:12px;overflow:hidden;border-radius:3px;background:#e7edf4}.pena-native-load-progress>span{display:block;width:0;height:100%;border-radius:inherit;background:#2f80ed;transition:width .18s ease-out}.pena-native-load-progress.--indeterminate>span{width:38%;animation:pena-native-load-indeterminate .8s ease-in-out infinite}.pena-native-load-value{margin-top:8px;text-align:center;font:700 11px/14px system-ui,-apple-system,Segoe UI,Roboto,Arial;color:#526071;font-variant-numeric:tabular-nums}.pena-native-load-guard.--complete .pena-native-load-progress>span{transition:none}@keyframes pena-native-load-indeterminate{0%{transform:translateX(-120%)}100%{transform:translateX(365%)}}
-.pena-native-original-loading-host{position:relative!important}.pena-native-original-load-guard{position:absolute;inset:0;z-index:45;display:flex;align-items:flex-start;justify-content:center;padding:72px 14px 14px;background:rgba(255,255,255,.78);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);box-sizing:border-box;cursor:wait;pointer-events:auto;overflow:hidden}
+.pena-native-original-loading-host{position:relative!important}.pena-native-original-load-guard{position:absolute;inset:0;z-index:45;display:flex;align-items:flex-start;justify-content:center;padding:72px 14px 14px;background:rgba(255,255,255,.78);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);box-sizing:border-box;cursor:default;pointer-events:auto;overflow:hidden}
 .pena-native-remote-row{position:relative!important;inset:auto!important;transform:none!important;display:block!important;width:auto!important;height:64px!important;min-height:64px!important;content-visibility:auto;contain-intrinsic-size:64px;cursor:pointer;background:#fff}
 .pena-native-remote-row>.bx-im-list-recent-item__container,.pena-native-remote-row>.bx-im-list-item__container{display:grid!important;grid-template-columns:40px minmax(0,1fr) minmax(38px,max-content)!important;align-items:center!important;width:100%!important;max-width:100%!important;height:64px!important;min-height:64px!important;padding:7px 10px!important;gap:10px!important;overflow:hidden!important;box-sizing:border-box!important}
 .pena-native-remote-avatar{position:relative;display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;flex:0 0 40px;overflow:hidden;border-radius:50%;background:#e8eef5;color:#44566c;font:800 12px/40px system-ui,-apple-system,Segoe UI,Roboto,Arial}

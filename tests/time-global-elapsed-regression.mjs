@@ -41,14 +41,15 @@ function fixture(count=4149) {
   _readDialogTaskTimeTrackingFlag:()=>true,_rememberDialogTimeTaskChat:()=>{},_setDialogTimeTaskEligibility:()=>{},
   _dialogTimeForcedRefreshes:new Map(),_dialogTimeRangeRechecks:new Map(),_dialogTimePanelRefreshes:new Map(),_dialogTimeCatalogCursor:1,_dialogTimeCatalogScope:state.scope,
   _DIALOG_TIME_FIRST_WAVE_SIZE:16,_DIALOG_TIME_WAVE_SIZE:50,_getDialogTimeIdentityScopeKey:()=>state.identity,_getDialogTimeProjectScopeKey:()=>state.scope,_getCurrentBitrixUserId:()=>state.user,
-  _getDialogTimeWorkingTaskIds:()=>ids.slice(),_getDialogTimeFriendlyError:e=>e.message,_isBxRestBatchPressureError:e=>e.code==='TIMEOUT',
+  _getDialogTimeWorkingTaskIds:()=>ids.filter(id=>!c._isDialogTimeTaskExcluded(id)),_getDialogTimeFriendlyError:e=>e.message,_isBxRestBatchPressureError:e=>e.code==='TIMEOUT',
+  _runDialogRecentJobs:async(jobs,worker)=>{for(const job of jobs)await worker(job);},
   _queueDialogTimeUiSync:()=>{},_loadDialogTimeTaskTitles:async()=>{},_sleepDialogControl:async()=>{},
   _ensureDialogTimeProjectCatalog:async()=>{state.catalogCalls++;if(state.catalogHold)await state.catalogHold.promise;c._dialogTimeCatalogCursor=1;c._dialogTimeCatalogScope=state.scope;return true;},
-  _callBxRestPageWithTimeout:async(method,params,_timeout,options)=>{assert.equal(method,'task.elapseditem.getlist');assert.equal(options.isCurrent(),true);return api.call(params);},
+  _callBxRestPageWithTimeout:async(method,params,_timeout,options)=>{assert.equal(options.isCurrent(),true);if(method==='tasks.task.get')return{data:{task:{id:params.taskId}}};assert.equal(method,'task.elapseditem.getlist');return api.call(params);},
   _callDialogTimeElapsedPages:async params=>{state.pointCalls.push(...params.map(p=>p[0]));return Promise.all(params.map(api.call));},
   _isDialogTimeProjectTask:id=>ids.includes(String(id)),_buildDialogTimeWriteFields:(_seconds,date)=>({CREATED_DATE:`${date}T12:00:00+03:00`}),
  });
- vm.runInContext(['_callDialogTimeGlobalElapsedPage','_getDialogTimeCacheKey','_hasDialogTimeVerifiedData','_setDialogTimeCacheRecord','_loadDialogTimeRange','_invalidateDialogTimeCachesForDates','_applyDialogTimeOptimisticEntry','_publishDialogTimeTaskIndexRows'].map(extract).join('\n'),c);
+ vm.runInContext(['_isDialogTimeTaskExcluded','_confirmDialogTimeTaskUnavailable','_callDialogTimeGlobalElapsedPage','_getDialogTimeCacheKey','_hasDialogTimeVerifiedData','_setDialogTimeCacheRecord','_loadDialogTimeRange','_invalidateDialogTimeCachesForDates','_applyDialogTimeOptimisticEntry','_publishDialogTimeTaskIndexRows'].map(extract).join('\n'),c);
  return{api,state,c,ids,load:options=>c._loadDialogTimeRange(range,options),record:()=>c._dialogTimeCache.get(c._getDialogTimeCacheKey(range))};
 }
 await phase('global321 records use7 keyset pages; other users/days excluded and zero-duration IDs retained',async()=>{
@@ -246,6 +247,32 @@ await phase('documented Desktop task access errors do not stop the journal at a 
   return partialPages;
  };
  await assert.rejects(f.load());assert.equal(f.record().data.entryCount,79);assert.equal(f.state.pointCalls.length,80);assert.equal(f.record().hasCompleteSnapshot,false);
+});
+await phase('only confirmed view denial excludes tasks; transient errors, scope and late replies cannot hide them',async()=>{
+ const f=fixture(1);f.api.state.mode='unsupported';f.api.state.rows=[raw(1)];await f.load();
+ const original=f.c._callBxRestPageWithTimeout;
+ const deny=error=>{f.c._callBxRestPageWithTimeout=async()=>{throw Object.assign(new Error(error.message),{code:error.code});};};
+ for(const error of [{code:'TIMEOUT',message:'Timeout'},{code:'INVALID_CREDENTIALS',message:'Access denied'},{code:'insufficient_scope',message:'Access denied'},{code:'ERROR_CORE',message:'Unknown failure'},{code:'ERROR_CORE',message:'0x000100'},{code:'ACCESS_DENIED',message:'Available only on commercial plans'},{code:'ERROR_METHOD_NOT_FOUND',message:'Method not found'}]){
+  deny(error);assert.equal(await f.c._confirmDialogTimeTaskUnavailable('1'),false,JSON.stringify(error));assert.equal(f.c._isDialogTimeTaskExcluded('1'),false);
+ }
+ deny({code:'0',message:'Access denied.'});assert.equal(await f.c._confirmDialogTimeTaskUnavailable('1'),true);
+ assert.equal(f.record().data.totalSeconds,0);assert.equal(f.record().data.coverage.complete,true);assert.equal(f.record().data.coverage.totalTasks,0);
+ const proof=f.c._isDialogTimeTaskExcluded.proofs.get('portal~7:1');proof.at-=300001;
+ assert.equal(f.c._isDialogTimeTaskExcluded('1'),false);f.c._callBxRestPageWithTimeout=original;
+ await f.load();assert.equal(f.record().data.totalSeconds,60,'Expired denial must not reuse a removed window proof');
+ deny({code:'ERROR_CORE',message:'0x000001'});await f.c._confirmDialogTimeTaskUnavailable('1');
+ f.state.identity='other~8';assert.equal(f.c._isDialogTimeTaskExcluded('1'),false);f.state.identity='portal~7';
+ f.c._dialogTimeTaskRevisions.set('1',1);assert.equal(f.c._isDialogTimeTaskExcluded('1'),false);
+ assert.equal(await f.c._confirmDialogTimeTaskUnavailable('1',{isCurrent:()=>false}),false);
+ assert.equal(f.c._isDialogTimeTaskExcluded('1'),false);
+ return {nonExcludingErrors:7,removedStaleEntries:true,expiryRecovery:true,identityAndRevisionFenced:true};
+});
+await phase('all tasks becoming invisible is a complete empty accessible result',async()=>{
+ const f=fixture(1);f.api.state.mode='unsupported';
+ f.c._callDialogTimeElapsedPages=async params=>{throw Object.assign(new Error('Access denied'),{partialPages:params.map(()=>null),partialErrors:params.map(()=>({code:'ERROR_CORE',message:'Access denied'}))});};
+ const original=f.c._callBxRestPageWithTimeout;
+ f.c._callBxRestPageWithTimeout=async(method,...args)=>{if(method==='tasks.task.get')throw Object.assign(new Error('Access denied.'),{code:'0'});return original(method,...args);};
+ await f.load();assert.equal(f.record().data.totalSeconds,0);assert.equal(f.record().hasCompleteSnapshot,true);assert.equal(f.record().data.coverage.totalTasks,0);assert.equal(f.record().error,'');
 });
 await phase('selected day never waits for unrelated monthly global entries',async()=>{
  const f=fixture(100);f.api.state.rows=[...Array.from({length:3000},(_,i)=>raw(i+1,1,7,'2026-09-07')),raw(3001,1)];

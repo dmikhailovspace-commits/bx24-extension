@@ -18,6 +18,9 @@ const source=raw.replace(anchor,anchor+`
   readKeys:()=>Array.from(_dialogTimeInFlight.keys()),
   select:range=>_setDialogTimeRange(range),
   warm:()=>_loadDialogTimeRange(window.dateProbe.range()),
+  refresh:()=>_loadDialogTimeRange(window.dateProbe.range(),{force:true}),
+  excluded:id=>_isDialogTimeTaskExcluded(id),
+  taskChanged:id=>_dialogTimeTaskRevisions.set(id,(_dialogTimeTaskRevisions.get(id)||0)+1),
   legacy(){_callDialogTimeGlobalElapsedPage.capabilities ||= new Map();_callDialogTimeGlobalElapsedPage.capabilities.set(_getDialogTimeIdentityScopeKey(),{supported:false,reason:'controlled-legacy-portal'});},
   taskCount:()=>_getDialogTimeWorkingTaskIds(window.dateProbe.range()).length,
   clear(){_dialogTimeCache.clear();_loadDialogTimeRange.windows?.clear();},
@@ -64,6 +67,7 @@ try {
   };
   const method=BX.rest.callMethod;
   BX.rest.callMethod=function(name,params,callback){
+   if(name==='tasks.task.get'&&state.viewDenied?.includes(String(params.taskId))){state.viewChecks=(state.viewChecks||0)+1;queueMicrotask(()=>callback({error:()=> '0',error_description:()=> 'Access denied.'}));return;}
    if(name!=='task.elapseditem.getlist')return method.call(this,name,params,callback);
    note(params);const deliver=()=>callback(result(params));
    if(held(params))state.held.push(deliver);else queueMicrotask(deliver);
@@ -185,10 +189,10 @@ try {
     const panel=document.querySelector('.pena-native-time-panel'),overlay=panel.querySelector('.pena-native-time-loading-overlay');
     const box=overlay.getBoundingClientRect();
     return{width:innerWidth,total:panel.querySelector('.pena-native-time-total-value').textContent,today:document.querySelector('.pena-native-time-button-label').textContent,
-     overlayVisible:!overlay.hidden,headInert:panel.querySelector('.pena-native-time-panel-head').inert,scrollInert:panel.querySelector('.pena-native-time-scroll').inert,
+     overlayVisible:!overlay.hidden,cursor:getComputedStyle(overlay).cursor,headInert:panel.querySelector('.pena-native-time-panel-head').inert,scrollInert:panel.querySelector('.pena-native-time-scroll').inert,
      filter:getComputedStyle(panel.querySelector('.pena-native-time-scroll')).filter,opacity:Number(getComputedStyle(panel.querySelector('.pena-native-time-scroll')).opacity),left:box.left,right:box.right,scrollWidth:panel.scrollWidth,clientWidth:panel.clientWidth};
    });
-   assert.equal(snapshot.overlayVisible,true);assert.equal(snapshot.headInert,true);assert.equal(snapshot.scrollInert,true);assert.equal(snapshot.filter,'none');assert.ok(snapshot.opacity>0&&snapshot.opacity<1,'Loading content stays visibly dimmed without a blur pass');
+   assert.equal(snapshot.overlayVisible,true);assert.equal(snapshot.cursor,'default');assert.equal(snapshot.headInert,true);assert.equal(snapshot.scrollInert,true);assert.equal(snapshot.filter,'none');assert.ok(snapshot.opacity>0&&snapshot.opacity<1,'Loading content stays visibly dimmed without a blur pass');
    assert.match(snapshot.total,/^≥ /);assert.doesNotMatch(snapshot.today,/10\s*мин|10\s*м/);
    assert.ok(snapshot.left>=0&&snapshot.right<=width+1);assert.ok(snapshot.scrollWidth<=snapshot.clientWidth+1);
    await page.screenshot({path:`tests/artifacts/time-date-loading-${width}.png`});layouts.push(snapshot);
@@ -306,6 +310,30 @@ try {
   await page.locator('.pena-native-time-partial-warning').waitFor({state:'hidden'});
   assert.ok((await page.locator('.pena-native-time-stats-duration').allTextContents()).every(text=>!text.includes('≥')));
   return {days:30,failedTasks:2,confirmedSubtotal:1800,recovery:true};
+ });
+ await phase('confirmed task-view denial removes old entries and yields complete accessible totals without repeated reads',async()=>{
+  await page.locator('.pena-native-time-view-tab[data-view="day"]').click();
+  await page.evaluate(()=>dateProbe.select({from:dateBackend.today,to:dateBackend.today}));await ready();
+  assert.equal(await seconds(),1500);
+  const before=await page.evaluate(()=>{
+   dateBackend.viewDenied=['101'];dateBackend.failTask='101';dateBackend.failDescription='Access denied';
+   return dateProbe.taskCount();
+  });
+  await page.evaluate(()=>dateProbe.refresh());await ready();
+  assert.equal(await seconds(),900);assert.equal(await page.locator('.pena-native-time-total-value').innerText(),'15 мин');
+  assert.equal(await page.evaluate(()=>dateProbe.excluded('101')),true);
+  assert.equal(await page.evaluate(()=>dateProbe.taskCount()),before-1);
+  assert.equal(await page.locator('.pena-native-time-partial-warning').isVisible(),false);
+  assert.equal(await page.evaluate(()=>dateProbe.record().data.items.some(item=>String(item.taskId)==='101')),false);
+  const calls=await page.evaluate(()=>({elapsed:dateBackend.calls.length,checks:dateBackend.viewChecks}));
+  await page.locator('.pena-native-time-view-tab[data-view="stats30"]').click();await ready();
+  assert.equal(await seconds(),2700);assert.equal(await page.locator('.pena-native-time-total-value').innerText(),'45 мин');
+  const later=await page.evaluate(n=>({ids:dateBackend.calls.slice(n).map(call=>call.taskId),checks:dateBackend.viewChecks}),calls.elapsed);
+  assert.ok(!later.ids.includes('101'));assert.equal(later.checks,calls.checks);
+  await page.evaluate(()=>{dateBackend.viewDenied=[];dateBackend.failTask='';dateBackend.failDescription='';dateProbe.taskChanged('101');});
+  await page.evaluate(()=>dateProbe.warm());await ready();
+  assert.equal(await page.evaluate(()=>dateProbe.excluded('101')),false);assert.equal(await seconds(),19500);
+  return {excluded:1,completeDaySeconds:900,completeMonthSeconds:2700,restoredMonthSeconds:19500,repeatDeniedReads:0};
  });
  await phase('saving a narrower project selection never lets its preview marker block a complete read',async()=>{
   await page.evaluate(()=>dateProbe.select({from:dateBackend.today,to:dateBackend.today}));await ready();
