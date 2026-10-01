@@ -83,7 +83,7 @@ function ShowBalloon {}
  const result=run(['-ApprovedVersion','99.1.2']);assert.equal(result.status,0,result.stdout+result.stderr);assert(existsSync(join(temp,'applied')));
  const frame=Buffer.from(JSON.stringify({action:'status'}));const header=Buffer.alloc(4);header.writeUInt32LE(frame.length);
  const host=spawnSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',resolve('installers/windows/pena_host.ps1')],{input:Buffer.concat([header,frame]),env:{...process.env,LOCALAPPDATA:temp},windowsHide:true,timeout:10000});
- assert.equal(host.status,0);assert.equal(host.stdout.readUInt32LE(0),host.stdout.length-4);assert.equal(JSON.parse(host.stdout.subarray(4)).protocol,1);
+ assert.equal(host.status,0,`native status=${host.status}, stderr=${host.stderr}, stdout=${host.stdout.toString('hex')}`);assert.equal(host.stdout.readUInt32LE(0),host.stdout.length-4);assert.equal(JSON.parse(host.stdout.subarray(4)).protocol,1);
  return {defaultInstalls:0,shortcutInstalls:0,staleApprovalInstalls:0,approvedInstalls:1,nativeFraming:true};
 });
 await phase('macOS real updater migrates changing worker name; missing staged worker preserves installed version',async()=>{
@@ -120,7 +120,7 @@ cp "$PENA_FIXTURE/$relative" "$out"
  assert(existsSync(join(installed,newWorker)));assert(!existsSync(join(installed,oldWorker)));
  const frame=Buffer.from('{"action":"status"}'),header=Buffer.alloc(4);header.writeUInt32LE(frame.length);
  const host=spawnSync('/bin/bash',[join(installed,'pena_updater.sh'),'--native-host','chrome-extension://hlhefpcndfepdlgbjcokkcodcbfnnepm/'],{input:Buffer.concat([header,frame]),env,timeout:10000});
- assert.equal(host.status,0);assert.equal(host.stdout.readUInt32LE(0),host.stdout.length-4);assert.equal(JSON.parse(host.stdout.subarray(4)).protocol,1);
+ assert.equal(host.status,0,`native status=${host.status}, stderr=${host.stderr}, stdout=${host.stdout.toString('hex')}`);assert.equal(host.stdout.readUInt32LE(0),host.stdout.length-4);assert.equal(JSON.parse(host.stdout.subarray(4)).protocol,1);
  return {changedWorker:true,defaultInstalls:0,staleApprovalInstalls:0,failedDownloadRetainsVersion:true,nativeFraming:true};
 });
 mkdirSync('tests/artifacts',{recursive:true});writeFileSync('tests/artifacts/update-delivery-regression.json',JSON.stringify(report,null,2));

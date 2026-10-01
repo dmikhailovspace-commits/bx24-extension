@@ -152,7 +152,9 @@ native_reply() {
 if [ "${1:-}" = '--native-host' ]; then
     # Only the fixed extension may start this native host. All stdout is framed.
     [ "${2:-}" = 'chrome-extension://hlhefpcndfepdlgbjcokkcodcbfnnepm/' ] || exit 1
-    bytes=($(od -An -tu1 -N4))
+    # BSD od can read ahead past -N4 on a pipe. dd owns the exact four-byte read
+    # so the following body read still receives the complete JSON message.
+    bytes=($(dd bs=1 count=4 2>/dev/null | od -An -tu1))
     [ "${#bytes[@]}" -eq 4 ] || exit 1
     length=$((bytes[0] + (bytes[1]<<8) + (bytes[2]<<16) + (bytes[3]<<24)))
     [ "$length" -gt 0 ] && [ "$length" -le 4096 ] || exit 1
