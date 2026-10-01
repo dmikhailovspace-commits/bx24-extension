@@ -156,6 +156,10 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      - name: Verify macOS update migration and consent
+        shell: bash
+        run: PENA_UPDATE_PLATFORM_ONLY=1 node tests/update-delivery-regression.mjs
+
       - name: Build Universal DMG
         shell: bash
         run: bash installers/macos/build.sh

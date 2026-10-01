@@ -9,8 +9,12 @@ $stdout = [Console]::OpenStandardOutput()
 
 function Read-NativeMessage {
     $lenBuf = New-Object byte[] 4
-    $read = $stdin.Read($lenBuf, 0, 4)
-    if ($read -lt 4) { return $null }
+    $read = 0
+    while ($read -lt 4) {
+        $part = $stdin.Read($lenBuf, $read, 4 - $read)
+        if ($part -le 0) { return $null }
+        $read += $part
+    }
     $len = [BitConverter]::ToInt32($lenBuf, 0)
     if ($len -le 0 -or $len -gt 1048576) { return $null }
     $msgBuf = New-Object byte[] $len
@@ -20,6 +24,7 @@ function Read-NativeMessage {
         if ($r -le 0) { break }
         $totalRead += $r
     }
+    if ($totalRead -ne $len) { return $null }
     $json = [System.Text.Encoding]::UTF8.GetString($msgBuf, 0, $totalRead)
     return $json | ConvertFrom-Json
 }
@@ -55,6 +60,31 @@ function Kill-Bitrix24 {
 }
 
 switch ($msg.action) {
+    'status' {
+        $state = 'idle'
+        $statusFile = "$env:LOCALAPPDATA\PENA Agency\update-status.json"
+        if (Test-Path $statusFile) {
+            try { $state = Get-Content $statusFile -Raw | ConvertFrom-Json } catch {}
+        }
+        Write-NativeMessage @{ ok = $true; protocol = 1; state = $state }
+    }
+    'apply' {
+        $version = [string]$msg.version
+        if ($version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$' -or -not (Test-Path $UPDATER)) {
+            Write-NativeMessage @{ok=$false;error='invalid_update'}; exit 1
+        }
+        $statusFile = "$env:LOCALAPPDATA\PENA Agency\update-status.json"
+        @{version=$version;status='installing'} | ConvertTo-Json -Compress | Set-Content -LiteralPath $statusFile -Encoding UTF8
+        $updaterLiteral = $UPDATER.Replace("'", "''")
+        $statusLiteral = $statusFile.Replace("'", "''")
+        $script = "& '$updaterLiteral' -ApprovedVersion '$version'; `$result = if (`$LASTEXITCODE -eq 0) {'done'} else {'error'}; @{version='$version';status=`$result} | ConvertTo-Json -Compress | Set-Content -LiteralPath '$statusLiteral' -Encoding UTF8"
+        # A separate process survives Bitrix24 closing during the atomic swap.
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
+        try {
+            Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded" -WindowStyle Hidden -ErrorAction Stop
+            Write-NativeMessage @{ok=$true;started=$true;version=$version}
+        } catch { Write-NativeMessage @{ok=$false;error='launch_failed'} }
+    }
     'quit' {
         $killed = Kill-Bitrix24
         Write-NativeMessage @{ ok = $true; killed = $killed }

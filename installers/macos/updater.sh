@@ -4,7 +4,7 @@
 # Режимы запуска:
 #   --setup  : Первоначальная настройка (запускается установщиком)
 #              Регистрирует LaunchAgent для ежедневного обновления.
-#   (нет)    : Проверяет обновление и устанавливает, если есть.
+#   (нет)    : Только проверяет. Установка требует --approved-version.
 #
 # LaunchAgent запускает этот скрипт ежедневно автоматически.
 # ==============================================================
@@ -21,8 +21,7 @@ SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SO
 # ──────────────────────────────────────────────────────────────
 
 CYAN='\033[0;36m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
-REQUIRED_EXTENSION_FILES="worker-v7_5_90.js
-background.js
+REQUIRED_EXTENSION_FILES="background.js
 content.js
 native-catalog.js
 native-interaction-state.js
@@ -34,6 +33,8 @@ injected.css
 manifest.json
 popup.html
 popup.js
+fonts/Onest-Variable.ttf
+fonts/Unbounded-Variable.ttf
 icons/icon16.png
 icons/icon48.png
 icons/icon128.png
@@ -66,27 +67,14 @@ version_is_newer() {
     }'
 }
 
+# plutil is part of supported macOS; python3 may only be an Xcode installer stub.
 json_scalar() {
-    local json="$1" key="$2"
-    if command -v python3 >/dev/null 2>&1; then
-        printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin)[sys.argv[1]])' "$key" 2>/dev/null
-    elif [ -x /usr/bin/plutil ]; then
-        printf '%s' "$json" | /usr/bin/plutil -extract "$key" raw -o - - 2>/dev/null
-    else
-        return 1
-    fi
+    printf '%s' "$1" | /usr/bin/plutil -extract "$2" raw -o - - 2>/dev/null
 }
 
 json_array_lines() {
-    local json="$1" key="$2"
-    if command -v python3 >/dev/null 2>&1; then
-        printf '%s' "$json" | python3 -c 'import json,sys; [print(v) for v in json.load(sys.stdin)[sys.argv[1]]]' "$key" 2>/dev/null
-    elif [ -x /usr/bin/plutil ]; then
-        printf '%s' "$json" | /usr/bin/plutil -extract "$key" xml1 -o - - 2>/dev/null |
-            sed -n 's:.*<string>\([^<]*\)</string>.*:\1:p'
-    else
-        return 1
-    fi
+    printf '%s' "$1" | /usr/bin/plutil -extract "$2" xml1 -o - - 2>/dev/null |
+        sed -n 's:.*<string>\([^<]*\)</string>.*:\1:p'
 }
 
 safe_release_path() {
@@ -109,13 +97,23 @@ download_release_file() {
     local url="$1" destination="$2" temporary="${2}.download"
     mkdir -p "$(dirname "$destination")" || return 1
     rm -f "$temporary"
-    curl -fsSL --max-time 60 "$url" -o "$temporary" || return 1
+    if ! curl -fsSL --retry 2 --retry-delay 1 --connect-timeout 10 --max-time 60 "$url" -o "$temporary"; then
+        local relative="${url#"$TRUSTED_RAW_PREFIX/"}" tag
+        tag="${relative%%/*}"
+        [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || return 1
+        curl -fsSL --connect-timeout 10 --max-time 60 -H 'Accept: application/vnd.github.raw+json' \
+            "https://api.github.com/repos/dmikhailovspace-commits/bx24-extension/contents/${relative#*/}?ref=$tag" -o "$temporary" || return 1
+    fi
     [ -s "$temporary" ] || return 1
     mv -f "$temporary" "$destination" || return 1
 }
 
 installed_release_healthy() {
     local required_file module
+    local manifest worker
+    manifest=$(cat "$INSTALL_DIR/manifest.json" 2>/dev/null)
+    worker=$(json_scalar "$manifest" background.service_worker)
+    safe_release_path "$worker" && [ -s "$INSTALL_DIR/$worker" ] || return 1
     while IFS= read -r required_file; do
         [ -s "$INSTALL_DIR/$required_file" ] || return 1
     done << REQUIRED_FILES_EOF
@@ -131,7 +129,59 @@ REQUIRED_FILES_EOF
 # ==============================================================
 # РЕЖИМ НАСТРОЙКИ (--setup)
 # ==============================================================
-if [ "$1" = "--setup" ]; then
+register_native_host() {
+    local parent host manifest dir
+    parent=$(dirname "$INSTALL_DIR")
+    host="$parent/pena-native-host.sh"
+    mkdir -p "$parent" || return 1
+    printf '#!/bin/bash\nexec /bin/bash %q --native-host "$@"\n' "$INSTALL_DIR/pena_updater.sh" > "$host"
+    chmod 755 "$host"
+    manifest=$(/usr/bin/osascript -l JavaScript -e 'function run(a){return JSON.stringify({name:"com.pena.agency.helper",description:"PENA BX24 update helper",path:a[0],type:"stdio",allowed_origins:["chrome-extension://hlhefpcndfepdlgbjcokkcodcbfnnepm/"]})}' "$host") || return 1
+    for dir in 'Google/Chrome' Chromium 'Microsoft Edge'; do
+        mkdir -p "$HOME/Library/Application Support/$dir/NativeMessagingHosts" || return 1
+        printf '%s' "$manifest" > "$HOME/Library/Application Support/$dir/NativeMessagingHosts/com.pena.agency.helper.json"
+    done
+}
+
+native_reply() {
+    local body="$1" length=${#1}
+    printf "\\$(printf '%03o' $((length & 255)))\\$(printf '%03o' $(((length >> 8) & 255)))\\$(printf '%03o' $(((length >> 16) & 255)))\\$(printf '%03o' $(((length >> 24) & 255)))"
+    printf '%s' "$body"
+}
+
+if [ "${1:-}" = '--native-host' ]; then
+    # Only the fixed extension may start this native host. All stdout is framed.
+    [ "${2:-}" = 'chrome-extension://hlhefpcndfepdlgbjcokkcodcbfnnepm/' ] || exit 1
+    bytes=($(od -An -tu1 -N4))
+    [ "${#bytes[@]}" -eq 4 ] || exit 1
+    length=$((bytes[0] + (bytes[1]<<8) + (bytes[2]<<16) + (bytes[3]<<24)))
+    [ "$length" -gt 0 ] && [ "$length" -le 4096 ] || exit 1
+    message=$(dd bs=1 count="$length" 2>/dev/null)
+    [ "$(printf '%s' "$message" | wc -c | tr -d ' ')" = "$length" ] || exit 1
+    action=$(json_scalar "$message" action)
+    status_file="$(dirname "$INSTALL_DIR")/update-status.json"
+    case "$action" in
+        status)
+            state=$(cat "$status_file" 2>/dev/null); [ -n "$state" ] || state='"idle"'
+            native_reply "{\"ok\":true,\"protocol\":1,\"state\":$state}"
+            ;;
+        apply)
+            version=$(json_scalar "$message" version)
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || { native_reply '{"ok":false,"error":"invalid_version"}'; exit 1; }
+            printf '{"version":"%s","status":"installing"}' "$version" > "$status_file"
+            (
+                /bin/bash "$INSTALL_DIR/pena_updater.sh" --approved-version "$version"
+                result=$?; state=error; [ "$result" -eq 0 ] && state=done
+                printf '{"version":"%s","status":"%s"}' "$version" "$state" > "$status_file"
+            ) </dev/null >>"$LOG_FILE" 2>&1 &
+            native_reply '{"ok":true,"started":true}'
+            ;;
+        *) native_reply '{"ok":false,"error":"unknown_action"}' ;;
+    esac
+    exit 0
+fi
+
+if [ "${1:-}" = "--setup" ]; then
     log "=== РЕЖИМ НАСТРОЙКИ ==="
 
     # Копируем себя в папку расширения (чтобы LaunchAgent всегда мог нас найти)
@@ -165,7 +215,7 @@ if [ "$1" = "--setup" ]; then
     <key>StandardErrorPath</key>
     <string>$LOG_FILE</string>
     <key>RunAtLoad</key>
-    <false/>
+    <true/>
 </dict>
 </plist>
 PLIST_EOF
@@ -181,6 +231,7 @@ PLIST_EOF
             log "ПРЕДУПРЕЖДЕНИЕ: Запуск launchctl bootstrap также не удался — перезагрузитесь или загрузите вручную."
     fi
 
+    register_native_host || log "Не удалось зарегистрировать помощник обновления."
     log "Настройка завершена."
     exit 0
 fi
@@ -207,7 +258,10 @@ fi
 log "Установлена версия: $LOCAL_VERSION"
 
 # Получаем update.json
-UPDATE_JSON=$(curl -fsSL --max-time 15 "$UPDATE_JSON_URL" 2>/dev/null)
+UPDATE_JSON=$(curl -fsSL --retry 2 --retry-delay 1 --connect-timeout 5 --max-time 15 -H 'Cache-Control: no-cache' "$UPDATE_JSON_URL" 2>/dev/null)
+if [ -z "$UPDATE_JSON" ]; then
+    UPDATE_JSON=$(curl -fsSL --connect-timeout 5 --max-time 15 -H 'Accept: application/vnd.github.raw+json' 'https://api.github.com/repos/dmikhailovspace-commits/bx24-extension/contents/update.json?ref=main' 2>/dev/null)
+fi
 if [ -z "$UPDATE_JSON" ]; then
     log "Не удалось получить update.json — пробуем завтра."
     exit 0
@@ -251,7 +305,15 @@ if [ "$REMOTE_VERSION" = "$LOCAL_VERSION" ]; then
     log "Восстанавливаю неполный release $REMOTE_VERSION"
 fi
 
-log "Загружаю обновление $REMOTE_VERSION ..."
+if [ "${1:-}" != '--approved-version' ]; then
+    log "Доступно обновление $REMOTE_VERSION. Ожидаем согласия в панели расширения."
+    exit 0
+fi
+if [ "${2:-}" != "$REMOTE_VERSION" ] || ! [[ "$REMOTE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+    log "Версия изменилась. Требуется новое согласие."
+    exit 1
+fi
+log "Загружаю подтверждённое обновление $REMOTE_VERSION ..."
 
 while IFS= read -r required_file; do
     if ! contains_line "$EXTENSION_FILES" "$required_file"; then
@@ -331,6 +393,17 @@ if [ "$STAGED_VERSION" != "$REMOTE_VERSION" ]; then
     exit 1
 fi
 
+# The worker is release-specific; never require a filename from a previous tag.
+STAGED_WORKER=$(json_scalar "$STAGED_MANIFEST" background.service_worker)
+if ! safe_release_path "$STAGED_WORKER" || ! contains_line "$EXTENSION_FILES" "$STAGED_WORKER" || [ ! -s "$STAGE_DIR/$STAGED_WORKER" ]; then
+    log "ОШИБКА: отсутствует worker, объявленный в manifest.json."
+    exit 1
+fi
+for stale_worker in "$STAGE_DIR"/worker-v*.js "$STAGE_DIR"/service-worker.js; do
+    [ -f "$stale_worker" ] || continue
+    [ "$stale_worker" = "$STAGE_DIR/$STAGED_WORKER" ] || rm -f "$stale_worker"
+done
+
 while IFS= read -r required_file; do
     if [ ! -s "$STAGE_DIR/$required_file" ]; then
         log "ОШИБКА: в staging-каталоге отсутствует обязательный файл: $required_file"
@@ -376,6 +449,7 @@ fi
 chmod +x "$INSTALL_DIR/pena_updater.sh" 2>/dev/null || true
 rm -rf "$BACKUP_DIR"
 log "Release атомарно опубликован в: $INSTALL_DIR"
+register_native_host || log "Не удалось зарегистрировать помощник обновления."
 
 PENA_LAUNCHER="$HOME/Applications/Bitrix24 + Фильтр чатов.app"
 if [ -d "$PENA_LAUNCHER" ]; then

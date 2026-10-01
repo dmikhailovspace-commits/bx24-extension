@@ -202,5 +202,25 @@ await phase('Save All projects keeps old confirmed totals while rebuilding scope
  assert.equal(f.api.state.calls.length-calls,7);assert.equal(f.state.pointCalls.length,0);assert.equal(f.record().data.totalSeconds,19260);assert.equal(f.record().hasCompleteSnapshot,true);
  return{preservedWhileLoading:3000,finalSeconds:19260,expandedTaskCount:4149,globalPages:7,pointReads:0};
 });
+await phase('one revoked task cannot block sentinel capability detection or discard other tasks in a batch',async()=>{
+ const calls=[];
+ const capability=await model.loadGlobalElapsedItems({...range,userId:7,probeTaskId:1,probeTaskIds:[1,2,3],callPage:async p=>{
+  calls.push(p[0]);if(p[0]===0||p[0]===1)throw Object.assign(new Error('Access denied'),{code:'0x000004'});return {data:[]};
+ }});
+ assert.equal(capability.supported,false);assert.deepEqual(calls,[0,1,2]);
+ const f=fixture(80);f.api.state.mode='unsupported';f.api.state.rows=Array.from({length:80},(_,i)=>raw(i+1));
+ f.c._callDialogTimeElapsedPages=async params=>{
+  f.state.pointCalls.push(...params.map(p=>p[0]));
+  const partialPages=await Promise.all(params.map(p=>Number(p[0])===2?null:f.api.call(p)));
+  if(partialPages.includes(null))throw Object.assign(new Error('Access denied'),{partialPages,partialErrors:params.map(p=>Number(p[0])===2?{code:'0x000004',message:'Access denied'}:null)});
+  return partialPages;
+ };
+ await assert.rejects(f.load(),/Не удалось проверить задачи: 1/);
+ assert.equal(f.state.pointCalls.length,80);assert.equal(f.record().data.entryCount,79);assert.equal(f.record().data.totalSeconds,79*60);assert.equal(f.record().hasCompleteSnapshot,false);
+ f.record().taskFreshness['2'].at=Date.now()-16000;f.record().failedAt=Date.now()-16000;
+ f.c._callDialogTimeElapsedPages=async params=>{assert.deepEqual(Array.from(params,p=>Number(p[0])),[2]);return Promise.all(params.map(f.api.call));};
+ await f.load();assert.equal(f.record().data.entryCount,80);assert.equal(f.record().hasCompleteSnapshot,true);
+ return {accessibleRecordsPreserved:79,inaccessibleTasks:1,recoveryReads:1};
+});
 mkdirSync(new URL('./artifacts/',import.meta.url),{recursive:true});writeFileSync(new URL('./artifacts/time-global-elapsed-regression.json',import.meta.url),JSON.stringify(report,null,2));
 for(const p of report.phases)console.log(`${p.status}: ${p.name}${p.error?'\n'+p.error:''}`);assert.equal(report.phases.filter(p=>p.status==='FAIL').length,0,'Global time regression failed');

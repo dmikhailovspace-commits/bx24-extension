@@ -87,6 +87,16 @@ try {
 	 });
 	 assert.ok(centering<1,`Unique toggle is displaced by ${centering}px`);
   assert.equal(await unique.locator('.pena-native-toggle-track').evaluate(el=>Math.round(el.getBoundingClientRect().width)),28,'The shipped CSS must render the toggle');
+  for (const checked of [false,true]) {
+   await unique.locator('input').evaluate((input,value)=>{input.checked=value;},checked);
+   await page.waitForTimeout(150); // Let the 120 ms thumb transition reach its endpoint.
+   const box=await unique.evaluate(label=>{
+    const track=label.querySelector('.pena-native-toggle-track').getBoundingClientRect(),thumb=label.querySelector('.pena-native-toggle-thumb').getBoundingClientRect();
+    return {left:thumb.left-track.left,right:track.right-thumb.right,top:thumb.top-track.top,bottom:track.bottom-thumb.bottom};
+   });
+   assert.equal(box.top,2);assert.equal(box.bottom,2);assert.equal(checked?box.right:box.left,2);assert.ok(box.left>=2&&box.right>=2);
+  }
+  await unique.locator('input').evaluate(input=>{input.checked=false;});
   await unique.click();
   await row('chat225').waitFor({state:'hidden'});await row('chat5').waitFor({state:'hidden'});await row('chat77').waitFor({state:'visible'});
   assert.match(await page.locator(host+' .pena-native-group-tab[data-native-segment-id=""]').textContent(),/Несортированные/);

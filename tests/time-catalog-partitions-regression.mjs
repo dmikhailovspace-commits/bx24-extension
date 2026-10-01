@@ -12,7 +12,7 @@ function service(initial,{after=0,upper=Math.max(0,...initial),hook}={}){
  const callPages=async jobs=>{
   assert(jobs.length>0&&jobs.length<=16);state.waves.push(structuredClone(jobs));
   const response=jobs.map(job=>{
-   assert.equal(job.method,'tasks.task.list');assert.deepEqual(job.params.order,{ID:'asc'});assert.equal(job.params.start,0);
+   assert.equal(job.method,'tasks.task.list');assert.deepEqual(job.params.order,{ID:'asc'});assert.equal(job.params.start,-1);
    assert.deepEqual(job.params.filter.GROUP_ID,filter.GROUP_ID);assert.equal(job.params.filter['>=CHANGED_DATE'],filter['>=CHANGED_DATE']);assert.deepEqual(job.params.select,select);
    const lo=job.params.filter['>ID'],hi=job.params.filter['<=ID'];
    assert(lo>=after&&hi<=upper&&lo<hi,'Partition left the fixed read watermark');
@@ -38,6 +38,13 @@ await phases('empty partitions require two matching confirmations and a zero-wid
  const bounds=new Map();for(const job of f.state.waves.flat()){const key=JSON.stringify(job.params.filter);bounds.set(key,(bounds.get(key)||0)+1);}assert.equal(bounds.size,15);assert([...bounds.values()].every(n=>n===2));
  const zero=service([],{after:9,upper:9});assert.deepEqual(await model.loadTaskCatalogPartitions(zero.args),{rows:[],pages:0});assert.equal(zero.state.waves.length,0);
  return {emptyPartitions:15,confirmationsEach:2,zeroWidthCalls:0};
+});
+await phases('count-free full pages ignore synthetic hasMore:false and retain every task',async()=>{
+ const ids=Array.from({length:1000},(_,i)=>i+1);
+ const f=service(ids,{upper:1000000,hook:({response})=>response.forEach(page=>{page.next=null;page.data.hasMore=false;page.data.hasMorePages=false;})});
+ const result=await model.loadTaskCatalogPartitions(f.args);
+ assert.deepEqual(result.rows.map(r=>Number(r.ID)),ids);
+ return {tasks:result.rows.length,totalQueries:0};
 });
 await phases('invalid numeric bounds fail before calling the SDK',async()=>{
  for(const [afterId,upperId] of [[-1,20],[20,19],[0,Infinity],[NaN,20],[0,Number.MAX_SAFE_INTEGER+1],['0',20],[0,1.5]]){let calls=0;await assert.rejects(model.loadTaskCatalogPartitions({afterId,upperId,callPages:async()=>{calls++;return[];}}),TypeError);assert.equal(calls,0);}

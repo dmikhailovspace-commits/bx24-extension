@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.20';
+	window.__ANITREC_RUNNING__ = '8.0.21';
 
-	const VER = '8.0.20';
+	const VER = '8.0.21';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -4976,7 +4976,7 @@
 				const root = page.data?.result || page.data || {};
 				let tail = root.hasMore === false || root.hasMorePages === false || !batch.length ||
 					(!(page.next != null && page.next > 0) && root.hasMore !== true && root.hasMorePages !== true && batch.length < 50);
-				if (!tail && !since && afterId === 0 && Number(page.total) >= 500) {
+				if (!tail && !since && afterId === 0 && (Number(page.total) >= 500 || (page.total == null && batch.length >= 50))) {
 					const partitioned = await _loadDialogTaskCatalogPartitionTail({ page, firstRows:batch, afterId:nextId, filter, select, isCurrent:current });
 					if (!current()) return false;
 					if (partitioned) {
@@ -5292,13 +5292,13 @@
 	async function _loadDialogTaskCatalogPartitionTail({ page, firstRows, afterId, filter = {}, select, isCurrent, maxPages = 2000 }) {
 		// Computed time fields are unrelated to ID-keyset/batch capability.
 		// Missing TIME_SPENT_IN_LOGS must not serialize a large catalog.
-		if (!(Number(page?.total) >= 500) || !firstRows?.length ||
+		if (!(Number(page?.total) >= 500 || (page?.total == null && firstRows?.length >= 50)) || !firstRows?.length ||
 			typeof _PENA_TIME_CONTROL?.loadTaskCatalogPartitions !== 'function') return null;
 		const topWin = _getSafeTopWindow();
 		if (![window.BX?.rest, topWin?.BX?.rest, window.BX24, topWin?.BX24].some(client => typeof client?.callBatch === 'function')) return null;
 		if (!isCurrent()) throw Object.assign(new Error('Task catalog superseded'), { code:'STALE_REQUEST' });
 		const highPage = await _callBxRestPageWithTimeout('tasks.task.list', {
-			filter:{ ...filter, '>ID':afterId }, select:['ID'], order:{ID:'desc'}, start:0
+			filter:{ ...filter, '>ID':afterId }, select:['ID'], order:{ID:'desc'}, start:-1
 		}, 12000, {isCurrent});
 		if (!isCurrent()) throw Object.assign(new Error('Task catalog superseded'), { code:'STALE_REQUEST' });
 		const highRows = _extractDialogTaskCatalogRows(highPage?.data);
@@ -5405,7 +5405,7 @@
 					complete = paginationChainValid;
 					break;
 				}
-				if (!headOnly && firstWindow && Number(page.total) >= 500) {
+				if (!headOnly && firstWindow && (Number(page.total) >= 500 || (page.total == null && batch.length >= 50))) {
 					const partitioned = await _loadDialogTaskCatalogPartitionTail({ page, firstRows:batch, afterId:nextId, select, isCurrent:current, maxPages:maxPages-pages });
 					if (partitioned) {
 						rows.push(...partitioned.rows); pages += partitioned.pages; complete = true;
@@ -17764,6 +17764,12 @@ if (_presetChannel) {
 	async function _reconcileDialogTimeVisible() {
 		if (_dialogControlNativeWorkspaceTab !== 'time' || !_isDialogTimeFrameActive() || document.visibilityState === 'hidden' || navigator.onLine === false) return;
 		const scope = _getDialogTimeProjectScopeKey();
+		const range = (_dialogTimeView === 'stats' || _dialogTimeView === 'stats30') ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
+		const snapshot = _getDialogTimeRecord(range);
+		// Opening a freshly bootstrapped panel shares that read. Native mutations
+		// have their own immediate invalidation/refresh path; polling can wait.
+		if (!_dialogTimeProjectCatalogDirty && snapshot?.status === 'ready' && snapshot.hasCompleteSnapshot && !snapshot.error &&
+			Date.now() >= snapshot.updatedAt && Date.now() - snapshot.updatedAt < 30000) return;
 		const owner = _reconcileDialogTimeVisible.owner;
 		if (!scope || (owner?.scope === scope && (owner.pending || Date.now()-owner.at < 30000))) return;
 		const token = {scope,at:Date.now(),pending:true};
@@ -17771,7 +17777,6 @@ if (_presetChannel) {
 		try {
 			const current = () => scope === _getDialogTimeProjectScopeKey() && _dialogControlNativeWorkspaceTab === 'time' && document.visibilityState !== 'hidden' && navigator.onLine !== false;
 			if (!await _ensureDialogTimeProjectCatalog({delta:true}) || !current()) return;
-			const range = (_dialogTimeView === 'stats' || _dialogTimeView === 'stats30') ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
 			const key = _getDialogTimeCacheKey(range);
 			if (_dialogTimeInFlight.has(key)) return;
 			const global = _callDialogTimeGlobalElapsedPage.capabilities?.get(_getDialogTimeIdentityScopeKey())?.supported === true;
@@ -17910,7 +17915,7 @@ if (_presetChannel) {
 			// pages while reading its tail causes endless full sweeps on large portals.
 			// Pull/CHANGED_DATE revisions, new tasks, local writes and manual refresh
 			// are the authoritative reasons to revisit an already checked task.
-			return !emptyLogs.has(id) && (force || !entry || entry.revision !== (_dialogTimeTaskRevisions.get(id) || 0));
+			return !emptyLogs.has(id) && (force || !entry || (entry.unavailable && Date.now() - entry.at >= 15000) || entry.revision !== (_dialogTimeTaskRevisions.get(id) || 0));
 		};
 		let pendingIds = taskIds.filter(needsRead);
 		const hasCompleteCoverage = () => _dialogTimeCatalogCursor > 0 && _dialogTimeCatalogScope === scope &&
@@ -17969,7 +17974,7 @@ if (_presetChannel) {
 				let globalData;
 				try {
 					globalData = await _PENA_TIME_CONTROL.loadGlobalElapsedItems({ ...readRange, ...(typeof _getDialogTimeCalendarZone === 'function' ? _getDialogTimeCalendarZone() : {}), userId, knownItems:cached?.data?.items || [], supported:globalCapability?.supported === true, isCurrent:current,
-						probeTaskId:(cached?.data?.items || []).find(item => workingTaskIdSet.has(String(item.taskId)))?.taskId || taskIds[0],
+						probeTaskId:(cached?.data?.items || []).find(item => workingTaskIdSet.has(String(item.taskId)))?.taskId || taskIds[0], probeTaskIds:taskIds.slice(0,3),
 						callPage:async params => {
 							const startedAt = Date.now();
 							diagnostics.attemptedGlobalPages++;
@@ -18047,7 +18052,7 @@ if (_presetChannel) {
 						catch (error) {
 							if (_isBxRestBatchPressureError(error) || !error.partialPages || !error.partialErrors) throw error;
 							const missing = params.map((_, index) => index).filter(index => !error.partialPages[index]);
-							if (!missing.length || !missing.every(index => /access.?denied|not.?found|not.?allowed/i.test(String(error.partialErrors[index]?.code || '')))) throw error;
+							if (!missing.length || !missing.every(index => _PENA_TIME_CONTROL.isElapsedAccessError(error.partialErrors[index]))) throw error;
 							missing.forEach(index => unavailable.set(String(params[index][0]), _getDialogTimeFriendlyError(error.partialErrors[index])));
 							return rememberDispatch(params.map((_, index) => error.partialPages[index] || { data: [], total: 0, next: null }));
 						}
@@ -19149,6 +19154,9 @@ if (_presetChannel) {
 			));
 		}
 		const syncChip = document.createElement('button');
+		const updateSlot = document.createElement('span');
+		updateSlot.className = 'pena-native-update-slot';
+		workspaceTabs.append(updateSlot);
 		syncChip.type = 'button';
 		syncChip.className = 'pena-native-sync-chip';
 		syncChip.setAttribute('role', 'status');
@@ -19205,6 +19213,7 @@ if (_presetChannel) {
 			unreadInput.checked = viewPrefs.unreadOnly;
 			const unreadToggle = document.createElement('span');
 			unreadToggle.className = 'pena-native-toggle-track';
+			unreadToggle.innerHTML = '<span class="pena-native-toggle-thumb" aria-hidden="true"></span>';
 			const unreadText = document.createElement('span');
 			unreadText.textContent = 'Только непрочитанные';
 			unreadInput.addEventListener('change', () => {
@@ -19251,6 +19260,7 @@ if (_presetChannel) {
 		uniqueInput.checked = !!viewPrefs.uniqueOnly;
 		const uniqueToggle = document.createElement('span');
 		uniqueToggle.className = 'pena-native-toggle-track';
+		uniqueToggle.innerHTML = '<span class="pena-native-toggle-thumb" aria-hidden="true"></span>';
 		const uniqueText = document.createElement('span');
 		uniqueText.textContent = 'Без повторов';
 		uniqueInput.addEventListener('change', () => {
@@ -19703,6 +19713,7 @@ if (_presetChannel) {
 		switcherContent.appendChild(folderRow);
 		_setDialogControlDockEmbedded(null);
 		switcher.replaceChildren(switcherContent);
+		document.dispatchEvent(new CustomEvent('pena-update-slot-ready'));
 		_syncDialogRecentStatusControl(switcher);
 		_syncDialogTimeUi(switcher);
 		// The panel is assembled in a fragment, so it can be revealed immediately
@@ -28521,7 +28532,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .pena-native-search>svg{width:15px;height:15px;flex:0 0 15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
 .pena-native-search-input{width:100%;min-width:0;height:30px;border:0!important;outline:0!important;background:transparent!important;box-shadow:none!important;color:#1f2937!important;padding:0!important;font:500 12px/30px system-ui,-apple-system,Segoe UI,Roboto,Arial!important;box-sizing:border-box}
 .pena-native-search-input::placeholder{color:#9aa5b3}
-.pena-native-command-bar{position:relative;display:flex;align-items:center;gap:4px;margin:0;padding:0;z-index:30}
+.pena-native-command-bar{position:relative;display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:0;padding:0;z-index:30}
 .pena-native-command-btn{height:26px;display:inline-flex;align-items:center;gap:6px;border:1px solid rgba(15,23,42,.12);border-radius:6px;background:#f8fafc;color:#526174;padding:0 7px 0 9px;cursor:pointer;font:700 11px/24px system-ui,-apple-system,Segoe UI,Roboto,Arial;box-sizing:border-box;transition:color .12s ease,border-color .12s ease,background-color .12s ease;animation:none!important;transform:none!important}
 .pena-native-command-btn:hover{border-color:rgba(37,99,235,.34);background:#fff;color:#1d4ed8}
 .pena-native-command-btn.--active{border-color:rgba(37,99,235,.48);background:#dbeafe;color:#1d4ed8}
@@ -28546,14 +28557,16 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .pena-native-filter-label{color:#64748b;font:700 10px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial;text-transform:uppercase}
 .pena-native-unread-filter{display:flex;align-items:center;gap:7px;color:#475569;font:700 11px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial;cursor:pointer}
 .pena-native-unread-filter input{position:absolute;opacity:0;pointer-events:none}
-.pena-native-toggle-track{position:relative;width:28px;height:16px;border-radius:999px;background:#cbd5e1;transition:background-color .12s ease}
-.pena-native-toggle-track::after{content:"";position:absolute;left:2px;top:2px;width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(15,23,42,.22);transition:transform .12s ease}
+.pena-native-toggle-track{position:relative!important;display:inline-flex!important;align-items:center!important;flex:0 0 28px!important;width:28px!important;height:16px!important;min-width:28px;min-height:16px;margin:0!important;padding:2px!important;border:0!important;box-sizing:border-box!important;border-radius:999px;background:#cbd5e1;overflow:hidden;transition:background-color .12s ease}
+.pena-native-toggle-track::before,.pena-native-toggle-track::after{content:none!important;display:none!important}
+.pena-native-toggle-track>.pena-native-toggle-thumb{position:static!important;display:block!important;flex:0 0 12px!important;width:12px!important;height:12px!important;margin:0!important;padding:0!important;border:0!important;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(15,23,42,.22);transform:translateX(0);transition:transform .12s ease}
+.pena-native-toggle-thumb::before,.pena-native-toggle-thumb::after{content:none!important}
 .pena-native-unread-filter input:checked+.pena-native-toggle-track{background:#3b82f6}
-.pena-native-unread-filter input:checked+.pena-native-toggle-track::after{transform:translateX(12px)}
+.pena-native-unread-filter input:checked+.pena-native-toggle-track>.pena-native-toggle-thumb{transform:translateX(12px)}
 .pena-native-unique-filter{display:flex;align-items:center;gap:7px;padding:8px 2px;color:#475569;font:700 11px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial;cursor:pointer;width:fit-content}
 .pena-native-unique-filter input{position:absolute;opacity:0;width:1px;height:1px}
 .pena-native-unique-filter input:checked+.pena-native-toggle-track{background:#3b82f6}
-.pena-native-unique-filter input:checked+.pena-native-toggle-track::after{transform:translateX(12px)}
+.pena-native-unique-filter input:checked+.pena-native-toggle-track>.pena-native-toggle-thumb{transform:translateX(12px)}
 .pena-native-unique-filter input:focus-visible+.pena-native-toggle-track{outline:2px solid #2563eb;outline-offset:3px}
 .pena-native-control-panel{display:grid;gap:7px;margin:0 0 6px;padding:7px;border:1px solid rgba(15,23,42,.1);border-radius:6px;background:#f1f5f9;box-sizing:border-box}
 .pena-native-control-actions{display:flex;flex-wrap:wrap;gap:5px}

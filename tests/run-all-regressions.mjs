@@ -37,6 +37,7 @@ if (Number.parseInt(process.versions.node.split('.')[0], 10) < minimumNodeMajor 
 }
 
 const suites = [
+  'update-delivery-regression.mjs',
   'native-startup-time-contention.mjs',
   'native-mention-interference-regression.mjs',
   'native-search-state-regression.mjs',

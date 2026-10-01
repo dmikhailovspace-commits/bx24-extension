@@ -809,7 +809,86 @@ async function handleRepositoryMessage(message, sender) {
   }
 }
 
+const UPDATE_CHANNEL = 'pena.update.v1';
+const UPDATE_REPO = 'dmikhailovspace-commits/bx24-extension';
+let updateRead = null;
+let updateApply = null;
+let updateFailureAt = 0;
+const compareUpdateVersions = (a, b) => {
+  const left = a.split('.').map(Number), right = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(left.length, right.length); i++) {
+    if ((left[i] || 0) !== (right[i] || 0)) return (left[i] || 0) - (right[i] || 0);
+  }
+  return 0;
+};
+async function readUpdateChannel(force = false) {
+  if (updateRead) return updateRead;
+  updateRead = (async () => {
+    const cached = (await storageGet('local', ['pena.update.channel.v1']))['pena.update.channel.v1'];
+    if (!force && cached?.at <= Date.now() && Date.now() - cached.at < 3600000) return cached;
+    if (!force && updateFailureAt && Date.now() - updateFailureAt < 60000) return cached || null;
+    for (const url of [`https://raw.githubusercontent.com/${UPDATE_REPO}/main/update.json`, `https://api.github.com/repos/${UPDATE_REPO}/contents/update.json?ref=main`]) {
+      const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 12000);
+      try {
+        const response = await fetch(url, {cache:'no-store', credentials:'omit', signal:controller.signal, headers:{Accept:'application/vnd.github.raw+json'}});
+        if (!response.ok) throw new Error('Update channel unavailable');
+        const info = await response.json();
+        if (!/^\d+\.\d+\.\d+(\.\d+)?$/.test(info.version) ||
+          info.raw_base_url !== `https://raw.githubusercontent.com/${UPDATE_REPO}/v${info.version}` ||
+          info.release_url !== `https://github.com/${UPDATE_REPO}/releases/tag/v${info.version}`) throw new Error('Invalid update channel');
+        const next = {version:info.version, at:Date.now()};
+        await storageSet('local', {'pena.update.channel.v1':next});
+        updateFailureAt = 0;
+        return next;
+      } catch { /* The second GitHub endpoint also covers raw-domain DNS failures. */ }
+      finally { clearTimeout(timer); }
+    }
+    updateFailureAt = Date.now();
+    if (force) throw new Error('Не удалось проверить обновление. Повторите после восстановления сети.');
+    return cached || null;
+  })().finally(() => { updateRead = null; });
+  return updateRead;
+}
+function callUpdateHost(message) {
+  return new Promise((resolve, reject) => {
+    if (!chrome.runtime.getManifest().permissions?.includes('nativeMessaging')) return reject(new Error('native_host_unavailable'));
+    chrome.runtime.sendNativeMessage('com.pena.agency.helper', message, response => {
+      const error = chrome.runtime.lastError;
+      if (error || !response?.ok) reject(new Error(response?.error || 'native_host_unavailable'));
+      else resolve(response);
+    });
+  });
+}
+async function handleUpdateMessage(message, sender) {
+  if (sender?.id !== chrome.runtime.id || !/^https?:\/\//.test(sender?.url || '')) throw new Error('Invalid sender');
+  const desktop = chrome.runtime.getManifest().permissions?.includes('nativeMessaging') === true;
+  if (message.action === 'status') return callUpdateHost({action:'status'});
+  if (message.action === 'prepare') {
+    try { const host = await callUpdateHost({action:'status'}); return {native:host.protocol === 1, desktop}; }
+    catch { return {native:false, desktop}; }
+  }
+  if (message.action === 'check') {
+    const info = await readUpdateChannel();
+    return {available:!!info && compareUpdateVersions(info.version, chrome.runtime.getManifest().version) > 0, version:info?.version, desktop};
+  }
+  if (message.action !== 'apply' || !/^\d+\.\d+\.\d+(\.\d+)?$/.test(message.version)) throw new Error('Invalid update action');
+  if (updateApply) return updateApply;
+  updateApply = (async () => {
+    const info = await readUpdateChannel(true);
+    if (info.version !== message.version) throw new Error('Появилась другая версия. Откройте обновление ещё раз.');
+    if (compareUpdateVersions(info.version, chrome.runtime.getManifest().version) <= 0) throw new Error('Эта версия уже установлена.');
+    const host = await callUpdateHost({action:'status'});
+    if (host.protocol !== 1) throw new Error('Установите новую версию через установщик.');
+    return callUpdateHost({action:'apply',version:info.version});
+  })().finally(() => {updateApply = null;});
+  return updateApply;
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.channel === UPDATE_CHANNEL) {
+    handleUpdateMessage(message, sender).then(result => sendResponse({ok:true,result})).catch(error => sendResponse({ok:false,error:error.message}));
+    return true;
+  }
 	if (message?.channel === WORKER_HEALTH_CHANNEL) {
 		sendResponse({
 			ok: true,

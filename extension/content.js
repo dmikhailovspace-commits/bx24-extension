@@ -21,6 +21,100 @@
   const _logoUrl = chrome.runtime.getURL('icons/logo.png');
   const _runtimeManifest = chrome.runtime.getManifest();
   const _releaseVersion = _runtimeManifest.version;
+  // Consent lives in the isolated world and a closed shadow root. Page events
+  // may request mounting, but can never request installation or forge a click.
+  (() => {
+    let host, root, button, panel, info, pending = false, checkedAt = 0, checking = null, installTimer;
+    const send = (action, fields = {}) => new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Помощник не ответил. Повторите.')), 30000);
+      try { chrome.runtime.sendMessage({channel:'pena.update.v1',action,...fields}, response => {
+        clearTimeout(timer);
+        if (chrome.runtime.lastError || !response?.ok) reject(new Error(response?.error || 'Не удалось проверить обновление.'));
+        else resolve(response.result);
+      }); } catch (error) {clearTimeout(timer);reject(error);}
+    });
+    const close = () => {if (!panel) return; if (typeof panel.hidePopover==='function' && panel.matches(':popover-open')) panel.hidePopover(); panel.hidden=true;button?.setAttribute('aria-expanded','false');};
+    const position = () => {
+      if (!panel || panel.hidden || typeof panel.showPopover !== 'function') return;
+      const rect=button.getBoundingClientRect();
+      panel.style.left=`${Math.max(8,Math.min(rect.left,innerWidth-panel.offsetWidth-8))}px`;
+      panel.style.top=`${Math.max(8,Math.min(rect.bottom+8,innerHeight-panel.offsetHeight-8))}px`;
+    };
+    const render = () => { if (button) {button.hidden=!info?.available;button.textContent=pending?'Обновляем…':'Доступно обновление';} };
+    const check = () => {
+      if (!host?.isConnected || document.visibilityState==='hidden' || navigator.onLine===false || checking || Date.now()-checkedAt<60000) return;
+      checkedAt=Date.now();
+      checking=send('check').then(value=>{info=value;render();}).catch(()=>{}).finally(()=>{checking=null;});
+    };
+    const open = async event => {
+      if (!event.isTrusted) return;
+      close();panel.replaceChildren();panel.hidden=false;button.setAttribute('aria-expanded','true');
+      const title=document.createElement('strong');title.textContent=`Обновление ${info.version}`;
+      const text=document.createElement('p');text.setAttribute('role','status');text.textContent='Проверяем способ установки…';
+      const actions=document.createElement('div');actions.className='actions';
+      const later=document.createElement('button');later.textContent='Позже';later.addEventListener('click',()=>{close();button.focus();});
+      actions.append(later);panel.append(title,text,actions);
+      if (typeof panel.showPopover==='function') panel.showPopover();
+      position();later.focus();
+      const approved=info.version;
+      let mode;
+      try {mode=await send('prepare');} catch {mode={native:false,desktop:info.desktop};}
+      if (panel.hidden || info.version!==approved) return;
+      if (pending) {text.textContent='Загружаем обновление. Bitrix24 перезапустится после проверки файлов.';position();return;}
+      if (mode.native) {
+        text.textContent='Bitrix24 перезапустится. Сохраните незавершённую работу.';
+        const apply=document.createElement('button');apply.className='primary';apply.textContent='Обновить и перезапустить';
+        apply.addEventListener('click',async click=>{
+          if (!click.isTrusted || pending || apply.disabled) return;
+          apply.disabled=true;pending=true;render();text.textContent='Проверяем и загружаем обновление…';
+          const fail=message=>{clearTimeout(installTimer);pending=false;apply.disabled=false;text.textContent=message;render();position();};
+          try {
+            await send('apply',{version:approved});
+            const started=Date.now();
+            const poll=async()=>{
+              try {
+                const result=await send('status');
+                if (result.state?.version===approved && result.state?.status==='error') return fail('Обновление не установлено. Текущая версия сохранена. Повторите.');
+                if (result.state?.version===approved && result.state?.status==='done') {pending=false;render();text.textContent='Обновление установлено. Перезапустите Bitrix24, если окно осталось открытым.';return;}
+                if (Date.now()-started>600000) return fail('Установка ещё не подтверждена. Проверьте подключение и повторите.');
+              } catch {if (Date.now()-started>600000) return fail('Не удалось подтвердить установку. Перезапустите Bitrix24 и проверьте версию.');}
+              installTimer=setTimeout(poll,5000);
+            };
+            installTimer=setTimeout(poll,5000);
+          } catch(error) {fail(error.message);checkedAt=0;check();}
+        });
+        actions.prepend(apply);
+      } else {
+        text.textContent=mode.desktop?'Для этой установки нужен новый установщик. Скачайте его и запустите.':'Скачайте ZIP, распакуйте и обновите расширение на странице chrome://extensions.';
+        const downloadLink=document.createElement('a');downloadLink.className='primary';downloadLink.textContent=mode.desktop?'Скачать установщик':'Скачать ZIP';
+        const base=`https://github.com/dmikhailovspace-commits/bx24-extension/releases/`;
+        downloadLink.href=mode.desktop?`${base}tag/v${approved}`:`${base}download/v${approved}/BX24_Chat_Sorter_Chrome_v${approved}.zip`;
+        downloadLink.target='_blank';downloadLink.rel='noopener noreferrer';actions.prepend(downloadLink);
+      }
+      position();
+    };
+    const mount = () => {
+      const slot=document.querySelector('.pena-native-update-slot');if (!slot) return;
+      if (!host) {
+        host=document.createElement('span');host.style.cssText='display:inline-flex;position:relative;flex:0 0 auto';
+        root=host.attachShadow({mode:'closed'});
+        const style=document.createElement('style');style.textContent=`:host{all:initial;display:inline-flex}*{box-sizing:border-box}[hidden]{display:none!important}button,a{font:600 11px/1.3 system-ui;cursor:pointer;color:#1d4ed8;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:5px 7px;text-decoration:none}button:disabled{opacity:.65;cursor:wait}button:focus-visible,a:focus-visible{outline:2px solid #2563eb;outline-offset:2px}.badge{height:26px;white-space:nowrap}.panel{position:fixed;inset:auto;margin:0;width:min(330px,calc(100vw - 16px));padding:14px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;color:#263241;box-shadow:0 8px 28px #0f172a30;font:13px/1.4 system-ui;z-index:2147483647}.panel strong{font-size:14px}.panel p{margin:10px 0 14px}.actions{display:flex;flex-wrap:wrap;gap:8px}.primary{background:#2563eb;border-color:#2563eb;color:#fff}`;
+        button=document.createElement('button');button.type='button';button.className='badge';button.hidden=true;button.setAttribute('aria-haspopup','dialog');button.setAttribute('aria-expanded','false');button.addEventListener('click',open);
+        panel=document.createElement('div');panel.className='panel';panel.hidden=true;panel.setAttribute('role','dialog');panel.setAttribute('aria-label','Обновление расширения');
+        if (typeof panel.showPopover==='function') panel.setAttribute('popover','manual');else panel.style.cssText='position:absolute;left:0;top:32px';
+        root.append(style,button,panel);
+        document.addEventListener('pointerdown',event=>{if (!event.composedPath().includes(host)) close();},true);
+        document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!panel.hidden){close();button.focus();}},true);
+        window.addEventListener('resize',position);window.addEventListener('scroll',position,true);
+        window.addEventListener('online',()=>{checkedAt=0;check();});
+        document.addEventListener('visibilitychange',check);
+        setInterval(check,60000);
+      }
+      if (host.parentElement!==slot) {close();slot.append(host);}
+      render();check();
+    };
+    document.addEventListener('pena-update-slot-ready',mount);
+  })();
   const _enabledKey = 'pena.extension.enabled';
   const _repositoryChannel = 'pena.dialog.repository.v2';
 	const _workerHealthChannel = 'pena.runtime.worker-health.v1';

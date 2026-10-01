@@ -7,7 +7,7 @@
 #              Находит Bitrix24, создаёт ярлыки, регистрирует
 #              задачу в Планировщике для ежедневного обновления.
 #   -Launch  : Запускает Bitrix24 с расширением (из чекбокса в конце установки).
-#   (нет)    : Проверяет обновление и устанавливает, если есть.
+#   (нет)    : Только проверяет; установка требует -ApprovedVersion.
 #
 # Планировщик запускает этот скрипт ежедневно автоматически.
 # ==============================================================
@@ -16,7 +16,8 @@ param(
     [switch]$Launch,                # запустить Bitrix24 с расширением
     [switch]$LaunchWithUpdate,      # проверить обновление + запустить (из ярлыка)
     [switch]$CreateDesktopShortcut, # создать ярлык на рабочем столе (postinstall чекбокс)
-    [string]$InstallFrom            # атомарно опубликовать staging-каталог установщика
+    [string]$InstallFrom,           # атомарно опубликовать staging-каталог установщика
+    [ValidatePattern('^\d+\.\d+\.\d+(\.\d+)?$')][string]$ApprovedVersion
 )
 
 # ── Конфигурация (замените URL на свой реальный репозиторий) ──
@@ -55,6 +56,33 @@ $REQUIRED_WINDOWS_TARGET_FILES = @('updater.ps1', 'pena_host.ps1', 'pena_host.ba
 # ──────────────────────────────────────────────────────────────
 
 $ErrorActionPreference = "SilentlyContinue"
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+
+function Get-UpdateMetadata {
+    $urls = @($UPDATE_JSON_URL, 'https://api.github.com/repos/dmikhailovspace-commits/bx24-extension/contents/update.json?ref=main')
+    foreach ($url in $urls) {
+        try {
+            $value = Invoke-RestMethod -Uri $url -TimeoutSec 15 -Headers @{Accept='application/vnd.github.raw+json'; 'Cache-Control'='no-cache'; 'User-Agent'='PENA-BX24-Updater'} -ErrorAction Stop
+            if ($value -is [string]) { $value = $value | ConvertFrom-Json -ErrorAction Stop }
+            if ([string]$value.version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') { throw 'Invalid update metadata' }
+            return $value
+        } catch { Log "Проверка канала не удалась: $($_.Exception.Message)" }
+    }
+    throw 'Не удалось проверить обновление. Повторим после восстановления сети.'
+}
+
+function Receive-ReleaseFile($Uri, $Destination) {
+    for ($attempt = 0; $attempt -lt 3; $attempt++) {
+        try {
+            $url = $Uri
+            if ($attempt -eq 2 -and $Uri -match '^https://raw\.githubusercontent\.com/dmikhailovspace-commits/bx24-extension/(v[0-9.]+)/(.+)$') {
+                $url = 'https://api.github.com/repos/dmikhailovspace-commits/bx24-extension/contents/' + $Matches[2] + '?ref=' + $Matches[1]
+            }
+            Invoke-WebRequest -Uri $url -OutFile $Destination -UseBasicParsing -TimeoutSec 60 -Headers @{Accept='application/vnd.github.raw+json';'User-Agent'='PENA-BX24-Updater'} -ErrorAction Stop
+            return
+        } catch { if ($attempt -eq 2) { throw }; Start-Sleep -Milliseconds 500 }
+    }
+}
 
 function Log($msg) {
     $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
@@ -332,8 +360,7 @@ function Invoke-AtomicExtensionUpdate($UpdateInfo) {
             $outDir = Split-Path $outFile -Parent
             if (-not (Test-Path $outDir)) { New-Item $outDir -ItemType Directory -Force -ErrorAction Stop | Out-Null }
             $downloadPath = "$outFile.download"
-            Invoke-WebRequest -Uri "$rawBase/extension/$relativePath" -OutFile $downloadPath `
-                -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop
+            Receive-ReleaseFile "$rawBase/extension/$relativePath" $downloadPath
             Move-Item -LiteralPath $downloadPath -Destination $outFile -Force -ErrorAction Stop
             Log "Загружен: $relativePath"
         }
@@ -342,8 +369,7 @@ function Invoke-AtomicExtensionUpdate($UpdateInfo) {
             $targetName = Split-Path $sourcePath -Leaf
             $outFile = Join-Path $stageDir $targetName
             $downloadPath = "$outFile.download"
-            Invoke-WebRequest -Uri "$rawBase/$sourcePath" -OutFile $downloadPath `
-                -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop
+            Receive-ReleaseFile "$rawBase/$sourcePath" $downloadPath
             Move-Item -LiteralPath $downloadPath -Destination $outFile -Force -ErrorAction Stop
             Log "Загружен release-файл: $sourcePath"
         }
@@ -552,7 +578,9 @@ if ($Setup) {
         $settings = New-ScheduledTaskSettingsSet `
             -ExecutionTimeLimit (New-TimeSpan -Hours 1) `
             -StartWhenAvailable `
-            -RunOnlyIfNetworkAvailable
+            -RunOnlyIfNetworkAvailable `
+            -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 15) `
+            -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
         Register-ScheduledTask `
             -TaskName $TASK_NAME `
             -Action $action `
@@ -660,34 +688,7 @@ if ($Launch) {
 # 3. Запускает Bitrix24 с --load-extension
 # ==============================================================
 if ($LaunchWithUpdate) {
-    $localVersion = "0.0.0"
-    $manifestPath = Join-Path $INSTALL_DIR "manifest.json"
-    if (Test-Path $manifestPath) {
-        try {
-            $mf = Get-Content $manifestPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-            $localVersion = $mf.version
-        } catch {}
-    }
-    $releaseHealthy = Test-InstalledReleaseHealth $localVersion
-
-    try {
-        $updateInfo = Invoke-RestMethod -Uri $UPDATE_JSON_URL -TimeoutSec 8 -ErrorAction Stop
-        $remoteVersion = $updateInfo.version
-        $versionComparison = CompareVersions $remoteVersion $localVersion
-        if ($remoteVersion -and ($versionComparison -gt 0 -or ($versionComparison -eq 0 -and -not $releaseHealthy))) {
-            if ($versionComparison -gt 0) {
-                Log "Обновление: $localVersion -> $remoteVersion"
-            } else {
-                Log "Восстанавливаю неполный release $remoteVersion"
-            }
-            Invoke-WithUpdateLock { Invoke-AtomicExtensionUpdate $updateInfo } | Out-Null
-            Log "Обновление до $remoteVersion установлено атомарно."
-            ShowBalloon "PENA Agency" "Расширение обновлено до v$remoteVersion"
-        }
-    } catch {
-        Log "Проверка или установка обновления не удалась; запускаю целую предыдущую версию: $($_.Exception.Message)"
-    }
-
+    # The extension checks the channel without delaying startup. Installation requires per-version consent.
     Register-NativeHost
     $extArgs = "--disable-extensions-except=`"$INSTALL_DIR`" --load-extension=`"$INSTALL_DIR`""
     $BitrixExe = Get-BitrixExecutable
@@ -723,10 +724,10 @@ $releaseHealthy = Test-InstalledReleaseHealth $localVersion
 
 # Получаем update.json
 try {
-    $updateInfo = Invoke-RestMethod -Uri $UPDATE_JSON_URL -TimeoutSec 15 -ErrorAction Stop
+    $updateInfo = Get-UpdateMetadata
 } catch {
     Log "Не удалось получить update.json: $($_.Exception.Message)"
-    exit 0   # не критично — пробуем завтра
+    exit 1   # планировщик повторит неудачную проверку
 }
 
 $remoteVersion = $updateInfo.version
@@ -742,7 +743,12 @@ if ($versionComparison -eq 0) {
     Log "Восстанавливаю неполный release $remoteVersion"
 }
 
-Log "Загружаю обновление $remoteVersion ..."
+if (-not $ApprovedVersion) {
+    Log "Доступно обновление $remoteVersion. Ожидаем согласия в панели расширения."
+    exit 0
+}
+if ($ApprovedVersion -ne $remoteVersion) { Log "Версия изменилась. Требуется новое согласие."; exit 1 }
+Log "Загружаю подтверждённое обновление $remoteVersion ..."
 
 try {
     Invoke-WithUpdateLock { Invoke-AtomicExtensionUpdate $updateInfo } | Out-Null

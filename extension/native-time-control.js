@@ -713,7 +713,11 @@
 	// tasks/classes/general/elapseditem.php has an explicit taskId === 0 global
 	// branch (observed in 23.675.0). Empty responses need independent evidence:
 	// older portals can silently interpret the sentinel as an ordinary task ID.
-	async function loadGlobalElapsedItems({ callPage, from, to, userId, utcOffsetMinutes, timeZone, knownItems = [], probeTaskId = '', supported = false, isCurrent = () => true, maxPages = 2000 } = {}) {
+	function isElapsedAccessError(error) {
+		const detail = `${error?.code || ''} ${error?.message || ''} ${error?.description || ''}`;
+		return /access.?denied|not.?found|not.?allowed|(?:^|\W)0x(?:000004|100002)(?:\W|$)/i.test(detail);
+	}
+	async function loadGlobalElapsedItems({ callPage, from, to, userId, utcOffsetMinutes, timeZone, knownItems = [], probeTaskId = '', probeTaskIds = [], supported = false, isCurrent = () => true, maxPages = 2000 } = {}) {
 		if (typeof callPage !== 'function') throw new TypeError('callPage is required');
 		if (!/^[1-9]\d*$/.test(String(userId || ''))) throw new TypeError('Current user ID is required');
 		const range = normalizeRange(from, to);
@@ -779,18 +783,21 @@
 			const ambiguous = /(?:^|[^A-Z0-9_])(?:0X000001|0X000004|0X000100|0X100002|ERROR_CORE|ACTION_NOT_ALLOWED|ACCESS_DENIED)(?:$|[^A-Z0-9_])/.test(detail);
 			if (ambiguous) {
 				if (pages > 0) throw error;
-				const id = Number(probeTaskId);
-				if (!/^[1-9]\d*$/.test(String(probeTaskId)) || !Number.isSafeInteger(id)) throw error;
-				try {
-					const probe = await request(dateFilter, { ID:'ASC' }, 1, id);
-					if (probe.items.some(item => item.taskId !== String(id) || item.dateKey < range.from || item.dateKey > range.to)) throw error;
-				} catch (probeError) {
-					if (probeError?.code === 'SUPERSEDED' || probeError?.code === 'STALE_REQUEST') throw probeError;
-					// Do not leak a validation error's globalFallback flag: a failed probe
-					// is never permission to dispatch thousands of per-task requests.
-					throw error;
+				const candidates = [...new Set([probeTaskId, ...probeTaskIds].map(String))].filter(id => /^[1-9]\d*$/.test(id) && Number.isSafeInteger(Number(id))).slice(0,3);
+				for (const candidate of candidates) {
+					const id = Number(candidate);
+					try {
+						const probe = await request(dateFilter, { ID:'ASC' }, 1, id);
+						if (probe.items.some(item => item.taskId !== String(id) || item.dateKey < range.from || item.dateKey > range.to)) throw invalid('Неверная задача или дата в проверке журнала');
+					} catch (probeError) {
+						if (probeError?.code === 'SUPERSEDED' || probeError?.code === 'STALE_REQUEST') throw probeError;
+						if (isElapsedAccessError(probeError)) continue;
+						// Invalid data never authorizes a portal-wide legacy scan.
+						throw error;
+					}
+					return { supported:false, reason:'unsupported-confirmed-by-task', pages };
 				}
-				return { supported:false, reason:'unsupported-confirmed-by-task', pages };
+				throw error;
 			}
 			if (/UNKNOWN_METHOD|METHOD_NOT_FOUND|ERROR_METHOD_NOT_FOUND|WRONG_ARGUMENTS|INVALID_PARAMETERS|ERROR_ARGUMENT|TASK_NOT_FOUND/.test(detail)) return { supported:false, reason:'unsupported', pages };
 			throw error;
@@ -815,7 +822,7 @@
 			}
 			const wave = pending.splice(0, 16);
 			if (pages + wave.length > maxPages) throw new Error('Слишком большой список задач');
-			const responses = await callPages(wave.map(job => ({ method:'tasks.task.list', params:{ filter:{ ...filter, '>ID':job.after, '<=ID':job.upper }, select, order:{ ID:'asc' }, start:0 } })));
+			const responses = await callPages(wave.map(job => ({ method:'tasks.task.list', params:{ filter:{ ...filter, '>ID':job.after, '<=ID':job.upper }, select, order:{ ID:'asc' }, start:-1 } })));
 			if (!isCurrent()) throw Object.assign(new Error('Task catalog superseded'), { code:'STALE_REQUEST' });
 			if (!Array.isArray(responses) || responses.length !== wave.length || wave.some((_,i) => !responses[i] || responses[i].error || responses[i].partial || responses[i].complete === false)) throw new Error('Неполный пакет задач');
 			responses.forEach((page, index) => {
@@ -831,8 +838,9 @@
 				rows.push(...batch); pages++;
 				if (!batch.length) { if (!job.empty) pending.push({ ...job, empty:true }); return; }
 				const more = page.next != null && page.next !== false || payload?.hasMore === true || payload?.hasMorePages === true;
-				const noMore = payload?.hasMore === false || payload?.hasMorePages === false;
-				if (cursor < job.upper && !noMore && (more || batch.length >= 50)) pending.push({ after:cursor, upper:job.upper, empty:false });
+				// With counting disabled, a full page still needs a cursor follow-up,
+				// even if the SDK synthesizes hasMore:false from absent pagination.
+				if (cursor < job.upper && (more || batch.length >= 50)) pending.push({ after:cursor, upper:job.upper, empty:false });
 			});
 		}
 		rows.sort((a,b) => Number(a.ID ?? a.id) - Number(b.ID ?? b.id));
@@ -965,6 +973,7 @@
 		buildElapsedWriteFields,
 		loadTaskCatalogPartitions,
 		loadElapsedItems,
+		isElapsedAccessError,
 		loadGlobalElapsedItems
 	});
 });

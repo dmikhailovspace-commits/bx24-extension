@@ -74,7 +74,10 @@ try {
  });
  await phase('visible fallback catches a missed event and is throttled',async()=>{
   await page.evaluate(()=>liveProbe.select('2026-09-21'));await ready();
-  await page.evaluate(async()=>{timeSeedItems.find(row=>row.ID==='501').SECONDS='3000';await liveProbe.reconcile();});
+  const calls=await page.evaluate(()=>timeRestCalls.length);
+  await page.evaluate(()=>liveProbe.reconcile());
+  assert.equal(await page.evaluate(()=>timeRestCalls.length),calls,'Freshly loaded panel must not repeat its journal read');
+  await page.evaluate(async()=>{liveProbe.record().updatedAt=Date.now()-31000;timeSeedItems.find(row=>row.ID==='501').SECONDS='3000';await liveProbe.reconcile();});
   await ready();assert.equal(await page.evaluate(()=>liveProbe.record().data.totalSeconds),3000);
  });
  await phase('confirmed task deletion clears totals and cannot reappear from cached month',async()=>{
