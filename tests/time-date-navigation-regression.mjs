@@ -291,7 +291,11 @@ try {
   return {retainedSeconds:900,completeSeconds:1500,retriedTasks:[...new Set(retryCalls.map(call=>call.taskId))]};
  });
  await phase('30-day partial statistics retain numerical subtotals and expose both failed tasks on desktop and mobile',async()=>{
-  await page.evaluate(()=>{dateProbe.clear();dateBackend.failTask='101';dateBackend.failTasks=['102'];dateBackend.failDescription='Access denied';});
+  // Inject the cold backend at the actual click, not while the old day is
+  // still visible: clearing its cache earlier lets a UI tick block the tab.
+  await page.evaluate(()=>document.querySelector('.pena-native-time-view-tab[data-view="stats30"]').addEventListener('click',()=>{
+   dateProbe.clear();dateBackend.failTask='101';dateBackend.failTasks=['102'];dateBackend.failDescription='Access denied';
+  },{capture:true,once:true}));
   await page.locator('.pena-native-time-view-tab[data-view="stats30"]').click();
   await page.waitForFunction(()=>dateProbe.record()?.errorCode==='TIME_TASKS_UNAVAILABLE'&&dateProbe.idle());
   await page.waitForFunction(()=>!document.querySelector('.pena-native-time-panel').classList.contains('--read-blocked'));
