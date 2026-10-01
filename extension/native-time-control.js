@@ -211,6 +211,8 @@
 	// Inputs are already validated, normalized aggregates. Replace only accepted
 	// tasks; unchanged records retain their identity and are not parsed/sorted again.
 	function replaceElapsedTasks(previous, replacement, taskIds) {
+		previous ||= {};
+		replacement ||= {};
 		const accepted = new Set(Array.from(taskIds || [], String));
 		const days = new Map((previous.days || []).map(day => [day.dateKey, { ...day }]));
 		const tasks = new Map((previous.tasks || []).filter(task => !accepted.has(task.taskId)).map(task => [task.taskId, task]));
@@ -884,7 +886,46 @@
 		};
 	}
 
+	// A completed task read is reusable across days, including days with no entries.
+	// Proofs are scoped to the project selection/timezone and revoked by task revisions.
+	function createElapsedWindowCache(limit = 6) {
+		const windows = new Map();
+		const rangeFor = range => {
+			const normalized = normalizeRange(range.from, range.to);
+			if (normalized.from.slice(0, 7) !== normalized.to.slice(0, 7)) return normalized;
+			const from = normalized.from.slice(0, 7) + '-01';
+			const next = addDays(from, 32).slice(0, 7) + '-01';
+			return { from, to:addDays(next, -1) };
+		};
+		const select = (data, range) => aggregateElapsedItems((data?.items || []).filter(item => item.dateKey >= range.from && item.dateKey <= range.to));
+		return {
+			rangeFor, select,
+			clear: () => windows.clear(),
+			put(scope, range, data, taskIds, freshness) {
+				const key = `${scope}|${range.from}|${range.to}`;
+				const previous = windows.get(key);
+				const proofs = { ...previous?.freshness };
+				for (const id of taskIds) if (freshness[id] && !freshness[id].unavailable) proofs[id] = { ...freshness[id] };
+				windows.delete(key);
+				windows.set(key, { scope, range:{...range}, data:replaceElapsedTasks(previous?.data, data, taskIds), freshness:proofs });
+				while (windows.size > limit) windows.delete(windows.keys().next().value);
+			},
+			get(scope, range, taskIds, revisions) {
+				for (const [key, record] of [...windows].reverse()) {
+					if (record.scope !== scope || record.range.from > range.from || record.range.to < range.to) continue;
+					const accepted = new Set(taskIds.filter(id => record.freshness[id] && record.freshness[id].revision === (revisions.get(id) || 0)));
+					if (!accepted.size && taskIds.length) continue;
+					windows.delete(key); windows.set(key, record);
+					return { data:select({items:record.data.items.filter(item => accepted.has(String(item.taskId)))}, range),
+						freshness:Object.fromEntries([...accepted].map(id => [id, {...record.freshness[id]}])), complete:accepted.size === taskIds.length };
+				}
+				return null;
+			}
+		};
+	}
+
 	return Object.freeze({
+		createElapsedWindowCache,
 		applyQualifiedContact,
 		segmentTimerByPortalDay,
 		createRequestQueue,

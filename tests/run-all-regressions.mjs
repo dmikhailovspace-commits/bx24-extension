@@ -67,6 +67,7 @@ const suites = [
   'time-catalog-partitions-regression.mjs',
   'time-log-empty-regression.mjs',
   'time-global-elapsed-regression.mjs',
+  'time-live-cache-regression.mjs',
   'time-counter-reset-regression.mjs',
   'time-contact-project-exception-regression.mjs',
   'time-today-preview-regression.mjs',

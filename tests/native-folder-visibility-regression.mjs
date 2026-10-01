@@ -80,6 +80,12 @@ try {
   });
   const row=id=>page.locator(host+' .bx-im-list-recent-item__wrap[data-id="'+id+'"]');
   const unique=page.locator(host+' .pena-native-unique-filter');
+	 const centering=await unique.evaluate(label=>{
+	  const host=label.parentElement,control=label.querySelector('.pena-native-toggle-track').getBoundingClientRect();
+	  const commands=host.querySelector('.pena-native-command-bar').getBoundingClientRect(),groups=host.querySelector('.pena-native-group-tabs').getBoundingClientRect();
+	  return Math.abs((control.top+control.bottom)/2-(commands.bottom+groups.top)/2);
+	 });
+	 assert.ok(centering<1,`Unique toggle is displaced by ${centering}px`);
   assert.equal(await unique.locator('.pena-native-toggle-track').evaluate(el=>Math.round(el.getBoundingClientRect().width)),28,'The shipped CSS must render the toggle');
   await unique.click();
   await row('chat225').waitFor({state:'hidden'});await row('chat5').waitFor({state:'hidden'});await row('chat77').waitFor({state:'visible'});

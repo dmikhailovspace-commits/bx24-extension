@@ -20,7 +20,7 @@ const source=raw.replace(anchor,anchor+`
   warm:()=>_loadDialogTimeRange(window.dateProbe.range()),
   legacy(){_callDialogTimeGlobalElapsedPage.capabilities ||= new Map();_callDialogTimeGlobalElapsedPage.capabilities.set(_getDialogTimeIdentityScopeKey(),{supported:false,reason:'controlled-legacy-portal'});},
   taskCount:()=>_getDialogTimeWorkingTaskIds(window.dateProbe.range()).length,
-  clear(){_dialogTimeCache.clear();},
+  clear(){_dialogTimeCache.clear();_loadDialogTimeRange.windows?.clear();},
   pressure(){
    for(let i=0;i<12;i++){const day=_PENA_TIME_CONTROL.addDays(_getDialogTimeTodayKey(),-100-i);const range={from:day,to:day};_setDialogTimeCacheRecord(_getDialogTimeCacheKey(range),{range,status:'ready'});}
    return{size:_dialogTimeCache.size,selected:_dialogTimeCache.has(_getDialogTimeCacheKey(window.dateProbe.range())),today:_dialogTimeCache.has(_getDialogTimeCacheKey(_getDialogTimeRange('today')))};
@@ -47,7 +47,7 @@ try {
   state.rows.push({ID:'9000',TASK_ID:'405',USER_ID:'7',SECONDS:'1800',CREATED_DATE:model.addDays(today,-1)+'T13:00:00+03:00'});
   const result=params=>{
    const [taskId,order,filter,,nav]=params;
-   if(state.failDay&&String(filter['>=CREATED_DATE']||'').startsWith(state.failDay))return{error:()=> 'TIMEOUT',error_description:()=> 'Controlled journal timeout'};
+   if(state.failDay&&state.failDay===dateProbe.range().from)return{error:()=> 'TIMEOUT',error_description:()=> 'Controlled journal timeout'};
    if(state.legacy&&Number(taskId)===0)return{error:()=> 'TASK_NOT_FOUND',error_description:()=> 'controlled unsupported sentinel'};
    let rows=state.rows.filter(row=>(!taskId||String(taskId)===row.TASK_ID)&&String(filter.USER_ID)===row.USER_ID&&
     (filter.ID==null||String(filter.ID)===row.ID)&&(filter['>ID']==null||Number(row.ID)>Number(filter['>ID']))&&
@@ -56,10 +56,10 @@ try {
    const total=rows.length,size=nav.NAV_PARAMS.nPageSize,start=(nav.NAV_PARAMS.iNumPage-1)*size;
    rows=rows.slice(start,start+size);return{error:()=>null,data:()=>rows,total:()=>total,answer:{}};
   };
-  const note=params=>state.calls.push({taskId:String(params[0]),from:String(params[2]['>=CREATED_DATE']||'').slice(0,10),to:String(params[2]['<CREATED_DATE']||'').slice(0,10)});
+  const note=params=>state.calls.push({taskId:String(params[0]),selected:dateProbe.range().from,from:String(params[2]['>=CREATED_DATE']||'').slice(0,10),to:String(params[2]['<CREATED_DATE']||'').slice(0,10)});
   const held=params=>{
-   const day=String(params[2]['>=CREATED_DATE']||'').slice(0,10);
-   return (state.holdDay&&day===state.holdDay)||(state.partialDay&&day===state.partialDay&&state.calls.filter(call=>call.from===day).length>16);
+   const day=dateProbe.range().from;
+   return (state.holdDay&&day===state.holdDay)||(state.partialDay&&day===state.partialDay&&state.calls.filter(call=>call.selected===day).length>16);
   };
   const method=BX.rest.callMethod;
   BX.rest.callMethod=function(name,params,callback){
@@ -85,7 +85,7 @@ try {
   assert.equal(await seconds(),3000);
   const prior=await page.evaluate(()=>({range:dateProbe.range(),calls:dateBackend.calls.slice(),tasks:dateProbe.record().data.tasks.map(task=>task.taskId)}));
   assert.ok(prior.tasks.includes('405'),'A task with ALLOW_TIME_TRACKING=N must keep its recorded historical time');
-  assert.ok(prior.calls.some(call=>call.from===prior.range.from));
+  assert.ok(prior.calls.some(call=>call.from<=prior.range.from&&call.to>prior.range.to));
   await page.locator('.pena-native-time-date-next').click();await ready();assert.equal(await seconds(),600);
   return prior;
  });
@@ -155,7 +155,7 @@ try {
  });
  await phase('rapid navigation cancels unseen legacy tail and prioritizes the newest date',async()=>{
   const oldDay=await page.evaluate(()=>{
-   dateProbe.legacy();dateBackend.legacy=true;
+   dateProbe.clear();dateProbe.legacy();dateBackend.legacy=true;
    const day=__PENA_TIME_CONTROL__.addDays(dateBackend.today,-10);dateBackend.holdDay=day;
    dateProbe.select({from:day,to:day});return day;
   });
@@ -165,9 +165,9 @@ try {
   });
   await page.evaluate(()=>dateBackend.release());await ready();
   await page.waitForFunction(()=>dateProbe.idle());
-  const evidence=await page.evaluate(({oldDay,nextDay})=>({oldDay,nextDay,oldCalls:dateBackend.calls.filter(call=>call.from===oldDay).length,newCalls:dateBackend.calls.filter(call=>call.from===nextDay).length,workingTasks:dateProbe.taskCount(),selected:dateProbe.selected()}),{oldDay,nextDay});
+  const evidence=await page.evaluate(({oldDay,nextDay})=>({oldDay,nextDay,oldCalls:dateBackend.calls.filter(call=>call.selected===oldDay).length,newCalls:dateBackend.calls.filter(call=>call.selected===nextDay).length,workingTasks:dateProbe.taskCount(),selected:dateProbe.selected()}),{oldDay,nextDay});
   assert.equal(evidence.selected.from,nextDay);assert.ok(evidence.oldCalls<=16,`Obsolete date still queried ${evidence.oldCalls} tasks instead of stopping after its first 16`);
-  assert.equal(evidence.newCalls,evidence.workingTasks);return evidence;
+  assert.ok(evidence.newCalls<=evidence.workingTasks);assert.equal(await page.evaluate(()=>dateProbe.record().hasCompleteSnapshot),true);return evidence;
  });
  await phase('partial today is masked until all tasks finish; loading and ready layouts fit desktop and narrow windows',async()=>{
   await page.evaluate(()=>{
@@ -200,7 +200,7 @@ try {
  });
  await phase('cold timeout offers an explicit exit without totals; real manual refresh recovers the exact date',async()=>{
   const day=await page.evaluate(()=>{
-   const day=__PENA_TIME_CONTROL__.addDays(dateBackend.today,-13);dateBackend.failDay=day;dateProbe.select({from:day,to:day});return day;
+   dateProbe.clear();const day=__PENA_TIME_CONTROL__.addDays(dateBackend.today,-13);dateBackend.failDay=day;dateProbe.select({from:day,to:day});return day;
   });
   await page.waitForFunction(()=>document.querySelector('.pena-native-time-loading-retry')?.hidden===false&&dateProbe.record()?.status==='error');
   const error=await page.evaluate(()=>{
@@ -221,13 +221,13 @@ try {
   assert.equal(await seconds(),0);assert.equal(await page.evaluate(()=>dateProbe.selected().from),day);return{error,continued};
  });
  await phase('loading close and Escape remain available; reopening a completed day never blocks',async()=>{
-  await page.evaluate(()=>{const day=__PENA_TIME_CONTROL__.addDays(dateBackend.today,-14);dateBackend.holdDay=day;dateProbe.select({from:day,to:day});});
+  await page.evaluate(()=>{dateProbe.clear();const day=__PENA_TIME_CONTROL__.addDays(dateBackend.today,-14);dateBackend.holdDay=day;dateProbe.select({from:day,to:day});});
   await page.waitForFunction(()=>dateBackend.held.length>0&&!document.querySelector('.pena-native-time-loading-overlay')?.hidden);
   await page.locator('.pena-native-time-loading-close').click();
   assert.equal(await page.locator('.pena-native-time-panel').count(),0);
   await page.evaluate(()=>dateBackend.release());await page.waitForFunction(()=>dateProbe.idle());
   await page.locator('.pena-native-time-button').click();await ready();
-  await page.evaluate(()=>{const day=__PENA_TIME_CONTROL__.addDays(dateBackend.today,-15);dateBackend.holdDay=day;dateProbe.select({from:day,to:day});});
+  await page.evaluate(()=>{dateProbe.clear();const day=__PENA_TIME_CONTROL__.addDays(dateBackend.today,-15);dateBackend.holdDay=day;dateProbe.select({from:day,to:day});});
   await page.waitForFunction(()=>dateBackend.held.length>0&&!document.querySelector('.pena-native-time-loading-overlay')?.hidden);
   await page.keyboard.press('Escape');assert.equal(await page.locator('.pena-native-time-panel').count(),0);
   await page.evaluate(()=>dateBackend.release());await page.waitForFunction(()=>dateProbe.idle());

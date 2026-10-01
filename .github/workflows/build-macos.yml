@@ -284,9 +284,9 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s\n' \
-            'Adds the optional Without duplicates view below the filters toolbar.' \
-            'All groups and All folders become Unsorted: assigned dialogs appear only in their group and folder. Group counters include their folders; Unsorted folder counters include only unfiled dialogs. Search remains global and clearing it restores the selected view before paint.' \
-            'Folder pagination uses the mounted Bitrix service without forced scrolling or a blocking loader; saved folder membership is preserved.' \
+            'The Without duplicates toggle is centered between the filter buttons and groups.' \
+            'Time records share a scoped monthly cache: switching loaded days needs no extra journal requests. Native edits and deletions update cached totals automatically; visible reconciliation recovers missed events. Late responses cannot restore a deleted task or overwrite a confirmed write.' \
+            'Project setup keeps a stable window size and fixed actions during loading, errors, search and reopening. Only the choices scroll.' \
             'The configured verification profile passed before packaging; the Chrome package is checked against the exact tested source.' \
             'Controlled tests are not a live Bitrix latency measurement. The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \
             'Includes Windows EXE, Universal macOS DMG for Intel and Apple Silicon, Chrome ZIP and Chrome Web Store submission materials. Store publication is separate.' \

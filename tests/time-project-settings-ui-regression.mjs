@@ -28,10 +28,14 @@ try{
   await page.locator('.pena-native-time-button').click();
   await page.waitForFunction(()=>typeof window.releaseProjectFailure==='function');
   assert.equal(await page.locator('.pena-native-time-project-status').innerText(),'Загружаем проекты…');
+	 const loadingBox=await page.locator('.pena-native-time-panel').boundingBox();
+	 const loadingFooter=await page.locator('.pena-native-time-project-footer').boundingBox();
   assert.equal(await page.locator('.pena-native-time-project-save').isDisabled(),true);assert.deepEqual(await timeIds(),[]);
   await page.screenshot({path:new URL('time-project-settings-loading-1280.png',artifacts).pathname.replace(/^\/(?=[A-Za-z]:)/,'')});
   await page.evaluate(()=>window.releaseProjectFailure());
   await page.locator('.pena-native-time-project-status.--error').waitFor({state:'visible'});
+	 assert.deepEqual(await page.locator('.pena-native-time-panel').boundingBox(),loadingBox,'Project error moved the window');
+	 assert.deepEqual(await page.locator('.pena-native-time-project-footer').boundingBox(),loadingFooter,'Project error moved the actions');
   assert.equal(await preference(),null);assert.deepEqual(await timeIds(),[]);
   assert.equal(await page.locator('.pena-native-time-project-save').isDisabled(),true);
   assert.equal(await page.locator('.pena-native-time-project-cancel').isVisible(),false,'Mandatory first selection exposed cancel');
@@ -39,6 +43,8 @@ try{
   await page.screenshot({path:new URL('time-project-settings-error-1280.png',artifacts).pathname.replace(/^\/(?=[A-Za-z]:)/,'')});
   await page.locator('.pena-native-time-project-status').getByRole('button',{name:'Повторить'}).click();
   await project('1').waitFor({state:'visible'});
+	 assert.deepEqual(await page.locator('.pena-native-time-panel').boundingBox(),loadingBox,'Loaded projects moved the window');
+	 assert.deepEqual(await page.locator('.pena-native-time-project-footer').boundingBox(),loadingFooter,'Loaded projects moved the actions');
   assert.equal(await page.locator('.pena-native-time-project-status').evaluate(n=>n.classList.contains('--error')),false);
   assert.equal(await page.evaluate(()=>window.projectLookupAttempts),2);
   assert.deepEqual(await timeIds(),[]);
