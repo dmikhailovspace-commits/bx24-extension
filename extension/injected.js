@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.26';
+	window.__ANITREC_RUNNING__ = '8.0.27';
 
-	const VER = '8.0.26';
+	const VER = '8.0.27';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -5139,13 +5139,16 @@
 		const current = () => identity === _getDialogTimeIdentityScopeKey() && revision === (_dialogTimeTaskRevisions.get(id) || 0) && (!options.isCurrent || options.isCurrent());
 		if (_isDialogTimeTaskExcluded(id)) return true;
 		try {
+			// A separately retried Desktop call can already prove task-level denial.
+			// Do not require a second API family to repeat the same explicit proof.
+			if (options.elapsedError?.elapsedIndividualConfirmed && _PENA_TIME_CONTROL.isTaskNotAccessibleError(options.elapsedError)) throw options.elapsedError;
 			await _callBxRestPageWithTimeout('tasks.task.get',{taskId:Number(id),select:['ID','TITLE']},12000,{isCurrent:current});
 			return false;
 		} catch (error) {
 			// A time-journal denial alone does not prove the task is invisible.
 			// Never exclude tasks on network/auth/scope/parameter or generic errors.
 			const code = String(error?.code || ''), message = String(error?.description || error?.message || '');
-			const taskError = /^(?:0|ERROR_CORE|TASK_NOT_FOUND|NOT_FOUND|0x000001|0x000004|0x100002)$/i.test(code) ||
+			const taskError = _PENA_TIME_CONTROL.isTaskNotAccessibleError(error) || /^(?:0|ERROR_CORE|TASK_NOT_FOUND|NOT_FOUND|0x000001|0x000004|0x100002)$/i.test(code) ||
 				(code === 'ACCESS_DENIED' && /^(?:access denied\.?|доступ запрещен\.?)$/i.test(message));
 			if (!current() || !taskError || !_PENA_TIME_CONTROL.isElapsedAccessError(error) || /method|метод/i.test(message)) return false;
 			(_isDialogTimeTaskExcluded.proofs ||= new Map()).set(`${identity}:${id}`,{at:Date.now(),revision});
@@ -18174,7 +18177,7 @@ if (_presetChannel) {
 							if (!missing.length || !missing.every(index => _PENA_TIME_CONTROL.isElapsedAccessError(error.partialErrors[index]) || error.partialErrors[index]?.code === 'ERROR_CORE')) throw error;
 							await _runDialogRecentJobs(missing,async index => {
 								const id = String(params[index][0]);
-								if (await _confirmDialogTimeTaskUnavailable(id,{key,isCurrent:current})) {
+								if (await _confirmDialogTimeTaskUnavailable(id,{key,isCurrent:current,elapsedError:error.partialErrors[index]})) {
 									const position = taskIds.indexOf(id); if (position >= 0) taskIds.splice(position,1);
 									workingTaskIdSet.delete(id); delete freshness[id];
 									data = {...data,..._PENA_TIME_CONTROL.replaceElapsedTasks(data,{items:[]},[id])};

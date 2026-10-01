@@ -67,6 +67,7 @@ try {
   };
   const method=BX.rest.callMethod;
   BX.rest.callMethod=function(name,params,callback){
+   if(name==='tasks.task.get')state.allViewChecks=(state.allViewChecks||0)+1;
    if(name==='tasks.task.get'&&state.viewDenied?.includes(String(params.taskId))){state.viewChecks=(state.viewChecks||0)+1;queueMicrotask(()=>callback({error:()=> '0',error_description:()=> 'Access denied.'}));return;}
    if(name!=='task.elapseditem.getlist')return method.call(this,name,params,callback);
    note(params);const deliver=()=>callback(result(params));
@@ -334,6 +335,29 @@ try {
   await page.evaluate(()=>dateProbe.warm());await ready();
   assert.equal(await page.evaluate(()=>dateProbe.excluded('101')),false);assert.equal(await seconds(),19500);
   return {excluded:1,completeDaySeconds:900,completeMonthSeconds:2700,restoredMonthSeconds:19500,repeatDeniedReads:0};
+ });
+ await phase('two exact Desktop task-unavailable errors disappear from 30-day statistics and day totals',async()=>{
+  const before=await page.evaluate(()=>{
+   dateBackend.failTask='101';dateBackend.failTasks=['102'];
+   dateBackend.failDescription='TASKS_ERROR_EXCEPTION_#1; Task not found or not accessible; 1/TE/TASK_NOT_FOUND_OR_NOT_ACCESSIBLE<br>';
+   return {tasks:dateProbe.taskCount(),checks:dateBackend.allViewChecks||0};
+  });
+  await page.evaluate(()=>dateProbe.refresh());await ready();
+  assert.equal(await seconds(),1800);assert.equal(await page.locator('.pena-native-time-total-value').innerText(),'30 мин');
+  assert.equal(await page.locator('.pena-native-time-partial-warning').isVisible(),false);
+  assert.equal(await page.locator('.pena-native-time-failure:visible').count(),0);
+  assert.ok((await page.locator('.pena-native-time-stats-duration').allTextContents()).every(text=>!text.includes('≥')));
+  const result=await page.evaluate(()=>({tasks:dateProbe.taskCount(),checks:dateBackend.allViewChecks||0,excluded:['101','102'].every(id=>dateProbe.excluded(id)),remaining:dateProbe.record().data.items.map(item=>item.taskId)}));
+  assert.equal(result.tasks,before.tasks-2);assert.equal(result.checks,before.checks);assert.equal(result.excluded,true);
+  assert.ok(result.remaining.every(id=>!['101','102'].includes(String(id))));
+  await page.screenshot({path:'tests/artifacts/time-inaccessible-tasks-excluded.png'});
+  const calls=await page.evaluate(()=>dateBackend.calls.length);
+  await page.locator('.pena-native-time-view-tab[data-view="day"]').click();await ready();
+  assert.equal(await seconds(),0);assert.equal(await page.locator('.pena-native-time-total-value').innerText(),'0 мин');
+  assert.ok(await page.evaluate(n=>dateBackend.calls.slice(n).every(call=>!['101','102'].includes(call.taskId)),calls));
+  await page.evaluate(()=>{dateBackend.failTask='';dateBackend.failTasks=[];dateBackend.failDescription='';dateProbe.taskChanged('101');dateProbe.taskChanged('102');});
+  await page.evaluate(()=>dateProbe.warm());await ready();assert.equal(await seconds(),1500);
+  return {excluded:2,monthSeconds:1800,daySeconds:0,extraViewRequests:0,recoveredDaySeconds:1500};
  });
  await phase('saving a narrower project selection never lets its preview marker block a complete read',async()=>{
   await page.evaluate(()=>dateProbe.select({from:dateBackend.today,to:dateBackend.today}));await ready();

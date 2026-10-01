@@ -718,6 +718,13 @@
 		const detail = `${error?.code || ''} ${error?.message || ''} ${error?.description || ''}`;
 		return /access.?denied|not.?found|not.?allowed|(?:^|\W)0x(?:000001|000004|100002)(?:\W|$)/i.test(detail);
 	}
+	function isTaskNotAccessibleError(error) {
+		// This task-level exception is distinct from an inaccessible time entry
+		// (ITEM_NOT_FOUND_OR_NOT_ACCESSIBLE) or a generic journal permission error.
+		const code = String(error?.code || '');
+		return /^(?:ERROR_CORE|TASK_NOT_FOUND_OR_NOT_ACCESSIBLE)$/i.test(code) &&
+			/(?:^|[^A-Z0-9_])TASK_NOT_FOUND_OR_NOT_ACCESSIBLE(?:$|[^A-Z0-9_])/i.test(`${code} ${error?.description || ''} ${error?.message || ''}`);
+	}
 	function describeElapsedError(error) {
 		const clean = value => String(value || '').replace(/https?:\/\/\S+/gi,'[URL]').replace(/\b(auth|access_token|refresh_token|authorization|client_secret)\s*[:=]\s*\S+/gi,'$1=[hidden]').replace(/[\u0000-\u001f]/g,' ').slice(0,300);
 		const code = clean(error?.code || 'REST_ERROR');
@@ -1001,6 +1008,7 @@
 		loadTaskCatalogPartitions,
 		loadElapsedItems,
 		isElapsedAccessError,
+		isTaskNotAccessibleError,
 		describeElapsedError,
 		loadGlobalElapsedItems
 	});

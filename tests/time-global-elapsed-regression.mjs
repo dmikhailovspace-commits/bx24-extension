@@ -267,6 +267,25 @@ await phase('only confirmed view denial excludes tasks; transient errors, scope 
  assert.equal(f.c._isDialogTimeTaskExcluded('1'),false);
  return {nonExcludingErrors:7,removedStaleEntries:true,expiryRecovery:true,identityAndRevisionFenced:true};
 });
+await phase('exact Desktop task-unavailable exception is sufficient only after individual confirmation',async()=>{
+ const f=fixture(2);f.api.state.mode='unsupported';f.api.state.rows=[raw(1),raw(2)];await f.load();
+ const message='TASKS_ERROR_EXCEPTION_#1; Task not found or not accessible; 1/TE/TASK_NOT_FOUND_OR_NOT_ACCESSIBLE<br>';
+ const failure={code:'ERROR_CORE',message,elapsedIndividualConfirmed:true};
+ const original=f.c._callBxRestPageWithTimeout;let viewChecks=0;
+ f.c._callBxRestPageWithTimeout=async(method,...args)=>{if(method==='tasks.task.get')viewChecks++;return original(method,...args);};
+ for(const error of [{...failure,elapsedIndividualConfirmed:false},{...failure,code:'TIMEOUT'},{...failure,message:'TASKS_ERROR_EXCEPTION_#512; Item not found; 512/TE/ITEM_NOT_FOUND_OR_NOT_ACCESSIBLE'},{...failure,message:'Access denied'}]){
+  assert.equal(await f.c._confirmDialogTimeTaskUnavailable('1',{elapsedError:error}),false);
+ }
+ assert.equal(viewChecks,4);viewChecks=0;
+ f.c._callDialogTimeElapsedPages=async params=>{
+  const partialPages=await Promise.all(params.map(p=>Number(p[0])===1?null:f.api.call(p)));
+  throw Object.assign(new Error(message),{partialPages,partialErrors:params.map(p=>Number(p[0])===1?failure:null)});
+ };
+ await f.load({force:true});assert.equal(viewChecks,0);assert.equal(f.record().data.totalSeconds,60);
+ assert.equal(f.c._isDialogTimeTaskExcluded('1'),true);assert.equal(f.record().hasCompleteSnapshot,true);
+ assert.equal(f.record().data.coverage.totalTasks,1);assert.equal(f.record().error,'');
+ return {exactUserResponse:true,extraViewRequests:0,accessibleTotalSeconds:60,complete:true};
+});
 await phase('all tasks becoming invisible is a complete empty accessible result',async()=>{
  const f=fixture(1);f.api.state.mode='unsupported';
  f.c._callDialogTimeElapsedPages=async params=>{throw Object.assign(new Error('Access denied'),{partialPages:params.map(()=>null),partialErrors:params.map(()=>({code:'ERROR_CORE',message:'Access denied'}))});};
