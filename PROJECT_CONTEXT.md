@@ -9,8 +9,8 @@
 - Release date: **2026-10-02**
 - Runtime files: **19**
 - Regression suites: **87**
-- Windows artifact: _not built_
-- macOS artifact: _not built_
+- Windows artifact: `dist/PENA_Agency_Windows_v8.0.30.exe` - SHA-256: `2BF258EB37384A161E189981D92B85DCD3045D8457AC3A0B82D2B6A9FF36C4ED`
+- macOS artifact: `dist/PENA_Agency_macOS_Universal_v8.0.30.dmg` - SHA-256: `859D4D37CB35D5BC91522E15BE723B7A3CF437A42DB0BC6A9986555BAD621A9B`
 <!-- AUTO:END -->
 
 ## Назначение
@@ -23,6 +23,10 @@
 - Для точной нативной структуры elements_container > elements > list > scroll-container сохраняется структурный scroll owner, даже когда Bitrix временно скрывает RecentList. Геометрия и видимость внешней области по-прежнему проверяются; скрытый маршрут не становится активным. Поиск, индикатор загрузки и результаты остаются у Bitrix; самостоятельная индексация или подмена выдачи не добавлены. Виртуальный scroller результатов поиска не подменяет владельца списка.
 - Search-state regression теперь использует нативную вложенную структуру и различие v-show чатов/задач. На 8.0.29 проверка стабильной панели при задержанном ответе падает; с исправлением проходит. Проверяются каждый кадр загрузки, единственная неизменная панель и list owner, поздняя выдача, очистка/кнопка/Escape, папки и непрочитанные, открытие результата, повторный mount и действия над результатами в обоих режимах.
 - Релизный профиль — точный search-focused 16 и проверка контекста. Полный пакет не запускать. Живой пользовательский портал и физический Mac не проверялись.
+
+- 8.0.30 опубликована из неизменяемого коммита `f5c4aeab13b32a25a47731c5baa267bba6d6dec7`: https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v8.0.30. Run `36992163329` полностью успешен: локально search-focused 16/16 за 245,0 с, CI 16/16 за 264,019 с; Windows EXE, macOS Universal DMG и Chrome ZIP. Полный пакет не запускался.
+- Проверены 8 опубликованных assets по GitHub digest/sidecars, точный Chrome payload, 19 runtime-файлов и updater внутри DMG, ProductVersion EXE 8.0.30. На macOS runner прошли migration/consent/rollback/native framing, hdiutil/plutil, LF/executable и обе архитектуры. Отчёт `tests/artifacts/release-verification-8.0.30.json`. В dist только четыре актуальных desktop-файла, chrome-release содержит CI-пакет. Пользовательские исходные PNG не изменялись.
+- Канал обновлений изменён только через main/update.json, коммит `20bda7c31af22ecaaee94a05147b7529eb03806b`; GitHub API и raw URL возвращают 8.0.30. Chrome Web Store не публиковался. Живой портал пользователя и физический Mac не проверялись.
 
 ## Изменения 8.0.29: «прочитать позже», первый запуск и названия разделов
 
