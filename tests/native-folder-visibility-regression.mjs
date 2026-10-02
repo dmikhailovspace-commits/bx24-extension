@@ -99,7 +99,7 @@ try {
   await unique.locator('input').evaluate(input=>{input.checked=false;});
   await unique.click();
   await row('chat225').waitFor({state:'hidden'});await row('chat5').waitFor({state:'hidden'});await row('chat77').waitFor({state:'visible'});
-  assert.match(await page.locator(host+' .pena-native-group-tab[data-native-segment-id=""]').textContent(),/Несортированные/);
+  assert.match(await page.locator(host+' .pena-native-group-tab[data-native-segment-id=""]').textContent(),/Прочее/);
   assert.equal(await page.locator(host+' .pena-native-folder-tab[data-native-folder-id="folder:test"]').count(),0);
   await page.locator(host+' .pena-native-group-tab[data-native-segment-id="mine"]').click();
   await row('chat5').waitFor({state:'visible'});await row('chat225').waitFor({state:'hidden'});await row('chat77').waitFor({state:'hidden'});
@@ -150,6 +150,52 @@ try {
   await page.reload();await page.waitForFunction(()=>!!window.folderProbe);
   await unique.waitFor();assert.equal(await unique.locator('input').isChecked(),true);
  }, mode, true);
+ for(const mode of ['chats','tasks']) await scenario(mode+' cold persisted reminder stays in unread list without a native dot',async page=>{
+  await page.evaluate(()=>{
+   const row=document.querySelector('.test-host:not([hidden]) [data-id="chat225"]');
+   row.querySelectorAll('.bx-im-list-recent-item__counter_number,[class*="mention"]').forEach(node=>node.remove());
+   folderProbe.seed({id:'chat225',hasLater:true,hasUnread:false,hasMention:false,unreadCount:0,counterFetchedAt:Date.now()-86400000,counterConfirmedAt:0});
+   folderProbe.prefs({unreadOnly:true});folderProbe.invalidate();folderProbe.apply();
+  });
+  await page.waitForTimeout(160);
+  assert.equal(await page.locator('.test-host:not([hidden]) [data-id="chat225"]').isVisible(),true);
+  assert.equal(await page.evaluate(()=>folderProbe.get('chat225').hasLater),true);
+  await page.evaluate(()=>{folderProbe.snapshot({CHAT:{},DIALOG:{},CHAT_UNREAD:[],DIALOG_UNREAD:[]});folderProbe.notifyData();folderProbe.apply();});
+  await page.waitForFunction(()=>!folderProbe.get('chat225').hasLater);
+  assert.equal(await page.locator('.test-host:not([hidden]) [data-id="chat225"]').isVisible(),false,'An explicit clear still removes the reminder from the filter');
+ },mode,true);
+ for(const mode of ['chats','tasks']) await scenario(mode+' all groups and aggregate folders can be renamed without changing membership',async page=>{
+  const host=mode==='tasks'?'.task-host':'.recent-host';
+  const group=page.locator(host+' .pena-native-group-tab[data-native-segment-id=""]');
+  const folder=page.locator(host+' .pena-native-folder-tab[data-native-folder-id=""]');
+  const before=await page.evaluate(()=>JSON.stringify(folderProbe.items()));
+  const rename=async(target,text)=>{
+   await target.click({button:'right'});
+   await page.locator('.dialog-control-context-menu').getByRole('menuitem',{name:'Переименовать',exact:true}).click();
+   await page.locator('.pena-native-confirm-input').fill(text);
+   await page.locator('.pena-native-confirm').getByRole('button',{name:'Сохранить',exact:true}).click();
+   await target.filter({hasText:text}).waitFor({state:'visible'});
+  };
+  await rename(group,'Обзор');await rename(folder,'Весь список');
+  assert.match(await group.textContent(),/Обзор/);assert.match(await folder.textContent(),/Весь список/);
+  await page.locator(host+' .pena-native-unique-filter').click();
+  assert.match(await group.textContent(),/Прочее/);assert.match(await folder.textContent(),/Прочее/);
+  await rename(group,'Входящие');await rename(folder,'Без папки');
+  await page.locator(host+' .pena-native-unique-filter').click();
+  assert.match(await group.textContent(),/Обзор/);assert.match(await folder.textContent(),/Весь список/);
+  assert.equal(await page.evaluate(()=>JSON.stringify(folderProbe.items())),before);
+  await page.evaluate(()=>{folderProbe.segments([{id:'rename-group',title:'Работа'}]);folderProbe.group('rename-group');folderProbe.render();});
+  await folder.filter({hasText:'Все папки'}).waitFor();
+  await rename(folder,'Все рабочие');
+  await rename(page.locator(host+' .pena-native-group-tab[data-native-segment-id="rename-group"]'),'Проекты');
+  await page.evaluate(()=>{folderProbe.group('');folderProbe.render();});
+  await folder.filter({hasText:'Весь список'}).waitFor();
+  await page.reload();await group.waitFor();assert.match(await group.textContent(),/Обзор/);assert.match(await folder.textContent(),/Весь список/);
+  await page.locator(host+' .pena-native-unique-filter').click();assert.match(await group.textContent(),/Входящие/);assert.match(await folder.textContent(),/Без папки/);
+  await group.click({button:'right'});assert.equal(await page.locator('.dialog-control-context-menu').getByRole('menuitem',{name:'Удалить группу',exact:true}).count(),0);
+  await page.keyboard.press('Escape');
+  await page.screenshot({path:'tests/artifacts/renamed-aggregate-'+mode+'.png'});
+ },mode,true);
  for(const mode of ['chats','tasks']) for(const reminder of [false,true]) await scenario(mode+' Messenger v2 '+(reminder?'reminder':'unread and mention')+' repairs a saved zero and survives the legacy REST projection',async page=>{
   await page.evaluate(()=>folderProbe.apply());
   await page.waitForFunction(()=>{const s=__PENA_NATIVE_PREFETCH__.status();return s.loadedModes.length>0&&!s.originalActive&&!s.modeLoadPending;});

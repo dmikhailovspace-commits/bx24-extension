@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.28';
+	window.__ANITREC_RUNNING__ = '8.0.29';
 
-	const VER = '8.0.28';
+	const VER = '8.0.29';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -4083,6 +4083,10 @@
 			hasMention: !!(domMeta.hasMention || recent.hasMention)
 		});
 		const taskTitle = recent.taskId && _dialogTimeTaskTitles.get(String(recent.taskId));
+		// A missing dot in a newly mounted/recycled row is not a reminder removal.
+		// Only the native model, a counter API snapshot or an acknowledged action
+		// can clear a stored reminder; it must survive a cold unread projection.
+		merged.hasLater = native ? !!native.hasLater : !!(recent.hasLater || domMeta.hasLater);
 		if (taskTitle) { merged.displayTitle = taskTitle; merged.title = taskTitle.toLowerCase(); }
 		const recentCounterAt = Math.max(0, Number(recent.counterFetchedAt) || 0);
 		const countersFresh = recentCounterAt > 0 &&
@@ -6321,8 +6325,8 @@
 				lastAuthorOwn: nativeMessage?.own === true,
 				lastAuthorResolved: true,
 				hasUnread: !!dom.hasUnread,
-				// Bitrix hides the reminder dot behind the numeric unread badge.
-				hasLater: !!dom.hasLater || (!!dom.hasUnread && !!existing.hasLater),
+				// A cold/recycled DOM snapshot cannot clear a saved reminder.
+				hasLater: !!dom.hasLater || !!existing.hasLater,
 				hasMention: !!dom.hasMention,
 				unreadCount: Math.max(0, Number(dom.unreadCount) || 0),
 				counterStale: false,
@@ -7964,7 +7968,18 @@
 		const filter = _getDialogControlNativeFilter();
 		if (!container || !filter || (!filter.folderId && !filter.segmentId && !filter.uniqueOnly && !filter.unreadOnly && !filters.unreadOnly)) return null;
         const requested = new Set(Array.from(filter.ids || []).map(normId).filter(Boolean));
-        const groups = _getDialogControlItems().filter(item => !_isDialogControlFolder(item)).filter(item => {
+        const candidates = _getDialogControlItems().filter(item => !_isDialogControlFolder(item));
+        // Unassigned reminders are in the catalog, not necessarily in saved folders.
+        // Their badge count must have a matching native loading demand on reopen.
+        if (filter.unreadOnly && !filter.folderId && !filter.segmentId) {
+            const known = new Set(candidates.flatMap(_getDialogControlItemIdentityKeys));
+            for (const meta of _getDialogRecentUniqueMeta()) {
+                if ((_pMode() === 'tasks') !== (meta.isTask === true) || known.has(normId(meta.id)) ||
+                    (filter.uniqueOnly && filter.excludedIds?.has(normId(meta.id))) || !_isDialogControlUnreadMeta(_getDialogControlEffectiveMeta(meta.id))) continue;
+                candidates.push(meta); requested.add(normId(meta.id)); known.add(normId(meta.id));
+            }
+        }
+        const groups = candidates.filter(item => {
             if (filter.uniqueOnly) return _getDialogControlItemIdentityKeys(item).some(id => requested.has(id)) && (!filter.unreadOnly || _isDialogControlUnreadMeta(_getDialogControlEffectiveMeta(item.id)));
             if (filter.folderId || filter.segmentId) return _getDialogControlItemIdentityKeys(item).some(id => requested.has(id));
             return _isDialogControlUnreadMeta(_getDialogControlEffectiveMeta(item.id));
@@ -8075,22 +8090,26 @@
 		};
 		if (!missing()) { status(''); return { found: true }; }
 		if (state.stopped && !force) return { skipped: true };
-		const bridge = _findDialogNativePageService(demand);
-		if (!bridge) {
-			state.stopped = true;
-			status('Не удалось подключить загрузку Bitrix', true);
-			return { unavailable: true };
-		}
 		state.stopped = false;
-		status('Загрузка диалогов…');
 		const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 		_dialogNativeFolderRun = (async () => {
 			// Defer once so the run is installed before any synchronous early return.
 			await pause(0);
 			let pages = 0, unchanged = 0;
+			const statusTimer = setTimeout(() => { if (current() && missing()) status('Загрузка диалогов…'); },180);
 			try {
+				// On first mount the native list may precede its Vue service. One
+				// coalesced, cancellable wait avoids a false error and a second loader.
+				let bridge = _findDialogNativePageService(demand);
+				const deadline = Date.now()+3000;
+				while (!bridge && current() && missing() && Date.now()<deadline) {
+					await pause(100); bridge = _findDialogNativePageService(demand);
+				}
+				if (!current()) return {cancelled:true,pages};
+				if (missing() && !bridge) { clearTimeout(statusTimer); state.stopped=true; status('Не удалось подключить загрузку Bitrix',true); return {unavailable:true}; }
 				while (current() && missing()) {
 					if (!bridge.hasMore()) {
+						clearTimeout(statusTimer);
 						state.stopped = true; status('Часть диалогов не найдена');
 						return { exhausted: true, pages };
 					}
@@ -8120,9 +8139,11 @@
 				if (current()) status('');
 				return { found: current(), pages };
 			} catch (error) {
+				clearTimeout(statusTimer);
 				if (current()) { state.stopped = true; status('Не удалось загрузить диалоги', true); }
 				return { error: String(error?.message || error), pages };
 			} finally {
+				clearTimeout(statusTimer);
 				_dialogNativeFolderRun = null;
 				if (!current()) _scheduleDialogNativeFolderWindow();
 			}
@@ -9463,14 +9484,18 @@
 				// A genuinely newer API/read event wins over a delayed DOM snapshot.
 				if (Number(previous.counterConfirmedAt) > eventAt) return;
 				const domMeta = getItemMeta(row);
-				const meta = Object.assign({}, domMeta, _getDialogNativeCounterMeta(id));
+				const nativeCounter = _getDialogNativeCounterMeta(id);
+				const meta = Object.assign({}, domMeta, nativeCounter);
 				if (!meta || normId(meta.id) !== id) return;
+				const reminderRemoved = !meta.hasLater && !meta.hasUnread && !meta.hasMention &&
+					getItemMetaInternal.reminders?.get(row)?.id === id;
+				if (reminderRemoved) getItemMetaInternal.reminders.delete(row);
 				const next = {
 					unreadCount: Math.max(0, Number(meta.unreadCount) || 0),
 					hasUnread: !!meta.hasUnread,
-					// The numbered native badge hides the manual reminder dot. Its
-					// absence cannot remove an API-confirmed reminder while unread > 0.
-					hasLater: !!meta.hasLater || (!!meta.hasUnread && !!previous.hasLater),
+					// Preserve cold missing dots; accept model state or removal of a
+					// dot previously observed on this same row and dialog identity.
+					hasLater: nativeCounter ? !!nativeCounter.hasLater : !reminderRemoved && (!!meta.hasLater || !!previous.hasLater),
 					hasMention: !!meta.hasMention
 				};
 				const rowChanged = previous.unreadCount !== next.unreadCount || previous.hasUnread !== next.hasUnread ||
@@ -11448,6 +11473,11 @@ if (_presetChannel) {
 		// число отсутствует). У обычных прочитанных чатов counter_number не рендерится вовсе.
 		const _noCounterEl = el.querySelector('.bx-im-list-recent-item__counter_number');
 		const hasLater = !hasUnread && !!_noCounterEl && _isDialogControlLiveStatusElement(_noCounterEl) && _noCounterEl.classList.contains('--no-counter');
+		// Remember a dot actually seen on this physical row and identity. Its
+		// later removal is a live read event; absence on first mount is not.
+		const reminderRows = getItemMetaInternal.reminders ||= new WeakMap();
+		if (hasLater) reminderRows.set(el,{id:normId(id)});
+		else if (reminderRows.get(el)?.id !== normId(id)) reminderRows.delete(el);
 		const hasSelfAuthor = !!el.querySelector('.bx-im-list-recent-item__self_author-icon');
 		const msgText = el.querySelector('.bx-im-list-recent-item__message_text');
 		const hasAuthorAvatar = !!(msgText && msgText.querySelector('.bx-im-list-recent-item__author-avatar'));
@@ -11935,8 +11965,34 @@ if (_presetChannel) {
 		return window.__PENA_NATIVE_CATALOG__.createPlacementIndex(items, _getDialogControlSegments());
 	}
 
-	function _getDialogControlAllLabel(folder = false) {
-		return _getDialogControlUniqueOnly() ? 'Несортированные' : (folder ? 'Все папки' : 'Все группы');
+	function _dialogControlLabelsKey() {
+		return _dialogControlUniqueKey().replace('dialogControlUnique.v1.', 'dialogControlLabels.v1.');
+	}
+	function _dialogControlLabelSlot(folder, segmentId) {
+		return JSON.stringify([_getDialogControlUniqueOnly() ? 'other' : 'all', folder ? 'folder' : 'group', folder ? String(segmentId || '') : '']);
+	}
+	function _getDialogControlAllLabel(folder = false, segmentId = _getDialogControlActiveSegmentId(), short = false) {
+		try {
+			const saved = JSON.parse(localStorage.getItem(_dialogControlLabelsKey()) || '{}');
+			const title = saved?.[_dialogControlLabelSlot(folder,segmentId)];
+			if (typeof title === 'string' && title.trim()) return title.replace(/\s+/g,' ').trim().slice(0,folder ? 40 : 32);
+		} catch {}
+		return _getDialogControlUniqueOnly() ? 'Прочее' : (folder ? 'Все папки' : short ? 'Все' : 'Все группы');
+	}
+	function _renameDialogControlAllLabel(folder, segmentId, h) {
+		const key = _dialogControlLabelsKey(), slot = _dialogControlLabelSlot(folder,segmentId);
+		if (!key) return;
+		_showDialogControlNamePrompt(folder ? 'Название папки' : 'Название группы', _getDialogControlAllLabel(folder,segmentId,true), {okLabel:'Сохранить',maxLength:folder ? 40 : 32}, title => {
+			if (key !== _dialogControlLabelsKey() || slot !== _dialogControlLabelSlot(folder,segmentId)) return;
+			const next = String(title || '').replace(/\s+/g,' ').trim().slice(0,folder ? 40 : 32);
+			if (!next) return;
+			try {
+				const parsed = JSON.parse(localStorage.getItem(key) || '{}');
+				const labels = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+				labels[slot] = next; localStorage.setItem(key,JSON.stringify(labels));
+			} catch { _showDialogDockToast('Не удалось сохранить название','danger'); return; }
+			_refreshDialogControlNativeStructure(h);
+		});
 	}
 
 	function _dialogControlNeedsCompleteNativeMaterialization(mode = _pMode()) {
@@ -12074,7 +12130,7 @@ if (_presetChannel) {
 		const map = new Map((Array.isArray(segments) ? segments : []).map(segment => [String(segment.id), segment]));
 		return _getDialogControlSegmentOrder(segments).map(id => {
 			if (id === _DIALOG_CONTROL_ALL_SEGMENT_ID) {
-				return { id: '', sortId: _DIALOG_CONTROL_ALL_SEGMENT_ID, title: 'Все', isAll: true };
+				return { id: '', sortId: _DIALOG_CONTROL_ALL_SEGMENT_ID, title: _getDialogControlAllLabel(false,'',true), isAll: true };
 			}
 			const segment = map.get(String(id));
 			return segment ? { ...segment, sortId: String(segment.id), isAll: false } : null;
@@ -19285,6 +19341,7 @@ if (_presetChannel) {
 			activeSegmentId,
 			activeFolderId,
 			_dialogControlNativeWorkspaceTab,
+			_getDialogControlAllLabel(true,activeSegmentId),
 			_getDialogControlNativeFolderOrder(segmentFolders, activeSegmentId).join(','),
 			groupTabs.map(group => [
 				group.sortId || '',
@@ -19469,7 +19526,7 @@ if (_presetChannel) {
 		}
 		const uniqueLabel = document.createElement('label');
 		uniqueLabel.className = 'pena-native-unique-filter';
-		uniqueLabel.title = 'В «Несортированных» остаются диалоги без группы или папки. Поиск ищет везде.';
+		uniqueLabel.title = 'Диалоги без группы или папки показываются отдельно. Поиск ищет везде.';
 		const uniqueInput = document.createElement('input');
 		uniqueInput.type = 'checkbox';
 		uniqueInput.checked = !!viewPrefs.uniqueOnly;
@@ -19700,7 +19757,7 @@ if (_presetChannel) {
 			btn.dataset.nativeSegmentId = id;
 			btn.dataset.nativeSegmentSortId = sortId;
 			btn.classList.toggle('--active', id === activeSegmentId || (!id && !activeSegmentId));
-			btn.textContent = group?.isAll && viewPrefs.uniqueOnly ? 'Несортированные' : (group?.title || 'Все');
+			btn.textContent = group?.isAll ? _getDialogControlAllLabel(false,'',true) : (group?.title || 'Все');
 			btn.title = group?.isAll ? _getDialogControlAllLabel() : (group?.title || 'Группа');
 			const badge = document.createElement('span');
 			badge.className = 'pena-native-tab-count';
@@ -19760,7 +19817,7 @@ if (_presetChannel) {
 					if (_setDialogControlItemsSegment([folderId], id)) {
 						finishNativeDialogDrop(id
 							? `Папка перенесена в группу «${group?.title || 'Группа'}»`
-							: (_getDialogControlUniqueOnly() ? 'Папка перенесена в «Несортированные»' : 'Папка перенесена в «Все»'));
+							: `Папка перенесена в «${_getDialogControlAllLabel(false,'',true)}»`);
 					} else {
 						clearNativeTabDrop();
 					}
@@ -19771,7 +19828,7 @@ if (_presetChannel) {
 					e.preventDefault();
 					e.stopPropagation();
 					if (_moveDialogControlNativeDialogsToGroup(dialogIds, id)) {
-						finishNativeDialogDrop(`Перенесено в группу «${group?.isAll && _getDialogControlUniqueOnly() ? 'Несортированные' : (group?.title || 'Все')}»`);
+						finishNativeDialogDrop(`Перенесено в группу «${group?.isAll ? _getDialogControlAllLabel(false,'',true) : (group?.title || 'Все')}»`);
 					} else {
 						clearNativeTabDrop();
 					}
@@ -22286,7 +22343,7 @@ if (_presetChannel) {
 		if (_dialogControlStorageSyncArmed) return;
 		_dialogControlStorageSyncArmed = true;
 		window.addEventListener('storage', event => {
-			if (event.key && event.key === _dialogControlUniqueKey()) {
+			if (event.key && (event.key === _dialogControlUniqueKey() || event.key === _dialogControlLabelsKey())) {
 				_dialogControlNativeSwitcherSig = '';
 				_dialogControlNativeViewSig = '';
 				_dialogControlMultiSelected.clear();
@@ -24724,7 +24781,7 @@ if (_presetChannel) {
 		title.textContent = group?.isAll ? _getDialogControlAllLabel() : String(group?.title || 'Группа');
 		let close = () => {};
 		const actions = [title];
-		if (!group?.isAll && segmentId) {
+		{
 			const renameBtn = _makeDialogControlContextButton(
 				'dialog-control-context-segment',
 				'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
@@ -24735,11 +24792,14 @@ if (_presetChannel) {
 				e.stopPropagation();
 				e.stopImmediatePropagation?.();
 				close();
+				if (group?.isAll) { _renameDialogControlAllLabel(false,'',h); return; }
 				_showDialogControlNamePrompt('Название группы', group.title || '', { okLabel: 'Сохранить', maxLength: 32 }, (nextTitle) => {
 					if (_setDialogControlSegmentTitle(segmentId, nextTitle)) _refreshDialogControlNativeStructure(h);
 				});
 			});
 			actions.push(renameBtn);
+		}
+		if (!group?.isAll && segmentId) {
 			const deleteBtn = _makeDialogControlContextButton(
 				'dialog-control-context-danger',
 				'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/></svg>',
@@ -24753,7 +24813,7 @@ if (_presetChannel) {
 				const groupTitle = String(group?.title || 'Группа');
 				_showDialogControlNativeConfirm(
 					'Удалить группу?',
-					`Группа «${groupTitle}» будет удалена. Диалоги и папки останутся в разделе «Все».`,
+						`Группа «${groupTitle}» будет удалена. Диалоги и папки останутся в разделе «${_getDialogControlAllLabel(false,'',true)}».`,
 					() => {
 						if (!_removeDialogControlSegment(segmentId)) return;
 						_refreshDialogControlNativeStructure(h);
@@ -24834,7 +24894,7 @@ if (_presetChannel) {
 		title.textContent = folder ? String(folder.title || 'Папка') : _getDialogControlAllLabel(true);
 		let close = () => {};
 		const actions = [title];
-		if (folderId) {
+		{
 			const renameBtn = _makeDialogControlContextButton(
 				'dialog-control-context-folder',
 				'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
@@ -24845,11 +24905,14 @@ if (_presetChannel) {
 				e.stopPropagation();
 				e.stopImmediatePropagation?.();
 				close();
+				if (!folderId) { _renameDialogControlAllLabel(true,targetSegmentId,h); return; }
 				_showDialogControlNamePrompt('Название папки', folder.title || '', { okLabel: 'Сохранить', maxLength: 40 }, (nextTitle) => {
 					if (_setDialogControlFolderTitle(folderId, nextTitle)) _refreshDialogControlNativeStructure(h);
 				});
 			});
 			actions.push(renameBtn);
+		}
+		if (folderId) {
 			const colorBtn = _makeDialogControlContextButton(
 				'dialog-control-context-folder-color',
 				'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8Z"/><circle cx="7.5" cy="10" r="1"/><circle cx="10" cy="6.5" r="1"/><circle cx="14.5" cy="6.5" r="1"/><circle cx="17" cy="10" r="1"/></svg>',

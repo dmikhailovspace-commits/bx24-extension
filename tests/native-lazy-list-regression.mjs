@@ -7,6 +7,8 @@ const raw = readFileSync(new URL('../extension/injected.js', import.meta.url), '
 const source = raw.replace('\tasync function boot() {', `\tasync function boot() {
   window.lazyAudit = {
     lazy: _isDialogNativeLazyMode, prefs: _getDialogControlViewPrefs,
+    unread: () => { _setDialogControlViewPrefs({unreadOnly:true}); applyFilters(); },
+    seed: meta => _setDialogRecentMeta(_dialogRecentMeta,meta),
     active: () => !!_dialogNativeFolderRun,
     folderId: _getDialogControlNativeActiveFolderId,
     assign: (id, folderId = 'folder:test') => { let item = _getDialogControlItems().find(item => item.id === id); if (!item) { item = {id, title:id}; _getDialogControlItems().push(item); } item.folderId = folderId; _saveDialogControlItems(); },
@@ -246,6 +248,25 @@ try {
       assert.deepEqual(errors,[]);
       report.phases.push({mode,status:'PASS',uniqueNativePagination:true});
     } finally {await page.close();}
+  }
+  for(const mode of ['chats','tasks']) {
+   const page=await browser.newPage(),errors=collectPageErrors(page);
+   try {
+    await page.route('**/extension/injected.js',route=>route.fulfill({contentType:'application/javascript',body:source}));
+    await page.addInitScript(()=>{window.startupGuards=[];new MutationObserver(()=>{if(document.querySelector('.pena-native-original-load-guard,.pena-native-load-guard'))startupGuards.push(true);}).observe(document,{subtree:true,childList:true});});
+    await page.goto(`${server.baseUrl}/tests/native-consistency-harness.html?mode=${mode}&lazyNative=1&nativeCatalog=1&nativeFirst=1&passThrough=1&eager=0&lazy=1&catalogRows=80&nativeService=1&serviceMountDelay=1500`);
+    await page.locator('.pena-native-folder-switcher').waitFor();
+    await page.evaluate(mode=>{lazyAudit.seed({id:'chat1079',restDialogId:'chat1079',isTask:mode==='tasks',hasLater:true,hasUnread:false,hasMention:false,unreadCount:0,counterFetchedAt:Date.now()-86400000});lazyAudit.unread();},mode);
+    const host=page.locator(mode==='tasks'?'.task-host':'.recent-host');
+    await host.locator('[data-id="chat1079"]').waitFor({state:'visible',timeout:10000});
+    await page.waitForFunction(()=>!lazyAudit.active());
+    assert.equal(await page.locator('.pena-native-folder-status button').count(),0,'A delayed service is not a permanent startup error');
+    assert.equal(await page.evaluate(()=>startupGuards.length),0,'No legacy blocking loader may flash during first open');
+    assert.equal(await page.evaluate(()=>nativeScrollAudit.length),0,'Startup never scrolls the user viewport');
+    assert.equal(await page.evaluate(()=>lazyAudit.items().some(item=>item.id==='chat1079'&&(item.folderId||item.segmentId))),false,'The reminder need not be assigned to any saved folder');
+    assert.equal(await page.evaluate(()=>lazyAudit.meta('chat1079').hasLater),true);
+    assert.deepEqual(errors,[]);report.phases.push({mode,status:'PASS',coldUnassignedReminder:true,delayedNativeService:true,blockingLoaders:0});
+   } finally {await page.close();}
   }
   console.log('PASS native lazy list: chats/tasks, native rows, native service pagination without scroll or blocking, remote search, counters, multi-select and unique view');
 } finally {

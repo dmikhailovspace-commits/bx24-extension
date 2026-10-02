@@ -316,12 +316,14 @@
         if (modeKey === 'tasks') service.hasMoreItemsToLoad = () => pending.length > 0;
         else Object.defineProperty(service, 'hasMoreItemsToLoad', {get:()=>pending.length > 0});
         const instance = { type:{name:modeKey === 'tasks' ? 'TaskList' : 'RecentList'}, proxy:{$el:list, getRecentService:()=>service} };
-        if (modeKey === 'tasks') {
+        const mountService = () => { if (modeKey === 'tasks') {
           // The portal's production Vue omits __vueParentComponent and app._instance.
           const root = list.closest('.test-host'); root.__vue_app__ = {_instance:null};
           root._vnode = {component:{subTree:{children:[{component:instance}]}}};
         }
-        else list.__vueParentComponent = instance;
+        else list.__vueParentComponent = instance; };
+        const mountDelay=Number(new URLSearchParams(location.search).get('serviceMountDelay'))||0;
+        if(mountDelay) setTimeout(mountService,mountDelay); else mountService();
       }
 	  let postProofScheduled = false;
 	  viewport.addEventListener('scroll', () => {
