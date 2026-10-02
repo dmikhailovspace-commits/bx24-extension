@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "8.0.29",
+  "version": "8.0.30",
   "release_date": "2026-10-02",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v8.0.29",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v8.0.29",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v8.0.30",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v8.0.30",
   "extension_files": [
-    "worker-v8_0_29.js",
+    "worker-v8_0_30.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,8 +33,8 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v8.0.29/extension/injected.js",
-  "changelog": "v8.0.29: preserve cold read-later dialogs, wait for native startup and rename all groups and folders",
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v8.0.30/extension/injected.js",
+  "changelog": "v8.0.30: keep the chats panel visible throughout native Bitrix search, matching task chats",
   "verification_profile": "search-focused",
   "distribution": "github",
   "release_targets": [
