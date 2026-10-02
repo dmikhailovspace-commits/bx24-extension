@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.29';
+	window.__ANITREC_RUNNING__ = '8.0.30';
 
-	const VER = '8.0.29';
+	const VER = '8.0.30';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -221,6 +221,15 @@
 				: findVisibleInternalContainer('.bx-im-list-container-task__elements') ||
 					findVisibleInternalContainer('.bx-im-list-container-recent__elements');
 			if (!list) return null;
+			// RecentList is hidden by native v-show during search; TaskList is not.
+			// Its scroll owner still belongs to the same visible elements region.
+			// Keep that structural identity instead of treating search as a removed
+			// source or accidentally selecting the search results' virtual scroller.
+			const nativeKind = list.matches('.bx-im-list-container-task__elements') ? 'task' : 'recent';
+			if (list.parentElement?.matches(`.bx-im-list-container-${nativeKind}__elements_container`)) {
+				const nativeScroll = list.querySelector(`:scope > .bx-im-list-${nativeKind}__container > .bx-im-list-${nativeKind}__scroll-container`);
+				if (nativeScroll?.isConnected) return nativeScroll;
+			}
 
 			// Current Bitrix builds place the real scroll owner *inside* the elements
 			// branch (`elements > list > scroll-container`). Check that shape first;

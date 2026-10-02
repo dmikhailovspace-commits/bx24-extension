@@ -10,7 +10,7 @@ try {
  for(const mode of ['chats','tasks']) {
  const page=await browser.newPage();const errors=collectPageErrors(page);
  await page.route('**/extension/injected.js',route=>route.fulfill({contentType:'application/javascript',body:source}));
- await page.goto(`${server.baseUrl}/tests/native-consistency-harness.html?mode=${mode}&lazyNative=1&nativeCatalog=1&nativeFirst=1&passThrough=1&eager=0&lazy=1&catalogRows=40&nativeService=1`);
+ await page.goto(`${server.baseUrl}/tests/native-consistency-harness.html?mode=${mode}&descendantViewport=1&lazyNative=1&nativeCatalog=1&nativeFirst=1&passThrough=1&eager=0&lazy=1&catalogRows=40&nativeService=1`);
  await page.locator('.pena-native-folder-switcher').waitFor({state:'visible'});
  await page.evaluate(()=>{BX.Vue3={BitrixVue:{install(){}}};});
  await page.addScriptTag({url:`${server.baseUrl}/tests/fixtures/vendor/bitrix-vue-prod.js`});
@@ -23,19 +23,23 @@ try {
   const SearchItem={name:'SearchItem',props:['dialogId'],render(){return h('div',{class:'bx-im-search-item__container',onClick:()=>{window.nativeOpened=this.dialogId;window.nativeSearch.onCloseSearch();}},[h('div',{class:'bx-im-search-item__avatar-container'},[h('div',{class:'bx-im-avatar__container',style:'width:42px;height:42px;border-radius:50%'},'U')]),h('span',{class:'bx-im-chat-title__text'+(this.dialogId==='708'?' --collab':'')},'Native '+this.dialogId)])}};
   const results=createApp({data:()=>({ids:[]}),render(){return h('div',{class:'bx-im-chat-search__container'},this.ids.map(id=>h(SearchItem,{key:id,dialogId:id})));}}).mount(resultRoot);
   const nativeRows=()=>[...list.querySelectorAll('.bx-im-list-recent-item__wrap')];
+  // RecentList is v-show="!searchMode" in Bitrix. TaskList stays mounted and
+  // visible. Hiding only individual rows misses the real Chats lifecycle bug.
+  const nativeBranch=list.querySelector('.bx-im-list-recent__container,.bx-im-list-task__container');
+  const setSearchBranch=active=>{if(mode==='chats')nativeBranch.style.display=active?'none':'';};
   window.nativeSearchApp=createApp({
    name:mode==='tasks'?'TaskListContainer':'RecentListContainer',
    data:()=>({searchMode:false,searchQuery:'',inputValue:''}),
    created(){window.nativeSubscribedOpen=this.onOpenSearch;window.nativeSubscribedUpdate=this.onUpdateSearch;},
    beforeUnmount(){window.nativeUnsubscribeMatched=this.onOpenSearch===window.nativeSubscribedOpen;},
    methods:{
-    onOpenSearch(){this.searchMode=true;nativeRows().forEach(row=>row.style.display='none');results.ids=['chat225'];},
-    onUpdateSearch(query){this.searchMode=true;this.searchQuery=query;nativeRows().forEach(row=>{row.style.display=query?'none':row.style.display;});
+    onOpenSearch(){this.searchMode=true;setSearchBranch(true);nativeRows().forEach(row=>row.style.display='none');results.ids=['chat225'];},
+    onUpdateSearch(query){this.searchMode=true;setSearchBranch(true);this.searchQuery=query;nativeRows().forEach(row=>{row.style.display=query?'none':row.style.display;});
      if(!query){results.ids=[];setTimeout(()=>{if(!this.searchQuery)nativeRows().forEach(row=>row.style.display='');},80);return;}
      const delay=query==='first'?650:query==='slow'?180:20;
      setTimeout(()=>{if(this.searchQuery===query)results.ids=query==='other'?['chat77']:['chat225','chat5','707','708'];},delay);
     },
-    onCloseSearch(){this.searchMode=false;this.searchQuery='';this.inputValue='';results.ids=[];nativeRows().forEach(row=>row.style.display='');},
+    onCloseSearch(){this.searchMode=false;setSearchBranch(false);this.searchQuery='';this.inputValue='';results.ids=[];nativeRows().forEach(row=>row.style.display='');},
     onCloseRecentSearch(){this.onCloseSearch();}
    },
    render(){return h('div',[h('input',{type:'search',placeholder:mode==='tasks'?'Найти задачу':'Найти чат',value:this.inputValue,onFocus:this.onOpenSearch,onClick:this.onOpenSearch,onInput:event=>{this.inputValue=event.target.value;this.onUpdateSearch(event.target.value);},onKeydown:event=>{if(event.key==='Escape')this.onCloseRecentSearch();}}),h('button',{class:'native-clear',onClick:this.onCloseRecentSearch},'×')]);}
@@ -50,6 +54,23 @@ try {
  const rows=page.locator(`${mode==='tasks'?'.task-host':'.recent-host'} .bx-im-list-recent-item__wrap:visible`);
  const visibleIds=()=>rows.evaluateAll(nodes=>nodes.map(row=>row.dataset.id));
  const baselineIds=await visibleIds();
+ await page.evaluate(()=>{
+  window.searchPanel=document.querySelector('.pena-native-folder-switcher');
+  window.searchContext=window.__PENA_ACTIVE_LIST_CONTEXT__;
+ });
+ await input.fill('first');
+ const loadingFrames=await page.evaluate(()=>new Promise(resolve=>{
+  const frames=[];const start=performance.now();const sample=()=>{
+   frames.push({panel:searchPanel.isConnected&&searchPanel.getBoundingClientRect().height>0&&getComputedStyle(searchPanel).visibility==='visible',
+    same:document.querySelector('.pena-native-folder-switcher')===searchPanel,
+    context:window.__PENA_ACTIVE_LIST_CONTEXT__?.list===searchContext.list,
+    duplicate:document.querySelectorAll('.pena-native-folder-switcher').length});
+   if(performance.now()-start<800)requestAnimationFrame(sample);else resolve(frames);
+  };requestAnimationFrame(sample);
+ }));
+ assert.ok(loadingFrames.every(frame=>frame.panel&&frame.same&&frame.context&&frame.duplicate===1),'Native search loading must retain the same visible panel and list owner on every frame');
+ assert.equal(await page.locator('.bx-im-search-item__container:visible').count(),4,'Native delayed search results must arrive');
+ await input.fill('');await page.waitForTimeout(100);
  // Bitrix's EventEmitter retains the bound callback from created(), even after
  // Vue event props have been refreshed. Exercise that bypass, not the wrapper.
  await page.evaluate(()=>nativeSubscribedOpen());await input.blur();await page.mouse.click(700,500);await page.waitForTimeout(80);
