@@ -9,8 +9,8 @@
 - Release date: **2026-10-13**
 - Runtime files: **19**
 - Regression suites: **87**
-- Windows artifact: _not built_
-- macOS artifact: _not built_
+- Windows artifact: `dist/PENA_Agency_Windows_v8.0.31.exe` - SHA-256: `F77F16EBBAFB330E882C8D674A9C9EAC2BC437CE04E81A671622A85AA4451A08`
+- macOS artifact: `dist/PENA_Agency_macOS_Universal_v8.0.31.dmg` - SHA-256: `7F129E83DC3D4135BAF332DEBD94518A057B5977469474BFF4D5537FD7F20170`
 <!-- AUTO:END -->
 
 ## Назначение
@@ -24,6 +24,9 @@
 - Стенд `native-search-state` переведён на новую нативную вложенность для чатов и задач: проверяет один видимый mount и действительный list owner при нынешнем и смоделированном переименованном скролле, сохранение панели на каждом кадре поиска, очистку, фильтры и remount. Остальные сценарии сокращённого search-focused профиля покрывают старую структуру. Профиль остаётся ровно 16 наборов; полный пакет не запускать.
 - GitHub release notes берут описание текущего исправления из `update.json.changelog`, поэтому текст релиза больше не повторяет устаревшие изменения предыдущих версий.
 - Живой Bitrix после установки 8.0.31 требуется проверить отдельно; статические bundle и управляемый стенд не заменяют эту проверку.
+- 8.0.31 опубликована из неизменяемого коммита `d1389e751b31aca12c5f4d1acb45d65019f4fc2f`: https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v8.0.31. Run `38431658761` полностью успешен: точный search-focused 16/16 локально и в CI, Windows EXE, macOS Universal DMG и Chrome ZIP. Полный пакет не запускался.
+- Все 8 опубликованных assets сверены с GitHub digest и sidecar SHA-256. Chrome ZIP побайтно совпадает с текущими 24 файлами пакета; release-integrity проверил обе загруженные desktop-сборки, ProductVersion EXE — 8.0.31. На macOS runner прошли сборка Universal DMG и встроенные проверки; физический Mac не проверялся. Отчёт: `tests/artifacts/release-verification-8.0.31.json`.
+- Канал обоих desktop-updater обновлён только через `main/update.json`, коммит `61bce6f2e53fe1f25c926ecdafd4956d3beeafd2`; GitHub API и raw URL возвращают 8.0.31. Chrome Web Store не публиковался. Два пользовательских PNG в `chrome/assets/` сохранены без изменений.
 
 ## Изменения 8.0.30: одинаковый нативный поиск в чатах и задачах
 
