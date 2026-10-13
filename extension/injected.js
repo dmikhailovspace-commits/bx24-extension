@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.30';
+	window.__ANITREC_RUNNING__ = '8.0.31';
 
-	const VER = '8.0.30';
+	const VER = '8.0.31';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -227,7 +227,12 @@
 			// source or accidentally selecting the search results' virtual scroller.
 			const nativeKind = list.matches('.bx-im-list-container-task__elements') ? 'task' : 'recent';
 			if (list.parentElement?.matches(`.bx-im-list-container-${nativeKind}__elements_container`)) {
-				const nativeScroll = list.querySelector(`:scope > .bx-im-list-${nativeKind}__container > .bx-im-list-${nativeKind}__scroll-container`);
+				// BaseRecentList is shared by Chats and Task Chats in newer Bitrix builds.
+				// Read the direct list branch first, including when v-show hides it for search.
+				const nativeScroll = list.querySelector([
+					':scope > .bx-im-list-base__container > .bx-im-list-base__scroll-container',
+					`:scope > .bx-im-list-${nativeKind}__container > .bx-im-list-${nativeKind}__scroll-container`
+				].join(','));
 				if (nativeScroll?.isConnected) return nativeScroll;
 			}
 
@@ -236,8 +241,8 @@
 			// otherwise the loader scrolls an outer layout wrapper and no older page is
 			// requested. The mode-specific selectors keep us away from the open chat.
 			const descendantSelector = list.matches('.bx-im-list-container-task__elements')
-				? '.bx-im-list-task__scroll-container,.bx-im-list-container-task__scroll-container,[class*="recycle-scroller"],[class*="virtual-scroll"]'
-				: '.bx-im-list-recent__scroll-container,.bx-im-list-container-recent__scroll-container,[class*="recycle-scroller"],[class*="virtual-scroll"]';
+				? '.bx-im-list-base__scroll-container,.bx-im-list-task__scroll-container,.bx-im-list-container-task__scroll-container,[class*="recycle-scroller"],[class*="virtual-scroll"]'
+				: '.bx-im-list-base__scroll-container,.bx-im-list-recent__scroll-container,.bx-im-list-container-recent__scroll-container,[class*="recycle-scroller"],[class*="virtual-scroll"]';
 			const descendantCandidates = Array.from(list.querySelectorAll?.(descendantSelector) || []).filter(candidate => {
 				if (!candidate?.isConnected) return false;
 				const rect = candidate.getBoundingClientRect?.();
@@ -253,6 +258,16 @@
 			});
 			const descendant = descendantCandidates[0] || null;
 			if (descendant) return descendant;
+			// If Bitrix renames the shared list wrapper again, accept a scroll owner
+			// only when it contains native dialog rows inside this list. Search results
+			// and the open conversation cannot satisfy that ownership check.
+			const nativeRowSelector = '.bx-im-list-recent-item__wrap,.bx-im-list-item,.bx-messenger-cl-item';
+			const semanticScroll = Array.from(list.querySelectorAll?.('[class*="scroll-container" i]') || []).find(candidate => {
+				if (!candidate.isConnected || !candidate.querySelector(nativeRowSelector)) return false;
+				const style = getComputedStyle(candidate);
+				return /(?:auto|scroll|overlay)/i.test(String(style.overflowY || ''));
+			});
+			if (semanticScroll) return semanticScroll;
 
 			// Bitrix wraps the task list in an `elements_container` and keeps the real
 			// scroll owner one level higher. Returning the first named ancestor made
@@ -264,6 +279,7 @@
 			let elementsFallback = null;
 			for (let i = 0; i < 40 && n && n !== document.body && n !== document.documentElement; i++) {
 				if (n.classList && (
+					n.classList.contains('bx-im-list-base__scroll-container') ||
 					n.classList.contains('bx-im-list-recent__scroll-container') ||
 					n.classList.contains('bx-im-list-task__scroll-container') ||
 					n.classList.contains('bx-im-list-container-recent__scroll-container') ||
@@ -13699,7 +13715,8 @@ if (_presetChannel) {
 			add(_dialogControlManagedViewport);
 		}
 		add(findInternalScrollContainer(container));
-		add(container?.closest?.('.bx-im-list-container-task__scroll-container,.bx-im-list-container-recent__scroll-container,.bx-im-list-task__scroll-container,.bx-im-list-recent__scroll-container,.bx-im-list-container-task__elements_container,.bx-im-list-container-recent__elements_container,.bx-im-scrollbar__container,.bx-im-scrollbar-container,[class*="scroll-container" i],[class*="scrollbar" i]'));
+		add(container?.closest?.('.bx-im-list-base__scroll-container,.bx-im-list-container-task__scroll-container,.bx-im-list-container-recent__scroll-container,.bx-im-list-task__scroll-container,.bx-im-list-recent__scroll-container,.bx-im-list-container-task__elements_container,.bx-im-list-container-recent__elements_container,.bx-im-scrollbar__container,.bx-im-scrollbar-container,[class*="scroll-container" i],[class*="scrollbar" i]'));
+		add(container?.querySelector?.(':scope > .bx-im-list-base__container > .bx-im-list-base__scroll-container'));
 		add(findVisibleInternalContainer('.bx-im-list-task__scroll-container'));
 		add(findVisibleInternalContainer('.bx-im-list-recent__scroll-container'));
 		add(findVisibleInternalContainer('.bx-im-list-container-task__scroll-container'));
@@ -13741,7 +13758,7 @@ if (_presetChannel) {
 		if (el === document.scrollingElement) return 9000;
 		const cls = String(el.className || '');
 		let score = 100;
-		if (/(^|\s)bx-im-list-(?:container-)?(?:recent|task)__(?:scroll-container|elements_container)(\s|$)/i.test(cls)) score -= 80;
+		if (/(^|\s)bx-im-list-(?:base|container-(?:recent|task)|recent|task)__(?:scroll-container|elements_container)(\s|$)/i.test(cls)) score -= 80;
 		if (/scroll-container|scrollbar.*container/i.test(cls)) score -= 55;
 		if (/__container(\s|$)/i.test(cls)) score -= 25;
 		if (/__content|__elements/i.test(cls)) score += 20;
@@ -14029,8 +14046,8 @@ if (_presetChannel) {
 		}
 		const listMode = container.matches('.bx-im-list-container-task__elements') ? 'task' : 'recent';
 		const expectedViewportSelector = listMode === 'task'
-			? '.bx-im-list-container-task__scroll-container,.bx-im-list-task__scroll-container,.bx-im-list-container-task__elements_container'
-			: '.bx-im-list-container-recent__scroll-container,.bx-im-list-recent__scroll-container,.bx-im-list-container-recent__elements_container';
+			? '.bx-im-list-base__scroll-container,.bx-im-list-container-task__scroll-container,.bx-im-list-task__scroll-container,.bx-im-list-container-task__elements_container'
+			: '.bx-im-list-base__scroll-container,.bx-im-list-container-recent__scroll-container,.bx-im-list-recent__scroll-container,.bx-im-list-container-recent__elements_container';
 		const expectedHostSelector = listMode === 'task'
 			? '.bx-im-list-container-task__container,.bx-im-list-task__container'
 			: '.bx-im-list-container-recent__container,.bx-im-list-recent__container';
@@ -31449,7 +31466,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 		}
 		const measured = lifecycle?.elementVisibility?.(element);
 		if (!measured || measured.visible || measured.reason !== 'opacity') return measured;
-		const viewportSelector = '.bx-im-list-container-task__scroll-container,.bx-im-list-container-recent__scroll-container,.bx-im-list-task__scroll-container,.bx-im-list-recent__scroll-container,.bx-im-list-container-task__elements_container,.bx-im-list-container-recent__elements_container';
+		const viewportSelector = '.bx-im-list-base__scroll-container,.bx-im-list-container-task__scroll-container,.bx-im-list-container-recent__scroll-container,.bx-im-list-task__scroll-container,.bx-im-list-recent__scroll-container,.bx-im-list-container-task__elements_container,.bx-im-list-container-recent__elements_container';
 		const viewport = element?.matches?.(viewportSelector) ? element : element?.closest?.(viewportSelector);
 		const host = viewport?.parentElement;
 		if (!viewport || !host || host.classList.contains('pena-native-folder-switcher-ready')) return measured;
@@ -31696,6 +31713,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 			const routeListSelector = '.bx-im-list-container-recent__elements,.bx-im-list-container-task__elements';
 			const routeShellSelector = [
 				'.bx-im-list-container-recent__container', '.bx-im-list-container-task__container',
+				'.bx-im-list-base__container', '.bx-im-list-base__scroll-container',
 				'.bx-im-list-container-recent__scroll-container', '.bx-im-list-container-task__scroll-container',
 				'.bx-im-list-recent__scroll-container', '.bx-im-list-task__scroll-container'
 			].join(',');

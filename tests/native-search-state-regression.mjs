@@ -8,9 +8,29 @@ window.stability={apply:applyFilters,arm:_armPenaSearchFlow,query:()=>filters.qu
 const server=await startHarnessServer();const browser=await chromium.launch({headless:true});const report=[];
 try {
  for(const mode of ['chats','tasks']) {
+ for(const renamed of [false,true]) {
+ const basePage=await browser.newPage();
+ const baseErrors=collectPageErrors(basePage);
+ await basePage.goto(`${server.baseUrl}/tests/native-consistency-harness.html?mode=${mode}&baseViewport=1&renamedBaseScroll=${renamed?1:0}&nativeCatalog=1&nativeFirst=1&eager=0&catalogRows=40&nativeService=1`);
+ await basePage.locator('.pena-native-folder-switcher').waitFor({state:'visible'});
+ const baseState=await basePage.evaluate(mode=>{
+  const list=document.querySelector(mode==='tasks'?'.task-host .bx-im-list-container-task__elements':'.recent-host .bx-im-list-container-recent__elements');
+  const scroll=list?.querySelector(':scope > .bx-im-list-base__container > [class*="scroll-container"]');
+  return {scroll:!!scroll,owner:window.__PENA_ACTIVE_LIST_CONTEXT__?.list===list,
+   panelCount:document.querySelectorAll('.pena-native-folder-switcher').length,
+   rows:scroll?.querySelectorAll('.bx-im-list-recent-item__wrap').length||0};
+ },mode);
+	assert.equal(baseState.scroll,true);
+	assert.equal(baseState.owner,true);
+	assert.equal(baseState.panelCount,1);
+	assert.ok(baseState.rows>=40,
+  `Bitrix ${renamed?'renamed':'current'} BaseRecentList must mount one panel over the native ${mode} list`);
+ assert.deepEqual(baseErrors,[],`BaseRecentList ${mode} runtime errors`);
+ await basePage.close();
+ }
  const page=await browser.newPage();const errors=collectPageErrors(page);
  await page.route('**/extension/injected.js',route=>route.fulfill({contentType:'application/javascript',body:source}));
- await page.goto(`${server.baseUrl}/tests/native-consistency-harness.html?mode=${mode}&descendantViewport=1&lazyNative=1&nativeCatalog=1&nativeFirst=1&passThrough=1&eager=0&lazy=1&catalogRows=40&nativeService=1`);
+ await page.goto(`${server.baseUrl}/tests/native-consistency-harness.html?mode=${mode}&baseViewport=1&lazyNative=1&nativeCatalog=1&nativeFirst=1&passThrough=1&eager=0&lazy=1&catalogRows=40&nativeService=1`);
  await page.locator('.pena-native-folder-switcher').waitFor({state:'visible'});
  await page.evaluate(()=>{BX.Vue3={BitrixVue:{install(){}}};});
  await page.addScriptTag({url:`${server.baseUrl}/tests/fixtures/vendor/bitrix-vue-prod.js`});
@@ -25,7 +45,7 @@ try {
   const nativeRows=()=>[...list.querySelectorAll('.bx-im-list-recent-item__wrap')];
   // RecentList is v-show="!searchMode" in Bitrix. TaskList stays mounted and
   // visible. Hiding only individual rows misses the real Chats lifecycle bug.
-  const nativeBranch=list.querySelector('.bx-im-list-recent__container,.bx-im-list-task__container');
+  const nativeBranch=list.querySelector('.bx-im-list-base__container,.bx-im-list-recent__container,.bx-im-list-task__container');
   const setSearchBranch=active=>{if(mode==='chats')nativeBranch.style.display=active?'none':'';};
   window.nativeSearchApp=createApp({
    name:mode==='tasks'?'TaskListContainer':'RecentListContainer',

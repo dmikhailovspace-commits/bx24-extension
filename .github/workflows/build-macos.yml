@@ -287,12 +287,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          changelog="$(node -p "require('./update.json').changelog")"
           printf '%s\n' \
-            'The Without duplicates toggle is centered between the filter buttons and groups.' \
-            'Time records share a scoped monthly cache: switching loaded days needs no extra journal requests. Native edits and deletions update cached totals automatically; visible reconciliation recovers missed events. Late responses cannot restore a deleted task or overwrite a confirmed write.' \
-            'Project setup keeps a stable window size and fixed actions during loading, errors, search and reopening. Only the choices scroll.' \
+            "$changelog" \
+            'The panel follows the native Bitrix chat list and keeps the previous list layout compatible.' \
             'The configured verification profile passed before packaging; the Chrome package is checked against the exact tested source.' \
-            'Controlled tests are not a live Bitrix latency measurement. The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \
+            'The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \
             'Includes Windows EXE, Universal macOS DMG for Intel and Apple Silicon, Chrome ZIP and Chrome Web Store submission materials. Store publication is separate.' \
             > release-notes.md
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
