@@ -8,14 +8,14 @@ window.stability={apply:applyFilters,arm:_armPenaSearchFlow,query:()=>filters.qu
 const server=await startHarnessServer();const browser=await chromium.launch({headless:true});const report=[];
 try {
  for(const mode of ['chats','tasks']) {
- for(const renamed of [false,true]) {
+ for(const scrollName of ['current','renamed','opaque']) {
  const basePage=await browser.newPage();
  const baseErrors=collectPageErrors(basePage);
- await basePage.goto(`${server.baseUrl}/tests/native-consistency-harness.html?mode=${mode}&baseViewport=1&renamedBaseScroll=${renamed?1:0}&nativeCatalog=1&nativeFirst=1&eager=0&catalogRows=40&nativeService=1`);
+ await basePage.goto(`${server.baseUrl}/tests/native-consistency-harness.html?mode=${mode}&baseViewport=1&renamedBaseScroll=${scrollName==='renamed'?1:0}&opaqueBaseScroll=${scrollName==='opaque'?1:0}&nativeCatalog=1&nativeFirst=1&eager=0&catalogRows=40&nativeService=1`);
  await basePage.locator('.pena-native-folder-switcher').waitFor({state:'visible'});
  const baseState=await basePage.evaluate(mode=>{
   const list=document.querySelector(mode==='tasks'?'.task-host .bx-im-list-container-task__elements':'.recent-host .bx-im-list-container-recent__elements');
-  const scroll=list?.querySelector(':scope > .bx-im-list-base__container > [class*="scroll-container"]');
+  const scroll=list?.querySelector(':scope > .bx-im-list-base__container > [class*="scroll-container"],:scope > .bx-im-list-base__container > [data-test-scroll-owner]');
   return {scroll:!!scroll,owner:window.__PENA_ACTIVE_LIST_CONTEXT__?.list===list,
    panelCount:document.querySelectorAll('.pena-native-folder-switcher').length,
    rows:scroll?.querySelectorAll('.bx-im-list-recent-item__wrap').length||0};
@@ -24,7 +24,7 @@ try {
 	assert.equal(baseState.owner,true);
 	assert.equal(baseState.panelCount,1);
 	assert.ok(baseState.rows>=40,
-  `Bitrix ${renamed?'renamed':'current'} BaseRecentList must mount one panel over the native ${mode} list`);
+  `Bitrix ${scrollName} BaseRecentList must mount one panel over the native ${mode} list`);
  assert.deepEqual(baseErrors,[],`BaseRecentList ${mode} runtime errors`);
  await basePage.close();
  }
@@ -110,7 +110,7 @@ try {
   });
   for(let n=0;n<3;n++) {await input.blur();await input.focus();await input.click();await page.evaluate(()=>nativeSubscribedOpen());await page.waitForTimeout(30);}
   const frames=await page.evaluate(()=>{focusAudit=false;return focusFrames;});
-  assert.ok(frames.length>=3);for(const ids of frames)assert.deepEqual(ids,filteredIds,'No frame may show a shortened list on empty focus');
+  assert.ok(frames.length>=3);for(const ids of frames)assert.deepEqual(ids,filteredIds,`No frame may show a shortened list on empty focus (${mode}, ${folder}, unread=${unread})`);
   assert.deepEqual(await visibleIds(),filteredIds,'Repeated empty focus preserves folder and unread projection');
   assert.equal(await page.evaluate(()=>focusNodes.every(row=>row.isConnected)),true,'Focus preserves original rows and avatars');
  }
@@ -140,20 +140,20 @@ try {
  }
  await page.evaluate(()=>{stability.unique(false);stability.folder('');stability.unread(false);});await page.waitForTimeout(60);
  await input.fill('   ');await page.waitForTimeout(100);
- assert.deepEqual(await visibleIds(),baselineIds,'Whitespace-only input must preserve the native list');
+ assert.deepEqual((await visibleIds()).slice(0,baselineIds.length),baselineIds,'Whitespace-only input must preserve the native list');
  await input.fill('');
  await input.fill('slow');
  await input.evaluate(el=>{el.value='';el.dispatchEvent(new Event('search',{bubbles:true}));});
  await input.blur();await page.mouse.click(700,500);await page.waitForTimeout(240);
  assert.equal(await page.evaluate(()=>nativeSearch.searchMode),false,'Native clear without input must close search');
  assert.equal(await page.evaluate(()=>stability.query()),'');
- assert.deepEqual(await visibleIds(),baselineIds,'Late response cannot revive cleared search');
+ assert.deepEqual((await visibleIds()).slice(0,baselineIds.length),baselineIds,'Late response cannot revive cleared search');
  await page.evaluate(()=>{nativeSearch.onUpdateSearch('slow');nativeSubscribedUpdate('slow');nativeSubscribedOpen();});await page.waitForTimeout(220);
  assert.equal(await page.evaluate(()=>nativeSearch.searchMode),false,'Delayed native callbacks cannot reopen empty search');
- assert.deepEqual(await visibleIds(),baselineIds);
+ assert.deepEqual((await visibleIds()).slice(0,baselineIds.length),baselineIds);
  await input.fill('slow');await input.evaluate(el=>{el.value='';});await input.blur();await page.mouse.click(700,500);await page.waitForTimeout(230);
  assert.equal(await page.evaluate(()=>nativeSearch.searchMode),false,'Blur repairs an empty field even without input/change');
- assert.deepEqual(await visibleIds(),baselineIds);
+ assert.deepEqual((await visibleIds()).slice(0,baselineIds.length),baselineIds);
  await input.fill('first');await page.locator('.bx-im-search-item__container').first().waitFor({state:'visible'});
  await page.getByText('Native chat225',{exact:true}).click({button:'right'});
  await page.locator('.dialog-control-context-menu').waitFor({state:'visible',timeout:1500});

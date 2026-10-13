@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import vm from 'node:vm';
 
 const source=readFileSync(process.env.PENA_COUNTER_SOURCE || new URL('../extension/injected.js',import.meta.url),'utf8');
-const names=['_fetchDialogCounterSnapshot','_applyDialogCounterSnapshot','_getDialogControlNotificationStatus'];
+const names=['_fetchDialogCounterSnapshot','_applyDialogCounterSnapshot','_scheduleDialogCounterReconcile','_getDialogControlNotificationStatus'];
 if(source.includes('function _getPendingDialogNativeCounterAt(')) names.push('_getPendingDialogNativeCounterAt');
 function extract(name) {
  const match=new RegExp('\\n\\t(?:async )?function '+name+'\\(').exec(source);
@@ -17,6 +17,16 @@ const context=vm.createContext({
  Date:{now:()=>now}, Map,Set,Math,Number,Object,
  _dialogRecentMeta:new Map(), _dialogRecentRepositoryReady:false,
  _dialogRecentCountersAt:0,_dialogRecentCountersError:'',
+ _dialogCounterReconcileScope:'',_dialogCounterReconcileAttemptAt:0,_dialogCounterReconcileFlight:null,
+ _DIALOG_COUNTER_RECONCILE_MS:120000,_dialogRecentDataRevision:0,
+ document:{hidden:false},isInternalChatsDOM:()=>true,_isDialogNativeLazyMode:()=>true,
+ _getDialogRecentRepositoryScope:()=>({portalHost:'portal',userId:'7'}),
+ _scheduleDialogRecentCacheWrite:()=>{},_notifyDialogRecentCountersChanged:()=>{},
+ _markDialogRecentRepositoryDirty:()=>{},
+ _invalidateDialogControlDomReadCache:()=>{},_getDialogNativeSourceRows:()=>[],
+ findContainer:()=>null,_getCachedDialogControlElementMeta:()=>null,
+ getChatIdFromElement:()=>'',_isDialogControlUnreadMeta:()=>false,
+ _getDialogRecentMeta:id=>context._dialogRecentMeta.get(id),
  _dialogNativeStatusRefreshRequest:null,
  _isDialogNativeSourceGenerationCurrent:()=>true,
  _getDialogNativeExpectedAuditScopeKey:()=>'testscope',
@@ -104,6 +114,39 @@ await phase('out of order snapshots cannot roll back a newer counter or freshnes
  context._dialogRecentMeta.clear();record('chat1',5,6000);context._dialogRecentCountersAt=6000;
  context._applyDialogCounterSnapshot(context._dialogRecentMeta,snapshot(0,{startedAt:1000,fetchedAt:2000}));
  assert.equal(context._dialogRecentMeta.get('chat1').unreadCount,5);assert.equal(context._dialogRecentCountersAt,6000);
+});
+await phase('visible native unread survives omission from the legacy counter snapshot',async()=>{
+ context._dialogRecentMeta.clear();now=10000;
+ const item=record('chat1003',1,500);
+ const changed=context._applyDialogCounterSnapshot(context._dialogRecentMeta,
+  {complete:true,coverage:{chatCounts:true,chatManual:true},states:new Map(),startedAt:9000,fetchedAt:10000},
+  new Map(),true,new Set());
+ assert.equal(changed,false);assert.equal(item.unreadCount,1);assert.equal(item.hasUnread,true);
+});
+await phase('lazy wake clears a restored stale badge once and skips healthy lists',async()=>{
+ context._dialogRecentMeta.clear();now=10000;
+ const stale=record('user605',1,500);
+ const clean=record('user490',0,500);
+ context._dialogRecentRepositoryReady=true;
+ let requests=0,writes=0,paints=0;
+ context._callBxRestPageWithTimeout=async()=>{requests++;return {data:{}};};
+ context._parseDialogCounterSnapshot=()=>({
+  ...snapshot(0,{fetchedAt:now}),
+  states:new Map([['user605',{unreadCount:0,countSeen:true,manualSeen:true}]])
+ });
+ context._markDialogRecentRepositoryDirty=()=>writes++;
+ context._notifyDialogRecentCountersChanged=()=>paints++;
+ context._getDialogNativeSourceRows=()=>[{classList:{contains:()=>false},id:'user605'}];
+ context.getChatIdFromElement=row=>row.id;
+ context._scheduleDialogCounterReconcile();
+ context._scheduleDialogCounterReconcile();
+ await context._dialogCounterReconcileFlight;
+ assert.equal(requests,1);assert.equal(stale.unreadCount,0);assert.equal(stale.hasUnread,false);
+ assert.equal(clean.unreadCount,0);assert.equal(writes,1);assert.equal(paints,1);
+ context._scheduleDialogCounterReconcile();assert.equal(requests,1,'The two-minute interval should suppress a second request');
+ now+=120001;context._scheduleDialogCounterReconcile();await context._dialogCounterReconcileFlight;
+ assert.equal(requests,1);assert.equal(writes,1);assert.equal(paints,1);
+ context._dialogRecentRepositoryReady=false;
 });
 const report={sourceSha256:createHash('sha256').update(source).digest('hex'),phases};
 mkdirSync('tests/artifacts',{recursive:true});

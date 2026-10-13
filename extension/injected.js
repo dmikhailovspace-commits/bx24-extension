@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.31';
+	window.__ANITREC_RUNNING__ = '8.0.32';
 
-	const VER = '8.0.31';
+	const VER = '8.0.32';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -268,6 +268,23 @@
 				return /(?:auto|scroll|overlay)/i.test(String(style.overflowY || ''));
 			});
 			if (semanticScroll) return semanticScroll;
+			// A future Bitrix build may rename both scroll wrapper classes. Walk from
+			// actual dialog rows toward this list and accept only their scroll owner.
+			// The search scroller and the open conversation have no such row ancestry.
+			const rowAncestors = new Set();
+			const semanticRows = Array.from(list.querySelectorAll(nativeRowSelector))
+				.filter(row => _isUsableDialogCandidate(row, { allowNestedId: true })).slice(0, 4);
+			for (const row of semanticRows) {
+				for (let owner = row.parentElement, depth = 0; owner && owner !== list && depth < 10;
+					owner = owner.parentElement, depth += 1) {
+					if (!owner.isConnected || rowAncestors.has(owner)) continue;
+					rowAncestors.add(owner);
+					if (semanticRows.length > 1 &&
+						(!owner.contains(semanticRows[0]) || !owner.contains(semanticRows[1]))) continue;
+					const style = getComputedStyle(owner);
+					if (/(?:auto|scroll|overlay)/i.test(String(style.overflowY || ''))) return owner;
+				}
+			}
 
 			// Bitrix wraps the task list in an `elements_container` and keeps the real
 			// scroll owner one level higher. Returning the first named ancestor made
@@ -3376,16 +3393,30 @@
 		throw lastError || new Error('Не удалось получить счётчики диалогов');
 	}
 
-	function _applyDialogCounterSnapshot(target, snapshot, mandatory = _getDialogRecentMandatoryItems()) {
+	function _applyDialogCounterSnapshot(target, snapshot, mandatory = _getDialogRecentMandatoryItems(), changedOnly = false, visibleReadIds = null) {
 		if (!snapshot?.states) return false;
 		_ensureDialogRecentMandatoryMeta(target, mandatory);
+		let changed = false;
 		_getDialogRecentUniqueMeta(target).forEach(meta => {
+			const before = changedOnly ? [meta.unreadCount, meta.hasUnread, meta.hasLater, meta.hasMention] : null;
+			const beforeFreshness = changedOnly ? [meta.counterFetchedAt, meta.counterConfirmedAt, meta.counterStale] : null;
+			const markChanged = () => {
+				const statusChanged = before && ['unreadCount', 'hasUnread', 'hasLater', 'hasMention']
+					.some((field, index) => meta[field] !== before[index]);
+				if (changedOnly && !statusChanged) {
+					[meta.counterFetchedAt, meta.counterConfirmedAt, meta.counterStale] = beforeFreshness;
+				}
+				if (statusChanged) changed = true;
+				if ((!changedOnly || statusChanged) && target === _dialogRecentMeta && _dialogRecentRepositoryReady) {
+					_markDialogRecentRepositoryDirty(meta.id);
+				}
+			};
 			// Messenger v2 owns the counters rendered by Bitrix, including task chats,
 			// reminders and child counters absent from the legacy REST projection.
 			const native = _getDialogNativeCounterMeta(meta.id);
 			if (native) {
 				Object.assign(meta, native, { counterFetchedAt: Date.now(), counterConfirmedAt: Date.now(), counterStale: false });
-				if (target === _dialogRecentMeta && _dialogRecentRepositoryReady) _markDialogRecentRepositoryDirty(meta.id);
+				markChanged();
 				return;
 			}
 			// A read, message or reminder observed while this request was pending
@@ -3408,6 +3439,10 @@
 			const manualCovered = chatDomain ? snapshot.coverage?.chatManual !== false : snapshot.coverage?.dialogManual !== false;
 			const applyCounts = countsCovered && (snapshot.complete !== false || state?.countSeen === true);
 			const applyManual = manualCovered && (snapshot.complete !== false || state?.manualSeen === true);
+			// The legacy counter endpoint can omit an unread chat. Clear a cached
+			// notification only when its current native row also shows it as read.
+			if (changedOnly && (meta.hasUnread || meta.hasLater || meta.hasMention || Number(meta.unreadCount) > 0) &&
+				(!state || (!Number(state.unreadCount) && !state.manualUnread)) && !visibleReadIds?.has(id)) return;
 			if (applyCounts) {
 				meta.unreadCount = Math.max(0, Number(state?.unreadCount) || 0);
 				meta.hasUnread = meta.unreadCount > 0 || !!meta.hasMention;
@@ -3418,11 +3453,57 @@
 				meta.counterConfirmedAt = snapshot.fetchedAt;
 				meta.counterStale = false;
 			}
-			if (target === _dialogRecentMeta && _dialogRecentRepositoryReady) _markDialogRecentRepositoryDirty(id);
+			markChanged();
 		});
 		_dialogRecentCountersAt = Math.max(Number(_dialogRecentCountersAt) || 0, Number(snapshot.fetchedAt) || 0);
 		_dialogRecentCountersError = '';
-		return true;
+		return changedOnly ? changed : true;
+	}
+
+	function _scheduleDialogCounterReconcile() {
+		if (document.hidden || !isInternalChatsDOM() || !_isDialogNativeLazyMode() || !_dialogRecentRepositoryReady) return;
+		const scope = _getDialogRecentRepositoryScope();
+		if (!scope) return;
+		const scopeKey = `${scope.portalHost}:${scope.userId}`;
+		if (_dialogCounterReconcileScope !== scopeKey) {
+			_dialogCounterReconcileScope = scopeKey;
+			_dialogCounterReconcileAttemptAt = 0;
+		}
+		if (_dialogCounterReconcileFlight || (_dialogCounterReconcileAttemptAt > 0 &&
+			Date.now() - _dialogCounterReconcileAttemptAt < _DIALOG_COUNTER_RECONCILE_MS)) return;
+		// A saved positive counter with a currently read native row is the stale
+		// badge case. Healthy lists need no network request or catalog mutation.
+		const sourceRows = _getDialogNativeSourceRows(findContainer());
+		if (!sourceRows.some(row => {
+			if (row.classList?.contains('pena-native-managed-row')) return false;
+			const id = normId(getChatIdFromElement(row));
+			const stored = id && _getDialogRecentMeta(id);
+			if (!stored?.hasUnread || !(Number(stored.unreadCount) > 0)) return false;
+			return !_isDialogControlUnreadMeta(_getCachedDialogControlElementMeta(row));
+		})) return;
+		_dialogCounterReconcileAttemptAt = Date.now();
+		const flight = _fetchDialogCounterSnapshot().then(snapshot => {
+			const currentScope = _getDialogRecentRepositoryScope();
+			if (`${currentScope?.portalHost}:${currentScope?.userId}` !== scopeKey ||
+				_dialogCounterReconcileScope !== scopeKey || !snapshot?.states ||
+				!isInternalChatsDOM() || !_dialogRecentRepositoryReady) return;
+			const visibleReadIds = new Set();
+			_invalidateDialogControlDomReadCache();
+			_getDialogNativeSourceRows(findContainer()).forEach(row => {
+				if (row.classList?.contains('pena-native-managed-row')) return;
+				const id = normId(getChatIdFromElement(row));
+				if (id && !_isDialogControlUnreadMeta(_getCachedDialogControlElementMeta(row))) visibleReadIds.add(id);
+			});
+			if (!_applyDialogCounterSnapshot(_dialogRecentMeta, snapshot, _getDialogRecentMandatoryItems(), true, visibleReadIds)) return;
+			_dialogRecentDataRevision += 1;
+			_scheduleDialogRecentCacheWrite(80);
+			_notifyDialogRecentCountersChanged();
+		}).catch(error => {
+			_dialogRecentCountersError = String(error?.message || error);
+		}).finally(() => {
+			if (_dialogCounterReconcileFlight === flight) _dialogCounterReconcileFlight = null;
+		});
+		_dialogCounterReconcileFlight = flight;
 	}
 
 	async function _runDialogRecentJobs(jobs, worker, concurrency = _DIALOG_RECENT_DETAIL_CONCURRENCY) {
@@ -8848,6 +8929,7 @@
 		if (_isDialogNativeLazyMode()) {
 			if (document.hidden || !isInternalChatsDOM()) return { skipped: true };
 			const result = _refreshDialogNativeVisibleWindow();
+			_scheduleDialogCounterReconcile();
 			// Today's task totals have their own scope and deduplicated bootstrap;
 			// returning to Messenger must keep it alive without walking chat history.
 			_scheduleDialogTimeBootstrap(null);
@@ -9770,6 +9852,7 @@
 			} else if (_isDialogControlNativePassThrough()) {
 				_refreshDialogNativeVisibleWindow();
 			}
+			_scheduleDialogCounterReconcile();
 			// Repository metadata does not prove that the current Bitrix viewport is
 			// materialized. Always ask the deduplicated native loader to reconcile the
 			// visible source after bootstrap; a healthy source exits without scrolling.
@@ -10402,6 +10485,7 @@ let _dialogControlTitleLastSyncAt = 0;
 	const _DIALOG_RECENT_DEFAULT_LIMIT = 0;
 	const _DIALOG_RECENT_CACHE_STATUS_MAX_AGE_MS = 60000;
 	const _DIALOG_RECENT_CACHE_REFRESH_MS = 5 * 60 * 1000;
+	const _DIALOG_COUNTER_RECONCILE_MS = 2 * 60 * 1000;
 	const _DIALOG_RECENT_DETAIL_TTL_MS = 30 * 60 * 1000;
 	const _DIALOG_RECENT_DETAIL_RETRY_MS = 30 * 1000;
 	const _DIALOG_RECENT_ACCESS_RETRY_MS = 24 * 60 * 60 * 1000;
@@ -10444,6 +10528,9 @@ let _dialogControlTitleLastSyncAt = 0;
 	let _dialogRecentTruncated = false;
 	let _dialogRecentCountersAt = 0;
 	let _dialogRecentCountersError = '';
+	let _dialogCounterReconcileScope = '';
+	let _dialogCounterReconcileAttemptAt = 0;
+	let _dialogCounterReconcileFlight = null;
 	let _dialogRecentEmptyFullPasses = 0;
 	let _dialogRecentSyncPromise = null;
 	let _dialogRecentSyncUiSilent = false;

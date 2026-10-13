@@ -201,6 +201,7 @@
 	const nestedViewport = new URLSearchParams(location.search).get('nestedViewport') === '1';
 	const baseViewport = new URLSearchParams(location.search).get('baseViewport') === '1';
 	const renamedBaseScroll = new URLSearchParams(location.search).get('renamedBaseScroll') === '1';
+	const opaqueBaseScroll = new URLSearchParams(location.search).get('opaqueBaseScroll') === '1';
 	const descendantViewport = new URLSearchParams(location.search).get('descendantViewport') === '1' || baseViewport;
 	const legacyNativeOff = new URLSearchParams(location.search).get('legacyNativeOff') === '1';
 	const noPrefSeed = new URLSearchParams(location.search).get('noPrefSeed') === '1';
@@ -230,7 +231,8 @@
 		const innerContainer = document.createElement('div');
 		innerContainer.className = baseViewport ? 'bx-im-list-base__container' : task ? 'bx-im-list-task__container' : 'bx-im-list-recent__container';
 		const innerScroll = document.createElement('div');
-		innerScroll.className = baseViewport ? (renamedBaseScroll ? 'bx-im-list-next__scroll-container' : 'bx-im-list-base__scroll-container') : task ? 'bx-im-list-task__scroll-container' : 'bx-im-list-recent__scroll-container';
+		innerScroll.className = baseViewport ? (opaqueBaseScroll ? 'bx-im-list-next__viewport' : renamedBaseScroll ? 'bx-im-list-next__scroll-container' : 'bx-im-list-base__scroll-container') : task ? 'bx-im-list-task__scroll-container' : 'bx-im-list-recent__scroll-container';
+		if (opaqueBaseScroll) { innerScroll.dataset.testScrollOwner = '1'; innerScroll.style.cssText = 'width:360px;height:600px;overflow-y:auto'; }
 		Array.from(list.children).forEach(row => innerScroll.appendChild(row));
 		innerContainer.appendChild(innerScroll);
 		list.appendChild(innerContainer);
@@ -238,7 +240,7 @@
 		elementsContainer.appendChild(list);
 	  });
 	}
-	const getNativeRowHost = list => list?.querySelector?.(':scope > .bx-im-list-base__container > [class*="scroll-container"],:scope > .bx-im-list-recent__container > .bx-im-list-recent__scroll-container,:scope > .bx-im-list-task__container > .bx-im-list-task__scroll-container') || list;
+	const getNativeRowHost = list => list?.querySelector?.(':scope > .bx-im-list-base__container > [class*="scroll-container"],:scope > .bx-im-list-base__container > [data-test-scroll-owner],:scope > .bx-im-list-recent__container > .bx-im-list-recent__scroll-container,:scope > .bx-im-list-task__container > .bx-im-list-task__scroll-container') || list;
 	if (duplicateLists && mode === 'chats') {
 	  const stale = document.createElement('div');
 	  stale.className = 'stale-test-host';
@@ -290,7 +292,7 @@
 	  const fullRows = nativeFullRows.get(modeKey);
 	  rowHost.replaceChildren(...fullRows.slice(0, 10).map(row => row.cloneNode(true)));
 	  const pending = fullRows.slice(10).map(row => row.cloneNode(true));
-	  const viewport = list.querySelector('.bx-im-list-base__scroll-container,.bx-im-list-next__scroll-container,.bx-im-list-recent__scroll-container,.bx-im-list-task__scroll-container') ||
+	  const viewport = list.querySelector('.bx-im-list-base__scroll-container,.bx-im-list-next__scroll-container,[data-test-scroll-owner],.bx-im-list-recent__scroll-container,.bx-im-list-task__scroll-container') ||
 		list.closest('.bx-im-list-container-recent__scroll-container,.bx-im-list-container-task__scroll-container');
 	  if (!viewport) return;
 	  let loading = false;
@@ -398,7 +400,7 @@
 	}
 	const initialScrollTop = Math.max(0, Number(new URLSearchParams(location.search).get('initialTop')) || 0);
 	document.querySelectorAll(descendantViewport
-	  ? '.bx-im-list-base__scroll-container,.bx-im-list-next__scroll-container,.bx-im-list-recent__scroll-container,.bx-im-list-task__scroll-container'
+	  ? '.bx-im-list-base__scroll-container,.bx-im-list-next__scroll-container,[data-test-scroll-owner],.bx-im-list-recent__scroll-container,.bx-im-list-task__scroll-container'
 	  : '.bx-im-list-container-recent__scroll-container,.bx-im-list-container-task__scroll-container').forEach(viewport => {
 	  if (nativePassThrough) viewport.style.overflowY = 'scroll';
 	  viewport.scrollTop = initialScrollTop;
@@ -414,7 +416,7 @@
 	window.nativeScrollbarBaseline = {};
 	document.querySelectorAll('.recent-host,.task-host').forEach(host => {
 	  const key = host.classList.contains('task-host') ? 'tasks' : 'chats';
-	  const viewport = host.querySelector('[class*="scroll-container"]');
+	  const viewport = host.querySelector('[class*="scroll-container"],[data-test-scroll-owner]');
 	  if (!viewport) return;
 	  const style = getComputedStyle(viewport);
 	  window.nativeScrollbarBaseline[key] = {
