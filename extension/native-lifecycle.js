@@ -688,6 +688,35 @@
 				|| clearTimer;
 			let frame = null;
 			let closed = false;
+			const layoutWidths = new Map();
+			const Resize = details.ResizeObserver || settings.ResizeObserver || (root && root.ResizeObserver);
+			const layoutObserver = typeof details.resolveLayoutElements === 'function' && typeof Resize === 'function'
+				? new Resize(entries => {
+					let changed = false;
+					for (const entry of entries) {
+						if (!layoutWidths.has(entry.target)) continue;
+						const width = Number(entry.contentRect?.width);
+						if (!Number.isFinite(width)) continue;
+						const previous = layoutWidths.get(entry.target);
+						layoutWidths.set(entry.target, width);
+						if (previous !== null && Math.abs(previous - width) > .5) changed = true;
+					}
+					if (changed) scheduleScan();
+				}) : null;
+			const refreshLayoutElements = () => {
+				if (!layoutObserver) return;
+				const elements = new Set(details.resolveLayoutElements() || []);
+				for (const element of layoutWidths.keys()) {
+					if (elements.has(element) && element.isConnected) continue;
+					layoutObserver.unobserve(element);
+					layoutWidths.delete(element);
+				}
+				for (const element of elements) {
+					if (!element.isConnected || layoutWidths.has(element)) continue;
+					layoutWidths.set(element, null);
+					layoutObserver.observe(element);
+				}
+			};
 
 			const scan = reason => {
 				if (closed || disposed) return;
@@ -695,6 +724,7 @@
 					? details.resolvePreferredMode()
 					: details.preferredMode;
 				reconcile(resolveCandidates(), { reason, preferredMode });
+				refreshLayoutElements();
 			};
 			const scheduleScan = () => {
 				if (closed || frame != null) return;
@@ -739,6 +769,8 @@
 				if (frame != null) cancelFrame(frame);
 				frame = null;
 				observer.disconnect();
+				layoutObserver?.disconnect();
+				layoutWidths.clear();
 			};
 			const unregister = registerHandle(disposeConnection, { scope: 'controller' });
 			scan('connect');

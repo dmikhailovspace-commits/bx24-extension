@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { collectPageErrors, startHarnessServer } from './lib/harness-server.mjs';
+import { checkCompactRail } from './lib/native-compact-rail.mjs';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
@@ -141,6 +142,7 @@ const runScenario = async ({ query = '', expectedFaults = 0, expectActive = true
 };
 
 try {
+  await checkCompactRail(browser, server.baseUrl);
   await verifyPanelGeometry();
   await runScenario();
   await runScenario({ query: '?panelFault=1', expectedFaults: 1 });

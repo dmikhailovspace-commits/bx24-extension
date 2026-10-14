@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.36';
+	window.__ANITREC_RUNNING__ = '8.0.37';
 
-	const VER = '8.0.36';
+	const VER = '8.0.37';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -11004,6 +11004,11 @@ if (_presetChannel) {
 				break;
 			}
 		}
+		if (toolbar && _findNativeCompactRail(toolbar)) {
+			toolbar.querySelector(':scope > .pena-extension-toolbar-controls')?.remove();
+			toolbar.classList.remove('pena-bitrix-list-search-sticky');
+			toolbar = null;
+		}
 		document.querySelectorAll('.pena-bitrix-list-system-toolbar-sticky').forEach(el => {
 			if (el !== toolbar) el.classList.remove('pena-bitrix-list-system-toolbar-sticky');
 		});
@@ -14140,6 +14145,14 @@ if (_presetChannel) {
 		return true;
 	}
 
+	function _findNativeCompactRail(element) {
+		for (let region = element; region && region !== document.body && region !== document.documentElement; region = region.parentElement) {
+			const width = region.getBoundingClientRect().width;
+			if (width > 1 && width < 160) return region;
+		}
+		return null;
+	}
+
 	function _resolveDialogControlNativeMount(container = findContainer(), options = {}) {
 		if (
 			_dialogControlNativeMountGrant?.container === container &&
@@ -14200,6 +14213,12 @@ if (_presetChannel) {
 		const hostRect = host.getBoundingClientRect?.();
 		if (!viewportRect || !hostRect || viewportRect.width <= 1 || viewportRect.height <= 1 || hostRect.width <= 1 || hostRect.height <= 1) {
 			return fail('missing-geometry', { sourceViewport, managedViewport, measuredViewport, host, viewportRect, hostRect });
+		}
+		// Projects/Collabs reuse the recent list as an avatar rail. A familiar
+		// class name is not proof that this region still has room for our panel.
+		// Include ancestors: native CSS can keep a wide inner list inside a rail.
+		if (_findNativeCompactRail(measuredViewport)) {
+			return fail('compact-native-rail', { sourceViewport, sourceRegion, managedViewport, measuredViewport, host, viewportRect, hostRect });
 		}
 		const pageWidth = Math.max(0, document.documentElement?.clientWidth || window.innerWidth || 0);
 		const hostWidthExcess = hostRect.width - viewportRect.width;
@@ -22443,6 +22462,10 @@ if (_presetChannel) {
 				at: Date.now(),
 				mode: _pMode()
 			};
+			if (mount.reason === 'compact-native-rail') {
+				_resetDialogControlNativeLayoutRetry();
+				return false;
+			}
 			_scheduleDialogControlNativeLayoutRetry();
 			return false;
 		}
@@ -31658,6 +31681,14 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 		definitions.forEach(([mode, selector]) => {
 			Array.from(document.querySelectorAll(selector)).forEach((list, index) => {
 				const mount = _resolveDialogControlNativeMount(list, { requireStable: false });
+				if (mount.reason === 'compact-native-rail') {
+					_ensureBitrixListSystemToolbarSticky();
+					// Do not keep the old wide panel through the lifecycle absence grace.
+					if (_dialogControlNativeSwitcherNode?.parentElement === mount.host || _dialogControlManagedSource === list) {
+						_rollbackDialogControlNativePresentation(list, mount.reason);
+					}
+					return;
+				}
 				const scrollViewport = mount?.sourceViewport || findInternalScrollContainer(list);
 				const viewport = mount?.measuredViewport || mount?.sourceRegion || scrollViewport;
 				const host = mount?.host || viewport?.parentElement || null;
@@ -31983,6 +32014,14 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 			};
 			_nativeLifecycleDisconnect = lifecycle.connect({
 				root: document.body || document.documentElement,
+				resolveLayoutElements() {
+					const elements = new Set();
+					for (const list of knownRouteLists) {
+						if (!list.isConnected) continue;
+						for (let region = list.parentElement; region && region !== document.body && region !== document.documentElement; region = region.parentElement) elements.add(region);
+					}
+					return elements;
+				},
 				resolveCandidates() {
 					const candidates = _resolveNativeLifecycleCandidates();
 					// A move is connected again by the end of the mutation batch; only
