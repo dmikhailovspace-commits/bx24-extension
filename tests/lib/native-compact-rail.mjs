@@ -1,10 +1,35 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 export async function checkCompactRail(browser, baseUrl) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   try {
+    // Layering must be correct before any JS cleanup runs, including in the
+    // exposed avatar rail occupied by the native project's back button.
+    await page.setContent(`<style>
+      body{margin:0}.bx-im-messenger__list_container{position:relative;width:400px;height:600px}
+      .bx-im-list-container-recent__scope{height:100%}
+      .bx-im-list-container-recent__header_container{height:80px}
+      .bx-im-list-navigator-nested-list__container{position:absolute;left:68px;right:0;top:0;bottom:0;background:white;z-index:10}
+      #project-back{position:absolute;left:-68px;top:0;width:68px;height:50px}
+      #project-search{height:80px;background:white}
+      #project-content{height:520px;background:white}
+    </style><main class="bx-im-messenger__list_container">
+      <div class="bx-im-list-container-recent__scope">
+        <header class="bx-im-list-container-recent__header_container pena-bitrix-list-system-toolbar-sticky">
+          <div class="pena-extension-toolbar-controls --full-header"><span>PENA v8</span></div>
+        </header>
+        <div class="pena-native-folder-switcher" style="visibility:visible!important;pointer-events:auto!important;height:200px">Папки</div>
+      </div>
+      <section class="bx-im-list-navigator-nested-list__container --compact-mode">
+        <button id="project-back">Назад</button><div id="project-search">Поиск проекта</div><button id="project-content">Открыть проект</button>
+      </section>
+    </main>`);
+    await page.addStyleTag({ content:readFileSync(new URL('../../extension/injected.css',import.meta.url),'utf8') });
+    const topLayers = await page.evaluate(() => [[30,15],[80,15],[100,130]].map(([x,y])=>document.elementFromPoint(x,y)?.closest('[id]')?.id));
+    assert.deepEqual(topLayers,['project-back','project-search','project-content'],'Native project must cover all PENA layers without waiting for JS');
     await page.goto(`${baseUrl}/tests/native-cold-start-layout-harness.html`);
     await page.waitForFunction(() => window.__coldStartHarness?.phase === 'settled');
     await page.locator('.pena-native-folder-switcher').waitFor({ state: 'visible' });
@@ -70,6 +95,11 @@ export async function checkCompactRail(browser, baseUrl) {
     await page.waitForTimeout(50);
     for (let i=0; i<2; i++) {
       await page.evaluate(() => {
+        const staleHeader = document.createElement('div');
+        staleHeader.id = 'previous-native-header';
+        staleHeader.className = 'bx-im-list-container-recent__header_container';
+        staleHeader.innerHTML = '<div class="pena-extension-toolbar-controls">PENA</div>';
+        document.body.append(staleHeader);
         const status = document.createElement('div');
         status.className = 'pena-native-folder-status';
         status.textContent = 'Часть диалогов не найдена в списке Bitrix';
@@ -79,9 +109,11 @@ export async function checkCompactRail(browser, baseUrl) {
       await page.waitForTimeout(350);
       assert.equal(await page.locator('.pena-native-folder-switcher').count(), 0, 'Nested native slider retained the full-width panel');
       assert.equal(await page.locator('.pena-native-folder-status').count(), 0, 'Folder loading status overlapped the native project');
+      assert.equal(await page.locator('.pena-extension-toolbar-controls').count(), 0, 'Version controls survived in an old native header');
       assert.equal(await page.locator('#native-list').evaluate(el => el.getBoundingClientRect().width), 380, 'Fixture must retain the original wide list');
       await page.locator('#nested-action').click();
       await page.evaluate(() => { document.getElementById('native-collab-slider').style.transform = 'translateX(100%)'; });
+      await page.locator('#previous-native-header').evaluate(el => el.remove());
       await page.locator('.pena-native-folder-switcher').waitFor({ state:'visible', timeout:6000 });
       assert.equal(await page.locator('.pena-native-folder-switcher').count(), 1);
     }
