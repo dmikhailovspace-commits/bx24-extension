@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { chromium } from 'playwright';
 import { startHarnessServer, collectPageErrors } from './lib/harness-server.mjs';
-import { checkNativeAvatarTransitions, checkNativeImageRing, checkCollabAvatarRing } from './lib/native-avatar-transitions.mjs';
+import { checkNativeAvatarTransitions, checkNativeImageRing, checkCollabAvatarRing, checkLateAvatarRing, checkObservedAvatarReplacement } from './lib/native-avatar-transitions.mjs';
 
 const sourcePath = process.env.PENA_DOM_AUDIT_SOURCE || new URL('../extension/injected.js', import.meta.url);
 const raw = readFileSync(sourcePath, 'utf8');
@@ -55,6 +55,7 @@ const source = raw.replace(anchor, `${anchor}
 			repaint() { _dialogControlNativeViewSig = ''; _applyDialogControlNativeView(findContainer(), { forceShow: true }); },
 			repairLayers(row, host) { _syncDialogControlNativeAvatarLayers(row, host); },
 			colorAvatar(row, color) { _ensureDialogControlNativeColorLabel(row, color); },
+			repairAvatar(row) { _repairDialogControlNativeAvatar(row); },
 			syncStableTracker() {
 				const originalRead = _readDialogTimeTracker;
 				_readDialogTimeTracker = () => ({ taskId: '123', pendingSeconds: 60 });
@@ -252,8 +253,16 @@ try {
  await toolbarPage.close();
  Object.assign(result, toolbarResult);
  result.avatarTransitions = await checkNativeAvatarTransitions(page);
+ result.lateAvatarRings = await checkLateAvatarRing(page);
+ for (const state of result.lateAvatarRings) {
+  assert.equal(state.count, /shell|removed/.test(state.phase) ? 0 : 1, JSON.stringify(state));
+  for (const key of ['correctHost','square','exact']) assert.equal(state[key],true,JSON.stringify(state));
+  assert.equal(state.shellHeight,64,JSON.stringify(state));
+  assert.equal(state.staleHosts,0,JSON.stringify(state));
+ }
  result.nativeImageRings = await checkNativeImageRing(page);
  result.collabImageRings = await checkCollabAvatarRing(page);
+ result.observedAvatarReplacement = await checkObservedAvatarReplacement(page);
  for (const state of result.collabImageRings) {
   assert.equal(state.ringCount, state.phase === 'uncolored folder' ? 0 : 1, JSON.stringify(state));
   for (const key of ['correctHost', 'geometryPreserved', 'nativeSvgPreserved', 'typingVisible']) {
@@ -263,6 +272,7 @@ try {
  }
  for (const state of result.nativeImageRings) {
   assert.equal(state.ringRendered, true, `Avatar ring is not painted: ${JSON.stringify(state)}`);
+  assert.equal(state.square, true, `Avatar ring became an oval: ${JSON.stringify(state)}`);
   assert.equal(state.ringInsideImage, false, `Ring appended inside a void IMG: ${JSON.stringify(state)}`);
   assert.equal(state.geometryPreserved, true, `Ring no longer follows the native portrait: ${JSON.stringify(state)}`);
   assert.equal(state.photoRounded, true, `Photo lost its native rounding: ${JSON.stringify(state)}`);

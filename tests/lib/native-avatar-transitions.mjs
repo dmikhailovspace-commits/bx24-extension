@@ -70,6 +70,86 @@ export async function checkNativeAvatarTransitions(page) {
  });
 }
 
+// Vue can mount a tall shell first, then replace/recreate the portrait without
+// changing the dialog. Exercise the production row-local presentation repair.
+export async function checkLateAvatarRing(page) {
+ return page.evaluate(async () => {
+  const states = [];
+  const row = document.createElement('div');
+  row.style.cssText = 'position:fixed;left:600px;top:100px;width:100px;height:100px';
+  row.dataset.penaNativeColor = '#000000';
+  row.innerHTML = '<div class="bx-im-list-recent-item__avatar_container" style="position:relative;display:flex;align-items:center;width:48px;height:64px"></div>';
+  document.body.append(row);
+  const shell = row.firstElementChild;
+  const capture = async (phase, portrait = null) => {
+   await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+   const rings = row.querySelectorAll('.pena-native-avatar-ring');
+   const ring = rings[0];
+   const rect = ring?.getBoundingClientRect();
+   const expected = portrait?.getBoundingClientRect();
+   states.push({phase, count:rings.length, correctHost:!ring || ring.parentElement===portrait,
+    square:!rect || Math.abs(rect.width-rect.height)<.1,
+    exact:!expected || !!rect && ['x','y','width','height'].every(k=>Math.abs(rect[k]-expected[k])<.1),
+    shellHeight:shell.getBoundingClientRect().height,
+    staleHosts:[...row.querySelectorAll('.pena-native-avatar-ring-host')].filter(el=>el!==ring?.parentElement).length});
+  };
+  try {
+   window.__PENA_DOM_AUDIT__.colorAvatar(row, '#000000');
+   await capture('empty tall shell');
+   if (states[0].count) throw new Error('Tall empty avatar shell painted an oval marker');
+   for (const kind of ['initials','photo','replacement initials']) {
+    shell.innerHTML = '<div class="bx-im-avatar__container" style="position:relative;width:48px;height:48px"><div class="bx-im-avatar__content" style="width:48px;height:48px;border-radius:50%;background:#af805f">ОЧ</div></div>';
+    if (kind==='photo') shell.querySelector('.bx-im-avatar__content').innerHTML='<img style="width:48px;height:48px;border-radius:50%" alt="portrait">';
+    // Invoke the same callback used for a changed native row, not a full render.
+    window.__PENA_DOM_AUDIT__.repairAvatar(row);
+    await capture(kind,shell.querySelector('.bx-im-avatar__content'));
+    const portrait=shell.querySelector('.bx-im-avatar__content');
+    portrait.style.height='64px';
+    await new Promise(resolve=>requestAnimationFrame(resolve));
+    const transient=portrait.querySelector('.pena-native-avatar-ring').getBoundingClientRect();
+    if (Math.abs(transient.width-transient.height)>.1) throw new Error('Selection stretch temporarily made the marker oval');
+    portrait.style.height='48px';
+   }
+   shell.innerHTML='';
+   window.__PENA_DOM_AUDIT__.repairAvatar(row);
+   await capture('portrait removed');
+  } finally { row.remove(); }
+  return states;
+ });
+}
+
+export async function checkObservedAvatarReplacement(page) {
+ return page.evaluate(async () => {
+  const row = document.querySelector('.test-host:not([hidden]) .pena-native-chat-row[data-pena-native-color]');
+  const ring = row?.querySelector('.pena-native-avatar-ring');
+  if (!ring) throw new Error('Expected a colored native row for observer regression');
+  const original = ring.closest('.bx-im-list-recent-item__avatar,.bx-messenger-cl-avatar') || ring.parentElement;
+  const shell = document.createElement('div');
+  shell.className = 'bx-im-list-recent-item__avatar_container';
+  shell.style.cssText = 'position:relative;display:flex;align-items:center;flex:none;width:48px;height:64px';
+  const waitFor = async predicate => {
+   const until = Date.now()+3000;
+   while (!predicate()) {
+    if (Date.now()>until) throw new Error('Native avatar mutation did not repair the marker');
+    await new Promise(resolve=>setTimeout(resolve,25));
+   }
+  };
+  try {
+   original.replaceWith(shell);
+   await new Promise(resolve=>setTimeout(resolve,200));
+   if (shell.querySelector('.pena-native-avatar-ring')) throw new Error('Observer decorated a tall empty shell');
+   for (let index=0; index<2; index++) {
+    shell.innerHTML='<div class="bx-im-avatar__content" style="position:relative;flex:none;width:48px;height:48px;border-radius:50%;background:#af805f">ОЧ</div>';
+    const portrait=shell.firstElementChild;
+    await waitFor(()=>portrait.querySelector('.pena-native-avatar-ring'));
+    const rect=portrait.querySelector('.pena-native-avatar-ring').getBoundingClientRect();
+    if (Math.abs(rect.width-48)>.1 || Math.abs(rect.height-48)>.1) throw new Error('Recreated marker is not 48x48');
+   }
+   return {lateMount:true,recreatedPortrait:true,originalRowPreserved:row.isConnected};
+  } finally { shell.replaceWith(original); }
+ });
+}
+
 // Current Bitrix Avatar puts __content on the IMG itself, rather than on a
 // wrapper. Task/chat initials use a DIV with the very same class.
 export async function checkNativeImageRing(page) {
@@ -87,7 +167,9 @@ export async function checkNativeImageRing(page) {
     for (const kind of ['initials', 'photo', 'fallback initials', 'replacement photo']) {
      const next = document.createElement(kind.includes('photo') ? 'img' : 'div');
      next.className = prefix + '__content ' + (next.tagName === 'IMG' ? '--image' : '--text');
-     next.style.cssText = 'display:block;width:100%;height:100%;border-radius:50%;background:#94a3b8;object-fit:cover';
+     // The general harness has a 40px flex-basis. This fixture explicitly
+     // models a 48px native avatar and must not shrink its portrait to 40x48.
+     next.style.cssText = 'display:block;flex:none;width:100%;height:100%;border-radius:50%;background:#94a3b8;object-fit:cover';
      if (next.tagName === 'IMG') {
       next.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><path fill="red" d="M0 0h48v48H0z"/></svg>');
       await next.decode();
@@ -101,6 +183,7 @@ export async function checkNativeImageRing(page) {
      const rect = portrait.getBoundingClientRect();
      states.push({ prefix, kind,
       ringRendered: !!ring?.getClientRects().length && ringRect.width > 0 && ringRect.height > 0,
+      square: !!ringRect && Math.abs(ringRect.width - ringRect.height) < .1,
       ringInsideImage: !!ring?.closest('img'),
       geometryPreserved: !!ringRect && ['x','y','width','height'].every(key => Math.abs(ringRect[key] - rect[key]) < .1),
       photoRounded: getComputedStyle(portrait).borderRadius === '50%',

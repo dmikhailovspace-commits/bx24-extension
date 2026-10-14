@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.35';
+	window.__ANITREC_RUNNING__ = '8.0.36';
 
-	const VER = '8.0.35';
+	const VER = '8.0.36';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -9671,9 +9671,9 @@
 			prefs.sortMode !== 'date' || prefs.sortDirection !== 'desc';
 		const changedRows = (Array.isArray(rows) ? rows : Array.from(rows || [])).filter(row => row?.isConnected);
 		// A Bitrix typing/status badge can be replaced inside an otherwise stable row.
-		// Rebind only rows that already own a PENA ring; this is a tiny presentation
-		// repair and must not fall back to a catalog/view rebuild.
-		const needsAvatarLayerRepair = changedRows.some(row => row.querySelector?.('.pena-native-avatar-ring'));
+		// Repair only colored rows, including a portrait mounted after its shell.
+		// This must not fall back to a catalog/view rebuild.
+		const needsAvatarLayerRepair = changedRows.some(row => row.dataset?.penaNativeColor || row.querySelector?.('.pena-native-avatar-ring'));
 		if (!needsCustomPresentation && !needsAvatarLayerRepair) return;
 		const refreshDelay = needsAvatarLayerRepair
 			? Math.min(80, Math.max(16, Number(delay) || 80))
@@ -9698,9 +9698,7 @@
 			_invalidateDialogControlDomReadCache();
 			pendingRows.forEach(row => {
 				if (!row?.isConnected) return;
-				const ring = row.querySelector?.('.pena-native-avatar-ring');
-				const host = ring?.parentElement;
-				if (host) _syncDialogControlNativeAvatarLayers(row, host);
+				_repairDialogControlNativeAvatar(row);
 			});
 			if (String(filters.query || '').trim()) {
 				const nativeFolderFilter = _getDialogControlNativeFilter();
@@ -21982,7 +21980,19 @@ if (_presetChannel) {
 
 	function _resolveDialogControlNativeAvatarRingHost(row, avatar) {
 		if (!row || !avatar) return null;
-		if (!avatar.matches?.('img')) return avatar;
+		// Never paint on a tall loading shell, including non-IMG initials and
+		// renamed component wrappers. Wait for an actual square portrait host.
+		const square = element => {
+			const rect = element?.getBoundingClientRect?.();
+			return rect && rect.width >= 20 && rect.width <= 80 && rect.height >= 20 && rect.height <= 80 &&
+				Math.abs(rect.width - rect.height) <= 1;
+		};
+		if (!avatar.matches?.('img')) {
+			if (square(avatar)) return avatar;
+			return Array.from(avatar.querySelectorAll?.('[class*="avatar" i]') || []).filter(candidate =>
+				!candidate.matches('img,.pena-native-avatar-ring,[class*="status" i],[class*="icon" i],[class*="typing" i],[class*="author" i]') && square(candidate)
+			).at(-1) || null;
+		}
 		const candidates = [];
 		const seen = new Set();
 		const add = candidate => {
@@ -22023,8 +22033,23 @@ if (_presetChannel) {
 			if (candidate.matches?.('.bx-im-avatar__container,.bx-im-component-avatar__container')) score += 75;
 			if (candidate.matches?.('.bx-im-list-recent-item__avatar_container') && ratio < .82) score -= 180;
 			return { candidate, score, ratio, usableSize };
-		}).filter(entry => entry.usableSize && entry.ratio >= .82).sort((a, b) => b.score - a.score);
-		return scored[0]?.candidate || avatar.parentElement || null;
+		}).filter(entry => entry.usableSize && square(entry.candidate)).sort((a, b) => b.score - a.score);
+		return scored[0]?.candidate || null;
+	}
+
+	function _repairDialogControlNativeAvatar(row) {
+		const ring = row.querySelector?.('.pena-native-avatar-ring');
+		const color = row.dataset?.penaNativeColor || row.style?.getPropertyValue('--pena-native-color');
+		if (!color && !ring) return;
+		const avatar = _getDialogControlNativeAvatarElement(row);
+		const host = _resolveDialogControlNativeAvatarRingHost(row, avatar);
+		if (!host || ring?.parentElement !== host) {
+			_ensureDialogControlNativeColorLabel(row, color);
+		} else {
+			// A message/status update on a healthy portrait only repairs overlays;
+			// it must not rewrite color styles or restart catalog projection.
+			_syncDialogControlNativeAvatarLayers(row, host);
+		}
 	}
 
 	function _clearDialogControlNativeAvatarRingHosts(row, keep = null) {
@@ -22051,9 +22076,13 @@ if (_presetChannel) {
 			return null;
 		}
 		const avatar = _getDialogControlNativeAvatarElement(row);
-		if (!avatar) return null;
 		const host = _resolveDialogControlNativeAvatarRingHost(row, avatar);
-		if (!host) return null;
+		if (!host) {
+			existing.forEach(el => el.remove());
+			_clearDialogControlNativeAvatarLayers(row);
+			_clearDialogControlNativeAvatarRingHosts(row);
+			return null;
+		}
 		// A loading/recreated portrait may move the ring to a different native
 		// container. Release our styles on the previous host, including ancestors.
 		_clearDialogControlNativeAvatarRingHosts(row, host);
@@ -29123,7 +29152,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .pena-native-chat-row-paint.--native-colored,.pena-native-chat-row-paint.--native-folder-colored{background:transparent!important}
 .pena-native-chat-row-paint{border-radius:inherit!important;background-clip:padding-box}
 .pena-native-avatar-ring-host{position:relative!important;isolation:isolate!important}
-.pena-native-avatar-ring{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;transform:none!important;display:block!important;border:4px solid var(--pena-native-color,#3b82f6)!important;border-radius:999px!important;background:transparent!important;box-shadow:0 0 0 1px rgba(255,255,255,.96),inset 0 0 0 1px rgba(15,23,42,.42)!important;box-sizing:border-box!important;pointer-events:none!important;z-index:1!important}
+.pena-native-avatar-ring{position:absolute!important;inset:0 auto auto 0!important;width:100%!important;height:auto!important;aspect-ratio:1!important;transform:none!important;display:block!important;border:4px solid var(--pena-native-color,#3b82f6)!important;border-radius:999px!important;background:transparent!important;box-shadow:0 0 0 1px rgba(255,255,255,.96),inset 0 0 0 1px rgba(15,23,42,.42)!important;box-sizing:border-box!important;pointer-events:none!important;z-index:1!important}
 .pena-native-avatar-stack-host{isolation:isolate!important}
 .pena-native-avatar-native-overlay,.pena-native-avatar-stack-host [class*="typing" i],.pena-native-avatar-stack-host [class*="writing" i],.pena-native-avatar-stack-host [aria-label*="печатает" i]{z-index:7!important}
 .pena-native-chat-row.--native-multi-selected{background:transparent!important;background-color:transparent!important;box-shadow:0 0 0 2px #20aee5 inset!important}
