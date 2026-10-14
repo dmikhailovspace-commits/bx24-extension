@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.34';
+	window.__ANITREC_RUNNING__ = '8.0.35';
 
-	const VER = '8.0.34';
+	const VER = '8.0.35';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -21402,9 +21402,9 @@ if (_presetChannel) {
 			.forEach(el => el.classList.remove('--native-drop', '--native-drop-before', '--native-drop-after'));
 	}
 
-	// Let Bitrix build and execute its complete menu (including permissions,
-	// confirmations and submenus). Only add PENA actions to that native instance.
-	function _mountDialogControlCombinedBitrixMenu(event, item, menu, close) {
+	// Keep the established PENA menu. Read the available actions from Bitrix,
+	// then reopen its exact context only while invoking its original callback.
+	function _appendDialogControlBitrixActions(event, item, menu, close, before) {
 		const row = getChatItemElement(event.target);
 		if (!row?.isConnected) return null;
 		const owner = _findDialogNativeVueInstance(row, instance => {
@@ -21414,45 +21414,74 @@ if (_presetChannel) {
 				(typeof proxy.onItemRightClick === 'function' || typeof proxy.onOpenContextMenu === 'function') ? proxy : null;
 		});
 		if (!owner) return null;
-		let manager, nativeInstance;
-		try {
-			if (!_openDialogControlBitrixContextMenu(item, event, row)) return null;
-			manager = owner.contextMenuManager;
-			if (!manager?.menuInstance || typeof manager.getMenuItems !== 'function' || typeof manager.getMenuOptions !== 'function') { manager?.close?.(); return null; }
-			const context = { ...manager.context };
-			if (normId(context.dialogId) !== normId(item.id)) { manager.close(); return null; }
-			const getItems = manager.getMenuItems, getOptions = manager.getMenuOptions;
-			const ownItems = Object.getOwnPropertyDescriptor(manager, 'getMenuItems');
-			const ownOptions = Object.getOwnPropertyDescriptor(manager, 'getMenuOptions');
-			const actions = [...menu.querySelectorAll(':scope > button:not(.dialog-control-context-original)')].map(button => ({
-				title: button.textContent.trim(),
-				onClick: () => { menu.style.visibility = ''; button.click(); }
-			}));
-			manager.close();
+		let manager;
+		const withNativeMenu = callback => {
 			try {
-				manager.getMenuItems = function () {
-					return [...getItems.call(this), { title: 'PENA: папки, группы и цвет', subMenu: { items: actions, maxHeight: 560 } }];
-				};
-				manager.getMenuOptions = function () {
-					const options = getOptions.call(this);
-					const events = { ...options.events };
-					for (const name of ['onClose', 'onDestroy']) {
-						const original = events[name];
-						events[name] = (...args) => { try { original?.(...args); } finally { setTimeout(close, 0); } };
+				if (!_openDialogControlBitrixContextMenu(item, event, row)) return null;
+				manager = owner.contextMenuManager;
+				if (!manager?.menuInstance || typeof manager.getMenuOptions !== 'function' ||
+					normId(manager.context?.dialogId) !== normId(item.id)) return null;
+				const popup = manager.menuInstance.getPopupContainer?.();
+				if (popup) popup.style.visibility = 'hidden';
+				return callback(manager.getMenuOptions());
+			} finally { manager?.close?.(); }
+		};
+		try {
+			const options = withNativeMenu(value => value);
+			if (!Array.isArray(options?.items)) return null;
+			const fragment = document.createDocumentFragment();
+			const divider = document.createElement('div'); divider.className = 'dialog-control-context-divider';
+			const heading = document.createElement('div'); heading.className = 'dialog-control-context-title'; heading.textContent = 'Bitrix24';
+			fragment.append(divider, heading);
+			const existing = new Set([...menu.querySelectorAll(':scope > button')].map(button => button.textContent.trim()));
+			const disabled = action => action.disabled === true || action.design === 'disabled';
+			const key = action => action.id != null ? 'id:' + action.id : 'title:' + action.title;
+			const render = (actions, parent, path = []) => {
+				for (const action of actions.filter(Boolean)) {
+					if (typeof action.title !== 'string' || (!path.length && existing.has(action.title.trim()))) continue;
+					const children = action.subMenu?.items;
+					if (!Array.isArray(children) && typeof action.onClick !== 'function') continue;
+					const actionPath = [...path, key(action)];
+					const button = _makeDialogControlContextButton('dialog-control-context-native',
+						'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l7 7-7 7"/></svg>', action.title);
+					button.disabled = disabled(action);
+					button.setAttribute('aria-disabled', String(button.disabled));
+					if (typeof action.isSelected === 'boolean') {
+						button.setAttribute('role', 'menuitemcheckbox'); button.setAttribute('aria-checked', String(action.isSelected));
+						button.classList.toggle('--active', action.isSelected);
 					}
-					return { ...options, events };
-				};
-				manager.openMenu(context, { left: event.pageX, top: event.pageY });
-				nativeInstance = manager.menuInstance;
-				menu.style.visibility = 'hidden';
-			} finally {
-				if (ownItems) Object.defineProperty(manager, 'getMenuItems', ownItems); else delete manager.getMenuItems;
-				if (ownOptions) Object.defineProperty(manager, 'getMenuOptions', ownOptions); else delete manager.getMenuOptions;
-			}
-			return () => { if (manager.menuInstance === nativeInstance) manager.close(); };
+					parent.append(button);
+					if (Array.isArray(children)) {
+						const sub = document.createElement('div'); sub.hidden = true; sub.setAttribute('role', 'menu');
+						sub.setAttribute('aria-label', action.title); button.setAttribute('aria-haspopup', 'menu'); button.setAttribute('aria-expanded', 'false');
+						parent.append(sub); render(children, sub, actionPath);
+						button.addEventListener('click', () => { sub.hidden = !sub.hidden; button.setAttribute('aria-expanded', String(!sub.hidden)); });
+					} else {
+						button.addEventListener('click', () => {
+							close();
+							try {
+								// Recheck permissions and labels at invocation; never execute a
+								// stale callback for another row or a now unavailable action.
+								withNativeMenu(current => {
+									let candidates = current.items, selected;
+									for (const part of actionPath) {
+										const matches = (candidates || []).filter(candidate => candidate && key(candidate) === part);
+										if (matches.length !== 1 || disabled(matches[0])) return;
+										selected = matches[0]; candidates = selected.subMenu?.items;
+									}
+									const result = selected?.onClick?.();
+									result?.catch?.(error => { console.warn('[PENA] Bitrix menu action failed:', error); _showDialogDockToast('Не удалось выполнить действие Bitrix24', 'danger'); });
+								});
+							} catch (error) { console.warn('[PENA] Bitrix menu action failed:', error); _showDialogDockToast('Не удалось выполнить действие Bitrix24', 'danger'); }
+						});
+					}
+				}
+			};
+			render(options.items, fragment);
+			if (fragment.childElementCount > 2) menu.insertBefore(fragment, before || null);
+			return true;
 		} catch (error) {
 			try { manager?.close?.(); } catch {}
-			menu.style.visibility = '';
 			console.warn('[PENA] Native menu integration unavailable:', error);
 			return null;
 		}
@@ -25371,6 +25400,7 @@ if (_presetChannel) {
 			originalMenuActions.push(originalDivider, originalMenuBtn);
 		}
 		menu.append(laterBtn, readBtn, ...(canControlColor ? [colorDivider, colorBtn] : []), segmentDivider, segmentTitle, ...segmentButtons, folderDivider, folderTitle, ...folderButtons, createFolderDivider, createFolderAndMoveBtn, ...groupClearButtons, ...originalMenuActions);
+		if (!IS_OL_FRAME && targetItems.length === 1) _appendDialogControlBitrixActions(event, item, menu, () => close(), originalMenuActions[0]);
 		document.body.appendChild(menu);
 		['pointerdown', 'mousedown', 'mouseup', 'click', 'auxclick', 'contextmenu'].forEach(type => {
 			menu.addEventListener(type, (e) => {
@@ -25385,14 +25415,11 @@ if (_presetChannel) {
 		menu.style.left = left + 'px';
 		menu.style.top = top + 'px';
 		let dismissTimer = null;
-		let nativeCleanup = null;
 		const clearDismissTimer = () => {
 			if (dismissTimer) clearTimeout(dismissTimer);
 			dismissTimer = null;
 		};
 		const close = () => {
-			const cleanup = nativeCleanup; nativeCleanup = null;
-			cleanup?.();
 			clearDismissTimer();
 			document.removeEventListener('pointerdown', onPointerDown, true);
 			document.removeEventListener('keydown', onKeyDown, true);
@@ -25404,7 +25431,7 @@ if (_presetChannel) {
 			dismissTimer = setTimeout(close, 2600);
 		};
 		const onPointerDown = (e) => {
-			if (nativeCleanup || menu.contains(e.target)) return;
+			if (menu.contains(e.target)) return;
 			close();
 		};
 		const onKeyDown = (e) => {
@@ -25431,7 +25458,6 @@ if (_presetChannel) {
 			document.addEventListener('keydown', onKeyDown, true);
 		}, 0);
 		_dialogControlContextMenu = { menu, close };
-		if (!IS_OL_FRAME && targetItems.length === 1) nativeCleanup = _mountDialogControlCombinedBitrixMenu(event, item, menu, close);
 	}
 
 	function _placeDialogDockNearPanel(dock, panelHost = filtersHost) {
