@@ -302,6 +302,7 @@
         service = {
           isLoading: false, lastMessageDate: '',
           async loadNextPage() {
+            if (Date.now() < (window.nativeServicePrivateBusyUntil || 0)) return;
             if (this.isLoading || !pending.length) return;
             this.isLoading = true;
             window.nativeServiceCalls.push({mode:modeKey, before:pending.length});
@@ -311,17 +312,19 @@
               if (window.nativeServiceStall) return;
               const query = String(list.closest('.test-host')?.querySelector('input[type="search"]')?.value || '').trim().toLowerCase();
               const rows = pending.splice(0, lazyChunk);
-              rows.forEach(row => {
+              const renderRows = () => rows.forEach(row => {
                 if (query && !String(row.querySelector('.bx-im-chat-title__text')?.textContent || '').toLowerCase().includes(query)) row.style.display = 'none';
                 rowHost.appendChild(row);
               });
+              if (window.nativeServiceRenderDelay) setTimeout(renderRows, window.nativeServiceRenderDelay); else renderRows();
               this.lastMessageDate = rows.at(-1)?.dataset.id || this.lastMessageDate;
             } finally { this.isLoading = false; }
           }
         };
         if (modeKey === 'tasks') service.hasMoreItemsToLoad = () => pending.length > 0;
         else Object.defineProperty(service, 'hasMoreItemsToLoad', {get:()=>pending.length > 0});
-        const instance = { type:{name:modeKey === 'tasks' ? 'TaskList' : 'RecentList'}, proxy:{$el:list, getRecentService:()=>service} };
+        window.nativeServices ||= {}; window.nativeServices[modeKey] = service;
+        const instance = { type:{name:new URLSearchParams(location.search).get('renamedService') || (modeKey === 'tasks' ? 'TaskList' : 'RecentList')}, proxy:{$el:list, getRecentService:()=>window.nativeServices[modeKey]} };
         const mountService = () => { if (modeKey === 'tasks') {
           // The portal's production Vue omits __vueParentComponent and app._instance.
           const root = list.closest('.test-host'); root.__vue_app__ = {_instance:null};

@@ -268,6 +268,34 @@ try {
     assert.deepEqual(errors,[]);report.phases.push({mode,status:'PASS',coldUnassignedReminder:true,delayedNativeService:true,blockingLoaders:0});
    } finally {await page.close();}
   }
+  for (const mode of ['chats','tasks']) {
+    const page=await browser.newPage(),errors=collectPageErrors(page);
+    try {
+      await page.route('**/extension/injected.js',route=>route.fulfill({contentType:'application/javascript',body:source}));
+      await page.goto(`${server.baseUrl}/tests/native-consistency-harness.html?mode=${mode}&lazyNative=1&nativeCatalog=1&nativeFirst=1&passThrough=1&eager=0&lazy=1&lazyChunk=100&catalogRows=40&nativeService=1&renamedService=NextRecentList`);
+      await page.locator('.pena-native-folder-switcher').waitFor();
+      await page.evaluate(()=>{window.nativeServicePrivateBusyUntil=Date.now()+900;window.nativeServiceRenderDelay=650;lazyAudit.assign('chat1039');lazyAudit.folder('folder:test');});
+      const host=page.locator(mode==='tasks'?'.task-host':'.recent-host');
+      await host.locator('[data-id="chat1039"]').waitFor({state:'visible',timeout:10000});
+      await page.waitForFunction(()=>!lazyAudit.active());
+      assert.equal(await page.locator('.pena-native-folder-status').count(),0,'A private busy flag and delayed final render must not lose a folder member');
+      assert.equal(await page.evaluate(()=>nativeServiceCalls.length),1,'No duplicate request while the native service is busy');
+      await page.evaluate(()=>{lazyAudit.assign('chat9000');lazyAudit.apply();});
+      await page.waitForFunction(()=>!lazyAudit.active()&&document.querySelector('.pena-native-folder-status button'));
+      assert.equal(await page.evaluate(()=>lazyAudit.items().find(x=>x.id==='chat9000')?.folderId),'folder:test','An absent recent row never deletes folder membership');
+      await page.evaluate(mode=>{
+        const list=document.querySelector(mode==='tasks'?'.task-host .bx-im-list-container-task__elements':'.recent-host .bx-im-list-container-recent__elements');
+        let more=true;
+        nativeServices[mode]={hasMoreItemsToLoad:()=>more,getLastMessageDate:()=>more?'':'recovered',async loadNextPage(){more=false;const sample=list.querySelector('[data-id="chat1039"]');const row=sample.cloneNode(true);row.dataset.id='chat9000';row.querySelector('.bx-im-chat-title__text').textContent='Recovered folder member';sample.parentElement.append(row);}};
+        lazyAudit.apply();
+      },mode);
+      await host.locator('[data-id="chat9000"]').waitFor({state:'visible',timeout:10000});
+      await page.waitForFunction(()=>!lazyAudit.active());
+      assert.equal(await page.locator('.pena-native-folder-status').count(),0,'Service replacement reopens an exhausted folder without reloading the page');
+      assert.equal(await page.evaluate(()=>nativeScrollAudit.length),0);
+      assert.deepEqual(errors,[]);report.phases.push({mode,status:'PASS',privateBusy:true,delayedFinalPaint:true,renamedService:true,serviceReplacement:true});
+    } finally {await page.close();}
+  }
   console.log('PASS native lazy list: chats/tasks, native rows, native service pagination without scroll or blocking, remote search, counters, multi-select and unique view');
 } finally {
   await browser.close(); await server.close();
