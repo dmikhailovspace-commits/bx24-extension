@@ -24,11 +24,30 @@ try{
   const result=await page.evaluate(async()=>{
    const frames=async count=>{for(let i=0;i<count;i++)await new Promise(resolve=>requestAnimationFrame(resolve))};
    await frames(5);const before=toolbarRefreshes;await frames(12);const idleRefreshes=toolbarRefreshes-before;
-   const header=document.querySelector('.bx-im-list-container-task__header_container');header.querySelector('.pena-extension-toolbar-controls').remove();await frames(5);
+   const header=document.querySelector('.bx-im-list-container-task__header_container');
+   const badge=header.querySelector('.pena-extension-toolbar-controls');
+   header.querySelector('input').hidden=true;
+   _ensureBitrixListSystemToolbarSticky(null);
+   const coveredBadgeRetained=badge===header.querySelector('.pena-extension-toolbar-controls');
+   header.querySelector('input').hidden=false;
+   header.querySelector('.pena-extension-toolbar-controls').remove();await frames(5);
    const removedControlsRepaired=!!header.querySelector('.pena-extension-toolbar-controls');
-   const settled=toolbarRefreshes;await frames(12);return{idleRefreshes,removedControlsRepaired,repairIdleRefreshes:toolbarRefreshes-settled};
+   const settled=toolbarRefreshes;await frames(12);return{idleRefreshes,coveredBadgeRetained,removedControlsRepaired,repairIdleRefreshes:toolbarRefreshes-settled};
   });
-  await page.close();assert.deepEqual(result,{idleRefreshes:0,removedControlsRepaired:true,repairIdleRefreshes:0});return result;
+  await page.close();assert.deepEqual(result,{idleRefreshes:0,coveredBadgeRetained:true,removedControlsRepaired:true,repairIdleRefreshes:0});return result;
+ });
+ await check('version badge mounts in the native header before Bitrix creates a search input',async()=>{
+  const page=await fixture('Поиск сотрудников');
+  await page.evaluate(()=>{
+   const header=document.createElement('header');header.className='bx-im-list-container-recent__header_container';
+   header.innerHTML='<button>Найти сотрудника или чат</button>';
+   document.getElementById('listHost').prepend(header);
+  });
+  await page.addScriptTag({content:`const VER='test';function _isPenaExtensionEnabled(){return true} function _setPenaExtensionEnabled(){} ${['_getBitrixListSearchHost','_ensureBitrixListSystemToolbarSticky','_ensurePenaExtensionToolbarControls','_armPenaExtensionToolbarControls'].map(extract).join('\n')} _armPenaExtensionToolbarControls();`});
+  await page.locator('.pena-extension-toolbar-version').waitFor({state:'visible',timeout:3000});
+  assert.equal(await page.locator('.pena-extension-toolbar-version').textContent(),'PENA vtest');
+  assert.equal(await page.locator('.pena-extension-toolbar-toggle').getAttribute('aria-pressed'),'true');
+  await page.close();return {badgeVisible:true,toggleEnabled:true};
  });
  await check('popup result replacement batches route discovery without losing nested native sources',async()=>{
   const page=await fixture('Поиск сотрудников');

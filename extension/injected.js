@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.39';
+	window.__ANITREC_RUNNING__ = '8.0.40';
 
-	const VER = '8.0.39';
+	const VER = '8.0.40';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -10994,17 +10994,16 @@ if (_presetChannel) {
 
 	function _ensureBitrixListSystemToolbarSticky(searchHost = _getBitrixListSearchHost()) {
 		if (IS_OL_FRAME) return null;
-		let toolbar = searchHost?.closest?.('.bx-im-list-container-task__header_container,.bx-im-list-container-recent__header_container') || null;
-		if (toolbar && _findNativeCompactRail(toolbar)) {
-			toolbar.querySelector(':scope > .pena-extension-toolbar-controls')?.remove();
-			toolbar.classList.remove('pena-bitrix-list-search-sticky');
-			toolbar = null;
-		}
+		const headerSelector = '.bx-im-list-container-task__header_container,.bx-im-list-container-recent__header_container';
+		// Covered search is temporarily unavailable while a native project is open.
+		// Keep the existing header and badge underneath that native layer.
+		const toolbar = searchHost?.closest?.(headerSelector) ||
+			Array.from(document.querySelectorAll('.pena-bitrix-list-system-toolbar-sticky')).find(el => el.matches(headerSelector) && isVisibleElement(el)) ||
+			Array.from(document.querySelectorAll(headerSelector)).find(isVisibleElement) || null;
 		document.querySelectorAll('.pena-bitrix-list-system-toolbar-sticky').forEach(el => {
 			if (el !== toolbar) el.classList.remove('pena-bitrix-list-system-toolbar-sticky');
 		});
-		// Version controls belong only to the current native list header.
-		// A detached/retired header must not leave an absolute badge over projects.
+		// Remove controls only from a retired header, never because it is covered.
 		document.querySelectorAll('.pena-extension-toolbar-controls').forEach(el => {
 			if (el.parentElement !== toolbar) el.remove();
 		});
@@ -11071,6 +11070,8 @@ if (_presetChannel) {
 /* Keep PENA layers inside the recent list; native projects always open above it. */
 .bx-im-messenger__list_container .bx-im-list-container-recent__scope,.bx-im-messenger__list_container .bx-im-list-container-task__scope{isolation:isolate}
 .bx-im-messenger__list_container .bx-im-list-navigator-nested-list__container{z-index:30!important}
+.bx-im-messenger__list_container{container-type:inline-size}
+.bx-im-messenger__list_container .bx-im-list-navigator-nested-list__container.--compact-mode::before{content:"";position:absolute;right:100%;top:0;width:max(0px,calc(100cqw - 100%));height:var(--pena-native-system-toolbar-height,99px);background:var(--ui-color-background-primary,#fff)}
 .pena-bitrix-list-system-toolbar-sticky{position:sticky!important;top:0!important;z-index:26!important;background:#fff!important;opacity:1!important;box-sizing:border-box!important;overflow-anchor:none!important}
 .pena-dialog-native-mode .bx-im-list-container-task__header_container,.pena-dialog-native-mode .bx-im-list-container-recent__header_container{position:relative!important;min-height:99px!important;padding-top:34px!important;flex:0 0 99px!important;background:#fff!important;box-sizing:border-box!important;overflow-anchor:none!important}
 .pena-bitrix-list-system-toolbar-sticky.bx-im-list-container-task__header_container,.pena-bitrix-list-system-toolbar-sticky.bx-im-list-container-recent__header_container{min-height:99px!important;padding-top:34px!important}
@@ -29099,6 +29100,8 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 /* Keep PENA layers inside the recent list; native projects always open above it. */
 .bx-im-messenger__list_container .bx-im-list-container-recent__scope,.bx-im-messenger__list_container .bx-im-list-container-task__scope{isolation:isolate}
 .bx-im-messenger__list_container .bx-im-list-navigator-nested-list__container{z-index:30!important}
+.bx-im-messenger__list_container{container-type:inline-size}
+.bx-im-messenger__list_container .bx-im-list-navigator-nested-list__container.--compact-mode::before{content:"";position:absolute;right:100%;top:0;width:max(0px,calc(100cqw - 100%));height:var(--pena-native-system-toolbar-height,99px);background:var(--ui-color-background-primary,#fff)}
 .pena-bitrix-list-system-toolbar-sticky{position:sticky!important;top:0!important;z-index:26!important;background:#fff!important;opacity:1!important;box-sizing:border-box!important;overflow-anchor:none!important}
 .pena-extension-toolbar-controls{position:absolute;left:8px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:6px;max-width:calc(100% - 116px);height:28px;padding:2px 7px 2px 2px;border:1px solid #dfe5ec;border-radius:7px;background:#f7f9fb;color:#526071;box-shadow:0 1px 2px rgba(15,23,42,.04);box-sizing:border-box;z-index:2;white-space:nowrap}
 .pena-extension-toolbar-controls.--full-header{top:4px;transform:none}

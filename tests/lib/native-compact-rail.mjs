@@ -13,7 +13,7 @@ export async function checkCompactRail(browser, baseUrl) {
       .bx-im-list-container-recent__scope{height:100%}
       .bx-im-list-container-recent__header_container{height:80px}
       .bx-im-list-navigator-nested-list__container{position:absolute;left:68px;right:0;top:0;bottom:0;background:white;z-index:10}
-      #project-back{position:absolute;left:-68px;top:0;width:68px;height:50px}
+      #project-back{position:absolute;left:-42px;top:14px;width:42px;height:36px;border-radius:18px 0 0 18px}
       #project-search{height:80px;background:white}
       #project-content{height:520px;background:white}
     </style><main class="bx-im-messenger__list_container">
@@ -28,17 +28,30 @@ export async function checkCompactRail(browser, baseUrl) {
       </section>
     </main>`);
     await page.addStyleTag({ content:readFileSync(new URL('../../extension/injected.css',import.meta.url),'utf8') });
-    const topLayers = await page.evaluate(() => [[30,15],[80,15],[100,130]].map(([x,y])=>document.elementFromPoint(x,y)?.closest('[id]')?.id));
+    const topLayers = await page.evaluate(() => [[45,30],[80,15],[100,130]].map(([x,y])=>document.elementFromPoint(x,y)?.closest('[id]')?.id));
     assert.deepEqual(topLayers,['project-back','project-search','project-content'],'Native project must cover all PENA layers without waiting for JS');
+    for (const [width,rail] of [[340,40],[400,68],[480,96]]) {
+      await page.locator('main').evaluate((el,width)=>{el.style.width=`${width}px`;},width);
+      await page.locator('.bx-im-list-navigator-nested-list__container').evaluate((el,rail)=>{el.style.left=`${rail}px`;},rail);
+      assert.equal(await page.evaluate(()=>{
+        const project=document.querySelector('.bx-im-list-navigator-nested-list__container');
+        return [[10,10],[20,40],[5,75]].every(([x,y])=>project.contains(document.elementFromPoint(x,y)));
+      }),true,'Opaque project header must cover gaps around its rounded back button at every list width');
+    }
     await page.goto(`${baseUrl}/tests/native-cold-start-layout-harness.html`);
     await page.waitForFunction(() => window.__coldStartHarness?.phase === 'settled');
     await page.locator('.pena-native-folder-switcher').waitFor({ state: 'visible' });
+    await page.locator('.pena-extension-toolbar-version').waitFor({ state: 'visible' });
     await page.evaluate(() => {
+      window.savedVersionBadge = document.querySelector('.pena-extension-toolbar-controls');
       window.savedNativeList = document.getElementById('native-list');
       window.savedNativeRows = [...savedNativeList.children];
       window.savedView = localStorage.getItem('pena.dialogControlView.chats');
+      document.getElementById('workspace').classList.add('bx-im-messenger__list_container');
+      document.getElementById('native-host').classList.add('bx-im-list-container-recent__scope');
       const collab = document.createElement('section');
       collab.id = 'collab';
+      collab.className = 'bx-im-list-navigator-nested-list__container';
       collab.style.cssText = 'position:relative;flex:0 0 280px;background:white';
       collab.innerHTML = '<button id="collab-action">Открыть проект</button>';
       collab.querySelector('button').onclick = () => { window.collabClicks = (window.collabClicks || 0) + 1; };
@@ -82,13 +95,14 @@ export async function checkCompactRail(browser, baseUrl) {
     // slider covers the recent list, leaving a 68px avatar rail underneath.
     await page.evaluate(() => {
       const shell = document.getElementById('chat-column');
+      document.getElementById('native-host').classList.add('bx-im-list-container-recent__scope');
       shell.classList.add('bx-im-messenger__list_container');
       shell.style.position = 'relative';
       const layer = document.createElement('div');
       layer.id = 'native-collab-slider';
       layer.className = 'bx-im-list-navigator-nested-list__container --compact-mode';
       layer.style.cssText = 'position:absolute;left:68px;right:0;top:0;bottom:0;background:white;transform:translateX(100%);transition:transform .15s';
-      layer.innerHTML = '<div class="bx-im-list-container-slider --compact-mode" style="height:100%"><button id="nested-action">Проект</button></div>';
+      layer.innerHTML = '<div class="bx-im-list-container-slider --compact-mode" style="height:100%"><button id="nested-action" style="position:absolute;left:-68px;top:0;width:68px;height:50px">Назад</button><div style="height:100%;background:white">Проект</div></div>';
       layer.querySelector('button').onclick = () => { window.nestedClicks = (window.nestedClicks || 0) + 1; };
       shell.append(layer);
     });
@@ -109,13 +123,22 @@ export async function checkCompactRail(browser, baseUrl) {
       await page.waitForTimeout(350);
       assert.equal(await page.locator('.pena-native-folder-switcher').count(), 0, 'Nested native slider retained the full-width panel');
       assert.equal(await page.locator('.pena-native-folder-status').count(), 0, 'Folder loading status overlapped the native project');
-      assert.equal(await page.locator('.pena-extension-toolbar-controls').count(), 0, 'Version controls survived in an old native header');
+      assert.equal(await page.locator('#previous-native-header .pena-extension-toolbar-controls').count(), 0, 'Retired header retained duplicate controls');
+      assert.equal(await page.evaluate(() => savedVersionBadge === document.querySelector('#native-host .pena-extension-toolbar-controls')), true, 'Opening a project removed or replaced the version badge');
+      assert.equal(await page.locator('.pena-extension-toolbar-controls').evaluate(el => {
+        const rect = el.getBoundingClientRect();
+        return document.getElementById('native-collab-slider').contains(document.elementFromPoint(rect.x+5,rect.y+5));
+      }), true, 'Native project must cover the retained badge');
       assert.equal(await page.locator('#native-list').evaluate(el => el.getBoundingClientRect().width), 380, 'Fixture must retain the original wide list');
       await page.locator('#nested-action').click();
       await page.evaluate(() => { document.getElementById('native-collab-slider').style.transform = 'translateX(100%)'; });
       await page.locator('#previous-native-header').evaluate(el => el.remove());
       await page.locator('.pena-native-folder-switcher').waitFor({ state:'visible', timeout:6000 });
       assert.equal(await page.locator('.pena-native-folder-switcher').count(), 1);
+      assert.equal(await page.locator('.pena-extension-toolbar-controls').evaluate(el => {
+        const rect = el.getBoundingClientRect();
+        return el.contains(document.elementFromPoint(rect.x+5,rect.y+5));
+      }), true, 'Closing the project must uncover the version badge');
     }
     assert.equal(await page.evaluate(() => nestedClicks), 2);
     assert.deepEqual(errors, []);
