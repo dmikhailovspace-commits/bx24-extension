@@ -47,6 +47,7 @@ function fixture() {
     _getDialogControlSegmentTabs: () => [{ id: '', isAll: true }, { id: 'g1' }, { id: 'g2' }],
     _getDialogControlActiveSegmentId: () => state.active,
     _getDialogControlViewPrefs: () => ({}),
+    _getDialogControlUniqueOnly: () => false,
     _getDialogControlNativeActiveFolderId: () => '',
     _setDialogControlNativeActiveFolderId: noop,
     buildChatElementIndex: () => new Map(),

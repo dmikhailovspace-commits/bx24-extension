@@ -1,3 +1,4 @@
+import {installTimeVmDependencies} from './lib/time-vm-dependencies.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -48,7 +49,7 @@ function fixture(storage=new Map()) {
  };
  vm.createContext(a);
  const names=['_readDialogTimeVisits','_isDialogTimeProjectTask','_getDialogTimeContactExceptionTaskIds','_getDialogTimeWritableTaskIds','_isDialogTimeWritableTask','_getDialogTimeWorkingTaskIds','_getDialogTimeLocalTaskSearchResults','_getDialogTimeTaskCandidates','_withDialogTimeManualWriteLock','_addDialogTimeManualEntry','_commitDialogTimeManualEntry','_startDialogTimeTracker'];
- vm.runInContext(names.map(extract).join('\n'),a);
+ installTimeVmDependencies(a, source); vm.runInContext(names.map(extract).join('\n'),a);
  return {a,s,storage,visits:(rows,date=day)=>storage.set(key('visits',date),JSON.stringify(rows))};
 }
 const contact=(id,count=1,last=at)=>({taskId:String(id),title:`Задача ${id}`,visits:count,lastQualifiedAt:last,visitedAt:last});
@@ -266,7 +267,7 @@ try {
     await page.locator('.pena-native-time-project-save').click();
     await page.waitForFunction(()=>window.contactHeldRefresh.callbacks.length>0);
     const pendingSave=await page.evaluate(()=>{window.contactExceptionProbe.sync();return{seconds:window.contactExceptionProbe.record()?.data?.totalSeconds,verified:window.contactExceptionProbe.record()?.hasVerifiedData,total:document.querySelector('.pena-native-time-total-value')?.textContent,visits:window.contactExceptionProbe.visits()};});
-    assert.equal(pendingSave.seconds,6000);assert.equal(pendingSave.verified,true);assert.equal(pendingSave.total,'—','Retain the raw snapshot while hiding the unconfirmed expanded-scope total');assert.deepEqual(pendingSave.visits,visitsBeforeSave);
+    assert.equal(pendingSave.seconds,6000);assert.equal(pendingSave.verified,true);assert.equal(pendingSave.total,'≥ 1 ч 40 мин','Retain the confirmed lower bound while the expanded scope is pending');assert.deepEqual(pendingSave.visits,visitsBeforeSave);
     await page.evaluate(()=>{window.contactHeldRefresh.active=false;for(const fn of window.contactHeldRefresh.callbacks.splice(0))fn();});
     await page.waitForFunction(()=>window.contactExceptionProbe.record()?.hasCompleteSnapshot && window.contactExceptionProbe.record()?.data?.totalSeconds===6000);
     assert.deepEqual(await page.evaluate(()=>window.contactExceptionProbe.visits()),visitsBeforeSave);

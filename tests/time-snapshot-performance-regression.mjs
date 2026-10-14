@@ -1,3 +1,4 @@
+import {installTimeVmDependencies} from './lib/time-vm-dependencies.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync, writeFileSync, mkdirSync} from 'node:fs';
 import {createRequire} from 'node:module';
@@ -32,9 +33,9 @@ function fixture(count=51){
   _getDialogTimeWorkingTaskIds:()=>ids.slice(),_getDialogTimeRecord:r=>c._dialogTimeCache.get(c._getDialogTimeCacheKey(r)),
   _queueDialogTimeUiSync:()=>{},_loadDialogTimeTaskTitles:async()=>{},_sleepDialogControl:async()=>{},_getDialogTimeFriendlyError:e=>e.message,
   _syncDialogTaskCatalog:async()=>{state.catalogCalls++;c._dialogTimeCatalogCursor=100;c._dialogTimeCatalogScope=state.scope;return {complete:true};},
-  _callDialogTimeElapsedPages:async params=>{state.calls.push(...params.map(p=>String(p[0])));if(state.hold)await state.hold.promise;state.onPage?.();return params.map(p=>({data:[{...row(p[0],p[0],60,p[2]['>=CREATED_DATE'].slice(0,10)),USER_ID:String(p[2].USER_ID)}],total:1,next:null,requestedAt:Date.now()}));}
+  _callDialogTimeElapsedPages:async params=>{state.calls.push(...params.map(p=>String(p[0])));if(state.hold)await state.hold.promise;state.onPage?.();return params.map(p=>({data:[{...row(p[0],p[0],60,state.today),USER_ID:String(p[2].USER_ID)}],total:1,next:null,requestedAt:Date.now()}));}
  });
- vm.runInContext(['_getDialogTimeCacheKey','_hasDialogTimeVerifiedData','_setDialogTimeCacheRecord','_scheduleDialogTimeBootstrap','_loadDialogTimeRange'].map(extract).join('\n'),c);
+ installTimeVmDependencies(c, source); vm.runInContext(['_getDialogTimeCacheKey','_hasDialogTimeVerifiedData','_setDialogTimeCacheRecord','_scheduleDialogTimeBootstrap','_loadDialogTimeRange'].map(extract).join('\n'),c);
  return {c,state,range,ids};
 }
 
@@ -51,7 +52,7 @@ function pendingClockFixture(){
  state.clockCalls=0;state.requestDays=[];
  c._callBxRestPageWithTimeout=()=>{state.clockCalls++;return clock.promise;};
  const elapsed=c._callDialogTimeElapsedPages;c._callDialogTimeElapsedPages=async params=>{state.requestDays.push(...params.map(p=>String(p[2]['>=CREATED_DATE']).slice(0,10)));return elapsed(params);};
- vm.runInContext(extract('_ensureDialogTimePortalDate'),c);
+ installTimeVmDependencies(c, source); vm.runInContext(extract('_ensureDialogTimePortalDate'),c);
  return {...result,clock};
 }
 
@@ -62,7 +63,7 @@ try {
   const initialization=c._ensureDialogTimePortalDate().then(()=>c._loadDialogTimeRange(c._dialogTimeRange));
   await Promise.resolve();assert.equal(state.calls.length,0,'Elapsed read started on an unconfirmed host-local date');assert.equal(state.clockCalls,1);
   clock.resolve({data:'2026-09-07T22:00:00Z'});await Promise.all([early,initialization]);
-  assert.equal(state.calls.length,51);assert.equal(new Set(state.calls).size,51);assert.deepEqual([...new Set(state.requestDays)],['2026-09-07']);
+  assert.equal(state.calls.length,51);assert.equal(new Set(state.calls).size,51);assert.deepEqual([...new Set(state.requestDays)],['2026-09-01']);
   assert.equal(c._getDialogTimeRecord(range).hasCompleteSnapshot,true);return{beforeClock:0,afterClock:51,clockRequests:1};
  });
  await phase('pending clock preserves explicit history and remaps only the selected provisional week',async()=>{
@@ -71,7 +72,7 @@ try {
    const requested=stats?model.normalizeRange('2026-09-02','2026-09-08'):model.normalizeRange('2026-09-05','2026-09-05');
    if(!stats)c._dialogTimeRange=requested;
    const read=c._loadDialogTimeRange(requested);assert.equal(state.calls.length,0);clock.resolve({data:'2026-09-07T22:00:00Z'});await read;
-   assert.deepEqual([...new Set(state.requestDays)],[stats?'2026-09-01':'2026-09-05']);assert.equal(state.calls.length,51);
+   assert.deepEqual([...new Set(state.requestDays)],['2026-09-01']);assert.equal(state.calls.length,51);
   }
  });
  await phase('pending clock cannot dispatch after scope, close, visibility or connectivity changes',async()=>{
@@ -88,7 +89,7 @@ try {
   const week=c._loadDialogTimeRange(model.normalizeRange('2026-09-02','2026-09-08'));
   c._dialogTimeView='day';const day=c._loadDialogTimeRange(c._dialogTimeRange);
   clock.resolve({data:'2026-09-07T22:00:00Z'});await Promise.all([week,day]);
-  assert.equal(state.calls.length,51);assert.deepEqual([...new Set(state.requestDays)],['2026-09-07']);
+  assert.equal(state.calls.length,51);assert.deepEqual([...new Set(state.requestDays)],['2026-09-01']);
  });
  await phase('incremental replacement preserves complete totals, dates, receipts and unchanged record identity',()=>{
   let data=model.aggregateElapsedItems(Array.from({length:400},(_,i)=>row(i+1,i+1,60+i%37,i%2?'2026-09-07':'2026-09-06')));
@@ -112,8 +113,8 @@ try {
    _dialogTimeTaskTitles:new Map(ids.map(id=>[id,'Task '+id])),_dialogTimeTaskEligibility:new Map(ids.map(id=>[id,true])),
    _readDialogTimeVisits:()=>[],_dialogTimeManualSelectedTask:null,_readDialogTimeTracker:()=>null,_getActiveDialogTimeActivity:()=>null,
    _getDialogTimeEligibleTaskIds:()=>ids,_getDialogRecentUniqueMeta:()=>[],_getDialogTimeTaskEligibilityForDisplay:()=>true});
-  vm.runInContext(extract('_getDialogTimeWorkingTaskIds'),c);
-  vm.runInContext('globalThis.membershipScanned=0; const original=Array.prototype.includes; Array.prototype.includes=function(...args){ membershipScanned+=this.length; return original.apply(this,args); };',c);
+  installTimeVmDependencies(c, source); vm.runInContext(extract('_getDialogTimeWorkingTaskIds'),c);
+  installTimeVmDependencies(c, source); vm.runInContext('globalThis.membershipScanned=0; const original=Array.prototype.includes; Array.prototype.includes=function(...args){ membershipScanned+=this.length; return original.apply(this,args); };',c);
   const got=c._getDialogTimeWorkingTaskIds();assert.deepEqual(Array.from(got),ids);assert.equal(c.membershipScanned,0);
   return {taskCount:got.length,arrayMembershipElements:c.membershipScanned};
  });
@@ -176,7 +177,7 @@ try {
  for(const lazy of [false,true])for(const held of [false,true])await phase(`${lazy?'incremental':'legacy'} wake keeps today's snapshot with guard=${held}`,async()=>{
   const {c,state,range}=fixture(),guard=held?deferred():null;
   Object.assign(c,{_isDialogNativeLazyMode:()=>lazy,isInternalChatsDOM:()=>true,findContainer:()=>({matches:()=>false}),findInternalScrollContainer:()=>({}),_getDialogNativeSourceGeneration:()=>1,
-   _dialogNativeAttemptStates:new Map(),_dialogControlNeedsCompleteNativeMaterialization:()=>false,_refreshDialogNativeVisibleWindow:()=>{},_setDialogNativeAttemptState:()=>{},_publishDialogRecentSyncState:()=>{},_dialogNativeOriginalScrollPromise:guard?.promise||null});
+   _scheduleDialogCounterReconcile:()=>{},_dialogNativeAttemptStates:new Map(),_dialogControlNeedsCompleteNativeMaterialization:()=>false,_refreshDialogNativeVisibleWindow:()=>{},_setDialogNativeAttemptState:()=>{},_publishDialogRecentSyncState:()=>{},_dialogNativeOriginalScrollPromise:guard?.promise||null});
   c._dialogTimeCatalogCursor=0;vm.runInContext(extract('_runDialogWakeReconcile'),c);
   await c._runDialogWakeReconcile('periodic-freshness',{metadataOnly:true});
   await c._dialogTimeBootstrapPromise;assert.equal(state.catalogCalls,1);assert.equal(state.calls.length,51);assert.equal(c._getDialogTimeRecord(range).hasCompleteSnapshot,true);

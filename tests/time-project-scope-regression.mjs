@@ -1,3 +1,4 @@
+import {installTimeVmDependencies} from './lib/time-vm-dependencies.mjs';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
@@ -19,7 +20,7 @@ function fixture(storage=new Map()){
  const state={scope:'portal.test~7',nativeScope:null,resolvedUser:null,now:1000000,storage,storageFailure:false,rows:[...Array.from({length:101},(_,i)=>task(i+1)),task(201,'20'),task(202,'20'),task(301,'0')],calls:[],elapsed:[],catalogHook:null,elapsedHook:null,ignoredFilter:false};
  class Clock extends Date{static now(){return state.now++;}}
  const range={from:'2026-09-07',to:'2026-09-07'};
- const c=vm.createContext({Date:Clock,Map,Set,Promise,clearTimeout:()=>{},setTimeout:fn=>{queueMicrotask(fn);return 0;},
+ const c=vm.createContext({Date:Clock,Map,Set,Promise,window:{},_getSafeTopWindow:()=>null,clearTimeout:()=>{},setTimeout:fn=>{queueMicrotask(fn);return 0;},
   location:{get host(){return state.scope.split('~')[0];}},document:{visibilityState:'visible'},navigator:{onLine:true},_PENA_TIME_CONTROL:model,
   localStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>{if(state.storageFailure)throw new Error('storage denied');storage.set(key,value);}},
   _getDialogNativeSharedAuditScopeKey:()=>state.nativeScope??state.scope,_getCurrentBitrixUserId:()=>state.resolvedUser??state.scope.split('~').at(-1),_isDialogTimeFrameActive:()=>true,
@@ -60,12 +61,12 @@ function fixture(storage=new Map()){
   },
   _callDialogTimeElapsedPages:async jobs=>{
    const requested=jobs.map(p=>String(p[0]));state.elapsed.push(...requested);
-   const result=jobs.map(p=>({data:[{ID:String(p[0]),TASK_ID:String(p[0]),USER_ID:String(p[2].USER_ID),SECONDS:60,CREATED_DATE:p[2]['>=CREATED_DATE'].slice(0,10)+'T12:00:00'}]}));
+   const result=jobs.map(p=>({data:[{ID:String(p[0]),TASK_ID:String(p[0]),USER_ID:String(p[2].USER_ID),SECONDS:60,CREATED_DATE:range.from+'T12:00:00'}]}));
    if(state.elapsedHook)await state.elapsedHook(requested);return result;
   }
  });
  const names=['_publishDialogTimeTaskIndexInSlices','_getDialogTimeIdentityScopeKey','_syncDialogTaskCatalog','_normalizeDialogTimeProjectPreference','_getDialogTimeProjectStorageKey','_readDialogTimeProjectPreference','_getDialogTimeProjectScopeKey','_getDialogTimeProjectFilter','_matchesDialogTimeProjectTask','_isDialogTimeProjectTask','_rememberDialogTimeProjectTask','_pruneDialogTimeProjectSnapshots','_migrateDialogTimeProjectSnapshots','_saveDialogTimeProjectPreference','_getDialogTimeReusableNativeCatalog','_ensureDialogTimeProjectCatalog','_getDialogTaskKeysetCursor','_getDialogTimeWorkingTaskIds','_getDialogTimeCacheKey','_getDialogTimeRecord','_setDialogTimeCacheRecord','_hasDialogTimeVerifiedData','_loadDialogTimeRange','_scheduleDialogTimeBootstrap','_getDialogTimeLocalTaskSearchResults','_buildDialogTimeWriteFields','_applyDialogTimeOptimisticEntry'];
- vm.runInContext(names.map(extract).join('\n'),c);
+ installTimeVmDependencies(c, source); vm.runInContext(names.map(extract).join('\n'),c);
  return {state,c,range,save:value=>c._saveDialogTimeProjectPreference(value),load:()=>{const promise=c._loadDialogTimeRange(range);promise.catch(()=>{});return promise;},record:()=>c._getDialogTimeRecord(range)};
 }
 

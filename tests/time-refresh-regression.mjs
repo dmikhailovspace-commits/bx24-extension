@@ -1,3 +1,4 @@
+import {installTimeVmDependencies} from './lib/time-vm-dependencies.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -25,7 +26,7 @@ function fixture(count = 2) {
   _dialogTimeRangeRevisions:new Map(), _dialogTimeTaskRevisions:new Map(), _dialogTimeTaskLogEvidence:new Map(), _dialogTimeTaskChangedAt:new Map(), _dialogTimePanelRefreshes:new Map(),
   _dialogTimeTaskTitles:new Map(), _dialogTimeTaskEligibility:new Map(), _readDialogTaskTimeTrackingFlag:row=>row.ALLOW_TIME_TRACKING==='Y', _rememberDialogTimeTaskChat:()=>{},
   _setDialogTimeTaskEligibility:(id,enabled)=>sandbox._dialogTimeTaskEligibility.set(id,enabled), _parseDialogRecentDate:value=>Date.parse(value)||0,
-  _dialogTimeActionInFlight:false, _dialogTimeActiveManualWriteIntent:null, _dialogTimeManualError:'', _dialogTimeManualSelectedTask:null, _dialogTimeManualSearchQuery:'', _dialogTimeManualSearchResults:[],
+  _dialogTimeProjectCatalogDirty:false, _dialogTimeActionInFlight:false, _dialogTimeActiveManualWriteIntent:null, _dialogTimeManualError:'', _dialogTimeManualSelectedTask:null, _dialogTimeManualSearchQuery:'', _dialogTimeManualSearchResults:[],
   _dialogTimeAcknowledgedManualMemory:null, _dialogTimeAccountingRecoveryTimer:null, _dialogTimeAccountingRecoveryAttempt:0, _dialogTimeAccountingRecoveryPromise:null,
   _dialogTimeManualRetryConfirmKey:'', _dialogTimeTrackerRetryConfirmKey:'', _PENA_TIME_MANUAL_DRAFT_KEY:'manual', _PENA_TIME_TRACKER_KEY:'tracker', _dialogTimePortalUtcOffsetMinutes:0,
   _dialogTimeDeleteConfirmEntryId:'', _dialogTimeEditingEntryId:'',
@@ -72,8 +73,8 @@ function fixture(count = 2) {
   }
  };
  const names=['_invalidateDialogTimeTaskSnapshot','_scheduleDialogTimeElapsedRefresh','_hasDialogTimeVerifiedData','_publishDialogTimeTaskIndexRows','_withDialogTimeTrackerLock','_buildDialogTimeWriteFields','_getDialogTimeTrackerSeconds','_getDialogTimeCacheKey','_setDialogTimeCacheRecord','_invalidateDialogTimeCachesForDates','_applyDialogTimeOptimisticEntry','_removeDialogTimeCachedEntry','_loadDialogTimeRange','_refreshDialogTimePanel','_getDialogTimeSavedItemId','_isDialogTimeDefiniteWriteFailure','_getDialogTimeWriteIntentKey','_withDialogTimeManualWriteLock','_commitDialogTimeManualEntry','_addDialogTimeManualEntry','_deleteDialogTimeEntry','_updateDialogTimeEntry','_stopDialogTimeTracker'];
- names.push('_finishDialogTimeAcknowledgedManualWrite','_scheduleDialogTimeAccountingRecovery','_recoverDialogTimeContactAccounting');
- vm.createContext(sandbox); vm.runInContext(names.map(extract).join('\n'),sandbox);
+ names.push('_finishDialogTimeAcknowledgedManualWrite','_scheduleDialogTimeAccountingRecovery','_recoverDialogTimeContactAccounting','_reconcileDialogTimeVisible');
+ vm.createContext(sandbox); installTimeVmDependencies(sandbox, source); vm.runInContext(names.map(extract).join('\n'),sandbox);
  state.seed=(entries=[])=>{
   state.entries=structuredClone(entries);
   const data={...model.aggregateElapsedItems(entries),range,pages:1,totalAvailable:entries.length};
@@ -428,6 +429,34 @@ try {
   return {initialTasks:117,dirtyRechecks:1,repeatedWakeExtraReads:0};
  });
 
+ await phase('periodic wake cannot duplicate elapsed reads while manual refresh owns the catalog',async()=>{
+  const {state,api}=fixture(2),catalog=deferred();state.seed([entry(1,1,600),entry(2,2,900)]);
+  Object.assign(state.record(),{status:'error',error:'Timeout',failedAt:state.clock-16000});
+  api._isDialogTimeFrameActive=()=>true;api._getDialogTimeRecord=()=>state.record();
+  api._callDialogTimeGlobalElapsedPage=()=>{};api._getDialogTimeTodayKey=()=>range.from;
+  api._refreshDialogTimeTaskCatalog=()=>catalog.promise;
+  const manual=api._refreshDialogTimePanel(range);
+  await api._reconcileDialogTimeVisible();await api._reconcileDialogTimeVisible();
+  assert.equal(state.calls.length,0,'Periodic wake started elapsed before manual catalog completed');
+  catalog.resolve(true);await manual;
+  assert.deepEqual(state.calls.flat(),['1','2']);assert.equal(state.record().data.totalSeconds,1500);
+  assert.equal(api._dialogTimePanelRefreshes.size,0);
+  await api._reconcileDialogTimeVisible();assert.deepEqual(state.calls.flat(),['1','2']);
+  return {manualTaskReads:2,concurrentPeriodicReads:0,postRefreshReads:0};
+ });
+ await phase('manual refresh also supersedes a periodic wake already awaiting its catalog',async()=>{
+  const {state,api}=fixture(2),periodicCatalog=deferred(),manualCatalog=deferred();
+  state.seed([entry(1,1,600),entry(2,2,900)]);Object.assign(state.record(),{status:'error',error:'Timeout'});
+  api._isDialogTimeFrameActive=()=>true;api._getDialogTimeRecord=()=>state.record();
+  api._callDialogTimeGlobalElapsedPage=()=>{};api._getDialogTimeTodayKey=()=>range.from;
+  api._ensureDialogTimeProjectCatalog=()=>periodicCatalog.promise;
+  api._refreshDialogTimeTaskCatalog=()=>manualCatalog.promise;
+  const periodic=api._reconcileDialogTimeVisible(),manual=api._refreshDialogTimePanel(range);
+  periodicCatalog.resolve(true);await periodic;
+  assert.equal(state.calls.length,0,'Old periodic owner dispatched after manual refresh took ownership');
+  manualCatalog.resolve(true);await manual;assert.deepEqual(state.calls.flat(),['1','2']);
+  return {manualTaskReads:2,supersededPeriodicReads:0};
+ });
  await phase('qualified task invalidation is closed-panel silent, visible debounced and scope fenced',async()=>{
   const {state,api}=fixture(117);state.seed([entry(1,1,600)]);const timers=new Map();let nextTimer=0;
   api.setTimeout=fn=>{timers.set(++nextTimer,fn);return nextTimer;};api.clearTimeout=id=>timers.delete(id);
@@ -436,22 +465,22 @@ try {
   state.entries[0].SECONDS=900;api._dialogControlNativeWorkspaceTab='time';await api._loadDialogTimeRange(range);
   assert.deepEqual(state.calls.flat(),['1']);assert.equal(state.record().data.totalSeconds,900);
   api._invalidateDialogTimeTaskSnapshot('1');api._invalidateDialogTimeTaskSnapshot('1');assert.equal(timers.size,1);
-  const callback=timers.values().next().value;timers.clear();callback();await api._dialogTimeInFlight.get('portal:7:2026-09-07:2026-09-07');
+  const callback=timers.values().next().value;timers.clear();await callback();await api._dialogTimeInFlight.get('portal:7:2026-09-07:2026-09-07');
   assert.deepEqual(state.calls.flat(),['1','1']);
   api._invalidateDialogTimeTaskSnapshot('1');const old=timers.values().next().value;timers.clear();state.scope='portal:8';old();
   assert.equal(state.calls.flat().length,2);assert.equal(api._invalidateDialogTimeTaskSnapshot('not-a-task'),false);
   return {closedReads:0,closedTimers:0,reopenTaskReads:1,twoVisibleEventsTaskReads:1,foreignScopeReads:0};
  });
- await phase('inaccessible task keeps last data and retries only on manual refresh or new task evidence',async()=>{
+ await phase('unconfirmed journal denial keeps last data and retries after backoff or new evidence',async()=>{
   const {state,api}=fixture(2);state.seed([entry(1,1,600),entry(2,2,900)]);state.denied=new Set(['1']);
   await assert.rejects(api._loadDialogTimeRange(range,{force:true}));assert.equal(state.record().data.totalSeconds,1500);
-  const before=state.calls.flat().length;state.clock+=86400000;await api._loadDialogTimeRange(range);assert.equal(state.calls.flat().length,before);
+  const before=state.calls.flat().length;state.clock+=86400000;await assert.rejects(api._loadDialogTimeRange(range));assert.equal(state.calls.flat().length,before+1);
   assert.equal(state.record().status,'error');assert.equal(state.record().data.coverage.complete,false);
   state.denied.clear();await api._loadDialogTimeRange(range,{force:true});assert.equal(state.record().data.coverage.complete,true);
   state.denied.add('1');await assert.rejects(api._loadDialogTimeRange(range,{force:true}));state.denied.clear();state.clock+=15001;
   api._dialogTimeTaskRevisions.set('1',(api._dialogTimeTaskRevisions.get('1')||0)+1);const dirtyBefore=state.calls.flat().length;await api._loadDialogTimeRange(range);
   assert.deepEqual(state.calls.flat().slice(dirtyBefore),['1']);assert.equal(state.record().status,'ready');
-  return {unchangedDeniedRetryReads:0,preservedSeconds:1500,manualRecovery:true,newEvidenceRecoveryTasks:1};
+  return {expiredBackoffRetryReads:1,preservedSeconds:1500,manualRecovery:true,newEvidenceRecoveryTasks:1};
  });
 
  await phase('new task evidence bypasses a failed revision once while repeated failures keep backoff',async()=>{

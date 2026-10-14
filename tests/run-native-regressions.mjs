@@ -58,7 +58,17 @@ const visibleIds = page => page.evaluate(() => {
     .map(row => String(row.dataset.id || row.dataset.penaNativeDialogId || ''));
 });
 const switchMode = page => page.locator('#switch-mode').evaluate(button => button.click());
+const assertCurrentSortControls = async panel => {
+	assert.deepEqual(await panel.locator('[data-pena-sort-mode]').evaluateAll(buttons => buttons.map(button => button.dataset.penaSortMode)), ['date', 'color']);
+	assert.equal(await panel.locator('[data-pena-sort-direction]').count(), 0, 'Only date/color modes are supported; direction stays native');
+};
 const openMarkerPalette = async row => {
+	// A color choice keeps the palette open for further edits. Dismiss it as
+	// a user would before targeting another row underneath that floating panel.
+	if (await page.locator('.dialog-control-palette.--open').count()) {
+		await page.keyboard.press('Escape');
+		await page.locator('.dialog-control-palette.--open').waitFor({ state: 'hidden' });
+	}
 	await row.click({ button: 'right' });
 	const menu = page.locator('.dialog-control-context-menu');
 	await menu.waitFor({ state: 'visible', timeout: 2000 });
@@ -238,7 +248,7 @@ try {
 	await page.locator('.pena-native-folder-switcher').waitFor({ state: 'visible' });
 	await page.getByRole('button', { name: /Фильтры/ }).click();
 	const freshDefaultPanel = page.locator('.pena-native-filter-panel');
-	assert.equal(await freshDefaultPanel.locator('[data-pena-sort-mode],[data-pena-sort-direction]').count(),0);
+	await assertCurrentSortControls(freshDefaultPanel);
 	assert.equal(await freshDefaultPanel.locator('.pena-native-unread-filter input').isChecked(),false);
 	const freshNativeIds = await visibleIds(page);
 	await page.waitForTimeout(200);
@@ -324,7 +334,7 @@ try {
 	assert.equal(await page.locator('.test-host:not([hidden]) .pena-native-managed-viewport').count(), 1, `Clearing unread filter dropped the complete ${mode} catalog`);
 	assert.ok((await visibleIds(page)).length > 2);
 	const nativeDateBaseline = await visibleIds(page);
-	assert.equal(await filterPanel.locator('[data-pena-sort-mode],[data-pena-sort-direction]').count(),0);
+	await assertCurrentSortControls(filterPanel);
 	await page.locator(mode === 'tasks' ? '.task-host .pena-native-container' : '.recent-host .pena-native-container').evaluate(list => {
 		list.replaceChildren(...Array.from(list.children, row => row.cloneNode(true)));
 	});
@@ -405,8 +415,10 @@ try {
 	assert.equal(await timePanel.getAttribute('aria-modal'), 'true', `Time workspace is not modal in ${mode}`);
 	assert.equal(await timePanel.evaluate(panel => {
 		const tracker = panel.querySelector('.pena-native-time-tracker');
-		const activity = panel.querySelector('.pena-native-time-suggestions');
-		return !!(tracker && activity && tracker.parentElement.lastElementChild === tracker && (activity.compareDocumentPosition(tracker) & Node.DOCUMENT_POSITION_FOLLOWING));
+		const body = panel.querySelector('.pena-native-time-body');
+		if (!tracker || !body) return false;
+		const a = tracker.getBoundingClientRect(), b = body.getBoundingClientRect();
+		return tracker.parentElement === panel && a.top >= panel.querySelector('.pena-native-time-scroll').getBoundingClientRect().bottom && a.width >= b.width && a.width - b.width <= 16 && Math.abs(a.left - b.left) < 1;
 	}), true, `Tracker is not the final full-width block in ${mode}`);
 	assert.equal(await timePanel.locator('.pena-native-time-tracker-search').inputValue(), '', `Tracker auto-selected an unexplained task in ${mode}`);
 	assert.equal(await timePanel.locator('.pena-native-time-start').isDisabled(), true);
@@ -1873,7 +1885,7 @@ try {
 	await page.waitForFunction(() => !document.querySelector('.recent-host .pena-native-chat-row.--native-multi-selected'));
 	const nativeOrderBeforeReload = await page.locator('.recent-host .pena-native-chat-row').evaluateAll(rows => rows.map(row => row.dataset.id));
 	await page.getByRole('button', { name: /Фильтры/ }).click();
-	assert.equal(await page.locator('[data-pena-sort-mode],[data-pena-sort-direction]').count(),0);
+	await assertCurrentSortControls(page);
 	for(let i=0;i<6;i++) {
 		await page.locator('.recent-host .pena-native-unread-filter').click();
 		await page.waitForTimeout(60);

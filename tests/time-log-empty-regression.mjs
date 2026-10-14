@@ -1,3 +1,4 @@
+import {installTimeVmDependencies} from './lib/time-vm-dependencies.mjs';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {createRequire} from 'node:module';
@@ -27,7 +28,7 @@ function fixture(){
   _parseDialogRecentDate:value=>Date.parse(value)||0,_readDialogTaskTimeTrackingFlag:()=>true,_rememberDialogTimeTaskChat:()=>{},_setDialogTimeTaskEligibility:()=>{},
   _callDialogTimeElapsedPages:async requests=>{state.calls.push(...requests.map(p=>String(p[0])));return requests.map(p=>({data:structuredClone(state.rows.filter(r=>String(r.USER_ID)===String(p[2].USER_ID))),requestedAt:state.now}));}
  });
- vm.runInContext(['_getDialogTimeWorkingTaskIds','_getDialogTimeCacheKey','_setDialogTimeCacheRecord','_hasDialogTimeVerifiedData','_publishDialogTimeTaskIndexRows','_loadDialogTimeRange','_invalidateDialogTimeCachesForDates','_applyDialogTimeOptimisticEntry'].map(extract).join('\n'),c);
+ installTimeVmDependencies(c, source); vm.runInContext(['_getDialogTimeWorkingTaskIds','_getDialogTimeCacheKey','_setDialogTimeCacheRecord','_hasDialogTimeVerifiedData','_publishDialogTimeTaskIndexRows','_loadDialogTimeRange','_invalidateDialogTimeCachesForDates','_applyDialogTimeOptimisticEntry'].map(extract).join('\n'),c);
  const capture=()=>({scope:state.scope,at:state.now,revisions:new Map(c._dialogTimeTaskRevisions)});
  const publish=(fields={},proof=capture())=>c._publishDialogTimeTaskIndexRows([{ID:'1',TITLE:'Task 1',...fields}],proof);
  return{state,c,capture,publish,load:options=>c._loadDialogTimeRange(range,options),record:()=>c._dialogTimeCache.get(c._getDialogTimeCacheKey(range))};

@@ -219,12 +219,12 @@ try {
   await page.evaluate(() => timeUiProbe.state({status:'ready',readProgress:{completedTasks:4149,totalTasks:4149}}));
   return bulk;
  });
- await phase('unknown and partial totals stay masked while their cached entries are preserved; cached failure is quiet', async () => {
+ await phase('unknown totals stay masked and partial totals retain their lower bound; cached failure is quiet', async () => {
   assert.equal(ready.statusPresent,false);
   await page.evaluate(() => timeUiProbe.state({status:'loading',data:null,hasCompleteSnapshot:false,error:''}));
   const cold = await snapshot(); assert.equal(cold.total,'—'); assert.match(cold.meta,/Загружаем время/); assert.equal(cold.statusPresent,false); assert.equal(cold.bodyTop,ready.bodyTop);
   await page.evaluate(() => timeUiProbe.state({status:'loading',data:{...window.timeUiOriginalData,coverage:{checkedTasks:366,totalTasks:4149,complete:false}},hasCompleteSnapshot:false,readProgress:{completedTasks:366,totalTasks:4149}}));
-  const partial = await snapshot(); assert.equal(partial.statusPresent,false); assert.equal(partial.total,'—');
+  const partial = await snapshot(); assert.equal(partial.statusPresent,false); assert.equal(partial.total,'≥ '+ready.total);
   assert.equal(partial.recordSeconds,ready.recordSeconds); assert.equal(partial.recordEntries,ready.recordEntries);
   assert.equal(partial.overlayVisible,true); assert.equal(partial.contentInert,true); assert.match(partial.overlayDetail,/366 из 4149/);
   await page.evaluate(() => timeUiProbe.state({status:'error',data:window.timeUiOriginalData,hasCompleteSnapshot:true,error:'Сеть недоступна'}));
@@ -276,11 +276,11 @@ try {
   const unknown=await page.evaluate(()=>timeUiProbe.contactSnapshot(false));
   assert.equal(unknown.record.data.totalSeconds,0); assert.equal(unknown.record.taskFreshness['101'],undefined);
   assert.equal(unknown.contacts.length,1); assert.equal(unknown.contacts[0].pendingContacts,1); assert.ok(unknown.contacts[0].contactCutoffAt>0);
-  const unknownUi=await snapshot(); assert.equal(unknownUi.total,'—'); assert.equal(unknownUi.overlayVisible,true); assert.equal(unknownUi.contentInert,true);
+  const unknownUi=await snapshot(); assert.equal(unknownUi.total,'≥ 0 мин'); assert.equal(unknownUi.overlayVisible,true); assert.equal(unknownUi.contentInert,true);
   const checked=await page.evaluate(()=>timeUiProbe.contactSnapshot(true));
   assert.equal(checked.record.data.totalSeconds,0); assert.ok(checked.record.taskFreshness['101']);
   assert.equal(checked.contacts.length,1); assert.equal(checked.contacts[0].pendingContacts,1); assert.equal(checked.contacts[0].trackedSeconds,0);
-  const checkedUi=await snapshot(); assert.equal(checkedUi.total,'—'); assert.equal(checkedUi.overlayVisible,true); assert.equal(checkedUi.contentInert,true);
+  const checkedUi=await snapshot(); assert.equal(checkedUi.total,'≥ 0 мин'); assert.equal(checkedUi.overlayVisible,true); assert.equal(checkedUi.contentInert,true);
   return{unknown,checked,unknownUi,checkedUi};
  });
  await phase('history shows all 120 cached entries in pages without REST, preserves nodes and protects a displaced editor',async()=>{

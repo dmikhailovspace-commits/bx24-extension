@@ -22,7 +22,7 @@ function setup({count=100,deleteAfterFirst=false,ignoreCursor=false,reverse=fals
   calls.push(JSON.parse(JSON.stringify(params)));
   let filtered=(params.order?.ID==='asc'||params.order?.ID==='desc')&&!ignoreCursor?rows.filter(r=>Number(r.ID)>Number(params.filter?.['>ID']||0)&&Number(r.ID)<=Number(params.filter?.['<=ID']||Infinity)):rows;
   if(params.order?.ID==='desc')filtered=filtered.slice().reverse();
-  let batch=filtered.slice(params.start||0,(params.start||0)+50);
+  let batch=filtered.slice(Math.max(0,params.start||0),Math.max(0,params.start||0)+50);
   if(reverse)batch=batch.slice().reverse();
   if(calls.length===1&&deleteAfterFirst)rows.shift();
   if(calls.length===1&&changeScope)context.scope='portal:8';

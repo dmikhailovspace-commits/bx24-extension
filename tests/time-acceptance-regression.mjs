@@ -1,3 +1,4 @@
+import {installTimeVmDependencies} from './lib/time-vm-dependencies.mjs';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -74,6 +75,7 @@ function loadFixture() {
       return pages;
     }
   });
+  installTimeVmDependencies(context, injected);
   const names = ['_getDialogTimeEligibleTaskIds', '_getDialogTimeWorkingTaskIds', '_getDialogTimeCacheKey', '_setDialogTimeCacheRecord', '_hasDialogTimeVerifiedData', '_loadDialogTimeRange', '_invalidateDialogTimeCachesForDates', '_applyDialogTimeOptimisticEntry'];
   for (const name of names) {
     const marker = new RegExp(`\\t(?:async )?function ${name}\\(`).exec(injected);
@@ -113,7 +115,8 @@ await run('defensive author/date filtering does not count foreign or out-of-rang
 });
 
 await run('confirmed historical elapsed remains visible when task time tracking is now disabled', async () => {
-  const context = vm.createContext({ _PENA_TIME_CONTROL: time, _getDialogTimeTaskEligibilityForDisplay: id => id !== '401' });
+  const context = vm.createContext({ _getDialogTimeIdentityScopeKey:()=> 'portal:7', _PENA_TIME_CONTROL: time, _getDialogTimeTaskEligibilityForDisplay: id => id !== '401' });
+  installTimeVmDependencies(context, injected);
   vm.runInContext(section('\tfunction _filterDialogTimeDataByEligibility(', '\n\tfunction _readDialogTimeManualDraft('), context);
   const actual = context._filterDialogTimeDataByEligibility(time.aggregateElapsedItems([raw(1, '400', 600), raw(2, '401', 1200)]));
   assert.equal(actual.entryCount, 2, 'Changing ALLOW_TIME_TRACKING to N must not erase existing own time');

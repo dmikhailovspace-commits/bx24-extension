@@ -144,7 +144,7 @@ try {
      window.catalogProbeCalls.push(params);
      const start=params.start||0, delta=!!params.filter?.['>=CHANGED_DATE'];
      const data=delta?[]:window.catalogProbeRows.filter(row=>Number(row.ID)>Number(params.filter?.['>ID']||0)).slice(start,start+50);
-     return cb({error:()=>null,data:()=>({tasks:data}),next:()=>null});
+     return cb({error:()=>null,data:()=>({tasks:data}),total:()=>window.catalogProbeRows.length,next:()=>null});
     }
     return original.apply(this,arguments);
    };

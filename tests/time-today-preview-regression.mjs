@@ -1,3 +1,4 @@
+import {installTimeVmDependencies} from './lib/time-vm-dependencies.mjs';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {createRequire} from 'node:module';
@@ -29,7 +30,7 @@ function fixture(storage=new Map()){
   _DIALOG_TIME_FIRST_WAVE_SIZE:16,_DIALOG_TIME_WAVE_SIZE:50,_queueDialogTimeUiSync:()=>{},_loadDialogTimeTaskTitles:async()=>{},_sleepDialogControl:async()=>{},_getDialogTimeFriendlyError:e=>e.message,_isBxRestBatchPressureError:()=>false,
   _callDialogTimeElapsedPages:async jobs=>{state.elapsed.push(...jobs.map(p=>String(p[0])));return jobs.map(()=>({data:structuredClone(state.serverRows),requestedAt:state.now}));}
  });
- vm.runInContext(['_syncDialogTimeTodayPreview','_getDialogTimeWorkingTaskIds','_getDialogTimeCacheKey','_getDialogTimeRecord','_setDialogTimeCacheRecord','_hasDialogTimeVerifiedData','_loadDialogTimeRange'].map(extract).join('\n'),c);
+ installTimeVmDependencies(c, source); vm.runInContext(['_syncDialogTimeTodayPreview','_getDialogTimeWorkingTaskIds','_getDialogTimeCacheKey','_getDialogTimeRecord','_setDialogTimeCacheRecord','_hasDialogTimeVerifiedData','_loadDialogTimeRange'].map(extract).join('\n'),c);
  const record=()=>c._getDialogTimeRecord(today);
  const seed=(items=[item()],extra={})=>c._setDialogTimeCacheRecord(c._getDialogTimeCacheKey(today),{data:model.aggregateElapsedItems(items),range:today,status:'ready',hasVerifiedData:true,hasCompleteSnapshot:true,updatedAt:state.now,taskFreshness:{'1':{at:state.now,revision:0}},...extra});
  const payload=()=>({version:1,calendar:'user-v1',zone:'offset:0',scope:scope().replace(/:g\d+$/,''),day:state.day,offset:0,savedAt:state.now,items:[item()]});

@@ -77,7 +77,7 @@ export async function verifyTimeTimeoutRecovery(page, timePanel, mode) {
   completedAt:Date.now(), samples:window.__PENA_REST_DIAGNOSTICS__.snapshot().samples.slice(sampleOffset),
   nativeCalls:window.nativeRestCalls.slice(nativeCallOffset).map(({method,at})=>({method,at}))
  }),retry);
- const requested = await page.evaluate(offset => window.timeRestCalls.slice(offset).map(params => `${params[0]}:${params[4]?.NAV_PARAMS?.iNumPage || 1}`), retryCallOffset);
+ const requested = await page.evaluate(offset => window.timeRestCalls.slice(offset).map(params => `${params[0]}:${params[2]?.[">=CREATED_DATE"]}:${params[2]?.["<CREATED_DATE"]}:${params[4]?.NAV_PARAMS?.iNumPage || 1}`), retryCallOffset);
  assert.equal(new Set(requested).size, requested.length, `Manual recovery repeated a task page in ${mode}: ${JSON.stringify(requested)}`);
  assertTimeRetryCooldown(retry,admission.samples,admission.nativeCalls,admission.completedAt,mode);
  assert.equal(await page.locator('.pena-native-time-button').getAttribute('title'), 'Затраченное время за сегодня', `Manual recovery kept the timeout error on the time control in ${mode}`);

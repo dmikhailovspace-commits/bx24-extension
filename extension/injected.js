@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.33';
+	window.__ANITREC_RUNNING__ = '8.0.34';
 
-	const VER = '8.0.33';
+	const VER = '8.0.34';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -1463,7 +1463,16 @@
 		const key = read ? scope + ':' + method + ':' + JSON.stringify(params) : '';
 		const isCurrent = () => scope === (_getDialogNativeSharedAuditScopeKey() || location.host + ':self') &&
 			(!options.isCurrent || options.isCurrent());
-		return _dialogRestQueue ? _dialogRestQueue.run(method, key, run, { ...options, isCurrent }) : run();
+		if (!_dialogRestQueue) return run();
+		const enqueue = () => _dialogRestQueue.run(method, key, run, { ...options, isCurrent });
+		const request = enqueue();
+		// Identical monthly reads may share a queued request whose original day
+		// owner was cancelled. Re-admit the current reader once with its own fence.
+		const elapsedRead = method === 'task.elapseditem.getlist' || method === 'batch:task.elapseditem.getlist';
+		return elapsedRead ? request.catch(error => {
+			if (error?.code === 'SUPERSEDED' && isCurrent()) return enqueue();
+			throw error;
+		}) : request;
 	}
 	function _callBxRestMethod(method, params = {}, options = {}) {
 		return _callBxRestPage(method, params, options).then(page => page.data);
@@ -18076,6 +18085,9 @@ if (_presetChannel) {
 		if (_dialogControlNativeWorkspaceTab !== 'time' || !_isDialogTimeFrameActive() || document.visibilityState === 'hidden' || navigator.onLine === false) return;
 		const scope = _getDialogTimeProjectScopeKey();
 		const range = (_dialogTimeView === 'stats' || _dialogTimeView === 'stats30') ? _getDialogTimeStatsRange() : _getDialogTimeSelectedRange();
+		// Manual refresh owns both catalog reconciliation and the following forced
+		// elapsed read. A periodic wake between those stages must not read twice.
+		if (_dialogTimePanelRefreshes.has(_getDialogTimeCacheKey(range))) return;
 		const snapshot = _getDialogTimeRecord(range);
 		// Opening a freshly bootstrapped panel shares that read. Native mutations
 		// have their own immediate invalidation/refresh path; polling can wait.
@@ -18089,6 +18101,7 @@ if (_presetChannel) {
 			const current = () => scope === _getDialogTimeProjectScopeKey() && _dialogControlNativeWorkspaceTab === 'time' && document.visibilityState !== 'hidden' && navigator.onLine !== false;
 			if (!await _ensureDialogTimeProjectCatalog({delta:true}) || !current()) return;
 			const key = _getDialogTimeCacheKey(range);
+			if (_dialogTimePanelRefreshes.has(key)) return;
 			if (_dialogTimeInFlight.has(key)) return;
 			const global = _callDialogTimeGlobalElapsedPage.capabilities?.get(_getDialogTimeIdentityScopeKey())?.supported === true;
 			if (!global) {

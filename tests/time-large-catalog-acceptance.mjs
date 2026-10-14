@@ -1,3 +1,4 @@
+import {installTimeVmDependencies} from './lib/time-vm-dependencies.mjs';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync,writeFileSync} from 'node:fs';
@@ -29,10 +30,11 @@ function fixture(count=4149){
   _getDialogTimeFriendlyError:e=>e.message,_isBxRestBatchPressureError:()=>false,_sleepDialogControl:async()=>{},_refreshDialogTimeTaskCatalog:async()=>true,
   _callDialogTimeElapsedPages:async jobs=>{
    const requestedAt=s.now;s.calls.push(jobs.map(p=>String(p[0])));
-   const result=jobs.map(p=>({requestedAt,data:s.rows.has(String(p[0]))?[{ID:`entry-${p[0]}`,TASK_ID:String(p[0]),USER_ID:'7',SECONDS:s.rows.get(String(p[0])),CREATED_DATE:`${p[2]['>=CREATED_DATE'].slice(0,10)}T12:00:00+03:00`}]:[]}));
+   const result=jobs.map(p=>({requestedAt,data:s.rows.has(String(p[0]))?[{ID:`entry-${p[0]}`,TASK_ID:String(p[0]),USER_ID:'7',SECONDS:s.rows.get(String(p[0])),CREATED_DATE:`${range.from}T12:00:00+03:00`}]:[]}));
    s.now+=s.delay; if(s.hook)await s.hook(jobs);return result;
   }
  });
+ if(!baseline) installTimeVmDependencies(c, injected);
  for(const name of ['_getDialogTimeEligibleTaskIds','_getDialogTimeWorkingTaskIds','_getDialogTimeCacheKey','_setDialogTimeCacheRecord','_hasDialogTimeVerifiedData','_loadDialogTimeRange','_refreshDialogTimePanel']){
   const start=new RegExp(`\\t(?:async )?function ${name}\\(`).exec(injected)?.index;assert.notEqual(start,undefined,name);
   const end=injected.indexOf('\n\t}',start)+4;vm.runInContext(injected.slice(start,end),c);

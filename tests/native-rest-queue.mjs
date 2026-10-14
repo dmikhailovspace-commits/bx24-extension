@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
 const require = createRequire(import.meta.url);
 const { createRequestQueue } = require('../extension/native-time-control.js');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -59,3 +61,31 @@ const network=createRequestQueue({batchConcurrency:3,spacingMs:1});
 await assert.rejects(network.run(method,'network',async()=>{throw Object.assign(new Error('network'),{code:'NETWORK_ERROR'});}));
 assert.equal(network.snapshot().batchConcurrency,2);assert.equal(network.snapshot().reducedReason,'transport-error');
 console.log('PASS REST queue: adaptive 3→2 batches, independent ordinary cap, latency/error backoff, shared rate limit, deduplication and cancellation');
+// Exercise the production scheduler bridge: a new week view may join the
+// identical monthly read queued by a day view that has since been cancelled.
+const source=readFileSync(process.env.PENA_QUEUE_SOURCE || new URL('../extension/injected.js',import.meta.url),'utf8');
+const at=source.indexOf('\tfunction _scheduleBxRest(');
+const bridgeQueue=createRequestQueue({concurrency:1,spacingMs:0});
+const scope={value:'portal~7'}, bridge=vm.createContext({_dialogRestQueue:bridgeQueue,_PENA_TIME_CONTROL:{createRequestQueue},
+ _getDialogNativeSharedAuditScopeKey:()=>scope.value,location:{host:'portal'},window:{}});
+vm.runInContext(source.slice(at,source.indexOf('\n\t}',at)+4),bridge);
+let release;const blocked=bridgeQueue.run('block','block',()=>new Promise(resolve=>{release=resolve;}));
+await Promise.resolve();let oldCurrent=true,oldCalls=0,newCalls=0;
+const old=bridge._scheduleBxRest('batch:task.elapseditem.getlist',{month:'2026-10'},()=>{oldCalls++;return 'old';},{isCurrent:()=>oldCurrent});
+const oldRejected=assert.rejects(old,error=>error.code==='SUPERSEDED');
+oldCurrent=false;
+const current=()=>true,read=()=>{newCalls++;return 'current';};
+const newer=bridge._scheduleBxRest('batch:task.elapseditem.getlist',{month:'2026-10'},read,{isCurrent:current});
+const duplicate=bridge._scheduleBxRest('batch:task.elapseditem.getlist',{month:'2026-10'},read,{isCurrent:current});
+release();await blocked;await oldRejected;
+assert.deepEqual(await Promise.all([newer,duplicate]),['current','current']);
+assert.equal(oldCalls,0);assert.equal(newCalls,1,'Current readers must share one replacement dispatch');
+let deniedCalls=0;
+await assert.rejects(bridge._scheduleBxRest('tasks.task.list',{},()=>{deniedCalls++;throw Object.assign(new Error('network'),{code:'NETWORK_ERROR'});},{isCurrent:current}));
+assert.equal(deniedCalls,1,'Transport failures must not be replayed by cancellation recovery');
+for (const method of ['task.elapseditem.add','im.chat.leave']) {
+ let writes=0;
+ await assert.rejects(bridge._scheduleBxRest(method,{},()=>{writes++;throw Object.assign(new Error('cancelled'),{code:'SUPERSEDED'});},{isCurrent:current}));
+ assert.equal(writes,1,'Never replay a mutation, including verbs outside CRUD');
+}
+console.log('PASS scheduler ownership: stale day cancelled, current week resumes once, duplicate readers coalesce, errors and mutations never replay');

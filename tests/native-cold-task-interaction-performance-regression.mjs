@@ -91,7 +91,7 @@ const assertSingleStartupCatalog = (sample, label) => {
 	const cursors = new Map(), attempts = new Map();
 	for (const call of sample.fullRestCalls) {
 		assert.equal(call.method, 'tasks.task.list', `${label}: unexpected full recent-dialog crawl`);
-		assert.equal(Number(call.params.start), 0, `${label}: offset pagination is not the startup owner`);
+		assert.equal(Number(call.params.start), call.params.order?.ID === 'desc' || call.params.filter?.['<=ID'] != null ? -1 : 0, `${label}: keyset request must disable totals for partition/watermark reads`);
 		const cursor = Number(call.params.filter?.['>ID']);
 		assert.ok(Number.isFinite(cursor) && cursor >= 0, `${label}: invalid catalog cursor`);
 		if (call.params.order?.ID === 'desc') {
@@ -166,7 +166,9 @@ try {
 			'localStorage.removeItem(`pena.dialogControlNativeFolder.v1.${mode}`)',
 			'localStorage.removeItem(`pena.nativeSearchQuery.v1.${mode}`)'
 		]) assert.ok(body.includes(expected), `Interaction-priority fixture patch is missing: ${expected}`);
-		await route.fulfill({ response, body });
+		// This interaction fixture has no elapsed journal entries.
+        body = body.replace("if (method === 'sonet_group.get')", "if (method === 'task.elapseditem.getlist') return success([], {total:0});\n      if (method === 'sonet_group.get')");
+        await route.fulfill({ response, body });
 	});
 	await page.route(/\/extension\/injected\.js(?:\?.*)?$/, route => route.fulfill({
 		status: 200,
@@ -673,7 +675,9 @@ try {
 	assertStorageContract(realClick.metrics, 'Task-row click');
 	assert.equal(realClick.metrics.synchronousCounts.localStorageGet || 0, 0, `Task-row click read localStorage synchronously: ${JSON.stringify(diagnostic)}`);
 	assertStorageContract(sendAfter.metrics, 'Outgoing message');
-	assert.ok((sendAfter.metrics.counts.localStorageGet || 0) <= 12, `Outgoing interaction repeated broad localStorage reads: ${JSON.stringify(diagnostic)}`);
+	const uniquePreferenceReads = Object.entries(sendAfter.metrics.localStorageGets).filter(([key]) => key.startsWith('pena.dialogControlUnique.v1.')).reduce((sum, [,count]) => sum + count, 0);
+    assert.ok(uniquePreferenceReads <= 1, 'Unique-folder preference must be read at most once per interaction');
+    assert.ok((sendAfter.metrics.counts.localStorageGet || 0) - uniquePreferenceReads <= 12, `Outgoing interaction repeated broad localStorage reads: ${JSON.stringify(diagnostic)}`);
 	assert.equal(sendAfter.restCalls.some(call => call.method === 'tasks.task.get'), false, `Outgoing message started tasks.task.get in the hot path: ${JSON.stringify(diagnostic)}`);
 	assert.equal(sendAfter.metrics.scrollEvents, 0, `Interaction-priority path scrolled the task list: ${JSON.stringify(diagnostic)}`);
 	assert.ok(Math.abs(sendAfter.scrollTop - sendBefore.scrollTop) < 0.5, `Interaction changed task-list scrollTop: ${JSON.stringify(diagnostic)}`);

@@ -52,7 +52,7 @@ try{
     checkbox:box(checkbox),option:box(option),
     scrollOwners:[...node.querySelectorAll('*')].filter(n=>n.getClientRects().length&&/^(auto|scroll)$/.test(getComputedStyle(n).overflowY)).map(n=>n.className)};
   });
-  assert.equal(layout.panel.width,viewport.width<=680?Math.min(520,viewport.width-16):Math.min(640,viewport.width-32));
+  assert.equal(layout.panel.width,viewport.width<=680?viewport.width-16:Math.min(960,viewport.width-32));
   assert(layout.panel.height>0&&layout.panel.height<=(viewport.width<=680?viewport.height-16:Math.min(720,viewport.height-32)));
   if(layout.scrollHeight<=layout.clientHeight)assert(layout.panel.bottom-layout.section.bottom<=(viewport.width<=680?9:17),'Settings leave a blank lower region');
   assert.ok(layout.panel.x>=8&&layout.panel.y>=8&&layout.panel.right<=viewport.width-8&&layout.panel.bottom<=viewport.height-8);
@@ -70,7 +70,7 @@ try{
   report.push({viewport,status:'PASS',layout});
  }
  await page.locator('.pena-native-time-project-list').evaluate((list,names)=>{for(let i=0;i<80;i++){const label=list.firstElementChild.cloneNode(true);label.querySelector('span').textContent=`Проект ${i} — ${names[1]}`;list.append(label);}},names);
- const large=await panel.evaluate(n=>{const r=n.getBoundingClientRect(),s=n.querySelector('.pena-native-time-project-choices');return{height:r.height,scrollHeight:s.scrollHeight,clientHeight:s.clientHeight};});assert.equal(large.height,440);assert(large.scrollHeight>large.clientHeight);
+ const large=await panel.evaluate(n=>{const r=n.getBoundingClientRect(),s=n.querySelector('.pena-native-time-project-choices');return{height:r.height,scrollHeight:s.scrollHeight,clientHeight:s.clientHeight};});assert.equal(large.height,468);assert(large.scrollHeight>large.clientHeight);
  await page.locator('.pena-native-time-project-save').scrollIntoViewIfNeeded();
  assert.equal(await page.locator('.pena-native-time-project-save').isVisible(),true);
  await page.locator('.pena-native-time-project-status').evaluate(n=>{n.hidden=false;n.classList.add('--error');n.textContent='Не удалось загрузить проекты. Повторите попытку.';});

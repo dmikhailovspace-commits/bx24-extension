@@ -143,7 +143,7 @@ try {
 		`Summary and cards do not share the same horizontal edges: ${JSON.stringify(wide)}`);
 	assert.equal(wide.overflowX, 'hidden');
 	assert.match(wide.scrollbarGutter, /stable/);
-	assert.deepEqual(wide.scrollOwners, ['pena-native-time-scroll'], `The time window has nested scroll owners: ${JSON.stringify(wide.scrollOwners)}`);
+	assert.deepEqual(wide.scrollOwners, ['pena-native-time-scroll', 'pena-native-time-tracker'], `The time window must keep its content and fixed timer as separate scroll owners: ${JSON.stringify(wide.scrollOwners)}`);
 	assert.deepEqual(wide.visibleOverflow, []);
 	for (const side of ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft']) {
 		assert.ok(closeEnough(wide.styles.scroll[side], 16), `Desktop scroll ${side} is off-grid: ${JSON.stringify(wide.styles.scroll)}`);
@@ -284,7 +284,7 @@ try {
 	const longSearchResult = page.locator('.pena-native-time-manual-result', { hasText: 'Задача 101' }).first();
 	await longSearchResult.waitFor({ state: 'visible' });
 	const searchOpen = await measure(page);
-	assert.deepEqual(searchOpen.scrollOwners, ['pena-native-time-scroll'],
+	assert.deepEqual(searchOpen.scrollOwners, ['pena-native-time-scroll', 'pena-native-time-tracker'],
 		`Visible search results introduced a nested scroll owner: ${JSON.stringify(searchOpen.scrollOwners)}`);
 	assert.equal(searchOpen.styles.manualResults.overflowY, 'visible',
 		`Visible search results should grow inside the main scroll owner: ${JSON.stringify(searchOpen.styles.manualResults)}`);
@@ -307,7 +307,7 @@ try {
 	const afterSearch = await measure(page);
 	const topAfter = afterSearch.panel.top;
 	assert.ok(closeEnough(topBefore, topAfter), `Dialog top jumped after dynamic content: ${topBefore} -> ${topAfter}`);
-	assert.deepEqual(afterSearch.scrollOwners, ['pena-native-time-scroll'],
+	assert.deepEqual(afterSearch.scrollOwners, ['pena-native-time-scroll', 'pena-native-time-tracker'],
 		`Search results introduced a nested scroll owner: ${JSON.stringify(afterSearch.scrollOwners)}`);
 	assert.equal(afterSearch.styles.manualResults.overflowY, 'visible',
 		`Search results should grow inside the main scroll owner: ${JSON.stringify(afterSearch.styles.manualResults)}`);
@@ -353,7 +353,7 @@ try {
 		assert.deepEqual(current.visibleOverflow, [], `Horizontal overflow at ${viewport.width}px: ${JSON.stringify(current.visibleOverflow)}`);
 		assert.ok(closeEnough(current.summary.left, current.body.left) && closeEnough(current.summary.right, current.body.right),
 			`Summary/card edges diverged at ${viewport.width}px: ${JSON.stringify(current)}`);
-		assert.deepEqual(current.scrollOwners, ['pena-native-time-scroll'],
+		assert.deepEqual(current.scrollOwners, ['pena-native-time-scroll', 'pena-native-time-tracker'],
 			`Nested scroll owner at ${viewport.width}px: ${JSON.stringify(current.scrollOwners)}`);
 		assert.ok(closeEnough(current.styles.scroll.paddingLeft, viewport.width <= 680 ? 8 : 16) &&
 			closeEnough(current.styles.scroll.paddingRight, viewport.width <= 680 ? 8 : 16),
