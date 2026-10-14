@@ -763,6 +763,13 @@
 				attributes: true,
 				attributeFilter: OBSERVED_ATTRIBUTES.slice()
 			});
+			const layoutTransition = event => {
+				if (details.isRelevantLayoutTransition?.(event) === true) scheduleScan();
+			};
+			if (typeof details.isRelevantLayoutTransition === 'function') {
+				target.addEventListener('transitionend', layoutTransition, true);
+				target.addEventListener('transitioncancel', layoutTransition, true);
+			}
 			const disposeConnection = () => {
 				if (closed) return;
 				closed = true;
@@ -771,6 +778,8 @@
 				observer.disconnect();
 				layoutObserver?.disconnect();
 				layoutWidths.clear();
+				target.removeEventListener?.('transitionend', layoutTransition, true);
+				target.removeEventListener?.('transitioncancel', layoutTransition, true);
 			};
 			const unregister = registerHandle(disposeConnection, { scope: 'controller' });
 			scan('connect');

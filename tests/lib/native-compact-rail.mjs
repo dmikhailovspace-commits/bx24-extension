@@ -53,6 +53,39 @@ export async function checkCompactRail(browser, baseUrl) {
       assert.equal(await page.evaluate(() => localStorage.getItem('pena.dialogControlView.chats') === savedView), true);
     }
     assert.equal(await page.evaluate(() => collabClicks), 3, 'Native Collab actions were blocked');
+    // Live Messenger keeps all original widths unchanged. A sibling nested
+    // slider covers the recent list, leaving a 68px avatar rail underneath.
+    await page.evaluate(() => {
+      const shell = document.getElementById('chat-column');
+      shell.classList.add('bx-im-messenger__list_container');
+      shell.style.position = 'relative';
+      const layer = document.createElement('div');
+      layer.id = 'native-collab-slider';
+      layer.className = 'bx-im-list-navigator-nested-list__container --compact-mode';
+      layer.style.cssText = 'position:absolute;left:68px;right:0;top:0;bottom:0;background:white;transform:translateX(100%);transition:transform .15s';
+      layer.innerHTML = '<div class="bx-im-list-container-slider --compact-mode" style="height:100%"><button id="nested-action">Проект</button></div>';
+      layer.querySelector('button').onclick = () => { window.nestedClicks = (window.nestedClicks || 0) + 1; };
+      shell.append(layer);
+    });
+    await page.waitForTimeout(50);
+    for (let i=0; i<2; i++) {
+      await page.evaluate(() => {
+        const status = document.createElement('div');
+        status.className = 'pena-native-folder-status';
+        status.textContent = 'Часть диалогов не найдена в списке Bitrix';
+        document.getElementById('native-host').append(status);
+        document.getElementById('native-collab-slider').style.transform = 'translateX(0)';
+      });
+      await page.waitForTimeout(350);
+      assert.equal(await page.locator('.pena-native-folder-switcher').count(), 0, 'Nested native slider retained the full-width panel');
+      assert.equal(await page.locator('.pena-native-folder-status').count(), 0, 'Folder loading status overlapped the native project');
+      assert.equal(await page.locator('#native-list').evaluate(el => el.getBoundingClientRect().width), 380, 'Fixture must retain the original wide list');
+      await page.locator('#nested-action').click();
+      await page.evaluate(() => { document.getElementById('native-collab-slider').style.transform = 'translateX(100%)'; });
+      await page.locator('.pena-native-folder-switcher').waitFor({ state:'visible', timeout:6000 });
+      assert.equal(await page.locator('.pena-native-folder-switcher').count(), 1);
+    }
+    assert.equal(await page.evaluate(() => nestedClicks), 2);
     assert.deepEqual(errors, []);
   } finally { await page.close(); }
 }

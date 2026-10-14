@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.37';
+	window.__ANITREC_RUNNING__ = '8.0.38';
 
-	const VER = '8.0.37';
+	const VER = '8.0.38';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -8082,6 +8082,9 @@
 		const container = findContainer();
 		const filter = _getDialogControlNativeFilter();
 		if (!container || !filter || (!filter.folderId && !filter.segmentId && !filter.uniqueOnly && !filter.unreadOnly && !filters.unreadOnly)) return null;
+		// A nested native project owns this column while recent is an avatar rail.
+		// Pause folder pagination too, including delayed progress/retry messages.
+		if (_findNativeCompactRail(container)) return null;
         const requested = new Set(Array.from(filter.ids || []).map(normId).filter(Boolean));
         const candidates = _getDialogControlItems().filter(item => !_isDialogControlFolder(item));
         // Unassigned reminders are in the catalog, not necessarily in saved folders.
@@ -14149,6 +14152,20 @@ if (_presetChannel) {
 		for (let region = element; region && region !== document.body && region !== document.documentElement; region = region.parentElement) {
 			const width = region.getBoundingClientRect().width;
 			if (width > 1 && width < 160) return region;
+		}
+		// Messenger keeps the original 400px recent list behind its nested
+		// Collab slider. The exposed avatar rail is only ~68px; source widths
+		// remain unchanged. Scope this check to the same native list shell.
+		const shell = element?.closest?.('.bx-im-messenger__list_container');
+		if (shell) {
+			const shellRect = shell.getBoundingClientRect();
+			for (const layer of shell.querySelectorAll('.bx-im-list-navigator-nested-list__container,.bx-im-list-container-slider')) {
+				const rect = layer.getBoundingClientRect();
+				const style = getComputedStyle(layer);
+				if (layer.hidden || rect.width <= 1 || rect.height <= 1 || style.display === 'none' || style.visibility === 'hidden') continue;
+				const exposedWidth = Math.max(0, rect.left - shellRect.left);
+				if (rect.right > shellRect.left && rect.left < shellRect.right && rect.height >= shellRect.height * .5 && exposedWidth < 160) return layer;
+			}
 		}
 		return null;
 	}
@@ -22379,6 +22396,10 @@ if (_presetChannel) {
 		const target = container?.isConnected
 			? container
 			: (_dialogControlManagedSource?.isConnected ? _dialogControlManagedSource : null);
+		if (reason === 'compact-native-rail') {
+			document.querySelectorAll('.pena-native-folder-status').forEach(node => node.remove());
+			if (target) _dialogNativeFolderWindows.delete(target);
+		}
 		document.documentElement.classList.remove('pena-dialog-native-mode');
 		try {
 			_clearDialogControlNativeView(target, { restoreDisplay: true, forceShow: true });
@@ -31988,7 +32009,8 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 				'.bx-im-list-container-recent__container', '.bx-im-list-container-task__container',
 				'.bx-im-list-base__container', '.bx-im-list-base__scroll-container',
 				'.bx-im-list-container-recent__scroll-container', '.bx-im-list-container-task__scroll-container',
-				'.bx-im-list-recent__scroll-container', '.bx-im-list-task__scroll-container'
+				'.bx-im-list-recent__scroll-container', '.bx-im-list-task__scroll-container',
+				'.bx-im-list-navigator-nested-list__container', '.bx-im-list-container-slider'
 			].join(',');
 			// Keep hidden sources too: switching an inactive host to visible must be
 			// detected without searching every message/task subtree on class changes.
@@ -32014,6 +32036,9 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 			};
 			_nativeLifecycleDisconnect = lifecycle.connect({
 				root: document.body || document.documentElement,
+				isRelevantLayoutTransition(event) {
+					return event.target?.matches?.('.bx-im-list-navigator-nested-list__container,.bx-im-list-container-slider') === true;
+				},
 				resolveLayoutElements() {
 					const elements = new Set();
 					for (const list of knownRouteLists) {
