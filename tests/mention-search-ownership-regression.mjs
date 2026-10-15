@@ -12,6 +12,16 @@ async function fixture(placeholder){const page=await browser.newPage();await pag
  window.probe={get:_getBitrixListSearchInput,find:()=>_findNativeLifecycleSearchInput(document.getElementById('list'),'tasks'),arm:_armPenaSearchFlow,prepare:_preparePenaSearchInput};document.addEventListener('input',()=>window.nativeInputs++);document.addEventListener('keydown',()=>window.nativeKeys++);`});return page;}
 async function check(name,fn){try{const detail=await fn();phases.push({name,status:'PASS',detail});}catch(error){phases.push({name,status:'FAIL',error:error.message});}}
 try{
+ await check('native search ownership survives empty or translated placeholder',async()=>{
+  const results=[];
+  for(const placeholder of ['', 'Search']) {
+   const page=await fixture('Поиск сотрудников');
+   await page.evaluate(placeholder=>{const header=document.createElement('div');header.className='bx-im-list-container-task__header_container';header.innerHTML='<div class="bx-im-search-input__scope"><input id="native-search" type="text" class="bx-im-search-input__input"></div>';header.querySelector('input').placeholder=placeholder;document.getElementById('listHost').prepend(header);},placeholder);
+   const result=await page.evaluate(()=>({search:probe.get()?.id||null,lifeSearch:probe.find()?.id||null}));
+   await page.close();assert.deepEqual(result,{search:'native-search',lifeSearch:'native-search'});results.push(result);
+  }
+  return results;
+ });
  await check('employee directory results, pagination and cancellation',async()=>{const {verifyEmployeeSearch}=await import('./lib/employee-search.mjs');return verifyEmployeeSearch(browser,source);});
  await check('employee entity selector is never native list search',async()=>{const page=await fixture('Поиск сотрудников');const result=await page.evaluate(()=>{probe.arm();const field=document.getElementById('mention');field.dispatchEvent(new Event('input',{bubbles:true}));field.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,key:'a'}));return{selected:probe.get()?.id||null,owned:field.dataset.penaSearchOwner||'',nativeInputs,nativeKeys};});await page.close();assert.deepEqual(result,{selected:null,owned:'',nativeInputs:1,nativeKeys:1});return result;});
  await check('task entity selector cannot become lifecycle search via body ancestor',async()=>{const page=await fixture('Поиск задач');const result=await page.evaluate(()=>({search:probe.find()?.id||null}));await page.close();assert.equal(result.search,null);return result;});

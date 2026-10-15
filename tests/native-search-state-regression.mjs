@@ -63,10 +63,16 @@ try {
     onCloseSearch(){this.searchMode=false;setSearchBranch(false);this.searchQuery='';this.inputValue='';results.ids=[];nativeRows().forEach(row=>row.style.display='');},
     onCloseRecentSearch(){this.onCloseSearch();}
    },
-   render(){return h('div',[h('input',{type:'search',placeholder:mode==='tasks'?'Найти задачу':'Найти чат',value:this.inputValue,onFocus:this.onOpenSearch,onClick:this.onOpenSearch,onInput:event=>{this.inputValue=event.target.value;this.onUpdateSearch(event.target.value);},onKeydown:event=>{if(event.key==='Escape')this.onCloseRecentSearch();}}),h('button',{class:'native-clear',onClick:this.onCloseRecentSearch},'×')]);}
+   render(){return h('div',[h('input',{type:'search',class:'bx-im-search-input__input',placeholder:'',value:this.inputValue,onFocus:this.onOpenSearch,onClick:this.onOpenSearch,onInput:event=>{this.inputValue=event.target.value;this.onUpdateSearch(event.target.value);},onKeydown:event=>{if(event.key==='Escape')this.onCloseRecentSearch();}}),h('button',{class:'native-clear',onClick:this.onCloseRecentSearch},'×')]);}
   });
   window.nativeSearch=nativeSearchApp.mount(fieldRoot);window.nativeSearchResults=results;
   window.nativeTestList=list;
+  // The real header initially contains a button. Its newly mounted field can
+  // receive typing before any list refresh has had a chance to bind it.
+  const lateInput=fieldRoot.querySelector('input');lateInput.value='late field';
+  lateInput.dispatchEvent(new Event('input',{bubbles:true}));
+  if(stability.query()!=='late field')throw Error('First input from a late native search field must enable global search synchronously');
+  lateInput.value='';lateInput.dispatchEvent(new Event('input',{bubbles:true}));
   // Messenger can focus the field before extension binding completes.
   nativeSearch.onOpenSearch();stability.arm();
  },mode);
@@ -123,6 +129,8 @@ try {
   await page.evaluate(unread=>{stability.folder('folder:test');stability.unread(unread);},unread);await page.waitForTimeout(60);
   const expectedIds=await visibleIds();assert.ok(expectedIds.length);
   await input.fill('slow');await page.waitForTimeout(240);
+  assert.equal(await page.evaluate(()=>stability.query()),'slow','A header without placeholder must still own the native query');
+  if(!unread) assert.deepEqual(await page.locator('.bx-im-search-item-layout__container:visible .bx-im-chat-title__text').allTextContents(),['Native chat225','Native chat5','Native 707','Native 708'],'Search must include chats and people outside the selected folder, including with unique-only enabled');
   const frames=await page.evaluate(clearVia=>new Promise(resolve=>{
    requestAnimationFrame(()=>{
     const field=nativeSearch.$el.querySelector('input');

@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.40';
+	window.__ANITREC_RUNNING__ = '8.0.41';
 
-	const VER = '8.0.40';
+	const VER = '8.0.41';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -10952,7 +10952,7 @@ if (_presetChannel) {
 	}
 
 	function _isPenaNativeListSearchInput(input) {
-		if (!input?.matches?.('input[placeholder],input[type="search"]')) return false;
+		if (!input?.matches?.('input') || !['text', 'search'].includes(input.type)) return false;
 		// Entity selectors can have exactly the same placeholder as Messenger.
 		// Ownership comes from the native list header, never from translated copy.
 		const header = input.closest('.bx-im-list-container-task__header_container,.bx-im-list-container-recent__header_container');
@@ -10973,8 +10973,7 @@ if (_presetChannel) {
 		}
 		_bitrixSearchSourceInput = null;
 		const candidates = Array.from(document.querySelectorAll('.bx-im-list-container-task__header_container input,.bx-im-list-container-recent__header_container input'))
-			.filter(input => _isPenaNativeListSearchInput(input) && isVisibleElement(input))
-			.filter(input => /найти.{0,48}(?:задач|чат|диалог|сотрудник)|поиск.{0,32}(?:чат|задач|диалог|сотрудник)/i.test(String(input.placeholder || input.getAttribute('aria-label') || '')));
+			.filter(input => _isPenaNativeListSearchInput(input) && isVisibleElement(input));
 		_bitrixSearchSourceInput = candidates.find(_isElementTopHit) || candidates.at(-1) || null;
 		return _bitrixSearchSourceInput;
 	}
@@ -11101,9 +11100,8 @@ if (_presetChannel) {
 		};
 		queueRefresh();
 		const toolbarSelector = '.bx-im-list-container-task__header_container,.bx-im-list-container-recent__header_container';
-		const searchSelector = 'input[placeholder],input[type="search"]';
-		const isSearchCandidate = node => _isPenaNativeListSearchInput(node) &&
-			/найти.{0,48}(?:задач|чат|диалог|сотрудник)|поиск.{0,32}(?:чат|задач|диалог|сотрудник)/i.test(String(node.placeholder || node.getAttribute?.('aria-label') || ''));
+		const searchSelector = 'input';
+		const isSearchCandidate = node => _isPenaNativeListSearchInput(node);
 		const containsToolbarCandidate = node => {
 			if (node?.nodeType !== 1) return false;
 			if (node.matches?.(toolbarSelector) || isSearchCandidate(node) || node.querySelector?.(toolbarSelector)) return true;
@@ -11506,6 +11504,15 @@ if (_presetChannel) {
 	function _armPenaSearchFlow(host = filtersHost) {
 		const systemInput = _ensureBitrixListSearchSticky();
 		if (_isDialogNativeLazyMode()) {
+			if (!_penaSearchFlowArmed) {
+				_penaSearchFlowArmed = true;
+				// New Bitrix headers create the field only after the search button is
+				// clicked. Bind before its first native input event reaches the field.
+				['input', 'change', 'search'].forEach(type => window.addEventListener(type, event => {
+					if (!_isPenaExtensionEnabled() || !_isPenaNativeListSearchInput(event.target)) return;
+					if (!_penaSearchPreparedInputs.has(event.target) && event.target === _getBitrixListSearchInput()) _armPenaSearchFlow();
+				}, true));
+			}
 			const controller = _bindPenaNativeSearchController(systemInput);
 			if (systemInput && !_penaSearchPreparedInputs.has(systemInput)) {
 				_penaSearchPreparedInputs.add(systemInput);
@@ -31684,11 +31691,11 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 	let _nativeLifecycleDisconnect = null;
 
 	function _findNativeLifecycleSearchInput(list, mode) {
-		const matcher = mode === 'tasks' ? /задач/i : /чат|диалог/i;
+		const headerSelector = mode === 'tasks' ? '.bx-im-list-container-task__header_container' : '.bx-im-list-container-recent__header_container';
 		let ancestor = list?.parentElement || null;
 		for (let depth = 0; ancestor && ancestor !== document.body && ancestor !== document.documentElement && depth < 10; depth += 1, ancestor = ancestor.parentElement) {
-			const inputs = Array.from(ancestor.querySelectorAll?.('.bx-im-list-container-task__header_container input,.bx-im-list-container-recent__header_container input') || [])
-				.filter(input => _isPenaNativeListSearchInput(input) && isVisibleElement(input) && matcher.test(String(input.placeholder || input.getAttribute?.('aria-label') || '')));
+			const inputs = Array.from(ancestor.querySelectorAll?.(`${headerSelector} input`) || [])
+				.filter(input => _isPenaNativeListSearchInput(input) && isVisibleElement(input));
 			if (inputs.length) return inputs.find(_isElementTopHit) || inputs[0];
 		}
 		return null;
