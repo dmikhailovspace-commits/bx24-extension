@@ -4,7 +4,8 @@ import {chromium} from 'playwright';
 import {startHarnessServer,collectPageErrors} from './lib/harness-server.mjs';
 const raw=readFileSync(process.env.PENA_STABILITY_SOURCE || new URL('../extension/injected.js',import.meta.url),'utf8');
 const source=raw.replace('\tasync function boot() {',`\tasync function boot() {
-window.stability={apply:applyFilters,arm:_armPenaSearchFlow,query:()=>filters.query,stored:_readStoredBitrixSearchQuery,pending:()=>_dialogControlReadActions.size,selected:()=>[..._dialogControlMultiSelected],unique:value=>{_setDialogControlViewPrefs({uniqueOnly:value});applyFilters()},unread:value=>{_setDialogControlViewPrefs({unreadOnly:value});applyFilters()}, folder:_setDialogControlNativeActiveFolderId, items:_getDialogControlItems};`);
+window.stability={apply:applyFilters,arm:_armPenaSearchFlow,query:()=>filters.query,stored:_readStoredBitrixSearchQuery,pending:()=>_dialogControlReadActions.size,selected:()=>[..._dialogControlMultiSelected],unique:value=>{_setDialogControlViewPrefs({uniqueOnly:value});applyFilters()},unread:value=>{_setDialogControlViewPrefs({unreadOnly:value});applyFilters()}, folder:_setDialogControlNativeActiveFolderId, items:_getDialogControlItems,
+seed:meta=>_setDialogRecentMeta(_dialogRecentMeta,{..._getDialogRecentMeta(meta.id),...meta}), notify:_notifyDialogRecentCountersChanged, render:()=>_renderDialogControlNativeSwitcher(findContainer(),_getDialogControlItems())};`);
 const server=await startHarnessServer();const browser=await chromium.launch({headless:true});const report=[];
 try {
  for(const mode of ['chats','tasks']) {
@@ -316,6 +317,32 @@ try {
  await nativeMenu.getByRole('menuitem',{name:'Закрепить',exact:true}).click();
  assert.deepEqual(await page.evaluate(()=>menuLog.at(-1)),{title:'Закрепить',id:'chat225'},'Ordinary chats/tasks retain their own native menu context');
  await page.waitForTimeout(30);
+ // Native search may match information absent from our catalog. Conversely,
+ // cached previews matching a single letter are not native search results.
+ await page.evaluate(()=>{
+  stability.unique(false);stability.unread(false);stability.folder('');
+  for(const item of stability.items().filter(x=>x.type!=='folder'))stability.seed({id:item.id,unreadCount:0,hasUnread:false,hasLater:false,hasMention:false,counterConfirmedAt:Date.now()});
+  stability.seed({id:'chat5',title:'a cached match',lastText:'a',unreadCount:51,hasUnread:true,counterConfirmedAt:Date.now()});
+  stability.seed({id:'chat225',title:'Unrelated',lastText:'',unreadCount:0,hasUnread:false,counterConfirmedAt:Date.now()});
+ });
+ const total=page.locator('.pena-native-group-tab[data-native-segment-id=""] .pena-native-tab-count');
+ await input.fill('a');
+ await page.waitForTimeout(80);
+ await page.evaluate(()=>{nativeSearchResults.ids=['chat225'];});
+ await page.waitForFunction(()=>document.querySelectorAll('[data-pena-native-search-row]').length===1);
+ await page.waitForFunction(()=>document.querySelector('.pena-native-group-tab[data-native-segment-id=""] .pena-native-tab-count')?.textContent==='0');
+ assert.equal(await total.textContent(),'0','One-letter native result must not inherit notifications from cached text matches');
+ await page.evaluate(()=>{stability.seed({id:'chat225',unreadCount:3,hasUnread:true,counterConfirmedAt:Date.now()});stability.notify();});
+ assert.equal(await total.textContent(),'3','Lightweight counter updates must use the same search result set');
+ await page.evaluate(()=>{stability.render();});assert.equal(await total.textContent(),'3');
+ await input.fill('zz');
+ await page.waitForFunction(()=>document.querySelector('.pena-native-group-tab[data-native-segment-id=""] .pena-native-tab-count')?.textContent==='54');
+ assert.equal(await total.textContent(),'54','Native results count even when their cached text does not match the query');
+ await page.evaluate(()=>{nativeSearchResults.ids=[];});
+ await page.waitForFunction(()=>document.querySelector('.pena-native-group-tab[data-native-segment-id=""] .pena-native-tab-count')?.textContent==='0');
+ await input.fill('');
+ await page.waitForFunction(()=>document.querySelector('.pena-native-group-tab[data-native-segment-id=""] .pena-native-tab-count')?.textContent==='54');
+ assert.equal(await total.textContent(),'54','Clearing search restores full counters without erasing catalog notifications');
  await input.fill('private query');
  await page.evaluate(()=>{window.currentBitrixUserId='8';stability.arm();});await page.waitForTimeout(80);
  assert.equal(await input.inputValue(),'','Changing the account clears the previous account query');

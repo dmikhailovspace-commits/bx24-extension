@@ -221,7 +221,8 @@ try {
   await page.evaluate(()=>{testCounterStore.state.counters.collection[225]={chatId:225,counter:4,isMarkedAsUnread:false};testCounterStore.mention=false;testCounterStore.emit('counters/setCounters');});
   await page.waitForFunction(()=>folderProbe.get('chat225').unreadCount===4);
   assert.equal(await count(),'4');
-  await page.evaluate(()=>{delete testCounterStore.state.counters.collection[225];testCounterStore.emit('counters/clearById');});
+  // Vuex subscribers receive the mutation (delete), not the clearById action.
+  await page.evaluate(()=>{delete testCounterStore.state.counters.collection[225];testCounterStore.emit('counters/delete');});
   await page.waitForFunction(()=>folderProbe.get('chat225').unreadCount===0&&!folderProbe.get('chat225').hasLater);
   assert.equal(await count(),'0','Native clear must beat the old rendered badge');
   await page.evaluate(()=>{testCounterStore.state.counters.collection[225]={chatId:225,counter:0,isMarkedAsUnread:true};testCounterStore.emit('counters/setCounters');});

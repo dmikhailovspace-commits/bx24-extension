@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.41';
+	window.__ANITREC_RUNNING__ = '8.0.42';
 
-	const VER = '8.0.41';
+	const VER = '8.0.42';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -3230,7 +3230,9 @@
 			const context = _dialogNativeCounterContext = { ...found, states: new Map(), dirty: true, cleared: false };
 			context.unsubscribe = context.store.subscribe(mutation => {
 				if (!/^(?:counters\/|messages\/anchors\/)/.test(mutation?.type || '')) return;
-				if (/^counters\/clear/.test(mutation.type)) context.cleared = true;
+				// Vuex emits mutations: clearById/clearByRecentType actions commit
+				// counters/delete. Remember those removals instead of reviving cache.
+				if (/^counters\/(?:clear|delete$)/.test(mutation.type)) context.cleared = true;
 				context.dirty = true;
 				if (context.timer) return;
 				context.timer = setTimeout(() => {
@@ -11376,16 +11378,16 @@ if (_presetChannel) {
 		if (!entry || entry.instance.isUnmounted || entry.scope !== _getDialogNativeExpectedAuditScopeKey(_pMode())) return '';
 		return normId(entry.instance.props?.dialogId || entry.instance.proxy?.dialogId);
 	}
-	function _indexDialogNativeSearchRows(container) {
+	function _indexDialogNativeSearchRows(container, refresh = false) {
 		const rows = Array.from(container.querySelectorAll('.bx-im-search-item__container,.bx-im-search-item-layout__container,[data-pena-native-search-row]'));
-		if (rows.length && !rows.some(row => !_getDialogNativeSearchRowId(row))) return;
+		if (!refresh && rows.length && !rows.some(row => !_getDialogNativeSearchRowId(row))) return;
 		if (!rows.length && !String(filters.query || '').trim()) return;
 		const scope = _getDialogNativeExpectedAuditScopeKey(_pMode());
 		_findDialogNativeVueInstance(rows[0] || container.querySelector('.bx-im-chat-search__container') || container, instance => {
 			const row = instance?.proxy?.$el;
 			if (!instance?.isUnmounted && instance?.type?.name === 'SearchItem' &&
 				row?.nodeType === 1 && container.contains(row) && normId(instance.props?.dialogId || instance.proxy?.dialogId)) {
-				row.setAttribute('data-pena-native-search-row', '1');
+				if (row.getAttribute('data-pena-native-search-row') !== '1') row.setAttribute('data-pena-native-search-row', '1');
 				_penaNativeSearchRowInstances.set(row, { instance, scope });
 			}
 			return null;
@@ -19411,7 +19413,8 @@ if (_presetChannel) {
 
 	function _syncDialogControlNativeCounterStatuses(switcher, items) {
 		if (!switcher?.isConnected) return;
-		const source = Array.isArray(items) ? items : [];
+		const searching = _isDialogNativeLazyMode() && !!String(filters.query || '').trim();
+		const source = _getDialogControlCounterItems(items, switcher._penaNativeRenderContext?.container || findContainer());
 		const emptyStatus = () => ({ childCount: 0, unreadCount: 0, hasUnread: false, hasMention: false, hasLater: false });
 		const addMeta = (status, meta) => {
 			if (!status || !meta) return;
@@ -19445,7 +19448,7 @@ if (_presetChannel) {
 
 		source.forEach(item => {
 			if (_isDialogControlFolder(item) || _isDialogControlItemUnavailable(item) ||
-				!_matchesDialogControlGlobalFilters(item, catalogOnlyIndex)) return;
+				(!searching && !_matchesDialogControlGlobalFilters(item, catalogOnlyIndex))) return;
 			const meta = _getDialogControlItemLiveMeta(item, catalogOnlyIndex);
 			if (!meta) return;
 			if (placement) {
@@ -19472,6 +19475,26 @@ if (_presetChannel) {
 		_syncDialogControlNativeTabStatuses(switcher, groupStatuses, folderStatuses, segmentStatus);
 	}
 
+	function _getDialogControlCounterItems(items, container) {
+		const source = Array.isArray(items) ? items : [];
+		if (!_isDialogNativeLazyMode() || !String(filters.query || '').trim()) return source;
+		// Search belongs to Bitrix, including one-character/local and remote
+		// results. Catalog text matching is not proof that a dialog is in it.
+		const byId = new Map(source.filter(item => !_isDialogControlFolder(item)).map(item => [normId(item.id), item]));
+		const result = new Map();
+		// Include appended results even if a newer Bitrix layout renamed their
+		// CSS classes; existing marked rows must not hide those new siblings.
+		if (container) _indexDialogNativeSearchRows(container, true);
+		_getDialogControlNativeRows(container, { includeSearch: true }).forEach(row => {
+			if ((!_getDialogNativeSearchRowId(row) && !row.closest('.bx-im-chat-search__container')) || !isVisibleElement(row)) return;
+			const id = normId(getChatIdFromElement(row));
+			if (id) result.set(id, byId.get(id) || { id, title: getChatTitleFromElement(row) });
+		});
+		// New remote results stay transient: a search projection never writes
+		// zero counters or invents catalog membership for missing results.
+		return [...source.filter(_isDialogControlFolder), ...result.values()];
+	}
+
 	function _renderDialogControlNativeSwitcher(container, items) {
 		if (window.__PENA_TEST_PERF_METRICS__) {
 			window.__PENA_TEST_PERF_METRICS__.switcherRenders =
@@ -19491,7 +19514,9 @@ if (_presetChannel) {
 		const groupTabs = _getDialogControlSegmentTabs(_getDialogControlSegments());
 		const activeSegmentId = _getDialogControlActiveSegmentId();
 		const viewPrefs = _getDialogControlViewPrefs();
-		const segmentDialogItems = _getDialogControlNativeDialogItemsForSegment(source, activeSegmentId);
+		const searching = _isDialogNativeLazyMode() && !!String(filters.query || '').trim();
+		const counterSource = _getDialogControlCounterItems(source, container);
+		const segmentDialogItems = _getDialogControlNativeDialogItemsForSegment(counterSource, activeSegmentId);
 		const segmentFolders = _getDialogControlNativeFoldersForSegment(source, activeSegmentId);
 		let activeFolderId = _getDialogControlNativeActiveFolderId();
 		if (activeFolderId && !segmentFolders.some(folder => String(folder.id || '') === activeFolderId)) {
@@ -19501,8 +19526,9 @@ if (_presetChannel) {
 		switcher.classList.remove('--filtering');
 		switcher.style.removeProperty('height');
 		const visibleChatIndex = buildChatElementIndex();
-		const allDialogItems = source.filter(item => !_isDialogControlFolder(item));
-		const filteredDialogItems = allDialogItems.filter(item => _matchesDialogControlGlobalFilters(item, visibleChatIndex));
+		const allDialogItems = counterSource.filter(item => !_isDialogControlFolder(item));
+		const filteredDialogItems = allDialogItems.filter(item => searching
+			? !_isDialogControlItemUnavailable(item) : _matchesDialogControlGlobalFilters(item, visibleChatIndex));
 		// Segment helpers retain source object references. Reuse this render's filter
 		// result for all tabs; the next render reads fresh filters and live metadata.
 		const filteredDialogSet = new Set(filteredDialogItems);
@@ -19511,7 +19537,7 @@ if (_presetChannel) {
 			const id = String(group.id || '');
 			const dialogs = group.isAll && !viewPrefs.uniqueOnly
 				? filteredDialogItems
-				: _getDialogControlNativeDialogItemsForSegment(source, id)
+				: _getDialogControlNativeDialogItemsForSegment(counterSource, id)
 					.filter(item => filteredDialogSet.has(item));
 			groupStatuses.set(id, _getDialogControlNotificationStatus(dialogs, visibleChatIndex));
 		});
