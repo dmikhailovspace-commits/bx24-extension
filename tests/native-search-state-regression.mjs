@@ -51,8 +51,8 @@ try {
   const setSearchBranch=active=>{if(mode==='chats')nativeBranch.style.display=active?'none':'';};
   window.nativeSearchApp=createApp({
    name:mode==='tasks'?'TaskListContainer':'RecentListContainer',
-   data:()=>({searchMode:false,searchQuery:'',inputValue:''}),
-   created(){window.nativeSubscribedOpen=this.onOpenSearch;window.nativeSubscribedUpdate=this.onUpdateSearch;},
+   data:()=>({searchMode:false,searchQuery:'',inputValue:'',inputMounted:true,inputKey:0}),
+   created(){window.nativeSubscribedOpen=this.onOpenSearch;window.nativeSubscribedUpdate=this.onUpdateSearch;window.nativeSubscribedClose=this.onCloseSearch;},
    beforeUnmount(){window.nativeUnsubscribeMatched=this.onOpenSearch===window.nativeSubscribedOpen;},
    methods:{
     onOpenSearch(){this.searchMode=true;setSearchBranch(true);nativeRows().forEach(row=>row.style.display='none');results.ids=['chat225'];},
@@ -61,10 +61,10 @@ try {
      const delay=query==='first'?650:query==='slow'?180:20;
      setTimeout(()=>{if(this.searchQuery===query)results.ids=query==='other'?['chat77']:['chat225','chat5','707','708'];},delay);
     },
-    onCloseSearch(){this.searchMode=false;setSearchBranch(false);this.searchQuery='';this.inputValue='';results.ids=[];nativeRows().forEach(row=>row.style.display='');},
+    onCloseSearch(){this.searchMode=false;setSearchBranch(false);this.searchQuery='';this.inputValue='';if(window.nativeCollapseInput)this.inputMounted=false;results.ids=[];nativeRows().forEach(row=>row.style.display='');},
     onCloseRecentSearch(){this.onCloseSearch();}
    },
-   render(){return h('div',[h('input',{type:'search',class:'bx-im-search-input__input',placeholder:'',value:this.inputValue,onFocus:this.onOpenSearch,onClick:this.onOpenSearch,onInput:event=>{this.inputValue=event.target.value;this.onUpdateSearch(event.target.value);},onKeydown:event=>{if(event.key==='Escape')this.onCloseRecentSearch();}}),h('button',{class:'native-clear',onClick:this.onCloseRecentSearch},'×')]);}
+   render(){return h('div',[this.inputMounted?h('input',{key:this.inputKey,type:'search',class:'bx-im-search-input__input',placeholder:'',value:this.inputValue,onFocus:this.onOpenSearch,onClick:this.onOpenSearch,onInput:event=>{this.inputValue=event.target.value;this.onUpdateSearch(event.target.value);},onKeydown:event=>{if(event.key==='Escape')this.onCloseRecentSearch();}}):h('button',{class:'native-open',onClick:()=>{this.inputMounted=true;}},'Find'),h('button',{class:'native-clear',onClick:this.onCloseRecentSearch},'×')]);}
   });
   window.nativeSearch=nativeSearchApp.mount(fieldRoot);window.nativeSearchResults=results;
   window.nativeTestList=list;
@@ -343,6 +343,32 @@ try {
  await input.fill('');
  await page.waitForFunction(()=>document.querySelector('.pena-native-group-tab[data-native-segment-id=""] .pena-native-tab-count')?.textContent==='54');
  assert.equal(await total.textContent(),'54','Clearing search restores full counters without erasing catalog notifications');
+ // Current Bitrix removes the field on close. Cached native callbacks bypass
+ // our wrapper; the detached old field still contains the previous query.
+ await page.evaluate(()=>{stability.folder('folder:test');});await page.waitForTimeout(80);
+ const beforeCollapse=await visibleIds();assert.ok(beforeCollapse.length);
+ await input.fill('collapsed query');await page.waitForTimeout(80);
+ await page.evaluate(()=>{window.nativeCollapseInput=true;nativeSubscribedClose();});
+ await page.waitForTimeout(120);
+ assert.equal(await input.count(),0,'Native close must really remove the search field');
+ assert.equal(await page.evaluate(()=>stability.query()),'','A removed field and closed native model must clear the extension query');
+ assert.equal(await page.evaluate(()=>stability.stored()),'','Closed native search must not be restored from storage');
+ assert.deepEqual(await visibleIds(),beforeCollapse,'Closing to the native search button restores the selected folder');
+ await page.evaluate(()=>{nativeSubscribedUpdate('collapsed query');nativeSubscribedOpen();});await page.waitForTimeout(120);
+ assert.equal(await page.evaluate(()=>nativeSearch.searchMode),false,'Late cached callbacks must not reopen search after its field was removed');
+ assert.equal(await page.evaluate(()=>stability.query()),'');
+ assert.deepEqual(await visibleIds(),beforeCollapse);
+ await page.evaluate(()=>{window.nativeCollapseInput=false;nativeSearch.inputMounted=true;});
+ await page.waitForTimeout(60);await page.evaluate(()=>stability.arm());
+ assert.equal(await input.inputValue(),'','Reopening the field must not resurrect the old query');
+ // A clear may replace the input within the same container instance.
+ await input.fill('replaced query');await page.waitForTimeout(80);
+ await page.evaluate(()=>{nativeSearch.inputValue='';nativeSearch.inputKey++;});
+ await page.waitForTimeout(60);await page.evaluate(()=>stability.arm());await page.waitForTimeout(80);
+ assert.equal(await input.inputValue(),'','An empty replacement field is authoritative over the old controller query');
+ assert.equal(await page.evaluate(()=>stability.query()),'');
+ assert.equal(await page.evaluate(()=>nativeSearch.searchMode),false);
+ assert.deepEqual(await visibleIds(),beforeCollapse);
  await input.fill('private query');
  await page.evaluate(()=>{window.currentBitrixUserId='8';stability.arm();});await page.waitForTimeout(80);
  assert.equal(await input.inputValue(),'','Changing the account clears the previous account query');

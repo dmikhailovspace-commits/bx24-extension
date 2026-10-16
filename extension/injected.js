@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.42';
+	window.__ANITREC_RUNNING__ = '8.0.43';
 
-	const VER = '8.0.42';
+	const VER = '8.0.43';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -11408,9 +11408,10 @@ if (_presetChannel) {
 		if (!instance) return null;
 		let state = _penaNativeSearchControllers.get(instance);
 		if (state?.scope === scope) {
-			const replaced = state.input !== input;
 			state.input = input; _penaNativeSearchInputs.set(input, state);
-			if (replaced && state.query) _setInputValueNative(input, state.query, true);
+			// Bitrix may replace the field when clearing. Its actual value wins;
+			// copying the old query back here would silently reopen the search.
+			state.scheduleEmpty?.();
 			return state;
 		}
 		const previousScope = state?.scope;
@@ -11428,7 +11429,17 @@ if (_presetChannel) {
 			state.emptyQueued = true;
 			queueMicrotask(() => {
 				state.emptyQueued = false;
-				if (!current() || !state.input?.isConnected || String(state.input.value || '').trim()) return;
+				if (!current() || !proxy.$el?.isConnected) return;
+				if (!state.input?.isConnected || !proxy.$el.contains(state.input)) {
+					// Native close can replace the input with a search button without
+					// an input event. Never read the detached field's previous value.
+					const replacement = Array.from(proxy.$el.querySelectorAll('input')).find(_isPenaNativeListSearchInput);
+					if (replacement) {
+						state.input = replacement;
+						_penaNativeSearchInputs.set(replacement, state);
+					}
+				}
+				if (state.input?.isConnected && String(state.input.value || '').trim()) return;
 				if (state.query || String(filters.query || '')) remember('');
 				if (proxy.searchMode || proxy.searchQuery) {
 					originals.onCloseSearch.call(proxy);
