@@ -369,6 +369,24 @@ try {
  assert.equal(await page.evaluate(()=>stability.query()),'');
  assert.equal(await page.evaluate(()=>nativeSearch.searchMode),false);
  assert.deepEqual(await visibleIds(),beforeCollapse);
+ // Bitrix can close the old search field while another Messenger tab owns the
+ // screen. The inactive Vue watcher cannot clear that tab's saved query then.
+ // Returning to a button-only header must restore the selected folder, not
+ // leave PENA in a global-search projection with native unfiltered rows.
+ await input.fill('mode query');await page.waitForTimeout(80);
+ await page.evaluate(()=>document.getElementById('switch-mode').click());await page.waitForTimeout(120);
+ await page.evaluate(()=>{nativeSubscribedClose();nativeSearch.inputMounted=false;});
+ await page.evaluate(()=>document.getElementById('switch-mode').click());await page.waitForTimeout(180);
+ assert.equal(await input.count(),0,'Native field was removed while its tab was inactive');
+ assert.equal(await page.evaluate(()=>stability.query()),'','Returning to a button-only native header clears the stale search projection');
+ assert.equal(await page.evaluate(()=>stability.stored()),'','Returning to that tab clears the saved stale query');
+ assert.deepEqual(await visibleIds(),beforeCollapse,'The selected folder survives search and tab switches');
+ await page.evaluate(()=>{nativeSearch.inputMounted=true;});await page.waitForTimeout(60);await page.evaluate(()=>stability.arm());
+ await input.fill('orphan query');await page.waitForTimeout(80);
+ await page.evaluate(()=>{nativeSearch.inputMounted=false;});
+ await page.waitForFunction(()=>stability.query()===''&&stability.stored()===''&&!nativeSearch.searchMode);
+ assert.deepEqual(await visibleIds(),beforeCollapse,'Removing an active native search field restores the selected folder without a tab switch');
+ await page.evaluate(()=>{nativeSearch.inputMounted=true;});await page.waitForTimeout(60);await page.evaluate(()=>stability.arm());
  await input.fill('private query');
  await page.evaluate(()=>{window.currentBitrixUserId='8';stability.arm();});await page.waitForTimeout(80);
  assert.equal(await input.inputValue(),'','Changing the account clears the previous account query');

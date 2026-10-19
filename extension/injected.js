@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.43';
+	window.__ANITREC_RUNNING__ = '8.0.44';
 
-	const VER = '8.0.43';
+	const VER = '8.0.44';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -11093,7 +11093,16 @@ if (_presetChannel) {
 		let mountedControls = null;
 		const refresh = () => {
 			queued = false;
-			mountedControls = _ensureBitrixListSystemToolbarSticky(_getBitrixListSearchHost());
+			const previousInput = _bitrixSearchSourceInput;
+			const input = _getBitrixListSearchInput();
+			mountedControls = _ensureBitrixListSystemToolbarSticky(_getBitrixListSearchHost(input));
+			const active = window.__PENA_ACTIVE_LIST_CONTEXT__;
+			if (_isDialogNativeLazyMode() && _isPenaExtensionEnabled() && active?.list?.isConnected &&
+				active.mode === _pMode() &&
+				!input && String(filters.query || '')) {
+				_penaNativeSearchInputs.get(previousInput)?.scheduleEmpty?.();
+				_setPenaSearchQuery('', { syncInput: false, persist: false });
+			}
 		};
 		const queueRefresh = () => {
 			if (queued) return;
@@ -28494,6 +28503,16 @@ if (_presetChannel) {
 		if (IS_OL_FRAME) return 'ol';
 		return isTasksChatsModeNow() ? 'tasks' : 'internal';
 	}
+	function _restorePanelModeFilters(mode, list) {
+		filters = _modeFiltersCache[mode] ? JSON.parse(JSON.stringify(_modeFiltersCache[mode])) : loadFilters();
+		if (mode === 'ol' || !_isDialogNativeLazyMode()) return;
+		// The native field is authoritative after a tab change. Bitrix may close
+		// it while this tab is inactive, when our search watcher cannot run.
+		const input = _findNativeLifecycleSearchInput(list, mode === 'tasks' ? 'tasks' : 'chats');
+		const query = String(input?.value || '');
+		filters.query = query;
+		_storeBitrixSearchQuery(query, mode === 'tasks' ? 'tasks' : 'chats');
+	}
 	function updateTypeChipsUI(host) {
 		const sel = new Set(Array.isArray(filters.typesSelected) ? filters.typesSelected : []);
 		host.querySelectorAll('#anit_types .anit-type-chip').forEach((btn) => {
@@ -31388,7 +31407,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 			filtersHost = null;
 			_finishDialogTimePendingActivity();
 			_currentPanelMode = needMode; // фиксируем режим ДО loadFilters/saveFilters
-			filters = _modeFiltersCache[needMode] ? JSON.parse(JSON.stringify(_modeFiltersCache[needMode])) : loadFilters();
+			_restorePanelModeFilters(needMode, container);
 			_invalidateDialogControlDomReadCache();
 			_dialogControlNativeViewSig = '';
 			_dialogControlNativeSwitcherSig = '';
@@ -31928,7 +31947,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 			_modeFiltersCache[_currentPanelMode] = JSON.parse(JSON.stringify(filters));
 			_finishDialogTimePendingActivity();
 			_currentPanelMode = needMode;
-			filters = _modeFiltersCache[needMode] ? JSON.parse(JSON.stringify(_modeFiltersCache[needMode])) : loadFilters();
+			_restorePanelModeFilters(needMode, lifecycleContext?.list);
 			_bitrixSearchSourceInput = null;
 			_dialogControlNativeWorkspaceTab = '';
 			_invalidateDialogControlDomReadCache();
