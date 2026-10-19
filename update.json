@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "8.0.43",
-  "release_date": "2026-10-16",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v8.0.43",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v8.0.43",
+  "version": "8.0.44",
+  "release_date": "2026-10-19",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v8.0.44",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v8.0.44",
   "extension_files": [
-    "worker-v8_0_43.js",
+    "worker-v8_0_44.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,8 +33,8 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v8.0.43/extension/injected.js",
-  "changelog": "v8.0.43: restore folder dialogs when native search removes or replaces the cleared input; prevent stale query revival",
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v8.0.44/extension/injected.js",
+  "changelog": "v8.0.44: reconcile native search when switching chat tabs or removing the search field; restore the selected folder and counters",
   "verification_profile": "marker-focused",
   "distribution": "github",
   "release_targets": [
