@@ -59,7 +59,9 @@ $ErrorActionPreference = "SilentlyContinue"
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 function Get-UpdateMetadata {
-    $urls = @($UPDATE_JSON_URL, 'https://api.github.com/repos/dmikhailovspace-commits/bx24-extension/contents/update.json?ref=main')
+    # A no-cache header alone does not invalidate every GitHub CDN copy.
+    $cacheStamp = [DateTime]::UtcNow.Ticks
+    $urls = @("${UPDATE_JSON_URL}?pena_update=$cacheStamp", "https://api.github.com/repos/dmikhailovspace-commits/bx24-extension/contents/update.json?ref=main&pena_update=$cacheStamp")
     foreach ($url in $urls) {
         try {
             $value = Invoke-RestMethod -Uri $url -TimeoutSec 15 -Headers @{Accept='application/vnd.github.raw+json'; 'Cache-Control'='no-cache'; 'User-Agent'='PENA-BX24-Updater'} -ErrorAction Stop

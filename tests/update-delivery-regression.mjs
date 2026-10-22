@@ -142,6 +142,13 @@ function ShowBalloon {}
 `;
  const source=read('installers/windows/updater.ps1').replace('if ($InstallFrom) {',overrides+'\nif ($InstallFrom) {');
  const script=join(temp,'updater.ps1');writeFileSync(script,'\ufeff'+source.replace(/^\uFEFF/,''));
+ // Execute the real metadata reader: simulate a stale CDN response for a bare URL
+ // and a raw-domain outage requiring the API fallback. Neither may hide a release.
+ const original=read('installers/windows/updater.ps1');
+ const reader=original.slice(original.indexOf('function Get-UpdateMetadata {'),original.indexOf('\nfunction ',original.indexOf('function Get-UpdateMetadata {')+1));
+ const metadataScript=join(temp,'metadata.ps1');
+ writeFileSync(metadataScript,'\ufeff'+`$UPDATE_JSON_URL='https://raw.githubusercontent.com/${repo}/main/update.json'\n${reader}\nfunction Log {}\n$global:calls=0\nfunction Invoke-RestMethod { param($Uri,$TimeoutSec,$Headers,$ErrorAction)\n$global:calls++; if ($Uri -notmatch '[?&]pena_update=\\d+') { return @{version='8.0.20'} }; if ($Uri -like '*raw.githubusercontent*') { throw 'raw offline' }; return @{version='99.1.2'}\n}\n$result=Get-UpdateMetadata; if ($result.version -ne '99.1.2' -or $global:calls -ne 2) {exit 13}\n`);
+ const metadataResult=spawnSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',metadataScript],{windowsHide:true,encoding:'utf8',timeout:10000});assert.equal(metadataResult.status,0,metadataResult.stdout+metadataResult.stderr);
  const run=args=>spawnSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',script,...args],{env:{...process.env,LOCALAPPDATA:temp},windowsHide:true,encoding:'utf8',timeout:30000});
  assert.equal(run([]).status,0);assert(!existsSync(join(temp,'applied')));
  assert.equal(run(['-LaunchWithUpdate']).status,0);assert(!existsSync(join(temp,'applied')));
@@ -170,7 +177,7 @@ await phase('macOS real updater migrates changing worker name; missing staged wo
  writeFileSync(join(bin,'curl'),`#!/bin/bash
 url='';out=''
 while [ "$#" -gt 0 ]; do case "$1" in -o) out="$2";shift;; https://*) url="$1";; esac;shift;done
-if [[ "$url" == *update.json* ]]; then cat "$PENA_FIXTURE/update.json";exit;fi
+if [[ "$url" == *update.json* ]]; then [[ "$url" == *pena_update=* ]] || exit 23; cat "$PENA_FIXTURE/update.json";exit;fi
 relative="\${url#*/v99.1.2/}"
 if [ -e "$PENA_FIXTURE/fail-worker" ] && [[ "$relative" == *worker-v99_1_2.js* ]]; then exit 22;fi
 cp "$PENA_FIXTURE/$relative" "$out"

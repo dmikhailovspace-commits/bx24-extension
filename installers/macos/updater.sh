@@ -260,9 +260,10 @@ fi
 log "Установлена версия: $LOCAL_VERSION"
 
 # Получаем update.json
-UPDATE_JSON=$(curl -fsSL --retry 2 --retry-delay 1 --connect-timeout 5 --max-time 15 -H 'Cache-Control: no-cache' "$UPDATE_JSON_URL" 2>/dev/null)
+UPDATE_CACHE_STAMP=$(date +%s)
+UPDATE_JSON=$(curl -fsSL --retry 2 --retry-delay 1 --connect-timeout 5 --max-time 15 -H 'Cache-Control: no-cache' "${UPDATE_JSON_URL}?pena_update=${UPDATE_CACHE_STAMP}" 2>/dev/null)
 if [ -z "$UPDATE_JSON" ]; then
-    UPDATE_JSON=$(curl -fsSL --connect-timeout 5 --max-time 15 -H 'Accept: application/vnd.github.raw+json' 'https://api.github.com/repos/dmikhailovspace-commits/bx24-extension/contents/update.json?ref=main' 2>/dev/null)
+    UPDATE_JSON=$(curl -fsSL --connect-timeout 5 --max-time 15 -H 'Accept: application/vnd.github.raw+json' "https://api.github.com/repos/dmikhailovspace-commits/bx24-extension/contents/update.json?ref=main&pena_update=${UPDATE_CACHE_STAMP}" 2>/dev/null)
 fi
 if [ -z "$UPDATE_JSON" ]; then
     log "Не удалось получить update.json — пробуем завтра."

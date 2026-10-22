@@ -898,7 +898,7 @@ async function readUpdateChannel(force = false) {
     };
     if (!force && updateFailureAt && Date.now() - updateFailureAt < 60000) return unavailable();
     // GitHub's public CDN may retain main/update.json for five minutes.
-    const stamp = Math.floor(Date.now() / 60000);
+    const stamp = force ? Date.now() : Math.floor(Date.now() / 60000);
     for (const url of [`https://raw.githubusercontent.com/${UPDATE_REPO}/main/update.json?pena_update=${stamp}`, `https://api.github.com/repos/${UPDATE_REPO}/contents/update.json?ref=main&pena_update=${stamp}`]) {
       const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 12000);
       try {
