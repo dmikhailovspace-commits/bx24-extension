@@ -869,6 +869,7 @@ async function handleRepositoryMessage(message, sender) {
 const UPDATE_CHANNEL = 'pena.update.v1';
 const UPDATE_REPO = 'dmikhailovspace-commits/bx24-extension';
 let updateRead = null;
+let updateReadForced = false;
 let updateApply = null;
 let updateFailureAt = 0;
 const compareUpdateVersions = (a, b) => {
@@ -879,12 +880,26 @@ const compareUpdateVersions = (a, b) => {
   return 0;
 };
 async function readUpdateChannel(force = false) {
-  if (updateRead) return updateRead;
+  if (updateRead) {
+    if (!force || updateReadForced) return updateRead;
+    // A manual check/approval must not reuse an automatic cache-only read.
+    await updateRead.catch(() => {});
+    return readUpdateChannel(true);
+  }
+  updateReadForced = force;
   updateRead = (async () => {
-    const cached = (await storageGet('local', ['pena.update.channel.v1']))['pena.update.channel.v1'];
-    if (!force && cached?.at <= Date.now() && Date.now() - cached.at < 3600000) return cached;
-    if (!force && updateFailureAt && Date.now() - updateFailureAt < 60000) return cached || null;
-    for (const url of [`https://raw.githubusercontent.com/${UPDATE_REPO}/main/update.json`, `https://api.github.com/repos/${UPDATE_REPO}/contents/update.json?ref=main`]) {
+    const stored = (await storageGet('local', ['pena.update.channel.v1']))['pena.update.channel.v1'];
+    const cached = /^\d+\.\d+\.\d+(\.\d+)?$/.test(stored?.version || '') && Number.isFinite(stored?.at) ? stored : null;
+    const installed = chrome.runtime.getManifest().version;
+    if (!force && cached?.at <= Date.now() && Date.now() - cached.at < 60000 && compareUpdateVersions(cached.version, installed) >= 0) return cached;
+    const unavailable = () => {
+      if (!force && cached) return {...cached, stale:true};
+      throw new Error('Не удалось проверить обновления. Проверьте подключение и повторите.');
+    };
+    if (!force && updateFailureAt && Date.now() - updateFailureAt < 60000) return unavailable();
+    // GitHub's public CDN may retain main/update.json for five minutes.
+    const stamp = Math.floor(Date.now() / 60000);
+    for (const url of [`https://raw.githubusercontent.com/${UPDATE_REPO}/main/update.json?pena_update=${stamp}`, `https://api.github.com/repos/${UPDATE_REPO}/contents/update.json?ref=main&pena_update=${stamp}`]) {
       const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 12000);
       try {
         const response = await fetch(url, {cache:'no-store', credentials:'omit', signal:controller.signal, headers:{Accept:'application/vnd.github.raw+json'}});
@@ -901,8 +916,7 @@ async function readUpdateChannel(force = false) {
       finally { clearTimeout(timer); }
     }
     updateFailureAt = Date.now();
-    if (force) throw new Error('Не удалось проверить обновление. Повторите после восстановления сети.');
-    return cached || null;
+    return unavailable();
   })().finally(() => { updateRead = null; });
   return updateRead;
 }
@@ -925,8 +939,8 @@ async function handleUpdateMessage(message, sender) {
     catch { return {native:false, desktop}; }
   }
   if (message.action === 'check') {
-    const info = await readUpdateChannel();
-    return {available:!!info && compareUpdateVersions(info.version, chrome.runtime.getManifest().version) > 0, version:info?.version, desktop};
+    const info = await readUpdateChannel(message.force === true);
+    return {available:compareUpdateVersions(info.version, chrome.runtime.getManifest().version) > 0, version:info.version, desktop, stale:info.stale === true};
   }
   if (message.action !== 'apply' || !/^\d+\.\d+\.\d+(\.\d+)?$/.test(message.version)) throw new Error('Invalid update action');
   if (updateApply) return updateApply;

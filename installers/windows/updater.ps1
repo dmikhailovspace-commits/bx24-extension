@@ -774,3 +774,6 @@ try {
     ShowBalloon "PENA Agency — ошибка обновления" "Не удалось обновить до v$remoteVersion. Подробности: $LOG_FILE"
     exit 1
 }
+# The native host invokes this script inside PowerShell and reads LASTEXITCODE.
+# Without an explicit success code it can report an error after a successful swap.
+exit 0

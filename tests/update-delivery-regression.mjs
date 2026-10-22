@@ -4,12 +4,45 @@ import {readFileSync,writeFileSync,mkdirSync,mkdtempSync,cpSync,existsSync} from
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {spawnSync} from 'node:child_process';
+import {verifyPublicUpdateChannel} from '../tools/publish-update-channel.mjs';
 const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
 const report={platform:process.platform,phases:[]};
 async function phase(name,fn){try{report.phases.push({name,status:'PASS',evidence:await fn()});}catch(e){report.phases.push({name,status:'FAIL',error:e.stack});}console.log(report.phases.at(-1));}
 const origin='https://portal.test/online/';
 const repo='dmikhailovspace-commits/bx24-extension';
 const metadata=version=>({version,raw_base_url:`https://raw.githubusercontent.com/${repo}/v${version}`,release_url:`https://github.com/${repo}/releases/tag/v${version}`});
+await phase('publication requires public channel readback, including already-published releases',async()=>{
+ const expected=metadata('9.0.1');let calls=0,waits=0;
+ await verifyPublicUpdateChannel(expected,{attempts:3,wait:async()=>waits++,fetchImpl:async(url,options)=>{
+  assert.equal(url,`https://raw.githubusercontent.com/${repo}/main/update.json`);assert.equal(options.credentials,'omit');
+  return {ok:true,json:async()=>++calls===1?metadata('9.0.0'):expected};
+ }});
+ assert.equal(calls,2);assert.equal(waits,1);
+ await assert.rejects(verifyPublicUpdateChannel(expected,{attempts:2,wait:async()=>{},fetchImpl:async()=>({ok:true,json:async()=>metadata('9.0.0')})}));
+ return {stalePublicChannelBlocksRelease:true,retryVerified:true};
+});
+await phase('automatic check sees a new release after one minute; manual check bypasses cache and offline is explicit',async()=>{
+ let listener,now=Date.now(),remote='8.0.20',offline=false,installed='8.0.20';const saved={},calls=[];
+ class Clock extends Date {static now(){return now;}}
+ const chrome={runtime:{id:'test',getManifest:()=>({version:installed,permissions:['nativeMessaging']}),onMessage:{addListener:fn=>listener=fn},onInstalled:{addListener:()=>{}}},storage:{local:{get:(_keys,cb)=>cb(saved),set:(value,cb)=>{Object.assign(saved,value);cb();}}}};
+ vm.runInNewContext(read('extension/background.js'),{chrome,Date:Clock,Map,Set,Promise,URL,AbortController,setTimeout,clearTimeout,fetch:async url=>{
+  calls.push(url);if(offline)throw new Error('offline');return {ok:true,json:async()=>metadata(remote)};
+ }});
+ const check=force=>new Promise(resolve=>listener({channel:'pena.update.v1',action:'check',force},{id:'test',url:origin},resolve));
+ assert.equal((await check()).result.available,false);
+ remote='8.0.21';now+=61000;
+ assert.equal((await check()).result.version,remote);assert.equal(calls.length,2,'Do not reuse the old one-hour cache');
+ remote='8.0.22';
+ const [cached,fresh]=await Promise.all([check(),check(true)]);
+ assert.equal(cached.result.version,'8.0.21');assert.equal(fresh.result.version,remote,'Forced check must not join a cache-only read');
+ assert.equal(calls.length,3);
+ remote=installed='8.0.23';assert.equal((await check()).result.version,remote,'Older cache must not survive an installed version change');
+ offline=true;now+=61000;
+ assert.equal((await check()).result.stale,true);
+ assert.equal((await check(true)).ok,false,'Manual failure cannot claim that the cached version is current');
+ delete saved['pena.update.channel.v1'];assert.equal((await check()).ok,false);
+ return {automaticRefreshMs:61000,manualBypassesCache:true,offlineDoesNotClaimCurrent:true};
+});
 await phase('raw DNS failure uses alternate GitHub endpoint; checks coalesce, persist and never install',async()=>{
  let listener;const saved={},calls=[],native=[];let remote='9.0.1',fail=false;
  const chrome={runtime:{id:'test',getManifest:()=>({version:'8.0.20',permissions:['nativeMessaging']}),onMessage:{addListener:fn=>listener=fn},onInstalled:{addListener:()=>{}},sendNativeMessage:(name,request,cb)=>{native.push(request);cb({ok:true,protocol:1});}},storage:{local:{get:(_keys,cb)=>cb(saved),set:(value,cb)=>{Object.assign(saved,value);cb();}}}};
@@ -39,7 +72,7 @@ await phase('closed-shadow consent requires a real click and preserves visible d
    window.chrome={runtime:{sendMessage:(message,callback)=>{requests.push(message);callback({ok:true,result:message.action==='check'?{available:true,version:'9.0.1',desktop:mode.desktop}:message.action==='prepare'?mode:{started:true}});}}};
   },mode);
   const content=read('extension/content.js');
-  await page.addScriptTag({content:content.slice(content.indexOf('  // Consent lives'),content.indexOf("  const _enabledKey"))});
+  await page.addScriptTag({content:"const _releaseVersion='8.0.20';\n"+content.slice(content.indexOf('  // Consent lives'),content.indexOf("  const _enabledKey"))});
   await page.evaluate(()=>document.dispatchEvent(new Event('pena-update-slot-ready')));
   await page.waitForFunction(()=>testRoot.querySelector('.badge').hidden===false);
   assert.equal(await page.evaluate(()=>shadowMode),'closed');
@@ -62,6 +95,39 @@ await phase('closed-shadow consent requires a real click and preserves visible d
  } finally {await browser.close();}
  return {closedShadow:true,syntheticInstalls:0,trustedInstalls:1};
 });
+await phase('update control remains visible without a release and supports manual check, retry and remount',async()=>{
+ if(process.env.PENA_UPDATE_PLATFORM_ONLY)return {coveredOn:'Windows Chromium verification job'};
+ const {chromium}=await import('playwright');const browser=await chromium.launch({headless:true});
+ try {
+  const page=await browser.newPage({viewport:{width:800,height:600}});
+  await page.setContent('<span class="pena-native-update-slot"></span>');
+  await page.evaluate(()=>{
+   const attach=Element.prototype.attachShadow;Element.prototype.attachShadow=function(options){return window.testRoot=attach.call(this,options);};
+   window.requests=[];window.remote='8.0.20';window.fail=false;
+   window.chrome={runtime:{sendMessage:(message,callback)=>{requests.push(message);callback(window.fail?{ok:false,error:'Не удалось проверить обновления. Повторите.'}:{ok:true,result:message.action==='check'?{available:remote!=='8.0.20',version:remote,desktop:true}:{native:true,desktop:true}});}}};
+  });
+  const content=read('extension/content.js');
+  await page.addScriptTag({content:"const _releaseVersion='8.0.20';\n"+content.slice(content.indexOf('  // Consent lives'),content.indexOf("  const _enabledKey"))});
+  await page.evaluate(()=>document.dispatchEvent(new Event('pena-update-slot-ready')));
+  assert.equal(await page.evaluate(()=>testRoot.querySelector('.badge').textContent),'Обновления');
+  const click=async selector=>{const point=await page.evaluate(selector=>{const r=testRoot.querySelector(selector).getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};},selector);await page.mouse.click(point.x,point.y);};
+  await click('.badge');
+  await page.waitForFunction(()=>testRoot.querySelector('[role=status]').textContent.includes('актуальная версия 8.0.20'));
+  assert.equal(await page.evaluate(()=>requests.at(-1).force),true);
+  await page.keyboard.press('Escape');
+  await page.evaluate(()=>{window.fail=true;});await click('.badge');
+  await page.waitForFunction(()=>testRoot.querySelector('[role=status]').textContent.includes('Не удалось'));
+  assert.equal(await page.evaluate(()=>!!testRoot.querySelector('.primary')),false);
+  await page.evaluate(()=>{window.fail=false;window.remote='9.0.1';});await click('.actions button');
+  await page.waitForFunction(()=>testRoot.querySelector('.primary'));
+  assert.equal(await page.evaluate(()=>testRoot.querySelector('.badge').textContent),'Доступно обновление');
+  assert.equal(await page.evaluate(()=>requests.filter(r=>r.action==='apply').length),0);
+  await page.evaluate(()=>{document.querySelector('.pena-native-update-slot').replaceWith(Object.assign(document.createElement('span'),{className:'pena-native-update-slot'}));document.dispatchEvent(new Event('pena-update-slot-ready'));});
+  assert.equal(await page.evaluate(()=>testRoot.host.isConnected&&!testRoot.querySelector('.badge').hidden),true);
+  await page.screenshot({path:'tests/artifacts/update-visible-control.png'});
+ } finally {await browser.close();}
+ return {alwaysVisible:true,forcedCheck:true,errorRetry:true,remount:true};
+});
 await phase('desktop default and stale approval never publish; approved Windows version reaches atomic updater',async()=>{
  if(process.platform!=='win32')return {coveredOn:'Windows verification job'};
  const temp=mkdtempSync(join(tmpdir(),'pena-consent-')),local=join(temp,'PENA Agency','Extension');mkdirSync(local,{recursive:true});
@@ -81,6 +147,8 @@ function ShowBalloon {}
  assert.equal(run(['-LaunchWithUpdate']).status,0);assert(!existsSync(join(temp,'applied')));
  const stale=run(['-ApprovedVersion','99.1.1']);assert.equal(stale.status,1,stale.stdout+stale.stderr);assert(!existsSync(join(temp,'applied')));
  const result=run(['-ApprovedVersion','99.1.2']);assert.equal(result.status,0,result.stdout+result.stderr);assert(existsSync(join(temp,'applied')));
+ const nested=spawnSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-Command',`$global:LASTEXITCODE=7; & '${script.replaceAll("'","''")}' -ApprovedVersion '99.1.2'; if ($LASTEXITCODE -ne 0) { exit 12 }`],{env:{...process.env,LOCALAPPDATA:temp},windowsHide:true,encoding:'utf8',timeout:30000});
+ assert.equal(nested.status,0,'Successful updater must clear a prior LASTEXITCODE for the native host');
  const frame=Buffer.from(JSON.stringify({action:'status'}));const header=Buffer.alloc(4);header.writeUInt32LE(frame.length);
  const host=spawnSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',resolve('installers/windows/pena_host.ps1')],{input:Buffer.concat([header,frame]),env:{...process.env,LOCALAPPDATA:temp},windowsHide:true,timeout:10000});
  assert.equal(host.status,0,`native status=${host.status}, stderr=${host.stderr}, stdout=${host.stdout.toString('hex')}`);assert.equal(host.stdout.readUInt32LE(0),host.stdout.length-4);assert.equal(JSON.parse(host.stdout.subarray(4)).protocol,1);

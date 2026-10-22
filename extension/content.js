@@ -24,7 +24,7 @@
   // Consent lives in the isolated world and a closed shadow root. Page events
   // may request mounting, but can never request installation or forge a click.
   (() => {
-    let host, root, button, panel, info, pending = false, checkedAt = 0, checking = null, installTimer;
+    let host, root, button, panel, info, pending = false, checkedAt = 0, checking = null, installTimer, opened = 0;
     const send = (action, fields = {}) => new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Помощник не ответил. Повторите.')), 30000);
       try { chrome.runtime.sendMessage({channel:'pena.update.v1',action,...fields}, response => {
@@ -33,14 +33,14 @@
         else resolve(response.result);
       }); } catch (error) {clearTimeout(timer);reject(error);}
     });
-    const close = () => {if (!panel) return; if (typeof panel.hidePopover==='function' && panel.matches(':popover-open')) panel.hidePopover(); panel.hidden=true;button?.setAttribute('aria-expanded','false');};
+    const close = () => {opened++;if (!panel) return; if (typeof panel.hidePopover==='function' && panel.matches(':popover-open')) panel.hidePopover(); panel.hidden=true;button?.setAttribute('aria-expanded','false');};
     const position = () => {
       if (!panel || panel.hidden || typeof panel.showPopover !== 'function') return;
       const rect=button.getBoundingClientRect();
       panel.style.left=`${Math.max(8,Math.min(rect.left,innerWidth-panel.offsetWidth-8))}px`;
       panel.style.top=`${Math.max(8,Math.min(rect.bottom+8,innerHeight-panel.offsetHeight-8))}px`;
     };
-    const render = () => { if (button) {button.hidden=!info?.available;button.textContent=pending?'Обновляем…':'Доступно обновление';} };
+    const render = () => { if (button) {button.hidden=false;button.textContent=pending?'Обновляем…':info?.available?'Доступно обновление':'Обновления';button.title=`Установлена версия ${_releaseVersion}. Проверить обновления`;} };
     const check = () => {
       if (!host?.isConnected || document.visibilityState==='hidden' || navigator.onLine===false || checking || Date.now()-checkedAt<60000) return;
       checkedAt=Date.now();
@@ -49,17 +49,35 @@
     const open = async event => {
       if (!event.isTrusted) return;
       close();panel.replaceChildren();panel.hidden=false;button.setAttribute('aria-expanded','true');
-      const title=document.createElement('strong');title.textContent=`Обновление ${info.version}`;
-      const text=document.createElement('p');text.setAttribute('role','status');text.textContent='Проверяем способ установки…';
+      const requestId=opened;
+      const title=document.createElement('strong');title.textContent='Обновления';
+      const text=document.createElement('p');text.setAttribute('role','status');text.textContent='Проверяем новую версию…';
       const actions=document.createElement('div');actions.className='actions';
       const later=document.createElement('button');later.textContent='Позже';later.addEventListener('click',()=>{close();button.focus();});
       actions.append(later);panel.append(title,text,actions);
       if (typeof panel.showPopover==='function') panel.showPopover();
       position();later.focus();
+      if (pending) {text.textContent='Загружаем обновление. Bitrix24 перезапустится после проверки файлов.';position();return;}
+      const retry=document.createElement('button');retry.textContent='Проверить снова';retry.addEventListener('click',open);
+      try {
+        const value=await send('check',{force:true});
+        if (panel.hidden || requestId!==opened) return;
+        if (value.stale) throw new Error('Не удалось проверить обновления. Проверьте подключение и повторите.');
+        info=value;checkedAt=Date.now();render();
+      } catch (error) {
+        if (panel.hidden || requestId!==opened) return;
+        text.textContent=error.message;actions.prepend(retry);position();return;
+      }
+      if (!info.available) {
+        text.textContent=`Установлена актуальная версия ${_releaseVersion}.`;
+        later.textContent='Закрыть';actions.prepend(retry);position();return;
+      }
+      title.textContent=`Обновление ${info.version}`;
+      text.textContent='Проверяем способ установки…';
       const approved=info.version;
       let mode;
       try {mode=await send('prepare');} catch {mode={native:false,desktop:info.desktop};}
-      if (panel.hidden || info.version!==approved) return;
+      if (panel.hidden || requestId!==opened || info.version!==approved) return;
       if (pending) {text.textContent='Загружаем обновление. Bitrix24 перезапустится после проверки файлов.';position();return;}
       if (mode.native) {
         text.textContent='Bitrix24 перезапустится. Сохраните незавершённую работу.';
@@ -107,6 +125,7 @@
         document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!panel.hidden){close();button.focus();}},true);
         window.addEventListener('resize',position);window.addEventListener('scroll',position,true);
         window.addEventListener('online',()=>{checkedAt=0;check();});
+        window.addEventListener('focus',check);
         document.addEventListener('visibilitychange',check);
         setInterval(check,60000);
       }

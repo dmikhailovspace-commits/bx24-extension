@@ -23,7 +23,21 @@ export function validateUpdatePublication({local, published, release, latest, cu
     }
   }
 }
-export function publishUpdateChannel() {
+export async function verifyPublicUpdateChannel(local, {fetchImpl=fetch, wait=ms=>new Promise(resolve=>setTimeout(resolve,ms)), attempts=12} = {}) {
+  const url='https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/main/update.json';
+  let failure;
+  for (let attempt=0; attempt<attempts; attempt++) {
+    try {
+      const response=await fetchImpl(url,{cache:'no-store',credentials:'omit',headers:{'Cache-Control':'no-cache'},signal:AbortSignal.timeout(15000)});
+      assert.equal(response.ok,true,'Public update channel is unavailable');
+      assert.deepEqual(await response.json(),local,'Public update channel still points to a different release');
+      return;
+    } catch (error) { failure=error; }
+    if (attempt+1<attempts) await wait(10000);
+  }
+  throw failure;
+}
+export async function publishUpdateChannel() {
   const repo='dmikhailovspace-commits/bx24-extension';
   const api=(path,body)=>JSON.parse(execFileSync('gh',['api',`repos/${repo}/${path}`,...(body?['--method','PUT','--input','-']:[])],{encoding:'utf8',windowsHide:true,input:body?JSON.stringify(body):undefined}));
   const local=JSON.parse(readFileSync(new URL('../update.json',import.meta.url),'utf8'));
@@ -31,9 +45,13 @@ export function publishUpdateChannel() {
   const currentFile=api('contents/update.json?ref=main'),current=decode(currentFile);
   const published=decode(api(`contents/update.json?ref=v${local.version}`));
   validateUpdatePublication({local,published,current,release:api(`releases/tags/v${local.version}`),latest:api('releases/latest')});
-  if(JSON.stringify(current)===JSON.stringify(local)){console.log(`Update channel already at ${local.version}`);return;}
-  const result=api('contents/update.json',{message:`Point desktop update channel to verified v${local.version}`,branch:'main',sha:currentFile.sha,content:Buffer.from(JSON.stringify(local,null,2)+'\n').toString('base64')});
-  assert.deepEqual(decode(api('contents/update.json?ref=main')),local,'Read back update channel');
-  console.log(`Update channel ${local.version}: ${result.commit.sha}`);
+  if(JSON.stringify(current)===JSON.stringify(local)) console.log(`Update channel already at ${local.version}`);
+  else {
+    const result=api('contents/update.json',{message:`Point desktop update channel to verified v${local.version}`,branch:'main',sha:currentFile.sha,content:Buffer.from(JSON.stringify(local,null,2)+'\n').toString('base64')});
+    assert.deepEqual(decode(api('contents/update.json?ref=main')),local,'Read back update channel');
+    console.log(`Update channel ${local.version}: ${result.commit.sha}`);
+  }
+  await verifyPublicUpdateChannel(local);
+  console.log(`Public desktop update channel verified: ${local.version}`);
 }
-if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url))publishUpdateChannel();
+if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url))await publishUpdateChannel();
