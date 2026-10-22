@@ -110,6 +110,17 @@ try {
 	});
 	assert.ok(searchScroll.scrollHeight > searchScroll.clientHeight + 1, `Native ${mode} search results must have a scroll range`);
 	assert.equal(searchScroll.allowed, true, `PENA blocked the native ${mode} search results wheel`);
+	const wrapperWheel = await page.evaluate(() => {
+		const results = document.querySelector('.test-host:not([hidden]) .bx-im-chat-search__container');
+		const list = window.nativeTestList;
+		const ordinaryScroll = list.querySelector(':scope > .bx-im-list-base__container > [class*="scroll-container"],:scope > .bx-im-list-base__container > [data-test-scroll-owner]');
+		if (!ordinaryScroll) throw Error('Ordinary Bitrix list scroll owner is missing');
+		ordinaryScroll.scrollTop = ordinaryScroll.scrollHeight;
+		const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 70 });
+		return { allowed: results.parentElement.dispatchEvent(event), query: window.stability.query() };
+	});
+	assert.equal(wrapperWheel.query, 'first');
+	assert.equal(wrapperWheel.allowed, true, `PENA blocked the native ${mode} search wrapper wheel`);
 	const searchPoint = await page.locator(`${mode==='tasks'?'.task-host':'.recent-host'} .bx-im-chat-search__container`).evaluate(results => {
 		const rect = results.firstElementChild.getBoundingClientRect();
 		return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
@@ -117,6 +128,20 @@ try {
 	await page.mouse.move(searchPoint.x, searchPoint.y);
 	await page.mouse.wheel(0, 70);
 	await page.waitForFunction(() => document.querySelector('.test-host:not([hidden]) .bx-im-chat-search__container')?.scrollTop > 0);
+	const wrapperPoint = await page.evaluate(() => {
+		const results = document.querySelector('.test-host:not([hidden]) .bx-im-chat-search__container');
+		const wrapper = results.parentElement;
+		results.style.height = 'auto';
+		results.style.overflowY = 'visible';
+		wrapper.style.height = '88px';
+		wrapper.style.overflowY = 'auto';
+		wrapper.style.paddingTop = '20px';
+		const rect = wrapper.getBoundingClientRect();
+		return { x: rect.left + rect.width / 2, y: rect.top + 8 };
+	});
+	await page.mouse.move(wrapperPoint.x, wrapperPoint.y);
+	await page.mouse.wheel(0, 70);
+	await page.waitForFunction(() => document.querySelector('.test-host:not([hidden]) .bx-im-chat-search__container')?.parentElement.scrollTop > 0);
  await input.fill('');await page.waitForTimeout(100);
  // Bitrix's EventEmitter retains the bound callback from created(), even after
  // Vue event props have been refreshed. Exercise that bypass, not the wrapper.

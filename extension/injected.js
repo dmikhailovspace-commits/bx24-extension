@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.45';
+	window.__ANITREC_RUNNING__ = '8.0.46';
 
-	const VER = '8.0.45';
+	const VER = '8.0.46';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -21578,7 +21578,10 @@ if (_presetChannel) {
 		if (document._penaDialogControlNativeInteractionsAttached) return;
 		document._penaDialogControlNativeInteractionsAttached = true;
 		document.addEventListener('wheel', (e) => {
-			if (!_isDialogControlNativeMode() || _dialogControlActive || !_isDialogControlNativeListWheelTarget(e.target)) return;
+			// Bitrix owns wheel scrolling while a search query is active. Its results
+			// can be wrapped by an unnamed scroll owner inside the ordinary list.
+			if (!_isDialogControlNativeMode() || _dialogControlActive || String(filters.query || '').trim() ||
+				!_isDialogControlNativeListWheelTarget(e.target)) return;
 			const dy = _getDialogControlNativeWheelDelta(e);
 			if (!dy || Math.abs(dy) <= Math.abs(Number(e.deltaX) || 0)) return;
 			const scrollEl = _getDialogControlNativeListScrollHost(findContainer(), e.target);
