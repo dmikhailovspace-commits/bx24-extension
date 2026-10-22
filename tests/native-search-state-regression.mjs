@@ -98,6 +98,25 @@ try {
  }));
  assert.ok(loadingFrames.every(frame=>frame.panel&&frame.same&&frame.context&&frame.duplicate===1),'Native search loading must retain the same visible panel and list owner on every frame');
  assert.equal(await page.locator('.bx-im-search-item-layout__container:visible').count(),4,'Native delayed search results must arrive');
+	const searchScroll = await page.evaluate(() => {
+		const results = document.querySelector('.test-host:not([hidden]) .bx-im-chat-search__container');
+		if (!results) throw Error('Native search results are missing');
+		results.style.height = '88px';
+		results.style.overflowY = 'auto';
+		for (const row of results.children) row.style.minHeight = '44px';
+		const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 70 });
+		const allowed = results.firstElementChild.dispatchEvent(event);
+		return { allowed, clientHeight: results.clientHeight, scrollHeight: results.scrollHeight };
+	});
+	assert.ok(searchScroll.scrollHeight > searchScroll.clientHeight + 1, `Native ${mode} search results must have a scroll range`);
+	assert.equal(searchScroll.allowed, true, `PENA blocked the native ${mode} search results wheel`);
+	const searchPoint = await page.locator(`${mode==='tasks'?'.task-host':'.recent-host'} .bx-im-chat-search__container`).evaluate(results => {
+		const rect = results.firstElementChild.getBoundingClientRect();
+		return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+	});
+	await page.mouse.move(searchPoint.x, searchPoint.y);
+	await page.mouse.wheel(0, 70);
+	await page.waitForFunction(() => document.querySelector('.test-host:not([hidden]) .bx-im-chat-search__container')?.scrollTop > 0);
  await input.fill('');await page.waitForTimeout(100);
  // Bitrix's EventEmitter retains the bound callback from created(), even after
  // Vue event props have been refreshed. Exercise that bypass, not the wrapper.

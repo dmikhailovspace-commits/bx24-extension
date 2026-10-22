@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.44';
+	window.__ANITREC_RUNNING__ = '8.0.45';
 
-	const VER = '8.0.44';
+	const VER = '8.0.45';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -14079,6 +14079,9 @@ if (_presetChannel) {
 	function _isDialogControlNativeListWheelTarget(target) {
 		const el = target?.nodeType === 1 ? target : target?.parentElement || null;
 		if (!el || el.closest?.('.pena-native-command-popover,.dialog-control-palette,[data-dialog-control-context-menu="1"]')) return false;
+		// Search results have their own Bitrix scroll owner inside the same list
+		// branch. The ordinary task list may be short while the results are long.
+		if (el.closest?.('.bx-im-chat-search__container,.bx-im-search-item__container,.bx-im-search-item-layout__container,[data-pena-native-search-row],.bx-im-search-result-item,.bx-im-search-item,.bx-im-dialog-search-result-item,.bx-im-list-search-item')) return false;
 		if (_dialogControlManagedViewport?.isConnected && _dialogControlManagedViewport.contains(el)) return true;
 		const container = findContainer();
 		if (!container) return false;
