@@ -457,6 +457,8 @@
   });
 
   global.__PENA_DIALOG_REPOSITORY__ = Object.freeze({
+    todoList: scope => requestOnce('todo.list', scope),
+    todoSave: (scope, payload) => requestOnce('todo.save', scope, payload),
     get,
     commit: (scope, records, meta, options) => mutate('catalog.commit', scope, records, [], meta, options),
     patch: (scope, records, deletedIds, meta, options) => mutate('catalog.patch', scope, records, deletedIds, meta, options),

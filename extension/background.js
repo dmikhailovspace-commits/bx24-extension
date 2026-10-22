@@ -774,6 +774,56 @@ async function acquireSync(scope, payload, sender) {
   };
 }
 
+// Personal todos use their own snapshot. Catalog refreshes and leases must never
+// replace it. All writers are serialized by the worker; item revisions prevent
+// an editor in another window from overwriting a newer edit or deletion.
+async function readTodosUnlocked(scope) {
+  const key = `pena.todos.v1.${scopeId(scope)}`;
+  const stored = (await storageGet('local', key))[key];
+  if (stored != null && (stored.version !== 1 || !Array.isArray(stored.items))) {
+    throw repositoryError('todo_corrupt', 'Не удалось прочитать список дел. Данные сохранены без изменений.');
+  }
+  return stored || { version: 1, revision: 0, items: [] };
+}
+
+async function saveTodoUnlocked(scope, payload) {
+  const snapshot = await readTodosUnlocked(scope);
+  const id = String(payload.id || '');
+  const operationId = String(payload.operationId || '');
+  if (!/^[a-zA-Z0-9_-]{8,100}$/.test(id) || !operationId || operationId.length > 120) {
+    throw repositoryError('todo_invalid', 'Некорректное дело');
+  }
+  const previous = snapshot.items.find(item => item.id === id);
+  if (previous?.operationId === operationId) return { item: previous, revision: snapshot.revision };
+  if (!Number.isSafeInteger(payload.baseRevision) || payload.baseRevision !== (previous?.revision || 0)) {
+    throw repositoryError('todo_conflict', 'Дело изменено в другом окне. Откройте его заново.');
+  }
+  const changes = payload.changes || {};
+  const title = String(changes.title ?? previous?.title ?? '').replace(/\s+/g, ' ').trim();
+  const note = String(changes.note ?? previous?.note ?? '').trim();
+  const dueDate = String(changes.dueDate ?? previous?.dueDate ?? '');
+  const validDate = !dueDate || (/^\d{4}-\d{2}-\d{2}$/.test(dueDate) && Number.isFinite(Date.parse(dueDate)) && new Date(dueDate).toISOString().slice(0, 10) === dueDate);
+  if (!title || title.length > 240 || note.length > 2000 || !validDate) throw repositoryError('todo_invalid', 'Проверьте название и срок дела');
+  let task = changes.task === undefined ? previous?.task : changes.task;
+  if (task != null) {
+    if (!/^[1-9]\d*$/.test(String(task.taskId || ''))) throw repositoryError('todo_invalid', 'Некорректная задача Bitrix');
+    task = { taskId: String(task.taskId), title: String(task.title || '').slice(0, 500), dialogId: String(task.dialogId || '').slice(0, 100) };
+  }
+  if (!previous && snapshot.items.filter(item => !item.deletedAt).length >= 2000) throw repositoryError('todo_limit', 'В списке уже 2000 дел. Удалите ненужные.');
+  const now = Date.now();
+  const item = { id, title, note, dueDate, task: task || null, createdAt: previous?.createdAt || now, updatedAt: now,
+    doneAt: changes.done === undefined ? previous?.doneAt || 0 : (changes.done ? now : 0),
+    deletedAt: changes.deleted === undefined ? previous?.deletedAt || 0 : (changes.deleted ? now : 0),
+    revision: (previous?.revision || 0) + 1, operationId };
+  // Retain deletion revisions for stale editors and Undo, with a bounded history.
+  const items = snapshot.items.filter(row => row.id !== id);
+  items.push(item);
+  const tombstones = items.filter(row => row.deletedAt).sort((a, b) => b.deletedAt - a.deletedAt).slice(0, 500);
+  const next = { version: 1, revision: snapshot.revision + 1, items: [...items.filter(row => !row.deletedAt), ...tombstones] };
+  await storageSet('local', { [`pena.todos.v1.${scopeId(scope)}`]: next });
+  return { item, revision: next.revision };
+}
+
 async function handleRepositoryMessage(message, sender) {
   const scope = normalizeScope(message.scope);
   const senderUrls = [sender?.url, sender?.tab?.url].filter(Boolean);
@@ -786,6 +836,13 @@ async function handleRepositoryMessage(message, sender) {
   const context = { sender, protocol };
   try {
     switch (message.command) {
+      case 'todo.list':
+        return await serialForScope(scope, async () => {
+          const snapshot = await readTodosUnlocked(scope);
+          return { revision: snapshot.revision, items: snapshot.items.filter(item => !item.deletedAt) };
+        });
+      case 'todo.save':
+        return await serialForScope(scope, () => saveTodoUnlocked(scope, payload));
       case 'catalog.get':
         return await serialForScope(scope, () => readCatalogUnlocked(scope, { migrateLegacy: true }));
       case 'catalog.commit':

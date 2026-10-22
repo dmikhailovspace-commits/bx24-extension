@@ -803,6 +803,72 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 .pena-native-filter-panel{position:relative;padding-right:42px}
 .pena-native-filter-panel>.pena-native-popover-close{position:absolute;right:6px;top:6px}
 
+/* Personal todos live in a separate drawer; scrolling belongs to its own list. */
+.pena-native-todo-modal{position:fixed;inset:0;z-index:2147483647;display:block;margin:0;padding:0;border:0;width:100%;height:100%;max-width:none;max-height:none;background:transparent;overflow:visible}
+.pena-native-todo-modal::backdrop{background:transparent}
+.pena-native-todo-backdrop{position:absolute;inset:0;background:rgba(15,23,42,.36)}
+.pena-native-todo-panel.pena-native-command-popover{position:fixed!important;inset:16px 16px 16px auto!important;transform:none!important;display:flex;flex-direction:column;width:min(560px,calc(100vw - 32px));height:calc(100dvh - 32px);max-height:none;margin:0!important;padding:0;overflow:hidden;border:1px solid #d6deea!important;border-radius:16px;background:#f7f9fc!important;color:#182237;box-shadow:0 20px 70px #0f172a40;font:14px/1.45 "Onest Variable",Onest,Arial,sans-serif;text-align:left;z-index:1;box-sizing:border-box}
+.pena-native-todo-panel *{box-sizing:border-box}
+.pena-native-todo-panel [hidden]{display:none!important}
+.pena-native-todo-panel input,.pena-native-todo-panel textarea{min-width:0;max-width:100%;border:1px solid #d6deea;border-radius:8px;background:white;color:#182237;font:inherit;padding:9px 11px;outline:none;box-shadow:none}
+.pena-native-todo-panel button{font-family:inherit}
+.pena-native-todo-panel :is(button,input,textarea):focus-visible{outline:2px solid #4389ec;outline-offset:2px}
+.pena-native-todo-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex:none;padding:18px 20px;background:white;border-bottom:1px solid #e2e7ef}
+.pena-native-todo-head>div{display:flex;align-items:baseline;gap:12px;min-width:0}
+.pena-native-todo-head strong{font:600 16px "Unbounded Variable",Unbounded,sans-serif;letter-spacing:-.4px}
+.pena-native-todo-count{font-size:12px;color:#66758c;white-space:nowrap}
+.pena-native-todo-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:34px;padding:6px 11px;border:1px solid #d6deea;border-radius:8px;background:#fff;color:#31425c;font:500 13px/1.4 "Onest Variable",Onest,Arial,sans-serif;cursor:pointer;text-align:center;box-shadow:none}
+.pena-native-todo-btn:hover{background:#edf3fc;border-color:#bed0e7}
+.pena-native-todo-btn.--primary{background:#2768d7;border-color:#2768d7;color:white}
+.pena-native-todo-btn.--primary:hover{background:#1c56bb}
+.pena-native-todo-btn:disabled{opacity:.5;cursor:default}
+.pena-native-todo-add{display:flex;gap:8px;padding:18px 20px 12px;flex:none;margin:0}
+.pena-native-todo-new-title{flex:1;width:0}
+.pena-native-todo-toolbar{display:flex;flex-direction:column;gap:12px;padding:0 20px 16px;flex:none}
+.pena-native-todo-filters{display:flex;gap:4px}
+.pena-native-todo-filters button{flex:1;border-color:transparent;background:transparent}
+.pena-native-todo-filters button[aria-pressed=true]{background:#e4edfc;color:#235fbf}
+.pena-native-todo-filter-query{width:100%;font-size:13px!important}
+.pena-native-todo-list{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding:0 12px 16px 20px}
+.pena-native-todo-row{display:flex;align-items:flex-start;gap:12px;margin:0 0 8px;padding:14px 12px;background:#fff;border:1px solid #e0e6ef;border-radius:10px}
+.pena-native-todo-check{width:22px;min-height:22px;height:22px;flex:none;padding:0;margin-top:3px;border-radius:6px}
+.pena-native-todo-row.--done .pena-native-todo-check{background:#e8f5ee;border-color:#acd4bc;color:#287545}
+.pena-native-todo-row-body{min-width:0;flex:1}
+.pena-native-todo-title{display:block;width:100%;min-height:0;padding:1px 0;border:0;border-radius:3px;background:transparent;text-align:left;color:#182237;font-size:14px;font-weight:600;line-height:1.5;overflow-wrap:anywhere}
+.pena-native-todo-title:hover{background:transparent;color:#2768d7}
+.pena-native-todo-row.--done .pena-native-todo-title{color:#768298;text-decoration:line-through}
+.pena-native-todo-note{margin:4px 0 0;color:#65738b;font-size:12px;white-space:pre-line;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow-wrap:anywhere}
+.pena-native-todo-meta{display:flex;flex-direction:column;gap:3px;margin-top:6px;font-size:11px;color:#6f7c91}
+.pena-native-todo-meta .--overdue{color:#b34b42}
+.pena-native-todo-task-link{display:block;min-height:0;max-width:100%;padding:0;border:0;background:transparent;color:#57769f;font-size:11px;text-align:left;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.pena-native-todo-start{flex:none;font-size:12px;min-height:28px;padding:4px 8px;margin-top:1px}
+.pena-native-todo-empty{display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;max-width:340px;margin:60px auto;padding:0 12px;color:#718096;font-size:13px}
+.pena-native-todo-empty strong{font-size:18px;font-weight:600;color:#35465f}
+.pena-native-todo-footer{display:flex;flex-direction:column;gap:8px;flex:none;border-top:1px solid #e2e7ef;padding:12px 20px;color:#7a879a;font-size:11px;background:white}
+.pena-native-todo-undo{display:flex;align-items:center;justify-content:space-between;color:#35465f;font-size:13px}
+.pena-native-todo-status{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 20px;color:#a4413c;font-size:12px;background:#fff3f0;flex:none}
+.pena-native-todo-timer{flex:none;margin:14px 20px 0;padding:12px;border-radius:10px;background:#eaf1fd;border:1px solid #cbdcf5}
+.pena-native-todo-timer-line{display:flex;align-items:flex-start;gap:10px;justify-content:space-between}
+.pena-native-todo-timer-title{font-size:13px;min-width:0;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.pena-native-todo-clock{font:600 18px/1.4 Consolas,monospace;flex:none;color:#235fbf}
+.pena-native-todo-timer-note{font-size:11px;color:#5d7292;margin:6px 0 10px}
+.pena-native-todo-timer-actions{display:flex;flex-wrap:wrap;gap:6px}
+.pena-native-todo-timer-actions button{font-size:12px}
+.pena-native-todo-editor{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:18px;padding:20px;margin:0}
+.pena-native-todo-editor label{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:500;color:#52647d}
+.pena-native-todo-editor input,.pena-native-todo-editor textarea{width:100%;font-size:14px}
+.pena-native-todo-editor textarea{resize:vertical;min-height:80px}
+.pena-native-todo-edit-date{max-width:220px!important}
+.pena-native-todo-task-field{display:flex;flex-direction:column;gap:6px}
+.pena-native-todo-task-selected{justify-content:flex-start;text-align:left;overflow-wrap:anywhere}
+.pena-native-todo-task-results{max-height:200px;overflow-y:auto;overscroll-behavior:contain;border:1px solid #d6deea;border-radius:8px;background:#fff;padding:4px}
+.pena-native-todo-task-option{display:block;width:100%;text-align:left;justify-content:flex-start;border:0;border-radius:5px;overflow-wrap:anywhere}
+.pena-native-todo-task-option[aria-selected=true]{background:#eaf1fd;color:#235fbf}
+.pena-native-todo-hint{font-size:11px;color:#7a879a;margin:4px 0}
+.pena-native-todo-edit-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto;padding-top:8px}
+.pena-native-todo-delete{margin-left:auto;color:#a94b47}
+@media(max-width:480px){.pena-native-todo-panel.pena-native-command-popover{inset:8px!important;width:calc(100vw - 16px);height:calc(100dvh - 16px);border-radius:12px}.pena-native-todo-head{padding:14px}.pena-native-todo-add{padding:14px 14px 10px}.pena-native-todo-toolbar{padding:0 14px 12px}.pena-native-todo-list{padding-left:14px;padding-right:6px}.pena-native-todo-row{gap:8px;padding:10px}.pena-native-todo-timer{margin:12px 14px 0}.pena-native-todo-editor{padding:14px}.pena-native-todo-footer{padding:10px 14px}.pena-native-todo-count{font-size:11px}.pena-native-todo-head strong{font-size:14px}}
+
 /* One authoritative visual system for the daily time workspace */
 .pena-native-folder-switcher.--time-modal-open{contain:style}
 .pena-native-time-modal{position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;padding:16px;box-sizing:border-box;margin:0;border:0;width:100%;height:100%;max-width:none;max-height:none;background:transparent;color:inherit;overflow:visible}

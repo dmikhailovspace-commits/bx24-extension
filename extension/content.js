@@ -257,6 +257,14 @@
 	};
 
   const _publishRepositoryChange = (key, change) => {
+    const todoMatch = String(key || '').match(/^pena\.todos\.v1\.([^~]+)~([^.]*)$/);
+    if (todoMatch) {
+      let portalHost, userId;
+      try { portalHost = decodeURIComponent(todoMatch[1]); userId = decodeURIComponent(todoMatch[2]); } catch { return; }
+      if (portalHost !== String(location.hostname || '').toLowerCase()) return;
+      document.dispatchEvent(new CustomEvent('pena-todo-changed', { detail: JSON.stringify({ scope: { portalHost, userId }, revision: change?.newValue?.revision || 0 }) }));
+      return;
+    }
     const match = String(key || '').match(_repositoryManifestPattern);
     if (!match || !change?.newValue) return;
     let portalHost = '';

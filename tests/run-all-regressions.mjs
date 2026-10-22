@@ -37,6 +37,8 @@ if (Number.parseInt(process.versions.node.split('.')[0], 10) < minimumNodeMajor 
 }
 
 const suites = [
+  'todo-repository-regression.mjs',
+  'todo-panel-regression.mjs',
   'update-delivery-regression.mjs',
   'native-startup-time-contention.mjs',
   'native-mention-interference-regression.mjs',
