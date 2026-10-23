@@ -7,6 +7,20 @@ const model=require('../extension/native-catalog.js');
 const condition=(field,op,value)=>({field,op,value});
 const rule=(id,conditions,match='all')=>({id,enabled:true,folderId:'folder:test',conditions,match});
 const folders=new Set(['folder:test']);
+const verifyControlAlignment=async()=>{
+ const evidence=await page.locator('.pena-automation-panel').evaluate(panel=>{
+  const labels=[...panel.querySelectorAll('button')].filter(button=>button.getClientRects().length&&!button.classList.contains('pena-automation-person-option')).map(button=>{
+   const box=button.getBoundingClientRect(),label=button.querySelector('.pena-automation-button-label,svg');
+   const range=document.createRange();range.selectNodeContents(button);
+   const content=label?label.getBoundingClientRect():range.getBoundingClientRect();
+   return {text:button.getAttribute('aria-label')||button.textContent,dx:Math.abs((box.left+box.right-content.left-content.right)/2),dy:Math.abs((box.top+box.bottom-content.top-content.bottom)/2),fits:content.width<=box.width&&content.height<=box.height};
+  });
+  const selects=[...panel.querySelectorAll('select')].filter(el=>el.getClientRects().length).map(el=>{const css=getComputedStyle(el);return {appearance:css.appearance,padding:parseFloat(css.paddingRight),position:css.backgroundPosition,image:css.backgroundImage};});
+  return {labels,selects};
+ });
+ for(const item of evidence.labels){assert.ok(item.dx<=1&&item.dy<=2&&item.fits,`Button alignment: ${JSON.stringify(item)}`);}
+ for(const item of evidence.selects){assert.equal(item.appearance,'none');assert.ok(item.padding>=32&&item.position.includes('12px')&&item.image.includes('svg'),JSON.stringify(item));}
+};
 assert.equal(model.automationCondition(condition('title','contains','  Участок  А '),{title:'Ремонт участка / УЧАСТОК   А'},'tasks'),true);
 assert.equal(model.automationCondition(condition('responsibleId','eq','2'),{responsibleId:'12'},'tasks'),false);
 assert.equal(model.automationCondition(condition('auditors','eq','12'),{auditors:[2,12]},'tasks'),true);
@@ -44,6 +58,28 @@ try {
  await page.locator('.recent-host .pena-native-folder-switcher').waitFor();
  await open();
  await page.getByRole('button',{name:'Добавить правило',exact:true}).click();
+ await verifyControlAlignment();
+ await page.getByLabel('Название правила').fill('Работы по участку А');
+ await page.getByLabel('Значение условия').fill('Чат 5');
+ const firstRule=page.locator('.pena-automation-rule').first();
+ await firstRule.getByRole('button',{name:'Свернуть правило',exact:true}).click();
+ assert.equal(await firstRule.locator('.pena-automation-rule-body').isVisible(),false);
+ assert.match(await firstRule.locator('.pena-automation-rule-summary').innerText(),/условий: 1 → Тестовая папка/);
+ await firstRule.getByRole('button',{name:'Развернуть правило',exact:true}).press('Enter');
+ assert.equal(await firstRule.locator('.pena-automation-rule-body').isVisible(),true);
+ assert.equal(await page.getByLabel('Название правила').inputValue(),'Работы по участку А');
+ assert.equal(await page.getByLabel('Значение условия').inputValue(),'Чат 5');
+ await firstRule.getByRole('button',{name:'Свернуть правило',exact:true}).press('Space');
+ await page.getByRole('button',{name:'Добавить правило',exact:true}).click();
+ assert.equal(await firstRule.locator('.pena-automation-rule-body').isVisible(),false,'Adding another rule preserves folded state');
+ const secondRule=page.locator('.pena-automation-rule').last();
+ assert.equal(await secondRule.locator('.pena-automation-rule-body').isVisible(),true,'New rule is expanded');
+ await secondRule.getByRole('button',{name:'Свернуть правило',exact:true}).click();
+ await page.getByRole('button',{name:'Сохранить',exact:true}).click();
+ assert.equal(await secondRule.locator('.pena-automation-rule-body').isVisible(),true,'Validation reveals an invalid folded rule');
+ assert.equal(await secondRule.getByLabel('Значение условия').evaluate(el=>el===document.activeElement),true);
+ await secondRule.getByRole('button',{name:'Удалить правило',exact:true}).click();
+ await firstRule.getByRole('button',{name:'Развернуть правило',exact:true}).click();
  assert.equal(await page.getByLabel('Поле условия').locator('option').count(),2);
  await page.getByLabel('Значение условия').fill('Чат 5');
  assert.equal(await page.getByLabel('Распределить уже существующие диалоги').isChecked(),false);
@@ -62,6 +98,12 @@ try {
  await page.waitForFunction(()=>JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats')||'[]').find(item=>item.id==='chat5999')?.folderId==='folder:test',{},{timeout:10000});
  assert.ok(!(await items()).find(item=>item.id==='chat5')?.folderId,'Existing chat remains excluded after a new arrival');
  await open();
+ const savedBeforeCollapse=await page.evaluate(()=>localStorage.getItem(Object.keys(localStorage).find(key=>key.startsWith('pena.automation.v1.')&&key.endsWith('.chats'))));
+ await page.getByRole('button',{name:'Свернуть правило',exact:true}).click();
+ await page.getByRole('button',{name:'Закрыть',exact:true}).click();await open();
+ assert.equal(await page.getByRole('button',{name:'Развернуть правило',exact:true}).count(),1,'Accordion state survives reopening');
+ assert.equal(await page.evaluate(()=>localStorage.getItem(Object.keys(localStorage).find(key=>key.startsWith('pena.automation.v1.')&&key.endsWith('.chats')))),savedBeforeCollapse,'Folding does not rewrite active rules');
+ await page.getByRole('button',{name:'Развернуть правило',exact:true}).click();
  await page.getByLabel('Распределить уже существующие диалоги').check();
  await page.getByRole('button',{name:'Проверить',exact:true}).click();
  assert.match(await page.locator('.pena-automation-panel [role=status]').innerText(),/распределены: 1/);
@@ -166,7 +208,21 @@ try {
  assert.equal(await page.getByRole('button',{name:'Анна Тестовая · 21'}).count(),0,'Late response cannot replace new results');
  await employee.press('ArrowDown');await page.keyboard.press('Enter');
  assert.equal(await employee.inputValue(),'Новый Сотрудник');
+ await employee.fill('Анна');await page.getByRole('button',{name:'Анна Тестовая · 21'}).waitFor();
+ await employee.press('ArrowDown');await page.keyboard.press('Escape');
+ assert.equal(await employee.evaluate(el=>el===document.activeElement),true,'Escape returns focus from results to the input');
+ assert.equal(await page.locator('.pena-automation-results:visible').count(),0);
+ assert.equal(await page.locator('.pena-automation-panel').count(),1,'Escape dismisses results before the editor');
+ await page.evaluate(()=>window.directoryRequests=[]);
+ await employee.fill('Старый');await page.waitForFunction(()=>directoryRequests.some(request=>request.FIND==='Старый'));
+ await page.getByRole('button',{name:'Свернуть правило',exact:true}).last().click();
+ await page.waitForTimeout(800);
+ await page.getByRole('button',{name:'Развернуть правило',exact:true}).click();
+ assert.equal(await page.locator('.pena-automation-results:visible').count(),0,'Late results stay dismissed after collapsing and reopening');
+ assert.equal(await employee.inputValue(),'Старый');
+ await page.getByLabel('Поле условия').last().focus();
  await page.getByLabel('Поле условия').last().selectOption('groupId');
+ assert.equal(await page.getByLabel('Поле условия').last().evaluate(el=>el===document.activeElement),true,'Field replacement preserves keyboard focus');
  await employee.fill('Бета');await page.getByRole('button',{name:'Проект Бета · 92'}).click();
  assert.equal(await employee.inputValue(),'Проект Бета');
  await page.getByRole('button',{name:'Создать папку',exact:true}).click();
@@ -176,8 +232,15 @@ try {
  await page.getByRole('button',{name:'Поднять правило',exact:true}).last().click();
  assert.equal(await page.getByLabel('Поле условия').first().inputValue(),'groupId');
  await page.getByRole('button',{name:'Опустить правило',exact:true}).first().click();
+ await page.getByRole('button',{name:'Свернуть правило',exact:true}).first().click();
+ await page.getByRole('button',{name:'Поднять правило',exact:true}).last().click();
+ assert.equal(await page.locator('.pena-automation-rule').last().locator('.pena-automation-rule-body').isVisible(),false,'Folded state follows the rule when reordered');
+ await page.getByRole('button',{name:'Опустить правило',exact:true}).first().click();
+ await page.getByRole('button',{name:'Развернуть правило',exact:true}).click();
+ await page.addStyleTag({content:'button{line-height:48px;text-indent:14px;letter-spacing:3px;text-transform:uppercase}'});
  for(const width of [1280,768,680,420,360]) {
   await page.setViewportSize({width,height:800});
+  await verifyControlAlignment();
   const geometry=await page.locator('.pena-automation-panel').evaluate(panel=>({
    overflow:panel.scrollWidth>panel.clientWidth,
    bad:[...panel.querySelectorAll('input,select,button')].filter(el=>el.getClientRects().length&&el.getBoundingClientRect().width<15).map(el=>el.outerHTML),
@@ -187,10 +250,18 @@ try {
   assert.equal(geometry.overflow,false,JSON.stringify({width,geometry}));assert.deepEqual(geometry.bad,[]);assert.equal(geometry.footer,true);assert.equal(geometry.headerHeight,48);
  }
  await page.setViewportSize({width:1100,height:800});
+ await page.getByRole('button',{name:'Свернуть правило',exact:true}).first().click();
+ await page.screenshot({path:'tests/artifacts/folder-automation-accordion.png'});
+ await page.getByRole('button',{name:'Развернуть правило',exact:true}).click();
  await page.getByRole('button',{name:'Удалить правило',exact:true}).last().click();
  assert.equal(await page.locator('.pena-automation-rule').count(),1);
  await page.getByRole('button',{name:'Сохранить',exact:true}).click();
  await page.locator('.pena-automation-panel').waitFor({state:'detached',timeout:15000});
+ await page.locator('.task-host .pena-native-rules-button').click();
+ await page.getByLabel('Значение условия').last().fill('Быстрый');
+ await page.getByRole('button',{name:'Закрыть',exact:true}).click();
+ await page.waitForTimeout(400);
+ assert.equal(await page.evaluate(()=>directoryRequests.some(request=>request.FIND==='Быстрый')),false,'Closing cancels pending debounce requests');
  assert.deepEqual(errors,[]);
  const {verifyEmployeeSearch}=await import('./lib/employee-search.mjs');
  await verifyEmployeeSearch(browser,readFileSync(new URL('../extension/injected.js',import.meta.url),'utf8'));

@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.52';
+	window.__ANITREC_RUNNING__ = '8.0.53';
 
-	const VER = '8.0.52';
+	const VER = '8.0.53';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -12796,6 +12796,11 @@ if (_presetChannel) {
 		const model = window.__PENA_NATIVE_CATALOG__;
 		const base = localStorage.getItem(key);
 		const rules = JSON.parse(JSON.stringify(_readDialogAutomation(mode)));
+		let collapsed;
+		try { collapsed=new Set(JSON.parse(sessionStorage.getItem(key+'.collapsed')||'[]')); } catch { collapsed=new Set(); }
+		const rememberCollapsed=()=>{try{sessionStorage.setItem(key+'.collapsed',JSON.stringify([...collapsed].filter(id=>rules.some(rule=>rule.id===id))));}catch{}};
+		const lookupCleanups=new Set();
+		const clearLookups=()=>{lookupCleanups.forEach(cleanup=>cleanup());lookupCleanups.clear();};
 		const previousFocus = document.activeElement;
 		const overlay = document.createElement('div'); overlay.className = 'pena-automation-overlay';
 		if (typeof overlay.showPopover === 'function') overlay.setAttribute('popover','manual');
@@ -12803,19 +12808,25 @@ if (_presetChannel) {
 		panel.setAttribute('role','dialog'); panel.setAttribute('aria-modal','true'); panel.setAttribute('aria-label','Автосортировка');
 		overlay.append(panel);
 		const node = (tag, text, parent) => { const el = document.createElement(tag); if (text != null) el.textContent = text; parent?.append(el); return el; };
-		const button = (text, parent, action) => { const el = node('button',text,parent); el.type='button'; el.addEventListener('click',action); return el; };
+		const button = (text, parent, action) => {
+			const el=node('button',null,parent);el.type='button';
+			const paths={'↑':'m6 14 6-6 6 6M12 8v12','↓':'m6 10 6 6 6-6M12 4v12','×':'m6 6 12 12M18 6 6 18'};
+			if(paths[text])el.innerHTML=`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${paths[text]}"/></svg>`;
+			else if(text)node('span',text,el).className='pena-automation-button-label';
+			el.addEventListener('click',action);return el;
+		};
 		const select = (values, value, label, parent, change) => {
 			const el = node('select',null,parent); el.setAttribute('aria-label',label);
 			values.forEach(([id,title]) => { const option = node('option',title,el); option.value=id; }); el.value=value;
 			el.addEventListener('change',() => change(el.value)); return el;
 		};
-		const close = () => { overlay.remove(); document.removeEventListener('keydown',trap,true); previousFocus?.focus?.({preventScroll:true}); };
+		const close = () => { clearLookups();overlay.remove(); document.removeEventListener('keydown',trap,true); previousFocus?.focus?.({preventScroll:true}); };
 		const trap = event => {
 			if (document.querySelector('.pena-native-confirm-overlay')) return;
 			if (event.key === 'Escape') {
-				const dropdown = panel.querySelector('.pena-automation-results:not([hidden])');
+				const dropdown = [...panel.querySelectorAll('.pena-automation-results:not([hidden])')].find(el=>el.getClientRects().length);
 				event.preventDefault(); event.stopImmediatePropagation();
-				if (dropdown) { dropdown.hidden=true; dropdown.parentElement.querySelector('input')?.setAttribute('aria-expanded','false'); } else close();
+				if (dropdown) dropdown._penaDismiss?.(); else close();
 			}
 			if (event.key === 'Tab') {
 				const all = [...panel.querySelectorAll('button,input,select')].filter(el => !el.disabled && el.getClientRects().length);
@@ -12845,12 +12856,17 @@ if (_presetChannel) {
 		panel.addEventListener('change',()=>status.replaceChildren());
 		const folders = () => _getDialogControlItemsForMode(mode).filter(_isDialogControlFolder);
 		const draw = () => {
+			const active=document.activeElement,activeCard=active?.closest?.('.pena-automation-rule');
+			const activeRuleId=activeCard?.dataset.ruleId,activeIndex=activeCard?[...activeCard.querySelectorAll('button,input,select')].indexOf(active):-1;
+			const scrollTop=scroll.scrollTop;
+			clearLookups();
 			status.replaceChildren();
 			list.replaceChildren();
 			if (!rules.length) {const empty=node('div',null,list);empty.className='pena-automation-empty';node('strong','Пока нет правил',empty);node('p','Добавьте условие и выберите папку назначения.',empty);}
 			rules.forEach((rule,index) => {
-				const card = node('fieldset',null,list); card.className='pena-automation-rule';card.setAttribute('aria-label',`Правило ${index+1}`);
+				const card = node('fieldset',null,list); card.className='pena-automation-rule';card.setAttribute('aria-label',`Правило ${index+1}`);card.dataset.ruleId=rule.id;
 				const head = node('div',null,card); head.className='pena-automation-rule-head';
+				const toggle=button('',head,()=>setExpanded(collapsed.has(rule.id)));toggle.className='pena-automation-rule-toggle';toggle.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
 				node('span',String(index+1).padStart(2,'0'),head).className='pena-automation-rule-number';
 				const label = node('label',null,head), enabled=node('input',null,label); enabled.type='checkbox'; enabled.checked=rule.enabled;
 				label.append(document.createTextNode('Включено')); enabled.addEventListener('change',()=>rule.enabled=enabled.checked);
@@ -12859,6 +12875,16 @@ if (_presetChannel) {
 				const down=button('↓',head,()=>{[rules[index+1],rules[index]]=[rules[index],rules[index+1]];draw();});down.setAttribute('aria-label','Опустить правило');down.disabled=index===rules.length-1;down.className='pena-automation-icon-button';
 				const remove=button('×',head,()=>{rules.splice(index,1);draw();});remove.setAttribute('aria-label','Удалить правило');remove.className='pena-automation-icon-button';
 				const body=node('div',null,card);body.className='pena-automation-rule-body';
+				body.id=`pena-automation-body-${index}`;toggle.setAttribute('aria-controls',body.id);
+				const summary=node('div',`${rule.match==='any'?'Любое':'Все'} · условий: ${rule.conditions.length} → ${folders().find(folder=>folder.id===rule.folderId)?.title||'Папка не выбрана'}`,card);summary.className='pena-automation-rule-summary';
+				const setExpanded=(expanded,persist=true)=>{
+					if(expanded)collapsed.delete(rule.id);else{collapsed.add(rule.id);card.dispatchEvent(new Event('pena-collapse'));}
+					summary.textContent=`${rule.match==='any'?'Любое':'Все'} · условий: ${rule.conditions.length} → ${folders().find(folder=>folder.id===rule.folderId)?.title||'Папка не выбрана'}`;
+					body.hidden=!expanded;summary.hidden=expanded;card.classList.toggle('--collapsed',!expanded);
+					toggle.setAttribute('aria-expanded',String(expanded));toggle.setAttribute('aria-label',expanded?'Свернуть правило':'Развернуть правило');toggle.title=toggle.getAttribute('aria-label');if(persist)rememberCollapsed();
+				};
+				setExpanded(!collapsed.has(rule.id),false);
+				head.addEventListener('click',event=>{if(!event.target.closest('button,input,label')){setExpanded(collapsed.has(rule.id));toggle.focus({preventScroll:true});}});
 				const match=node('div',null,body);match.className='pena-automation-match';node('span','Если совпадают',match);
 				select([['all','Все условия'],['any','Любое условие']],rule.match,'Совпадение условий',match,value=>rule.match=value);
 				rule.conditions.forEach((condition,ci) => {
@@ -12875,13 +12901,16 @@ if (_presetChannel) {
 						if(person)valueHost.className='pena-automation-person';
 						const input=node('input',null,valueHost); input.type=type==='date'?'date':'text'; input.value=condition.label||condition.value; input.maxLength=300;
 						input.placeholder=project?'Найти проект':person?'Найти сотрудника':'Введите текст'; input.setAttribute('aria-label','Значение условия');input.autocomplete='off';
-						let lookupTimer=null,lookupVersion=0;
+						let lookupTimer=null,lookupVersion=0,suppressFocus=false;
 						const results=person?node('div',null,valueHost):null;
 						if(results){results.className='pena-automation-results';results.hidden=true;input.setAttribute('aria-expanded','false');input.setAttribute('aria-haspopup','true');}
 						const hideResults=()=>{if(results){results.hidden=true;input.setAttribute('aria-expanded','false');}lookupVersion++;clearTimeout(lookupTimer);};
+						lookupCleanups.add(hideResults);card.addEventListener('pena-collapse',hideResults);
+						if(results)results._penaDismiss=()=>{hideResults();if(results.contains(document.activeElement)){suppressFocus=true;input.focus({preventScroll:true});suppressFocus=false;}};
 						const lookup=async(offset=0)=>{
+							if(!input.isConnected||body.hidden||key!==_dialogAutomationKey(mode)||mode!==_pMode())return;
 							const query=input.value.trim(),version=++lookupVersion;
-							const current=()=>input.isConnected&&version===lookupVersion&&input.value.trim()===query&&key===_dialogAutomationKey(mode)&&mode===_pMode();
+							const current=()=>input.isConnected&&!body.hidden&&version===lookupVersion&&input.value.trim()===query&&key===_dialogAutomationKey(mode)&&mode===_pMode();
 							results.hidden=false;input.setAttribute('aria-expanded','true');
 							if(!offset)results.replaceChildren();
 							const progress=node('span',project?'Загружаем проекты…':'Поиск…',results);progress.className='pena-automation-lookup-status';
@@ -12892,9 +12921,9 @@ if (_presetChannel) {
 								const users=project?response.data:_normalizePenaDirectoryUsers(response.data);
 								for(const user of users){
 									const id=String(user.id),name=String(user.name||[user.first_name,user.last_name].filter(Boolean).join(' ')||id);
-									const option=button('',results,()=>{condition.value=id;condition.label=name;input.value=name;hideResults();input.focus();});
+									const option=button('',results,()=>{condition.value=id;condition.label=name;input.value=name;input.removeAttribute('aria-invalid');status.replaceChildren();hideResults();input.focus();});
 									option.className='pena-automation-person-option';option.dataset.personId=id;option.setAttribute('aria-label',`${name} · ${id}`);
-									node('strong',name,option);node('span',user.work_position||`ID ${id}`,option);
+									node('strong',name,option);node('span',`${user.work_position?user.work_position+' · ':''}ID ${id}`,option);
 								}
 								if(!users.length&&!offset)node('span',project?'Проекты не найдены':'Сотрудники не найдены',results).className='pena-automation-lookup-status';
 								if(Number.isInteger(response.next)&&response.next>offset){const more=button('Показать ещё',results,()=>{more.remove();lookup(response.next);});}
@@ -12907,7 +12936,7 @@ if (_presetChannel) {
 							lookupTimer=setTimeout(()=>lookup(),300);
 						});
 						if(person){
-							input.addEventListener('focus',()=>{if(project&&!condition.label)lookup();});
+							input.addEventListener('focus',()=>{if(project&&!condition.label&&!suppressFocus)lookup();});
 							input.addEventListener('keydown',event=>{if(event.key==='ArrowDown'&&!results.hidden){event.preventDefault();results.querySelector('button')?.focus();}});
 							results.addEventListener('keydown',event=>{const options=[...results.querySelectorAll('button')],index=options.indexOf(document.activeElement);if(['ArrowDown','ArrowUp'].includes(event.key)){event.preventDefault();if(event.key==='ArrowUp'&&index===0)input.focus();else options[Math.max(0,Math.min(options.length-1,index+(event.key==='ArrowDown'?1:-1)))]?.focus();}});
 							valueHost.addEventListener('focusout',event=>{if(!valueHost.contains(event.relatedTarget))hideResults();});
@@ -12916,10 +12945,13 @@ if (_presetChannel) {
 					if(['overdue','empty','present'].includes(condition.op))node('span','',row).className='pena-automation-no-value';
 					const removeCondition=button('×',row,()=>{rule.conditions.splice(ci,1);draw();});removeCondition.setAttribute('aria-label','Удалить условие');removeCondition.className='pena-automation-icon-button';
 				});
-				button('Добавить условие',body,()=>{if(rule.conditions.length<20){rule.conditions.push({field:'title',op:'contains',value:''});draw();}}).className='pena-automation-add-condition';
+				const addCondition=button('Добавить условие',body,()=>{if(rule.conditions.length<20){rule.conditions.push({field:'title',op:'contains',value:''});draw();const nextCard=[...list.children].find(el=>el.dataset.ruleId===rule.id);nextCard?.querySelector('.pena-automation-condition:last-of-type select')?.focus();}});addCondition.className='pena-automation-add-condition';addCondition.disabled=rule.conditions.length>=20;
 				const dest=node('label','Перенести в папку',body);dest.className='pena-automation-destination';
 				select([['','Выберите папку'],...folders().map(folder=>[folder.id,folder.title])],rule.folderId,'Папка назначения',dest,value=>rule.folderId=value);
 			});
+			if(activeRuleId){const nextCard=[...list.children].find(el=>el.dataset.ruleId===activeRuleId);const controls=nextCard?[...nextCard.querySelectorAll('button,input,select')]:[];const next=controls[activeIndex];if(next&&!next.disabled&&next.getClientRects().length)next.focus({preventScroll:true});else if(nextCard)nextCard.querySelector('.pena-automation-rule-toggle')?.focus({preventScroll:true});else(list.querySelector('.pena-automation-rule-toggle')||actions.querySelector('button'))?.focus({preventScroll:true});}
+			scroll.scrollTop=scrollTop;
+			if(typeof addRuleButton!=='undefined')addRuleButton.disabled=rules.length>=50;
 		};
 		const add = () => { if(rules.length>=50)return; rules.push({id:`rule:${Date.now()}:${Math.random().toString(36).slice(2,8)}`,name:'Новое правило',enabled:true,folderId:defaultFolderId||folders()[0]?.id||'',match:'all',conditions:[{field:'title',op:'contains',value:''}]});draw();list.lastElementChild?.scrollIntoView({block:'nearest'});list.lastElementChild?.querySelector('input[aria-label="Название правила"]')?.select(); };
 		const folderEditor=node('div',null,bottom);folderEditor.className='pena-automation-folder-editor';folderEditor.hidden=true;
@@ -12928,15 +12960,25 @@ if (_presetChannel) {
 		button('Создать',folderEditor,createFolder);button('Отмена',folderEditor,()=>folderEditor.hidden=true);
 		folderName.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();createFolder();}});
 		const actions=node('footer',null,bottom);
-		button('Добавить правило',actions,add);
+		const addRuleButton=button('Добавить правило',actions,add);
 		button('Создать папку',actions,()=>{folderEditor.hidden=!folderEditor.hidden;if(!folderEditor.hidden)folderName.focus();});
-		const valid = () => {
+		const conditionValid=condition=>['overdue','empty','present'].includes(condition.op)||String(condition.value).trim()&&(model.automationFields[condition.field]?.[1]!=='ids'||/^[1-9]\d*$/.test(condition.value));
+		const invalidRule = () => {
 			const ids=new Set(folders().map(folder=>folder.id));
-			return rules.every(rule=>!rule.enabled||(ids.has(rule.folderId)&&rule.conditions.length>0&&rule.conditions.every(condition=>
-				['overdue','empty','present'].includes(condition.op)||String(condition.value).trim()&&(model.automationFields[condition.field]?.[1]!=='ids'||/^\d+$/.test(condition.value)))));
+			return rules.find(rule=>rule.enabled&&(!ids.has(rule.folderId)||!rule.conditions.length||!rule.conditions.every(conditionValid)));
+		};
+		const valid=()=>!invalidRule();
+		const showInvalid=()=>{
+			const rule=invalidRule();if(!rule)return;
+			collapsed.delete(rule.id);rememberCollapsed();draw();
+			const card=[...list.children].find(el=>el.dataset.ruleId===rule.id),ci=rule.conditions.findIndex(condition=>!conditionValid(condition));
+			const target=!folders().some(folder=>folder.id===rule.folderId)?card.querySelector('[aria-label="Папка назначения"]'):
+				ci>=0?card.querySelectorAll('.pena-automation-condition')[ci]?.querySelector('[aria-label="Значение условия"]'):card.querySelector('.pena-automation-add-condition');
+			if(target){target.setAttribute('aria-invalid','true');target.addEventListener('input',()=>target.removeAttribute('aria-invalid'),{once:true});target.addEventListener('change',()=>target.removeAttribute('aria-invalid'),{once:true});target.focus({preventScroll:true});target.scrollIntoView({block:'nearest'});}
+			status.textContent='Заполните условия и выберите папку для каждого включённого правила.';
 		};
 		button('Проверить',actions,()=>{
-			if(!valid()){status.textContent='Заполните условия и выберите папку для каждого включённого правила.';return;}
+			if(!valid()){showInvalid();return;}
 			const items=_getDialogControlItemsForMode(mode),folderMap=new Map(folders().map(folder=>[folder.id,folder.title])),folderIds=new Set(folderMap.keys());
 			const matches=[];let pending=0;
 			for(const item of items){if(_isDialogControlFolder(item)||item.folderId||item.automationHandled||_isDialogControlItemUnavailable(item))continue;const decision=model.automationDecision(rules,_dialogAutomationFacts(item),mode,folderIds);if(decision?.pending)pending++;if(decision?.folderId)matches.push({item,decision});}
@@ -12949,7 +12991,7 @@ if (_presetChannel) {
 		button('Сохранить',actions,async()=>{
 			if(saving)return;
 			if(key!==_dialogAutomationKey(mode)){status.textContent='Пользователь изменился. Откройте настройки заново.';return;}
-			if(!valid()){status.textContent='Заполните условия и выберите папку для каждого включённого правила.';return;}
+			if(!valid()){showInvalid();return;}
 			if(localStorage.getItem(key)!==base){status.textContent='Правила изменились в другом окне. Закройте и откройте настройки заново.';return;}
 			saving=true;const controls=[...panel.querySelectorAll('input,select,button')].filter(el=>el!==closeButton&&!el.disabled);controls.forEach(el=>el.disabled=true);
 			status.textContent='Проверяем список существующих диалогов…';
