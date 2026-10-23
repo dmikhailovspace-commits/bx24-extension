@@ -22,6 +22,15 @@ const restored=await save('todo-two',deleted.item.revision,{deleted:false});asse
 const payload={id:'todo-two',baseRevision:restored.item.revision,operationId:'stable-retry',changes:{note:'Детали'}};
 const first=await worker.request('todo.save',scope,payload),retry=await worker.request('todo.save',scope,payload);
 assert.deepEqual(first,retry,'retry must not create another revision');
+const steps=[{id:'step-one',title:'  Собрать   материалы ',done:false},{id:'step-two',title:'Проверить',done:true}];
+const checklist=await save('todo-two',first.item.revision,{steps});
+assert.equal(checklist.item.steps[0].title,'Собрать материалы');
+const kept=await save('todo-two',checklist.item.revision,{note:'Новая заметка'});
+assert.deepEqual(kept.item.steps,checklist.item.steps,'unrelated edits retain subtasks');
+await assert.rejects(save('todo-two',checklist.item.revision,{steps:[]}),{code:'todo_conflict'});
+for (const steps of [[{id:'invalid',title:'',done:false}],[{id:'step-one',title:'One',done:'false'}],Array(2).fill({id:'step-same',title:'Duplicate',done:false}),Array.from({length:101},(_,i)=>({id:`step-${1000+i}`,title:'Too many',done:false}))]) {
+  await assert.rejects(save('todo-two',kept.item.revision,{steps}),{code:'todo_invalid'});
+}
 await assert.rejects(save('invalid-date',0,{title:'Bad',dueDate:'2026-02-30'}),{code:'todo_invalid'});
 await assert.rejects(save('invalid-task',0,{title:'Bad',task:{taskId:'chat55'}}),{code:'todo_invalid'});
 await assert.rejects(save('invalid-title',0,{title:' '.repeat(5)}),{code:'todo_invalid'});

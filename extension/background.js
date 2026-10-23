@@ -804,6 +804,17 @@ async function saveTodoUnlocked(scope, payload) {
   const dueDate = String(changes.dueDate ?? previous?.dueDate ?? '');
   const validDate = !dueDate || (/^\d{4}-\d{2}-\d{2}$/.test(dueDate) && Number.isFinite(Date.parse(dueDate)) && new Date(dueDate).toISOString().slice(0, 10) === dueDate);
   if (!title || title.length > 240 || note.length > 2000 || !validDate) throw repositoryError('todo_invalid', 'Проверьте название и срок дела');
+  const rawSteps = changes.steps === undefined ? previous?.steps || [] : changes.steps;
+  if (!Array.isArray(rawSteps) || rawSteps.length > 100) throw repositoryError('todo_invalid', 'В одном деле можно добавить до 100 подзадач');
+  const stepIds = new Set();
+  const steps = rawSteps.map(step => {
+    const id = String(step?.id || ''), title = String(step?.title || '').replace(/\s+/g, ' ').trim();
+    if (!/^[a-zA-Z0-9_-]{8,100}$/.test(id) || stepIds.has(id) || !title || title.length > 240 || typeof step.done !== 'boolean') {
+      throw repositoryError('todo_invalid', 'Проверьте название подзадачи');
+    }
+    stepIds.add(id);
+    return {id, title, done:step.done};
+  });
   let task = changes.task === undefined ? previous?.task : changes.task;
   if (task != null) {
     if (!/^[1-9]\d*$/.test(String(task.taskId || ''))) throw repositoryError('todo_invalid', 'Некорректная задача Bitrix');
@@ -811,7 +822,7 @@ async function saveTodoUnlocked(scope, payload) {
   }
   if (!previous && snapshot.items.filter(item => !item.deletedAt).length >= 2000) throw repositoryError('todo_limit', 'В списке уже 2000 дел. Удалите ненужные.');
   const now = Date.now();
-  const item = { id, title, note, dueDate, task: task || null, createdAt: previous?.createdAt || now, updatedAt: now,
+  const item = { id, title, note, dueDate, steps, task: task || null, createdAt: previous?.createdAt || now, updatedAt: now,
     doneAt: changes.done === undefined ? previous?.doneAt || 0 : (changes.done ? now : 0),
     deletedAt: changes.deleted === undefined ? previous?.deletedAt || 0 : (changes.deleted ? now : 0),
     revision: (previous?.revision || 0) + 1, operationId };

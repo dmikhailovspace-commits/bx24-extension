@@ -34,12 +34,52 @@ try{
  await phase('separate panel and local checklist need no Bitrix writes',async()=>{
   assert.equal(await page.locator('.pena-native-time-panel').count(),0);
   await add('Подготовить презентацию');await add('Позвонить подрядчику');
-  await row('Позвонить подрядчику').getByRole('button',{name:'Выполнить: Позвонить подрядчику',exact:true}).click();
+  await row('Позвонить подрядчику').getByRole('checkbox',{name:'Выполнить: Позвонить подрядчику',exact:true}).click();
   await page.waitForFunction(()=>todoProbe.state().items.some(item=>item.title==='Позвонить подрядчику'&&item.doneAt));
   await page.getByRole('button',{name:'Готово',exact:true}).click();await row('Позвонить подрядчику').waitFor();
-  await row('Позвонить подрядчику').getByRole('button',{name:'Вернуть в работу: Позвонить подрядчику'}).click();
+  await row('Позвонить подрядчику').getByRole('checkbox',{name:'Вернуть в работу: Позвонить подрядчику'}).click();
   await page.getByRole('button',{name:'В работе',exact:true}).click();await row('Позвонить подрядчику').waitFor();
   assert.equal(await page.evaluate(()=>timeAddCalls.length),0);
+ });
+ await phase('inline subtasks, reversible checks, editing and undo',async()=>{
+  await page.getByRole('button',{name:'Все',exact:true}).click();
+  const parent=row('Подготовить презентацию');
+  await parent.getByRole('button',{name:'+ Подзадача',exact:true}).click();
+  const input=parent.getByRole('textbox',{name:'Новая подзадача: Подготовить презентацию'});
+  await input.fill('Собрать материалы');await input.press('Enter');
+  await parent.getByRole('checkbox',{name:'Выполнить подзадачу: Собрать материалы'}).waitFor();
+  await page.waitForFunction(()=>document.querySelector('[data-todo-action="add-step"]')?.value==='');
+  assert.equal(await input.evaluate(node=>node===document.activeElement),true);
+  await input.fill('Проверить цифры');await input.press('Enter');
+  await parent.getByRole('checkbox',{name:'Выполнить подзадачу: Проверить цифры'}).waitFor();
+  await parent.getByRole('checkbox',{name:'Выполнить подзадачу: Собрать материалы'}).focus();
+  await page.keyboard.press('Space');
+  await parent.getByRole('checkbox',{name:'Вернуть подзадачу: Собрать материалы'}).waitFor();
+  assert.match(await parent.textContent(),/1\/2 подзадач/);
+  await parent.getByRole('checkbox',{name:'Выполнить: Подготовить презентацию',exact:true}).click();
+  await parent.getByRole('checkbox',{name:'Вернуть в работу: Подготовить презентацию',exact:true}).click();
+  await parent.getByRole('checkbox',{name:'Выполнить: Подготовить презентацию',exact:true}).waitFor();
+  assert.equal(await parent.getByRole('checkbox',{name:'Вернуть подзадачу: Собрать материалы'}).getAttribute('aria-checked'),'true');
+  const title=parent.getByRole('textbox',{name:'Название подзадачи: Проверить цифры'});
+  await title.fill('Проверить смету');await title.press('Enter');
+  await parent.getByRole('textbox',{name:'Название подзадачи: Проверить смету'}).waitFor();
+  await parent.getByRole('button',{name:'Удалить подзадачу: Проверить смету'}).click();
+  await page.getByText('Подзадача удалена.',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Вернуть',exact:true}).click();
+  await parent.getByRole('textbox',{name:'Название подзадачи: Проверить смету'}).waitFor();
+  await input.fill('Черновик');await page.evaluate(()=>{for(let i=0;i<20;i++)todoProbe.sync();});
+  assert.equal(await input.inputValue(),'Черновик');await input.fill('');
+  worker.failWrite(true);await input.fill('Сохранить подзадачу');await input.press('Enter');
+  await page.getByText('Не удалось сохранить дело.',{exact:false}).waitFor();
+  assert.equal(await input.inputValue(),'Сохранить подзадачу');worker.failWrite(false);await input.press('Enter');
+  await parent.getByRole('checkbox',{name:'Выполнить подзадачу: Сохранить подзадачу'}).waitFor();
+  await page.screenshot({path:'tests/artifacts/todo-checklist-1100.png'});
+  await page.setViewportSize({width:360,height:850});await page.screenshot({path:'tests/artifacts/todo-checklist-360.png'});
+  await page.setViewportSize({width:1100,height:850});
+  await page.reload();await open();await parent.getByRole('button',{name:'1/3 подзадач'}).waitFor();
+  await page.getByRole('searchbox',{name:'Найти дело',exact:true}).fill('смету');await parent.waitFor();
+  await page.waitForFunction(()=>document.querySelectorAll('.pena-native-todo-row').length===1);
+  await page.getByRole('searchbox',{name:'Найти дело',exact:true}).fill('');
  });
  await phase('edit title, note, date and task with keyboard search',async()=>{
   await page.getByRole('button',{name:'Подготовить презентацию',exact:true}).click();
@@ -55,7 +95,8 @@ try{
  await phase('one timer shared with time panel; stop is the only elapsed write',async()=>{
   await row('Подготовить презентацию').getByRole('button',{name:'Начать таймер: Подготовить презентацию'}).click();
   await page.waitForFunction(()=>!!todoProbe.tracker()?.todoId);assert.equal(await page.evaluate(()=>timeAddCalls.length),0);
-  assert.equal(await row('Подготовить презентацию').getByRole('button',{name:'Выполнить: Подготовить презентацию'}).isDisabled(),true);
+  await page.evaluate(()=>{for(let i=0;i<5;i++)todoProbe.sync();});
+  assert.equal(await row('Подготовить презентацию').getByRole('checkbox',{name:'Выполнить: Подготовить презентацию'}).isDisabled(),true);
   await page.evaluate(()=>todoProbe.start({taskId:'102',title:'Задача 102'}));assert.equal(await page.evaluate(()=>todoProbe.tracker().taskId),'101');
   await page.locator('.pena-native-todo-timer').getByRole('button',{name:'Учёт времени',exact:true}).click();
   await page.locator('.pena-native-time-panel').waitFor();assert.equal(await page.locator('.pena-native-todo-panel').count(),0);
@@ -99,6 +140,24 @@ try{
   await page.waitForFunction(()=>document.querySelector('.pena-native-todo-list').scrollTop>100);
   await page.getByRole('searchbox',{name:'Найти дело',exact:true}).fill('Дополнительное');
   await list.hover();await page.mouse.wheel(0,500);await page.waitForFunction(()=>document.querySelector('.pena-native-todo-list').scrollTop>100);
+  for(const zoom of [0.67,0.8,1,1.25,1.5,2]) {
+   await page.evaluate(zoom=>document.documentElement.style.zoom=zoom,zoom);
+   for(const width of [1100,360]){
+    await page.setViewportSize({width,height:850});
+    const geometry=await page.locator('.pena-native-todo-row').first().evaluate(row=>{
+     const main=row.querySelector('.pena-native-todo-row-main').getBoundingClientRect();
+     const check=row.querySelector('.pena-native-todo-check').getBoundingClientRect();
+     const box=row.querySelector('.pena-native-todo-check-box').getBoundingClientRect();
+     const svg=row.querySelector('.pena-native-todo-check svg').getBoundingClientRect();
+     return {main,check,box,svg};
+    });
+    const center=r=>[r.x+r.width/2,r.y+r.height/2];
+    assert.ok(Math.abs(center(geometry.main)[1]-center(geometry.check)[1])<0.6,`row center ${width} zoom ${zoom}`);
+    for(const rect of [geometry.box,geometry.svg]) for(let axis=0;axis<2;axis++)assert.ok(Math.abs(center(rect)[axis]-center(geometry.check)[axis])<0.6,`check center ${width} zoom ${zoom}`);
+    assert.equal(await page.locator('.pena-native-todo-panel').evaluate(node=>node.scrollWidth<=node.clientWidth+1),true,`overflow ${width} zoom ${zoom}`);
+   }
+  }
+  await page.evaluate(()=>document.documentElement.style.zoom='');
   for(const width of [1100,360]){
    await page.setViewportSize({width,height:850});await page.screenshot({path:`tests/artifacts/todo-panel-${width}.png`});
    const rect=await page.locator('.pena-native-todo-panel').boundingBox();assert.ok(rect.x>=0&&rect.x+rect.width<=width);
@@ -108,7 +167,7 @@ try{
   await page.locator('.pena-native-todo-edit-title').fill('Не потерять черновик');
   await page.evaluate(()=>{for(let i=0;i<20;i++)todoProbe.sync();});assert.equal(await page.locator('.pena-native-todo-edit-title').inputValue(),'Не потерять черновик');
   await page.locator('.pena-native-todo-edit-title').press('Escape');await page.getByRole('textbox',{name:'Новое дело',exact:true}).press('Escape');
-  await page.locator('.pena-native-todo-panel').waitFor({state:'detached'});assert.equal(await page.locator('.pena-native-todo-button').evaluate(node=>node===document.activeElement),true);
+  await page.locator('.pena-native-todo-panel').waitFor({state:'detached'});await page.waitForFunction(()=>document.querySelector('.pena-native-todo-button')===document.activeElement);
  });
  assert.deepEqual(errors,[]);console.log(`PASS todo panel: ${phases.length} phases`);
 }finally{writeFileSync('tests/artifacts/todo-panel-report.json',JSON.stringify({phases,errors},null,2));await browser.close();await server.close();}

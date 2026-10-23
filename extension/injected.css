@@ -826,13 +826,30 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 .pena-native-todo-new-title{flex:1;width:0}
 .pena-native-todo-toolbar{display:flex;flex-direction:column;gap:12px;padding:0 20px 16px;flex:none}
 .pena-native-todo-filters{display:flex;gap:4px}
-.pena-native-todo-filters button{flex:1;border-color:transparent;background:transparent}
+.pena-native-todo-filters button{flex:1;min-width:0;padding:6px 5px;white-space:nowrap;border-color:transparent;background:transparent;font-size:12px}
 .pena-native-todo-filters button[aria-pressed=true]{background:#e4edfc;color:#235fbf}
 .pena-native-todo-filter-query{width:100%;font-size:13px!important}
 .pena-native-todo-list{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding:0 12px 16px 20px}
-.pena-native-todo-row{display:flex;align-items:flex-start;gap:12px;margin:0 0 8px;padding:14px 12px;background:#fff;border:1px solid #e0e6ef;border-radius:10px}
-.pena-native-todo-check{width:22px;min-height:22px;height:22px;flex:none;padding:0;margin-top:3px;border-radius:6px}
-.pena-native-todo-row.--done .pena-native-todo-check{background:#e8f5ee;border-color:#acd4bc;color:#287545}
+.pena-native-todo-row{margin:0 0 8px;padding:12px;background:#fff;border:1px solid #e0e6ef;border-radius:10px}
+.pena-native-todo-row-main{display:flex;align-items:center;gap:10px;min-width:0}
+.pena-native-todo-panel .pena-native-todo-check{display:grid;place-items:center;align-self:center;flex:0 0 32px;width:32px;min-width:32px;min-height:32px;height:32px;margin:0;padding:0;border:0;border-radius:8px;background:transparent;line-height:0}
+.pena-native-todo-check-box{display:grid;place-items:center;width:20px;height:20px;border:1.5px solid #9aaac0;border-radius:6px;color:white;background:white}
+.pena-native-todo-check svg{display:block;width:16px;height:16px;visibility:hidden}
+.pena-native-todo-check[aria-checked=true] .pena-native-todo-check-box{background:#2768d7;border-color:#2768d7}
+.pena-native-todo-check[aria-checked=true] svg{visibility:visible}
+.pena-native-todo-check:hover .pena-native-todo-check-box{border-color:#2768d7}
+.pena-native-todo-expand{border:0;background:transparent;padding:2px 0;min-height:28px;font-size:12px;color:#627795}
+.pena-native-todo-expand:hover{background:transparent;color:#2768d7}
+.pena-native-todo-steps{margin:8px 0 0 42px;padding-top:8px;border-top:1px solid #e8edf4}
+.pena-native-todo-step{display:flex;align-items:center;gap:6px;min-width:0;margin-bottom:4px}
+.pena-native-todo-panel .pena-native-todo-step-title{flex:1;width:0;padding:7px 4px;border-color:transparent;background:transparent;font-size:13px}
+.pena-native-todo-step-title:hover,.pena-native-todo-step-title:focus{border-color:#d6deea!important;background:#fff!important}
+.pena-native-todo-step:has([aria-checked=true]) .pena-native-todo-step-title{color:#768298;text-decoration:line-through}
+.pena-native-todo-step-delete{flex:none;width:32px;min-height:32px;padding:0;border:0;color:#7a879a;font-size:20px}
+.pena-native-todo-step-delete:hover{color:#a4413c;background:#fff3f0}
+.pena-native-todo-step-add{display:flex;align-items:center;gap:6px;margin:6px 0 0}
+.pena-native-todo-step-add input{flex:1;width:0;font-size:12px;padding:8px}
+.pena-native-todo-step-add button{flex:none;width:32px;padding:0;font-size:20px}
 .pena-native-todo-row-body{min-width:0;flex:1}
 .pena-native-todo-title{display:block;width:100%;min-height:0;padding:1px 0;border:0;border-radius:3px;background:transparent;text-align:left;color:#182237;font-size:14px;font-weight:600;line-height:1.5;overflow-wrap:anywhere}
 .pena-native-todo-title:hover{background:transparent;color:#2768d7}
