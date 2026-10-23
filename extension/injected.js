@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.54';
+	window.__ANITREC_RUNNING__ = '8.0.55';
 
-	const VER = '8.0.54';
+	const VER = '8.0.55';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -15948,10 +15948,6 @@ if (_presetChannel) {
 		const label = switcher.querySelector('.pena-native-time-button-label');
 		const labelText = `Сейчас ${compact}`;
 		if (label && label.textContent !== labelText) label.textContent = labelText;
-		if (_dialogControlNativeWorkspaceTab === 'todo') {
-			const todoClock = switcher.querySelector('.pena-native-todo-clock');
-			if (todoClock && todoClock.textContent !== compact) todoClock.textContent = compact;
-		}
 		if (_dialogControlNativeWorkspaceTab !== 'time') return;
 		const duration = switcher.querySelector('.pena-native-time-tracker-duration');
 		if (duration && duration.textContent !== compact) duration.textContent = compact;
@@ -16338,7 +16334,6 @@ if (_presetChannel) {
 	}
 
 	function _getDialogTimeTaskSearchState(target = 'manual') {
-		if (target === 'todo') return _getDialogTodoSearchState();
 		if (target === 'tracker') {
 			const scope = _getDialogTimeProjectScopeKey();
 			if (_dialogTimeTrackerSearch.scope !== scope) {
@@ -16369,7 +16364,6 @@ if (_presetChannel) {
 	}
 
 	function _renderDialogTimeManualSearch(panel = _dialogControlNativeSwitcherNode?.querySelector('.pena-native-time-panel'), target = 'manual') {
-		if (target === 'todo') { _renderDialogTodoTaskSearch(); return; }
 		if (!panel) return;
 		const state = _getDialogTimeTaskSearchState(target);
 		const input = panel.querySelector(`.pena-native-time-${target}-search`);
@@ -16500,7 +16494,7 @@ if (_presetChannel) {
 		const state = _getDialogTimeTaskSearchState(target);
 		if (token == null) token = ++state.token;
 		const scope = _getDialogTimeProjectScopeKey();
-		const isCurrent = () => !!scope && token === state.token && scope === _getDialogTimeProjectScopeKey() && _dialogControlNativeWorkspaceTab === (target === 'todo' ? 'todo' : 'time') && !state.selectedTask;
+		const isCurrent = () => !!scope && token === state.token && scope === _getDialogTimeProjectScopeKey() && _dialogControlNativeWorkspaceTab === 'time' && !state.selectedTask;
 		const normalizedQuery = String(query || '').replace(/\s+/g, ' ').trim();
 		if (!isCurrent()) return [];
 		if (!normalizedQuery) {
@@ -16938,16 +16932,9 @@ if (_presetChannel) {
 		}
 		await _withDialogTimeTrackerLock(async existing => {
 		if (existing || startScope !== _getDialogTimeIdentityScopeKey() || projectScope !== _getDialogTimeProjectScopeKey() || !_isDialogTimeWritableTask(taskId,_getDialogTimeTodayKey())) return;
-		if (task?.todoId) {
-			const latest = await window.__PENA_DIALOG_REPOSITORY__?.todoList(_getDialogTodoScope());
-			const todo = latest?.items.find(item => item.id === task.todoId);
-			if (startScope !== _getDialogTimeIdentityScopeKey() || projectScope !== _getDialogTimeProjectScopeKey() || !_isDialogTimeWritableTask(taskId,_getDialogTimeTodayKey()) || !todo || todo.doneAt || todo.task?.taskId !== taskId) {
-				_showDialogDockToast('Дело изменилось. Обновите список.', 'danger'); return;
-			}
-		}
 		const title = _getDialogTimeTaskTitle(taskId, task?.title);
 		_dialogTimeTrackerCancelConfirmTaskId = '';
-		const tracker = { taskId, title, ...(task?.todoId ? {todoId:String(task.todoId)} : {}), dialogId: String(task?.dialogId || ''), startedAt: Date.now(), dateKey: _getDialogTimeTodayKey(), pendingSeconds: 0, error: '' };
+		const tracker = { taskId, title, dialogId: String(task?.dialogId || ''), startedAt: Date.now(), dateKey: _getDialogTimeTodayKey(), pendingSeconds: 0, error: '' };
 		if (!_writeDialogTimeTracker(tracker)) throw new Error('Не удалось сохранить состояние таймера');
 		_rememberDialogTimeTaskVisit(taskId, title, tracker.dialogId, { takeover: true });
 		_ensureDialogTimeTrackerTick();
@@ -17460,11 +17447,11 @@ if (_presetChannel) {
 			if (!_isDialogTimeLocalCoordinator()) return;
 			const target = event.target instanceof Element ? event.target : null;
 			if (!target) return;
-			if (target.closest?.('[data-pena-workspace-tab="time"],[data-pena-workspace-tab="todo"],.pena-native-time-panel,.pena-native-todo-panel')) {
+			if (target.closest?.('[data-pena-workspace-tab="time"],.pena-native-time-panel')) {
 				// Capture runs before the workspace button opens the modal, so only
 				// actual task time before this click contributes to the paused session.
 				const pending = _dialogTimePendingActivities.get(_dialogTimePendingActiveId);
-				if (!['time','todo'].includes(_dialogControlNativeWorkspaceTab)) _qualifyPendingDialogTimeDuration(pending);
+				if (_dialogControlNativeWorkspaceTab !== 'time') _qualifyPendingDialogTimeDuration(pending);
 				_pauseDialogTimeDurationForPanel();
 				return;
 			}
@@ -17815,7 +17802,6 @@ if (_presetChannel) {
 
 	function _syncDialogTimeUi(switcher) {
 		if (!switcher || !_PENA_TIME_CONTROL) return;
-		_syncDialogTodoUi(switcher);
 		const today = _getDialogTimeRange('today');
 		_syncDialogTimeTodayPreview(today);
 		const todayRecord = _getDialogTimeRecord(today);
@@ -19754,378 +19740,6 @@ if (_presetChannel) {
 		return tooltip;
 	}
 
-	let _dialogTodoState = null;
-	let _dialogTodoSearch = { scope:'', query:'', selectedTask:null, results:[], loading:false, error:'', activeIndex:-1, token:0, timer:null };
-	function _getDialogTodoScope() {
-		return { portalHost:location.hostname.toLowerCase(), userId:String(_getCurrentBitrixUserId() || '') };
-	}
-	function _getDialogTodoState() {
-		const scope = _getDialogTimeIdentityScopeKey();
-		if (_dialogTodoState?.scope !== scope) {
-			_dialogTodoState = { scope, items:[], revision:0, loaded:false, loading:false, busy:false, error:'', filter:'all', query:'', editor:null, undo:null, expanded:new Set(), drafts:new Map() };
-		}
-		return _dialogTodoState;
-	}
-	function _getDialogTodoSearchState() {
-		const scope = _getDialogTimeProjectScopeKey();
-		if (_dialogTodoSearch.scope !== scope) {
-			if (_dialogTodoSearch.timer) clearTimeout(_dialogTodoSearch.timer);
-			Object.assign(_dialogTodoSearch, { scope, query:'', selectedTask:_dialogTodoState?.scope === _getDialogTimeIdentityScopeKey() ? _dialogTodoState.editor?.task || null : null, results:[], loading:false, error:'', activeIndex:-1, token:_dialogTodoSearch.token + 1, timer:null });
-		}
-		return _dialogTodoSearch;
-	}
-	function _resetDialogTodoSearch(task = null) {
-		const search = _getDialogTodoSearchState();
-		if (search.timer) clearTimeout(search.timer);
-		Object.assign(search, { query:'', selectedTask:task, results:[], loading:false, error:'', activeIndex:-1, token:search.token+1, timer:null });
-	}
-	async function _loadDialogTodos() {
-		const state = _getDialogTodoState();
-		if (!state.scope) return;
-		if (state.loading) { state.dirty=true; return; }
-		state.loading=true; state.error=''; _queueDialogTimeUiSync();
-		try {
-			const repository = window.__PENA_DIALOG_REPOSITORY__;
-			if (!repository?.todoList) throw new Error('Список недоступен. Обновите страницу после обновления расширения.');
-			const snapshot = await repository.todoList(_getDialogTodoScope());
-			if (state !== _getDialogTodoState()) return;
-			if (snapshot.revision >= state.revision) { state.items=snapshot.items; state.revision=snapshot.revision; }
-			state.loaded=true;
-		} catch (error) {
-			if (state === _getDialogTodoState()) state.error='Не удалось загрузить дела. Повторите попытку.';
-		} finally {
-			state.loading=false;
-			if (state === _getDialogTodoState()) {
-				_queueDialogTimeUiSync();
-				if (state.dirty) { state.dirty=false; _loadDialogTodos(); }
-			}
-		}
-	}
-	async function _saveDialogTodo(item, changes) {
-		const state = _getDialogTodoState();
-		if (state.busy || !state.scope || !state.loaded) return null;
-		state.busy=true; state.error=''; _queueDialogTimeUiSync();
-		try {
-			const result = await _withDialogTimeTrackerLock(async tracker => {
-				if (state !== _getDialogTodoState()) return null;
-				if (tracker?.todoId === item.id && (changes.done || changes.deleted || changes.task !== undefined)) {
-					state.error='Сначала остановите таймер этого дела и запишите время.'; return null;
-				}
-				const signature=JSON.stringify([item.id,item.revision || 0,changes]);
-				if (state.pendingWrite?.signature !== signature) state.pendingWrite={signature,payload:{id:item.id,baseRevision:item.revision || 0,operationId:crypto.randomUUID(),changes}};
-				return window.__PENA_DIALOG_REPOSITORY__.todoSave(_getDialogTodoScope(),state.pendingWrite.payload);
-			});
-			if (!result || state !== _getDialogTodoState()) return null;
-			state.pendingWrite=null;
-			state.revision=Math.max(state.revision,result.revision);
-			state.items=state.items.filter(row => row.id !== item.id);
-			if (!result.item.deletedAt) state.items.push(result.item);
-			return result.item;
-		} catch (error) {
-			if (state === _getDialogTodoState()) {
-				state.error=String(error.code || '').startsWith('todo_') ? error.message : 'Не удалось сохранить дело. Текст оставлен в форме; попробуйте ещё раз.';
-				if (error.code === 'todo_conflict') { state.loaded=false; }
-			}
-			return null;
-		} finally { state.busy=false; _queueDialogTimeUiSync(); }
-	}
-	document.addEventListener('pena-todo-changed', event => {
-		let change; try { change=JSON.parse(event.detail); } catch { return; }
-		const scope=_getDialogTodoScope();
-		if (change?.scope?.portalHost !== scope.portalHost || change?.scope?.userId !== scope.userId) return;
-		if (_dialogControlNativeWorkspaceTab === 'todo') _loadDialogTodos();
-		else if (_dialogTodoState) _dialogTodoState.loaded=false;
-	});
-	function _dialogTodoNode(tag, className, text = '') {
-		const node=document.createElement(tag); node.className=className; node.textContent=text; return node;
-	}
-	function _dialogTodoButton(label, action, className = '') {
-		const button=_dialogTodoNode('button', `pena-native-todo-btn ${className}`, label); button.type='button';
-		button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); action(); }); return button;
-	}
-	function _openDialogTodoTimePanel() {
-		_dialogControlNativeSwitcherNode?.querySelector('[data-pena-workspace-tab="time"]')?.click();
-	}
-	function _dialogTodoCheckbox(label, checked, action) {
-		const button=_dialogTodoButton('',action,'pena-native-todo-check');
-		button.setAttribute('role','checkbox'); button.setAttribute('aria-checked',String(checked)); button.setAttribute('aria-label',label);
-		button.innerHTML='<span class="pena-native-todo-check-box"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10 4 4 8-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>';
-		button.dataset.todoWrite='';
-		return button;
-	}
-	function _renderDialogTodoSteps(item, row, state) {
-		const steps=item.steps || [];
-		const section=_dialogTodoNode('div','pena-native-todo-steps');
-		section.id=`pena-todo-steps-${item.id}`;
-		section.hidden=!state.expanded.has(item.id);
-		for (const step of steps) {
-			const line=_dialogTodoNode('div','pena-native-todo-step');
-			const check=_dialogTodoCheckbox(`${step.done ? 'Вернуть подзадачу' : 'Выполнить подзадачу'}: ${step.title}`,step.done,() => _saveDialogTodo(item,{steps:steps.map(s => s.id === step.id ? {...s,done:!s.done} : s)}));
-			check.dataset.todoAction=`step-${step.id}`;
-			const input=_dialogTodoNode('input','pena-native-todo-step-title'); input.maxLength=240;
-			input.value=state.drafts.get(step.id) ?? step.title;
-			input.setAttribute('aria-label',`Название подзадачи: ${step.title}`); input.dataset.todoAction=`title-${step.id}`;
-			input.addEventListener('input',() => state.drafts.set(step.id,input.value));
-			const save=async () => {
-				const title=input.value.trim(); if (!title || title === step.title || state !== _getDialogTodoState()) return;
-				if (await _saveDialogTodo(item,{steps:steps.map(s => s.id === step.id ? {...s,title} : s)})) {
-					if (state.drafts.get(step.id)?.trim() === title) state.drafts.delete(step.id);
-				}
-			};
-			input.addEventListener('change',save);
-			input.addEventListener('keydown',event => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); save(); } });
-			const remove=_dialogTodoButton('×',async () => {
-				if (await _saveDialogTodo(item,{steps:steps.filter(s => s.id !== step.id)})) { state.undo={parentId:item.id,step,index:steps.indexOf(step)}; _queueDialogTimeUiSync(); }
-			},'pena-native-todo-step-delete');
-			remove.setAttribute('aria-label',`Удалить подзадачу: ${step.title}`); remove.dataset.todoWrite=''; remove.dataset.todoAction=`delete-${step.id}`;
-			line.append(check,input,remove); section.append(line);
-		}
-		const form=_dialogTodoNode('form','pena-native-todo-step-add');
-		const input=_dialogTodoNode('input',''); input.maxLength=240; input.autocomplete='off'; input.placeholder='Добавить подзадачу · Enter';
-		input.setAttribute('aria-label',`Новая подзадача: ${item.title}`); input.dataset.todoAction='add-step'; input.value=state.drafts.get(item.id) || '';
-		input.addEventListener('input',() => state.drafts.set(item.id,input.value));
-		const add=_dialogTodoNode('button','pena-native-todo-btn','+'); add.type='submit'; add.dataset.todoWrite=''; add.setAttribute('aria-label','Добавить подзадачу');
-		form.addEventListener('submit',async event => {
-			event.preventDefault(); const title=input.value.trim(); if (!title || state !== _getDialogTodoState()) return;
-			// Reuse the draft identity after an uncertain write, just as the parent composer does.
-			const draft=state.stepDraft?.parentId === item.id && state.stepDraft.title === title ? state.stepDraft : {parentId:item.id,id:crypto.randomUUID(),title}; state.stepDraft=draft;
-			if (await _saveDialogTodo(item,{steps:[...steps,{id:draft.id,title,done:false}]})) {
-				state.stepDraft=null;
-				if (state.drafts.get(item.id)?.trim() === title) state.drafts.delete(item.id);
-				_queueDialogTimeUiSync();
-			}
-		});
-		form.append(input,add); section.append(form); row.append(section);
-	}
-	function _editDialogTodo(item) {
-		const state=_getDialogTodoState(); state.editor={...item}; state.error=''; _resetDialogTodoSearch(item.task);
-		const panel=_dialogControlNativeSwitcherNode?.querySelector('.pena-native-todo-panel');
-		if (!panel) return;
-		panel.querySelector('.pena-native-todo-edit-title').value=item.title;
-		panel.querySelector('.pena-native-todo-edit-note').value=item.note || '';
-		panel.querySelector('.pena-native-todo-edit-date').value=item.dueDate || '';
-		_syncDialogTodoUi(_dialogControlNativeSwitcherNode);
-		panel.querySelector('.pena-native-todo-edit-title').focus();
-	}
-	function _renderDialogTodoTaskSearch() {
-		const panel=_dialogControlNativeSwitcherNode?.querySelector('.pena-native-todo-panel');
-		if (!panel || _dialogControlNativeWorkspaceTab !== 'todo') return;
-		const state=_getDialogTodoSearchState(), results=panel.querySelector('.pena-native-todo-task-results');
-		const input=panel.querySelector('.pena-native-todo-task-search'), selected=panel.querySelector('.pena-native-todo-task-selected');
-		const key=JSON.stringify([state.query,state.selectedTask,state.results,state.loading,state.error,state.activeIndex]);
-		if (results._penaKey === key) return;
-		results._penaKey=key; results.replaceChildren();
-		input.hidden=!!state.selectedTask; selected.hidden=!state.selectedTask;
-		selected.textContent=state.selectedTask ? `${state.selectedTask.title} · Убрать связь` : '';
-		if (document.activeElement !== input) input.value=state.query;
-		input.removeAttribute('aria-activedescendant');
-		results.hidden=!!state.selectedTask || !state.query.trim(); input.setAttribute('aria-expanded', String(!results.hidden));
-		if (results.hidden) return;
-		if (!state.results.length) {
-			results.append(_dialogTodoNode('div','pena-native-todo-hint',state.loading ? 'Ищем задачи…' : state.error || 'Нет подходящих задач в выбранных проектах.'));
-			if (state.error) results.append(_dialogTodoButton('Повторить', () => _searchDialogTimeEligibleTasks(state.query,++state.token,'todo')));
-			return;
-		}
-		if (state.activeIndex < 0 || state.activeIndex >= state.results.length) state.activeIndex=0;
-		state.results.forEach((task,index) => {
-			const button=_dialogTodoButton(`${task.title} · #${task.taskId}`, () => {
-				state.selectedTask={...task}; state.token++; state.loading=false; _renderDialogTodoTaskSearch(); selected.focus();
-			}, 'pena-native-todo-task-option');
-			button.id=`pena-todo-task-${task.taskId}`; button.setAttribute('role','option'); button.tabIndex=-1;
-			button.setAttribute('aria-selected',String(state.activeIndex === index)); results.append(button);
-		});
-		input.setAttribute('aria-activedescendant',`pena-todo-task-${state.results[state.activeIndex].taskId}`);
-	}
-	function _syncDialogTodoUi(switcher) {
-		const panel=switcher?.querySelector('.pena-native-todo-panel');
-		if (!panel || _dialogControlNativeWorkspaceTab !== 'todo') return;
-		const state=_getDialogTodoState(), tracker=_readDialogTimeTracker();
-		if (panel._penaScope !== state.scope) {
-			panel._penaScope=state.scope;
-			panel.querySelectorAll('input,textarea').forEach(node => { node.value=''; });
-			_resetDialogTodoSearch();
-		}
-		if (!state.loaded && !state.loading && !state.error && state.scope) _loadDialogTodos();
-		const editing=!!state.editor;
-		panel.querySelector('.pena-native-todo-add').hidden=editing;
-		panel.querySelector('.pena-native-todo-toolbar').hidden=editing;
-		panel.querySelector('.pena-native-todo-list').hidden=editing;
-		panel.querySelector('.pena-native-todo-editor').hidden=!editing;
-		const status=panel.querySelector('.pena-native-todo-status');
-		status.querySelector('span').textContent=state.error || (!state.scope ? 'Войдите в Bitrix, чтобы открыть личный список.' : (!state.loaded ? 'Загружаем дела…' : ''));
-		status.hidden=!state.error && !!state.scope && state.loaded;
-		status.querySelector('button').hidden=!state.error || state.loading;
-		panel.querySelectorAll('[data-todo-write]').forEach(button => { button.disabled=state.busy || !state.loaded || !state.scope || (button.dataset.todoAction === 'complete' && button.closest('[data-todo-id]')?.dataset.todoId === tracker?.todoId); });
-		const undo=panel.querySelector('.pena-native-todo-undo'); undo.hidden=!state.undo;
-		undo.querySelector('span').textContent=state.undo?.parentId ? 'Подзадача удалена.' : 'Дело удалено.';
-		panel.querySelector('.pena-native-todo-count').textContent=`${state.items.filter(row => !row.doneAt).length} в работе`;
-		panel.querySelectorAll('[data-todo-filter]').forEach(button => button.setAttribute('aria-pressed',String(button.dataset.todoFilter === state.filter)));
-		const banner=panel.querySelector('.pena-native-todo-timer'); banner.hidden=!tracker;
-		if (tracker) {
-			const todo=state.items.find(item => item.id === tracker.todoId);
-			banner.querySelector('.pena-native-todo-timer-title').textContent=todo?.title || tracker.title;
-			banner.querySelector('.pena-native-todo-clock').textContent=_PENA_TIME_CONTROL.formatDurationCompact(_getDialogTimeTrackerSeconds(tracker));
-			const unknown=tracker.saveSegments?.some(segment => ['unknown','sending'].includes(segment.status));
-			const confirming=unknown && _dialogTimeTrackerRetryConfirmKey === `${tracker.taskId}:${tracker.startedAt}`;
-			banner.querySelector('.pena-native-todo-timer-note').textContent=unknown ? 'Ответ Bitrix не получен. Проверьте запись в учёте времени перед повтором, чтобы не создать дубль.' : tracker.error || `Время будет записано в задачу #${tracker.taskId}`;
-			const stop=banner.querySelector('.pena-native-todo-stop');
-			stop.textContent=_dialogTimeActionInFlight ? 'Записываем…' : confirming ? 'Записать повторно?' : tracker.stoppedAt ? 'Повторить запись' : 'Остановить и записать';
-			stop.disabled=_dialogTimeActionInFlight;
-		}
-		panel.querySelector('.pena-native-todo-project-hint').hidden=!!_getDialogTimeProjectScopeKey();
-		panel.querySelector('.pena-native-todo-task-search').disabled=!_getDialogTimeProjectScopeKey();
-		if (editing) { _renderDialogTodoTaskSearch(); return; }
-		const list=panel.querySelector('.pena-native-todo-list');
-		const today=_getDialogTimeTodayKey();
-		const query=state.query.toLocaleLowerCase('ru').trim();
-		const rows=state.items.filter(item => (state.filter === 'all' || (state.filter === 'done' ? !!item.doneAt : !item.doneAt)) &&
-			(state.filter !== 'today' || (item.dueDate && item.dueDate <= today)) &&
-			(!query || `${item.title} ${item.note} ${item.task?.title || ''} ${(item.steps || []).map(step => step.title).join(' ')}`.toLocaleLowerCase('ru').includes(query)))
-			.sort((a,b) => state.filter === 'done' ? b.doneAt-a.doneAt : (a.dueDate || '9999').localeCompare(b.dueDate || '9999') || b.createdAt-a.createdAt || a.id.localeCompare(b.id));
-		const key=JSON.stringify([rows,state.filter,query,!!state.loaded,!!state.busy,tracker?.taskId,tracker?.todoId,!!_dialogTimeActionInFlight,today,[...state.expanded]]);
-		if (list._penaKey === key) return;
-		list._penaKey=key;
-		const focusedId=document.activeElement?.closest?.('[data-todo-id]')?.dataset.todoId;
-		const focusedAction=document.activeElement?.dataset.todoAction;
-		const selection=document.activeElement?.tagName === 'INPUT' ? [document.activeElement.selectionStart,document.activeElement.selectionEnd] : null;
-		const scrollTop=list.scrollTop; list.replaceChildren();
-		if (!rows.length && state.loaded) {
-			const empty=_dialogTodoNode('div','pena-native-todo-empty');
-			empty.append(_dialogTodoNode('strong','',query ? 'Ничего не найдено' : state.filter === 'done' ? 'Пока нет выполненных дел' : state.filter === 'today' ? 'На сегодня всё свободно' : 'С чего начнём?'),
-				_dialogTodoNode('span','',query ? 'Попробуйте другое название или текст подзадачи.' : ['all','active'].includes(state.filter) ? 'Напишите дело сверху и нажмите Enter. Подзадачи можно добавить, когда понадобятся.' : 'Здесь появятся дела из вашего списка.'));
-			list.append(empty);
-		}
-		for (const item of rows) {
-			const row=_dialogTodoNode('article','pena-native-todo-row' + (item.doneAt ? ' --done' : '')); row.dataset.todoId=item.id;
-			const complete=_dialogTodoCheckbox(`${item.doneAt ? 'Вернуть в работу' : 'Выполнить'}: ${item.title}`,!!item.doneAt,async () => { await _saveDialogTodo(item,{done:!item.doneAt}); });
-			complete.dataset.todoAction='complete'; complete.setAttribute('aria-label',`${item.doneAt ? 'Вернуть в работу' : 'Выполнить'}: ${item.title}`);
-			complete.disabled=state.busy || tracker?.todoId === item.id;
-			if (tracker?.todoId === item.id) complete.title='Сначала остановите таймер';
-			const body=_dialogTodoNode('div','pena-native-todo-row-body');
-			const title=_dialogTodoButton(item.title,() => _editDialogTodo(item),'pena-native-todo-title'); title.dataset.todoAction='edit'; body.append(title);
-			if (item.note) body.append(_dialogTodoNode('p','pena-native-todo-note',item.note));
-			const meta=_dialogTodoNode('div','pena-native-todo-meta');
-			if (item.dueDate) {
-				const label=item.dueDate === today ? 'Сегодня' : new Date(`${item.dueDate}T12:00:00`).toLocaleDateString('ru',{day:'numeric',month:'short',...(item.dueDate.slice(0,4) !== today.slice(0,4) ? {year:'numeric'} : {})});
-				meta.append(_dialogTodoNode('span',item.dueDate < today && !item.doneAt ? '--overdue' : '',`${item.dueDate < today && !item.doneAt ? 'Просрочено · ' : ''}${label}`));
-			}
-			if (item.task) {
-				const task=_dialogTodoButton(`#${item.task.taskId} · ${item.task.title}`, () => {
-					panel.querySelector('.pena-native-popover-close').click(); _openDialogTimeTask(item.task.taskId,item.task.title);
-				},'pena-native-todo-task-link'); task.dataset.todoAction='open'; meta.append(task);
-			}
-			if (meta.childNodes.length) body.append(meta);
-			const main=_dialogTodoNode('div','pena-native-todo-row-main'); main.append(complete,body); row.append(main);
-			const steps=item.steps || [], expanded=state.expanded.has(item.id);
-			const expand=_dialogTodoButton(steps.length ? `${steps.filter(step => step.done).length}/${steps.length} подзадач` : '+ Подзадача',() => {
-				if (expanded) state.expanded.delete(item.id); else state.expanded.add(item.id);
-				_syncDialogTodoUi(switcher);
-				if (!expanded) Array.from(list.querySelectorAll('[data-todo-id]')).find(node => node.dataset.todoId === item.id)?.querySelector('[data-todo-action="add-step"]')?.focus();
-			},'pena-native-todo-expand'); expand.dataset.todoAction='expand'; expand.setAttribute('aria-expanded',String(expanded)); expand.setAttribute('aria-controls',`pena-todo-steps-${item.id}`); body.append(expand);
-			if (!item.doneAt && item.task) {
-				const start=_dialogTodoButton(tracker?.todoId === item.id ? 'Идёт' : item.task ? 'Начать' : 'Связать', async () => {
-					if (!item.task) { _editDialogTodo(item); panel.querySelector('.pena-native-todo-task-search').focus(); return; }
-					if (!_isDialogTimeWritableTask(item.task.taskId,_getDialogTimeTodayKey())) { state.error='Проверьте проекты и доступность задачи в «Учёте времени».'; _queueDialogTimeUiSync(); return; }
-					await _startDialogTimeTracker({...item.task,todoId:item.id});
-				},'pena-native-todo-start'); start.dataset.todoAction='start';
-				start.disabled=state.busy || (item.task && (!!tracker || _dialogTimeActionInFlight));
-				start.setAttribute('aria-label',`${item.task ? 'Начать таймер' : 'Связать с задачей Bitrix'}: ${item.title}`); main.append(start);
-			}
-			_renderDialogTodoSteps(item,row,state);
-			row.querySelectorAll('[data-todo-write]').forEach(button => { button.disabled=state.busy || (button === complete && tracker?.todoId === item.id); });
-			list.append(row);
-		}
-		list.scrollTop=scrollTop;
-		if (focusedId && focusedAction) {
-			const target=Array.from(list.querySelectorAll('[data-todo-id]')).find(row => row.dataset.todoId === focusedId)?.querySelector(`[data-todo-action="${focusedAction}"]`);
-			(target || panel.querySelector('.pena-native-todo-new-title')).focus({preventScroll:true});
-			if (selection && target?.tagName === 'INPUT') target.setSelectionRange(...selection);
-		}
-	}
-
-	function _createDialogTodoModal() {
-		const state=_getDialogTodoState(); state.loaded=false; state.error=''; state.editor=null; _resetDialogTodoSearch();
-		const modal=_dialogTodoNode('div','pena-native-todo-modal');
-		if (typeof modal.showPopover === 'function') modal.setAttribute('popover','manual');
-		const backdrop=_dialogTodoNode('div','pena-native-todo-backdrop'); backdrop.setAttribute('aria-hidden','true');
-		const panel=_dialogTodoNode('section','pena-native-todo-panel pena-native-command-popover'); panel._penaScope=state.scope;
-		panel.setAttribute('role','dialog'); panel.setAttribute('aria-modal','true'); panel.setAttribute('aria-labelledby','pena-todo-title'); panel.tabIndex=-1;
-		panel.innerHTML=`<header class="pena-native-todo-head"><div><strong id="pena-todo-title">Мои дела</strong><span class="pena-native-todo-count"></span></div></header>
-			<section class="pena-native-todo-timer" hidden><div class="pena-native-todo-timer-line"><strong class="pena-native-todo-timer-title"></strong><span class="pena-native-todo-clock"></span></div><p class="pena-native-todo-timer-note"></p><div class="pena-native-todo-timer-actions"></div></section>
-			<form class="pena-native-todo-add"><input class="pena-native-todo-new-title" maxlength="240" required autocomplete="off" aria-label="Новое дело" placeholder="Что нужно сделать?"><button class="pena-native-todo-btn --primary" data-todo-write type="submit">Добавить</button></form>
-			<div class="pena-native-todo-toolbar"><div class="pena-native-todo-filters" aria-label="Показать дела"></div><input type="search" class="pena-native-todo-filter-query" aria-label="Найти дело" placeholder="Найти дело"></div>
-			<div class="pena-native-todo-status" role="status"><span></span></div><div class="pena-native-todo-list"></div>
-			<form class="pena-native-todo-editor" hidden><label>Дело<input class="pena-native-todo-edit-title" maxlength="240" required></label><label>Заметка<textarea class="pena-native-todo-edit-note" maxlength="2000" rows="3" placeholder="Детали, которые важно не забыть"></textarea></label><label>Срок<input class="pena-native-todo-edit-date" type="date"></label>
-			<div class="pena-native-todo-task-field"><label for="pena-todo-task-input">Задача Bitrix для таймера</label><input id="pena-todo-task-input" class="pena-native-todo-task-search" autocomplete="off" placeholder="Название или номер задачи" role="combobox" aria-autocomplete="list" aria-controls="pena-todo-task-results" aria-expanded="false"><button type="button" class="pena-native-todo-btn pena-native-todo-task-selected" hidden></button><div id="pena-todo-task-results" class="pena-native-todo-task-results" role="listbox" aria-label="Задачи Bitrix" hidden></div><p class="pena-native-todo-hint">Поиск по проектам, выбранным в учёте времени.</p><div class="pena-native-todo-project-hint"></div></div>
-			<div class="pena-native-todo-edit-actions"><button type="submit" class="pena-native-todo-btn --primary" data-todo-write>Сохранить</button></div></form>
-			<footer class="pena-native-todo-footer"><div class="pena-native-todo-undo" hidden><span>Дело удалено.</span></div><span>Личный список в этом приложении. Выполнение дела не закрывает задачу Bitrix.</span></footer>`;
-		const close=_createDialogControlPopoverClose('Закрыть мои дела'); panel.querySelector('header').append(close);
-		backdrop.addEventListener('pointerdown',event => { event.preventDefault(); event.stopPropagation(); close.click(); });
-		panel.querySelector('.pena-native-todo-status').append(_dialogTodoButton('Обновить список',() => _loadDialogTodos()));
-		panel.querySelector('.pena-native-todo-timer-actions').append(_dialogTodoButton('Остановить и записать',() => _stopDialogTimeTracker(),'pena-native-todo-stop --primary'),_dialogTodoButton('Учёт времени',_openDialogTodoTimePanel));
-		panel.querySelector('.pena-native-todo-project-hint').append(_dialogTodoButton('Выбрать проекты',_openDialogTodoTimePanel));
-		const getState=() => _getDialogTodoState();
-		panel.querySelector('.pena-native-todo-add').addEventListener('submit',async event => {
-			event.preventDefault(); const current=getState(), input=panel.querySelector('.pena-native-todo-new-title'), title=input.value.trim();
-			if (!title) return;
-			const draft=panel._penaNewDraft?.title === title ? panel._penaNewDraft : {id:crypto.randomUUID(),title}; panel._penaNewDraft=draft;
-			const saved=await _saveDialogTodo(draft,{title});
-			if (saved && current === getState()) { panel._penaNewDraft=null; if (input.value.trim() === title) input.value=''; current.filter='all'; current.query=''; panel.querySelector('.pena-native-todo-filter-query').value=''; input.focus(); _queueDialogTimeUiSync(); }
-		});
-		for (const [id,label] of [['all','Все'],['active','В работе'],['today','Сегодня'],['done','Готово']]) {
-			const button=_dialogTodoButton(label,() => { getState().filter=id; _queueDialogTimeUiSync(); }); button.dataset.todoFilter=id; panel.querySelector('.pena-native-todo-filters').append(button);
-		}
-		panel.querySelector('.pena-native-todo-filter-query').addEventListener('input',event => { getState().query=event.target.value; _queueDialogTimeUiSync(); });
-		const finishEdit=() => { getState().editor=null; _resetDialogTodoSearch(); _queueDialogTimeUiSync(); requestAnimationFrame(() => panel.querySelector('.pena-native-todo-new-title').focus()); };
-		panel.querySelector('.pena-native-todo-edit-actions').append(_dialogTodoButton('Отмена',finishEdit),_dialogTodoButton('Удалить',async () => {
-			const current=getState(), item=current.editor; if (!item) return;
-			const saved=await _saveDialogTodo(item,{deleted:true});
-			if (saved && current === getState()) { current.undo=saved; finishEdit(); }
-		},'pena-native-todo-delete'));
-		panel.querySelector('.pena-native-todo-delete').dataset.todoWrite='';
-		panel.querySelector('.pena-native-todo-undo').append(_dialogTodoButton('Вернуть',async () => {
-			const current=getState(); if (!current.undo) return;
-			if (current.undo.parentId) {
-				const undo=current.undo, parent=current.items.find(item => item.id === undo.parentId);
-				if (!parent) { current.error='Сначала верните удалённое дело.'; _queueDialogTimeUiSync(); return; }
-				const steps=[...(parent.steps || [])];
-				if (!steps.some(step => step.id === undo.step.id)) steps.splice(undo.index,0,undo.step);
-				if (await _saveDialogTodo(parent,{steps})) { current.undo=null; _queueDialogTimeUiSync(); } return;
-			}
-			if (await _saveDialogTodo(current.undo,{deleted:false})) { current.undo=null; _queueDialogTimeUiSync(); }
-		}));
-		panel.querySelector('.pena-native-todo-editor').addEventListener('submit',async event => {
-			event.preventDefault(); const current=getState(), item=current.editor; if (!item) return;
-			const selected=_getDialogTodoSearchState().selectedTask;
-			const changes={title:panel.querySelector('.pena-native-todo-edit-title').value,note:panel.querySelector('.pena-native-todo-edit-note').value,dueDate:panel.querySelector('.pena-native-todo-edit-date').value};
-			if (JSON.stringify(selected) !== JSON.stringify(item.task)) changes.task=selected;
-			if (await _saveDialogTodo(item,changes) && current === getState()) finishEdit();
-		});
-		panel.querySelector('.pena-native-todo-task-selected').addEventListener('click',() => { _resetDialogTodoSearch(); _renderDialogTodoTaskSearch(); panel.querySelector('.pena-native-todo-task-search').focus(); });
-		const taskInput=panel.querySelector('.pena-native-todo-task-search');
-		taskInput.addEventListener('input',event => _scheduleDialogTimeManualSearch(event.target.value,'todo'));
-		taskInput.addEventListener('keydown',event => {
-			const search=_getDialogTodoSearchState();
-			if (event.key === 'Enter') { event.preventDefault(); panel.querySelector('.pena-native-todo-task-option[aria-selected="true"]')?.click(); }
-			if (['ArrowDown','ArrowUp'].includes(event.key) && search.results.length) {
-				event.preventDefault(); search.activeIndex=(search.activeIndex+(event.key === 'ArrowDown' ? 1 : -1)+search.results.length)%search.results.length; _renderDialogTodoTaskSearch();
-				panel.querySelector('.pena-native-todo-task-option[aria-selected="true"]')?.scrollIntoView({block:'nearest'});
-			}
-		});
-		panel.addEventListener('keydown',event => {
-			if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); if (getState().editor) finishEdit(); else close.click(); return; }
-			if (event.key !== 'Tab') return;
-			const nodes=Array.from(panel.querySelectorAll('button:not([disabled]),input:not([disabled]),textarea:not([disabled])')).filter(node => node.tabIndex !== -1 && node.getClientRects().length);
-			const first=nodes[0],last=nodes.at(-1); if (!first) return;
-			if (event.shiftKey && (document.activeElement === first || document.activeElement === panel)) { event.preventDefault(); last.focus(); }
-			else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-		});
-		modal.append(backdrop,panel);
-		requestAnimationFrame(() => { if (panel.isConnected) panel.querySelector('.pena-native-todo-new-title').focus({preventScroll:true}); });
-		_scheduleDialogTimeBootstrap();
-		return modal;
-	}
-
 	function _createDialogTimeModal() {
 		const modal = document.createElement('div');
 		modal.className = 'pena-native-time-modal';
@@ -20259,7 +19873,7 @@ if (_presetChannel) {
 		if (_dialogControlNativeWorkspaceTab === 'control') _dialogControlNativeWorkspaceTab = '';
 		const switcher = _ensureDialogControlNativeSwitcher(container);
 		if (!switcher) return;
-		switcher.classList.toggle('--time-modal-open', ['time','todo'].includes(_dialogControlNativeWorkspaceTab));
+		switcher.classList.toggle('--time-modal-open', _dialogControlNativeWorkspaceTab === 'time');
 		switcher._penaNativeRenderContext = { container, source };
 		_markDialogControlNativeMutation();
 		const groupTabs = _getDialogControlSegmentTabs(_getDialogControlSegments());
@@ -20341,8 +19955,6 @@ if (_presetChannel) {
 		const preservedTimeModal = _dialogControlNativeWorkspaceTab === 'time'
 			? switcher.querySelector('.pena-native-time-modal')
 			: null;
-		const preservedTodoModal = _dialogControlNativeWorkspaceTab === 'todo' ? switcher.querySelector('.pena-native-todo-modal') : null;
-		const preservedTodoFocus = preservedTodoModal?.contains(document.activeElement) ? document.activeElement : null;
 
 		// Build the next tab layout off-screen and swap it in one operation. Clearing
 		// the live switcher first makes the sticky block briefly collapse and jump.
@@ -20357,7 +19969,7 @@ if (_presetChannel) {
 			btn.dataset.penaWorkspaceTab = id;
 			if (options.className) btn.classList.add(options.className);
 			btn.classList.toggle('--active', _dialogControlNativeWorkspaceTab === id);
-			btn.setAttribute('aria-haspopup', ['time','todo'].includes(id) ? 'dialog' : 'menu');
+			btn.setAttribute('aria-haspopup', id === 'time' ? 'dialog' : 'menu');
 			btn.setAttribute('aria-expanded', _dialogControlNativeWorkspaceTab === id ? 'true' : 'false');
 			btn.innerHTML = `${icon}<span${options.labelClass ? ` class="${options.labelClass}"` : ''}>${label}</span><svg class="pena-native-command-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>`;
 			btn.addEventListener('click', (e) => {
@@ -20396,7 +20008,6 @@ if (_presetChannel) {
 				{ className: 'pena-native-time-button', labelClass: 'pena-native-time-button-label' }
 			));
 		}
-		workspaceTabs.append(makeWorkspaceTab('todo','Дела','<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="m8 12 3 3 5-6"/></svg>',{className:'pena-native-todo-button'}));
 		const rulesButton = document.createElement('button');rulesButton.type='button';rulesButton.className='pena-native-command-btn pena-native-rules-button';
 		rulesButton.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h6v6H4zM14 15h6v6h-6zM7 11v7h7M10 8h7v7"/></svg><span>Правила</span>';rulesButton.setAttribute('aria-haspopup','dialog');rulesButton.title='Автосортировка диалогов по папкам';
 		rulesButton.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();_openDialogAutomation();});workspaceTabs.append(rulesButton);
@@ -20527,14 +20138,6 @@ if (_presetChannel) {
 			workspaceTabs.appendChild(timeModal);
 			requestAnimationFrame(() => {
 				if (timeModal.isConnected && timeModal.showPopover && !timeModal.matches(':popover-open')) timeModal.showPopover();
-			});
-		}
-		if (_dialogControlNativeWorkspaceTab === 'todo') {
-			const todoModal=preservedTodoModal || _createDialogTodoModal(); workspaceTabs.append(todoModal);
-			requestAnimationFrame(() => {
-				if (!todoModal.isConnected) return;
-				if (todoModal.showPopover && !todoModal.matches(':popover-open')) todoModal.showPopover();
-				if (preservedTodoFocus?.isConnected && document.activeElement === document.body) preservedTodoFocus.focus({preventScroll:true});
 			});
 		}
 		const groupRow = document.createElement('div');

@@ -435,3 +435,6 @@ try {
 assert.equal(report.status,'PASS');
 // Folder automation is part of the same folder contract and focused release gate.
 await import('./folder-automation-regression.mjs');
+
+// Removing the personal todo UI must preserve Rules and legacy running timers.
+await import('./todo-panel-regression.mjs');

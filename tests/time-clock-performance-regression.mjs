@@ -18,11 +18,10 @@ function fixture() {
     let value = initial;
     return { get textContent() { return value; }, set textContent(next) { state.writes++; value = next; } };
   };
-  const label = node('Сейчас 0:00'), duration = node('0:00'), todoClock=node('0:00');
+  const label = node('Сейчас 0:00'), duration = node('0:00');
   const switcher = { isConnected: true, querySelector(selector) {
     state.queries++;
-    assert.ok(['.pena-native-time-button-label', '.pena-native-time-tracker-duration', '.pena-native-todo-clock'].includes(selector), `Unexpected timer DOM work: ${selector}`);
-    if (selector === '.pena-native-todo-clock') return todoClock;
+    assert.ok(['.pena-native-time-button-label', '.pena-native-time-tracker-duration'].includes(selector), `Unexpected timer DOM work: ${selector}`);
     return selector.endsWith('button-label') ? label : duration;
   } };
   const sandbox = {
@@ -40,7 +39,7 @@ function fixture() {
   sandbox._PENA_TIME_CONTROL = sandbox.__PENA_TIME_CONTROL__;
   for (const name of ['_getDialogTimeTrackerSeconds', '_syncDialogTimeTrackerClock', '_ensureDialogTimeTrackerTick']) vm.runInContext(extract(name), sandbox);
   sandbox._ensureDialogTimeTrackerTick();
-  return { state, sandbox, label, duration, todoClock, switcher, tick: (seconds = 1) => { state.now += seconds * 1000; state.tick?.(); } };
+  return { state, sandbox, label, duration, switcher, tick: (seconds = 1) => { state.now += seconds * 1000; state.tick?.(); } };
 }
 const phases = [];
 function phase(name, run) {
@@ -59,12 +58,6 @@ phase('120 timer ticks update current values without rebuilding catalog, history
   f.sandbox._ensureDialogTimeTrackerTick();
   assert.equal(f.state.intervals, 1);
   return { ticks: 120, fullPanelSynchronizations: f.state.syncs, boundedQueries: f.state.queries, textWrites: f.state.writes };
-});
-phase('todo clock shares the interval without rebuilding rows or querying the time panel', () => {
-  const f=fixture();f.sandbox._dialogControlNativeWorkspaceTab='todo';
-  for(let i=0;i<120;i++)f.tick();
-  assert.equal(f.todoClock.textContent,'0:02');assert.equal(f.duration.textContent,'0:00');
-  assert.equal(f.state.syncs,0);assert.equal(f.state.queries,240);assert.equal(f.state.writes,4);
 });
 phase('hidden and closed panels do no panel work; resume uses wall-clock elapsed time', () => {
   const f = fixture();
