@@ -433,3 +433,5 @@ try {
  for(const phase of report.phases) console.log(phase.status+' '+phase.name+(phase.error?'\n'+phase.error:''));
 }
 assert.equal(report.status,'PASS');
+// Folder automation is part of the same folder contract and focused release gate.
+await import('./folder-automation-regression.mjs');

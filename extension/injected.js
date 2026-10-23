@@ -2429,6 +2429,7 @@
 		const id = normId(meta.id || aliases[0]);
 		if (!id) return null;
 		meta.id = id;
+		if (!meta.automationFacts && target.get(id)?.automationFacts) meta.automationFacts = target.get(id).automationFacts;
 		if (/^\d+$/.test(String(meta.taskId || ''))) {
 			const taskId = String(meta.taskId);
 			if (meta.isTask === true && /^chat\d+$/i.test(id)) {
@@ -2573,7 +2574,7 @@
 			'lastAuthorId', 'lastAuthorName', 'lastAuthorAvatarUrl', 'lastAuthorOwn', 'lastAuthorSystem', 'lastAuthorResolved', 'lastMessageStatus',
 			'lastMessageHasFile', 'lastMessageHasAttach', 'lastMessageSticker',
 			'lastMessageTs', 'lastMessageTsSource', 'nativeRecentRank', 'lastMessageId', 'lastReadMessageId', 'unreadCount', 'hasUnread', 'hasLater', 'hasMention',
-			'isTask', 'taskId', 'taskUrl', 'timeTrackingEnabled', 'taskCatalogFetchedAt', 'restDialogId', 'fetchedAt', 'counterFetchedAt', 'counterConfirmedAt', 'counterStale', 'detailFetchedAt', 'detailAttemptAt',
+			'isTask', 'taskId', 'taskUrl', 'automationFacts', 'timeTrackingEnabled', 'taskCatalogFetchedAt', 'restDialogId', 'fetchedAt', 'counterFetchedAt', 'counterConfirmedAt', 'counterStale', 'detailFetchedAt', 'detailAttemptAt',
 			'detailBlockedUntil', 'avatarResolved', 'availability', 'availabilityReason', 'availabilityCheckedAt', 'recentListFetchedAt', 'catalogSource'
 		];
 		const result = fields.reduce((serialized, field) => {
@@ -4170,6 +4171,7 @@
 			existingById.set(id, items[items.length - 1]);
 			added += 1;
 		});
+		updated += _applyDialogAutomation(targetMode, items);
 		if (added || updated || removed) {
 			_saveDialogControlItemsForMode(targetMode, items);
 			_dialogControlLastSig = '';
@@ -4230,6 +4232,7 @@
 	}
 
 	function _notifyDialogRecentDataChanged() {
+		_scheduleDialogAutomation();
 		_dialogControlLastSig = '';
 		_invalidateDialogControlDomReadCache();
 		if (!IS_OL_FRAME && _isDialogControlNativeMode()) {
@@ -5443,6 +5446,7 @@
 				timeTrackingEnabled,
 				lastMessageTs: Math.max(0, Number(previous.lastMessageTs) || taskActivityTs || 0),
 				lastMessageTsSource: previous.lastMessageTsSource || (taskActivityTs ? 'task-activity' : ''),
+				automationFacts: window.__PENA_NATIVE_CATALOG__.taskAutomationFacts(task, previous.automationFacts),
 				taskCatalogFetchedAt: fetchedAt,
 				availability: previous.availability === 'unavailable' ? 'unavailable' : 'available',
 				fetchedAt
@@ -5504,7 +5508,7 @@
 		const syncStartedAt = Date.now();
 		const evidence = { scope:scopeKey, revisions:new Map(_dialogTimeTaskRevisions), at:syncStartedAt };
 		const syncPromise = (async () => {
-			const select = ['ID', 'TITLE', 'CHAT_ID', 'GROUP_ID', 'ALLOW_TIME_TRACKING', 'ACTIVITY_DATE', 'CHANGED_DATE', 'TIME_SPENT_IN_LOGS'];
+			const select = ['ID', 'TITLE', 'CHAT_ID', 'GROUP_ID', 'ALLOW_TIME_TRACKING', 'ACTIVITY_DATE', 'CHANGED_DATE', 'TIME_SPENT_IN_LOGS', 'RESPONSIBLE_ID', 'CREATED_BY', 'ACCOMPLICES', 'AUDITORS', 'STATUS', 'PRIORITY', 'DEADLINE'];
 			const maxPages = headOnly
 				? Math.max(1, Math.min(4, Number(options.maxPages) || 1))
 				: _DIALOG_TASK_CATALOG_MAX_PAGES;
@@ -5967,7 +5971,7 @@
 		const previousTaskAt = Math.max(0, Number(previous?.taskCatalogFetchedAt) || 0);
 		const incomingTaskAt = Math.max(0, Number(incomingMeta?.taskCatalogFetchedAt) || 0);
 		if (previousTaskAt > 0 && (previousTaskAt >= incomingTaskAt || (startedAt > 0 && previousTaskAt >= startedAt))) {
-			for (const field of ['isTask', 'taskId', 'taskUrl', 'timeTrackingEnabled', 'taskCatalogFetchedAt']) {
+			for (const field of ['isTask', 'taskId', 'taskUrl', 'automationFacts', 'timeTrackingEnabled', 'taskCatalogFetchedAt']) {
 				if (previous[field] !== undefined) mergedMeta[field] = previous[field];
 			}
 			if (previous.isTask === true) {
@@ -12668,6 +12672,256 @@ if (_presetChannel) {
 		_setDialogControlCurrentId(null);
 		return '';
 	}
+
+	let _dialogAutomationTimer = null;
+	let _dialogAutomationLoading = '';
+	const _dialogAutomationAttempts = new Map();
+	function _dialogAutomationKey(mode = _pMode()) {
+		const scope = _getDialogTimeIdentityScopeKey();
+		return scope ? `pena.automation.v1.${scope}.${mode}` : '';
+	}
+	function _readDialogAutomation(mode = _pMode()) {
+		return _readDialogAutomationConfig(mode).rules;
+	}
+	function _readDialogAutomationConfig(mode = _pMode()) {
+		try {
+			const value = JSON.parse(localStorage.getItem(_dialogAutomationKey(mode)) || '{}');
+			if (value.version === 1 && Array.isArray(value.rules)) return value;
+		} catch {}
+		return {version:1,rules:[],excludedIds:[]};
+	}
+	async function _prepareDialogAutomationSnapshot(mode, isCurrent) {
+		const source = _dialogNativeSourceGenerations.get(mode);
+		if (!source || !isCurrent()) throw new Error('Откройте список диалогов и повторите сохранение.');
+		const taskOutcome = _syncDialogTaskCatalog({force:true,deferMerge:true}).then(value=>({value,error:null}),error=>({value:null,error}));
+		const audit = await _runDialogNativeExpectedCatalogAudit(mode,source.generation,{forceApi:true,sourceContainer:source.list,sourceViewport:source.viewport,taskCatalogOutcomePromise:taskOutcome});
+		const tasks = await taskOutcome;
+		if (!isCurrent() || !audit.complete || tasks.error || !tasks.value?.complete || tasks.value?.discarded) {
+			throw new Error('Не удалось получить полный список диалогов. Правила пока не изменены. Повторите сохранение после восстановления связи.');
+		}
+		// Reuse the audited metadata without scrolling the native list. All IDs
+		// known by the end of activation belong to the existing-dialog snapshot.
+		for (const [id,meta] of audit.metadata) {
+			_setDialogRecentMeta(_dialogRecentMeta,_mergeDialogRecentMessageState(_getDialogRecentMeta(id),meta));
+		}
+		_commitDialogTaskCatalogResult(tasks.value);
+		_hydrateAllDialogControlModesFromRecent({pruneMissing:false});
+		return [...new Set([...audit.metadata.keys(),..._getDialogRecentUniqueMeta().map(item=>item.id),
+			..._getDialogControlItemsForMode(mode).filter(item=>!_isDialogControlFolder(item)).map(item=>item.id)])];
+	}
+	function _dialogAutomationFacts(item) {
+		const meta = _getDialogRecentMeta(item.id) || {};
+		return { title:meta.displayTitle || item.title || '', kind:/^user\d+$/i.test(item.id) ? 'personal' : 'group', ...meta.automationFacts };
+	}
+	function _applyDialogAutomation(mode, items, previewRules = null) {
+		const model = window.__PENA_NATIVE_CATALOG__;
+		const rules = previewRules || _readDialogAutomation(mode);
+		const excluded = new Set(previewRules ? [] : _readDialogAutomationConfig(mode).excludedIds || []);
+		if (!model?.automationDecision || !rules.some(rule => rule.enabled)) return 0;
+		const folders = new Map(items.filter(_isDialogControlFolder).map(folder => [folder.id, folder]));
+		const folderIds = new Set(folders.keys());
+		let changed = 0;
+		for (const item of items) {
+			if (_isDialogControlFolder(item) || item.folderId || item.automationHandled || excluded.has(item.id) || _isDialogControlItemUnavailable(item)) continue;
+			const decision = model.automationDecision(rules, _dialogAutomationFacts(item), mode, folderIds);
+			if (!decision?.folderId) continue;
+			changed++;
+			if (previewRules) continue;
+			item.folderId = decision.folderId;
+			item.segmentId = folders.get(decision.folderId).segmentId || '';
+			item.automationHandled = true;
+			item.automationRuleId = decision.ruleId;
+			delete item.column; delete item.columnIndex;
+		}
+		return changed;
+	}
+	function _scheduleDialogAutomation() {
+		if (_dialogAutomationTimer || !_getDialogTimeIdentityScopeKey()) return;
+		if (!['chats','tasks'].some(mode => _readDialogAutomation(mode).some(rule => rule.enabled))) return;
+		_dialogAutomationTimer = setTimeout(async () => {
+			_dialogAutomationTimer = null;
+			if (document.hidden || navigator.onLine === false) return;
+			let changed = false;
+			for (const mode of ['chats','tasks']) {
+				const items = _getDialogControlItemsForMode(mode);
+				if (_applyDialogAutomation(mode, items)) { _saveDialogControlItemsForMode(mode, items); changed = true; }
+			}
+			if (changed) { _dialogControlNativeViewSig = ''; _notifyDialogRecentDataChanged(); }
+			// Only unresolved task rules need detail reads. Reuse the shared REST
+			// queue, cap each batch, and fence responses across account switches.
+			const scope = _getDialogTimeIdentityScopeKey();
+			if (_dialogAutomationLoading === scope) return;
+			const rules = _readDialogAutomation('tasks');
+			const excluded = new Set(_readDialogAutomationConfig('tasks').excludedIds || []);
+			const items = _getDialogControlItemsForMode('tasks');
+			const folders = new Set(items.filter(_isDialogControlFolder).map(item => item.id));
+			const pending = items.filter(item => !_isDialogControlFolder(item) && !item.folderId && !item.automationHandled && !excluded.has(item.id) &&
+				/^\d+$/.test(String(item.taskId)) && window.__PENA_NATIVE_CATALOG__.automationDecision(rules, _dialogAutomationFacts(item), 'tasks', folders)?.pending &&
+				Date.now() - (_dialogAutomationAttempts.get(`${scope}:${item.taskId}`) || 0) > 60000).slice(0, 10);
+			if (!pending.length) return;
+			_dialogAutomationLoading = scope;
+			try {
+				for (const item of pending) {
+					if (scope !== _getDialogTimeIdentityScopeKey() || document.hidden || navigator.onLine === false) break;
+					_dialogAutomationAttempts.set(`${scope}:${item.taskId}`, Date.now());
+					try {
+						const data = await _callBxRestMethod('tasks.task.get', {taskId:item.taskId}, {timeoutMs:12000, isCurrent:()=>scope===_getDialogTimeIdentityScopeKey() && !document.hidden});
+						if (scope !== _getDialogTimeIdentityScopeKey()) break;
+						const task = _extractTaskRecordFromData(data);
+						if (String(task?.id ?? task?.ID) !== String(item.taskId)) continue;
+						const meta = _getDialogRecentMeta(item.id);
+						if (meta) {
+							_setDialogRecentMeta(_dialogRecentMeta, {...meta, automationFacts:window.__PENA_NATIVE_CATALOG__.taskAutomationFacts(task, meta.automationFacts)});
+							_scheduleDialogRecentCacheWrite();
+						}
+					} catch { break; }
+				}
+			} finally {
+				if (_dialogAutomationLoading === scope) _dialogAutomationLoading = '';
+				if (scope === _getDialogTimeIdentityScopeKey()) _scheduleDialogAutomation();
+			}
+		}, 300);
+	}
+	function _openDialogAutomation(defaultFolderId = '') {
+		if (document.querySelector('.pena-automation-overlay')) return;
+		const mode = _pMode(), key = _dialogAutomationKey(mode);
+		if (!key) { _showDialogDockToast('Дождитесь определения пользователя Bitrix24', 'danger'); return; }
+		const model = window.__PENA_NATIVE_CATALOG__;
+		const base = localStorage.getItem(key);
+		const rules = JSON.parse(JSON.stringify(_readDialogAutomation(mode)));
+		const previousFocus = document.activeElement;
+		const overlay = document.createElement('div'); overlay.className = 'pena-automation-overlay';
+		const panel = document.createElement('section'); panel.className = 'pena-automation-panel';
+		panel.setAttribute('role','dialog'); panel.setAttribute('aria-modal','true'); panel.setAttribute('aria-label','Автосортировка');
+		overlay.append(panel);
+		const node = (tag, text, parent) => { const el = document.createElement(tag); if (text != null) el.textContent = text; parent?.append(el); return el; };
+		const button = (text, parent, action) => { const el = node('button',text,parent); el.type='button'; el.addEventListener('click',action); return el; };
+		const select = (values, value, label, parent, change) => {
+			const el = node('select',null,parent); el.setAttribute('aria-label',label);
+			values.forEach(([id,title]) => { const option = node('option',title,el); option.value=id; }); el.value=value;
+			el.addEventListener('change',() => change(el.value)); return el;
+		};
+		const close = () => { overlay.remove(); document.removeEventListener('keydown',trap,true); previousFocus?.focus?.(); };
+		const trap = event => {
+			if (document.querySelector('.pena-native-confirm-overlay')) return;
+			if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); close(); }
+			if (event.key === 'Tab') {
+				const all = [...panel.querySelectorAll('button,input,select')].filter(el => !el.disabled);
+				if (event.shiftKey && document.activeElement === all[0]) {event.preventDefault(); all.at(-1)?.focus();}
+				if (!event.shiftKey && document.activeElement === all.at(-1)) {event.preventDefault(); all[0]?.focus();}
+			}
+		};
+		document.addEventListener('keydown',trap,true);
+		overlay.addEventListener('click',event => { if (event.target === overlay) close(); });
+		const header = node('header',null,panel);
+		node('h2',`Автосортировка · ${mode === 'tasks' ? 'задачи' : 'чаты'}`,header);
+		button('Закрыть',header,close);
+		node('p','Правила проверяются сверху вниз. Первое совпадение выбирает папку. Диалоги, распределённые вручную, сохраняют своё место.',panel);
+		if (mode === 'tasks') node('p','Сотрудника можно найти по имени или указать ID. Для проекта используйте ID из ссылки Bitrix24. Недостающие данные задач загрузятся автоматически.',panel);
+		const list = node('div',null,panel); list.className='pena-automation-rules';
+		const existingLabel=node('label',null,panel);existingLabel.className='pena-automation-existing';
+		const includeExisting=node('input',null,existingLabel);includeExisting.type='checkbox';includeExisting.checked=false;
+		existingLabel.append(document.createTextNode('Распределить уже существующие диалоги'));
+		node('p','Без этой галочки правила применяются только к диалогам, появившимся после сохранения. Новое сообщение в старом диалоге не делает его новым.',panel);
+		const status = node('p','',panel); status.setAttribute('role','status');
+		const folders = () => _getDialogControlItemsForMode(mode).filter(_isDialogControlFolder);
+		const draw = () => {
+			list.replaceChildren();
+			if (!rules.length) node('p','Правил пока нет. Создайте первое, чтобы новые диалоги попадали в нужную папку.',list);
+			rules.forEach((rule,index) => {
+				const card = node('fieldset',null,list); node('legend',`Правило ${index+1}`,card);
+				const head = node('div',null,card); head.className='pena-automation-rule-head';
+				const label = node('label',null,head), enabled=node('input',null,label); enabled.type='checkbox'; enabled.checked=rule.enabled;
+				label.append(document.createTextNode('Включено')); enabled.addEventListener('change',()=>rule.enabled=enabled.checked);
+				const title=node('input',null,head); title.value=rule.name; title.maxLength=80; title.setAttribute('aria-label','Название правила'); title.addEventListener('input',()=>rule.name=title.value);
+				button('↑',head,()=>{ if(index>0){[rules[index-1],rules[index]]=[rules[index],rules[index-1]];draw();} }).setAttribute('aria-label','Поднять правило');
+				button('↓',head,()=>{ if(index<rules.length-1){[rules[index+1],rules[index]]=[rules[index],rules[index+1]];draw();} }).setAttribute('aria-label','Опустить правило');
+				button('Удалить',head,()=>{rules.splice(index,1);draw();});
+				select([['all','Все условия'],['any','Любое условие']],rule.match,'Совпадение условий',card,value=>rule.match=value);
+				rule.conditions.forEach((condition,ci) => {
+					const row=node('div',null,card); row.className='pena-automation-condition';
+					select(Object.entries(model.automationFields).filter(([field])=>mode==='tasks'?field!=='kind':['title','kind'].includes(field)).map(([field,spec])=>[field,spec[0]]),condition.field,'Поле условия',row,value=>{condition.field=value;condition.op=value==='title'?'contains':value==='deadline'?'overdue':'eq';condition.value='';delete condition.label;draw();});
+					const type=model.automationFields[condition.field]?.[1];
+					const operators=type==='text'?[['contains','содержит'],['notContains','не содержит'],['eq','равно'],['neq','не равно'],['starts','начинается с'],['ends','заканчивается на']]:type==='date'?[['overdue','просрочен'],['before','раньше'],['after','позже'],['empty','не задан'],['present','задан']]:[['eq','равно'],['neq','не равно']];
+					select(operators,condition.op,'Оператор',row,value=>{condition.op=value;draw();});
+					const choices={kind:[['personal','Личная переписка'],['group','Групповой чат']],status:[['2','Ждёт выполнения'],['3','В работе'],['4','Ждёт контроля'],['5','Завершена'],['6','Отложена'],['7','Отклонена']],priority:[['0','Низкий'],['1','Обычный'],['2','Высокий']]};
+					if(choices[type]) select([['','Выберите значение'],...choices[type]],condition.value,'Значение условия',row,value=>condition.value=value);
+					else if(!['overdue','empty','present'].includes(condition.op)) {
+						const person=type==='ids' && condition.field!=='groupId';
+						const valueHost=person?node('div',null,row):row;
+						if(person)valueHost.className='pena-automation-person';
+						const input=node('input',null,valueHost); input.type=type==='date'?'date':'text'; input.value=condition.label||condition.value; input.maxLength=300;
+						input.placeholder=person?'Имя сотрудника или ID':type==='ids'?'ID проекта, например 42':'Текст без учёта регистра'; input.setAttribute('aria-label','Значение условия');
+						let lookupTimer=null;
+						const results=person?node('div',null,valueHost):null;
+						input.addEventListener('input',()=>{
+							delete condition.label;condition.value=input.value.trim();clearTimeout(lookupTimer);results?.replaceChildren();
+							if(!person||condition.value.length<2||/^\d+$/.test(condition.value))return;
+							const query=condition.value;
+							const current=()=>input.isConnected&&input.value.trim()===query&&key===_dialogAutomationKey(mode);
+							lookupTimer=setTimeout(async()=>{
+								if(!current())return;results.textContent='Поиск…';
+								try{
+									const response=await _callBxRestReadPage('im.search.user.list',{FIND:query,OFFSET:0,LIMIT:20},{attempts:1,timeoutMs:12000,isCurrent:current});
+									if(!current())return;
+									const users=Array.isArray(response.data)?response.data:response.data?.result;
+									if(!Array.isArray(users))throw new Error('Invalid users');results.replaceChildren();
+									for(const user of users){
+										const id=String(user.id||'');if(!/^[1-9]\d*$/.test(id)||user.bot===true||user.bot==='Y')continue;
+										const name=String(user.name||[user.first_name,user.last_name].filter(Boolean).join(' ')||id);
+										button(`${name} · ${id}`,results,()=>{condition.value=id;condition.label=`${name} · ${id}`;input.value=condition.label;results.replaceChildren();});
+									}
+									if(!results.childElementCount)results.textContent='Никого не найдено. Уточните имя или введите ID.';
+								}catch{if(current())results.textContent='Поиск недоступен. Можно указать ID сотрудника.';}
+							},300);
+						});
+					}
+					button('×',row,()=>{rule.conditions.splice(ci,1);draw();}).setAttribute('aria-label','Удалить условие');
+				});
+				button('Добавить условие',card,()=>{if(rule.conditions.length<20){rule.conditions.push({field:'title',op:'contains',value:''});draw();}});
+				const dest=node('label','Перенести в папку ',card);
+				select([['','Выберите папку'],...folders().map(folder=>[folder.id,folder.title])],rule.folderId,'Папка назначения',dest,value=>rule.folderId=value);
+			});
+		};
+		const add = () => { if(rules.length>=50)return; rules.push({id:`rule:${Date.now()}:${Math.random().toString(36).slice(2,8)}`,name:'Новое правило',enabled:true,folderId:defaultFolderId||folders()[0]?.id||'',match:'all',conditions:[{field:'title',op:'contains',value:''}]});draw(); };
+		const actions=node('footer',null,panel);
+		button('Добавить правило',actions,add);
+		button('Создать папку',actions,()=>_showDialogControlNamePrompt('Название папки','',{okLabel:'Создать',maxLength:40},title=>{
+			if(key!==_dialogAutomationKey(mode)||mode!==_pMode())return;
+			const folder=_createDialogControlFolder({title,render:false,toast:false});defaultFolderId=folder.id;draw();
+		}));
+		const valid = () => {
+			const ids=new Set(folders().map(folder=>folder.id));
+			return rules.every(rule=>!rule.enabled||(ids.has(rule.folderId)&&rule.conditions.length>0&&rule.conditions.every(condition=>
+				['overdue','empty','present'].includes(condition.op)||String(condition.value).trim()&&(model.automationFields[condition.field]?.[1]!=='ids'||/^\d+$/.test(condition.value)))));
+		};
+		button('Проверить',actions,()=>{
+			status.textContent=!valid()?'Заполните условия и выберите папку для каждого включённого правила.':!includeExisting.checked?'Существующие диалоги останутся на месте. Правила будут применяться к новым.':`Сейчас будут распределены: ${_applyDialogAutomation(mode,_getDialogControlItemsForMode(mode),rules)}. Подсчёт по уже загруженным данным.`;
+		});
+		let saving=false;
+		button('Сохранить',actions,async()=>{
+			if(saving)return;
+			if(key!==_dialogAutomationKey(mode)){status.textContent='Пользователь изменился. Откройте настройки заново.';return;}
+			if(!valid()){status.textContent='Заполните условия и выберите папку для каждого включённого правила.';return;}
+			if(localStorage.getItem(key)!==base){status.textContent='Правила изменились в другом окне. Закройте и откройте настройки заново.';return;}
+			saving=true;const controls=[...panel.querySelectorAll('input,select,footer button,fieldset button')];controls.forEach(el=>el.disabled=true);
+			status.textContent='Проверяем список существующих диалогов…';
+			const current=()=>overlay.isConnected&&key===_dialogAutomationKey(mode)&&mode===_pMode();
+			try{
+				const ids=rules.some(rule=>rule.enabled)?await _prepareDialogAutomationSnapshot(mode,current):[];
+				if(!current())return;
+				if(localStorage.getItem(key)!==base)throw new Error('Правила изменились в другом окне. Откройте настройки заново.');
+				if(!valid())throw new Error('Папка назначения удалена. Выберите другую папку.');
+				localStorage.setItem(key,JSON.stringify({version:1,rules,excludedIds:includeExisting.checked?[]:ids,activatedAt:Date.now()}));
+				close();_scheduleDialogAutomation();_showDialogDockToast('Правила сохранены', 'ok');
+			}catch(error){if(current())status.textContent=error.message||'Не удалось сохранить правила. Повторите попытку.';}
+			finally{saving=false;controls.forEach(el=>el.disabled=false);}
+		});
+		draw();document.body.append(overlay);header.querySelector('button').focus();
+	}
+	window.addEventListener('storage',event=>{if(event.key===_dialogAutomationKey('tasks')||event.key===_dialogAutomationKey('chats'))_scheduleDialogAutomation();});
+	window.addEventListener('online',()=>_scheduleDialogAutomation());
+	document.addEventListener('visibilitychange',()=>{if(!document.hidden)_scheduleDialogAutomation();});
 
 	function _makeDialogControlFolderId() {
 		return `folder:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
@@ -19988,6 +20242,9 @@ if (_presetChannel) {
 			));
 		}
 		workspaceTabs.append(makeWorkspaceTab('todo','Дела','<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="m8 12 3 3 5-6"/></svg>',{className:'pena-native-todo-button'}));
+		const rulesButton = document.createElement('button');rulesButton.type='button';rulesButton.className='pena-native-command-btn pena-native-rules-button';
+		rulesButton.textContent='Правила';rulesButton.setAttribute('aria-haspopup','dialog');rulesButton.title='Автосортировка диалогов по папкам';
+		rulesButton.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();_openDialogAutomation();});workspaceTabs.append(rulesButton);
 		const syncChip = document.createElement('button');
 		const updateSlot = document.createElement('span');
 		updateSlot.className = 'pena-native-update-slot';
@@ -23023,6 +23280,10 @@ if (_presetChannel) {
 			const key = `${_LS_DIALOG_CONTROL}.${m}`;
 			const storedRaw = localStorage.getItem(key) || '[]';
 			const baseRaw = _dialogControlStorageRaw[m];
+			const previousFolders = new Map(JSON.parse(baseRaw || '[]').filter(item => item.type !== 'folder').map(item => [String(item.id), item.folderId || '']));
+			for (const item of localItems) {
+				if (item.type !== 'folder' && previousFolders.get(String(item.id)) && previousFolders.get(String(item.id)) !== (item.folderId || '')) item.automationHandled = true;
+			}
 			if (baseRaw != null && storedRaw !== baseRaw) {
 				const baseItems = JSON.parse(baseRaw || '[]');
 				const remoteItems = JSON.parse(storedRaw || '[]');
@@ -25478,6 +25739,9 @@ if (_presetChannel) {
 		title.textContent = group?.isAll ? _getDialogControlAllLabel() : String(group?.title || 'Группа');
 		let close = () => {};
 		const actions = [title];
+		const automationBtn = _makeDialogControlContextButton('dialog-control-context-automation', '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>', 'Автосортировка');
+		automationBtn.addEventListener('click', () => { close(); _openDialogAutomation(); });
+		actions.push(automationBtn);
 		{
 			const renameBtn = _makeDialogControlContextButton(
 				'dialog-control-context-segment',
@@ -25591,6 +25855,9 @@ if (_presetChannel) {
 		title.textContent = folder ? String(folder.title || 'Папка') : _getDialogControlAllLabel(true);
 		let close = () => {};
 		const actions = [title];
+		const automationBtn = _makeDialogControlContextButton('dialog-control-context-automation', '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>', 'Автосортировка');
+		automationBtn.addEventListener('click', () => { close(); _openDialogAutomation(folderId); });
+		actions.push(automationBtn);
 		{
 			const renameBtn = _makeDialogControlContextButton(
 				'dialog-control-context-folder',

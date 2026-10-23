@@ -475,7 +475,65 @@
 		return { segmentOf, folderOf };
 	}
 
+	// Unknown metadata is not a negative match. In particular, an unfinished
+	// task lookup must never satisfy «not equal» and send a task to a wrong folder.
+	const automationFields = Object.freeze({
+		title: ['Название', 'text'], kind: ['Тип диалога', 'kind'],
+		responsibleId: ['Исполнитель', 'ids'], createdBy: ['Постановщик', 'ids'],
+		accomplices: ['Соисполнитель', 'ids'], auditors: ['Наблюдатель', 'ids'],
+		groupId: ['Проект', 'ids'], status: ['Статус', 'status'],
+		priority: ['Приоритет', 'priority'], deadline: ['Крайний срок', 'date']
+	});
+	function taskAutomationFacts(task, previous = {}) {
+		const facts = { ...previous };
+		for (const [field, api] of Object.entries({ title:'TITLE', responsibleId:'RESPONSIBLE_ID', createdBy:'CREATED_BY',
+			accomplices:'ACCOMPLICES', auditors:'AUDITORS', groupId:'GROUP_ID', status:'STATUS', priority:'PRIORITY', deadline:'DEADLINE' })) {
+			if (hasOwn(task, field) || hasOwn(task, api)) facts[field] = task[field] ?? task[api] ?? '';
+		}
+		return facts;
+	}
+	function automationCondition(condition, facts, mode, now = Date.now()) {
+		const { field, op, value } = condition || {};
+		const spec = automationFields[field];
+		if (!spec || (mode !== 'tasks' && !['title', 'kind'].includes(field))) return false;
+		if (!hasOwn(facts, field) || facts[field] == null) return null;
+		const actual = facts[field], expected = normalizeText(value);
+		if (spec[1] === 'date') {
+			if (op === 'empty') return actual === '';
+			if (op === 'present') return !!actual;
+			const date = Date.parse(actual);
+			if (!Number.isFinite(date)) return false;
+			if (op === 'overdue') return date >= now ? false : !hasOwn(facts, 'status') ? null : !['4','5','6','7'].includes(String(facts.status));
+			const threshold = Date.parse(value);
+			return Number.isFinite(threshold) && (op === 'before' ? date < threshold : op === 'after' ? date > threshold : false);
+		}
+		if (!expected) return false;
+		const values = (Array.isArray(actual) ? actual : [actual]).map(value => normalizeText(value?.id ?? value));
+		if (op === 'eq') return values.includes(expected);
+		if (op === 'neq') return !values.includes(expected);
+		if (spec[1] !== 'text') return false;
+		if (op === 'contains') return values.some(text => text.includes(expected));
+		if (op === 'notContains') return values.every(text => !text.includes(expected));
+		if (op === 'starts') return values.some(text => text.startsWith(expected));
+		if (op === 'ends') return values.some(text => text.endsWith(expected));
+		return false;
+	}
+	function automationDecision(rules, facts, mode, folderIds, now = Date.now()) {
+		for (const rule of Array.isArray(rules) ? rules : []) {
+			if (!rule.enabled || !folderIds.has(rule.folderId) || !rule.conditions?.length) continue;
+			const checks = rule.conditions.map(condition => automationCondition(condition, facts, mode, now));
+			const match = rule.match === 'any'
+				? (checks.includes(true) ? true : checks.includes(null) ? null : false)
+				: (checks.includes(false) ? false : checks.includes(null) ? null : true);
+			// Preserve priority until metadata for an earlier possible rule arrives.
+			if (match === null) return { pending: true };
+			if (match) return { ruleId: rule.id, folderId: rule.folderId };
+		}
+		return null;
+	}
+
 	return Object.freeze({
+		automationFields, taskAutomationFacts, automationCondition, automationDecision,
 		createPlacementIndex,
 		buildIndex,
 		mergeRecentItems,
