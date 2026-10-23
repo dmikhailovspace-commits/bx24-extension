@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.53';
+	window.__ANITREC_RUNNING__ = '8.0.54';
 
-	const VER = '8.0.53';
+	const VER = '8.0.54';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -12844,7 +12844,6 @@ if (_presetChannel) {
 		node('span',mode==='tasks'?'Задачи':'Чаты',heading).className='pena-automation-mode';
 		const closeButton=button('',header,close);closeButton.className='pena-native-popover-close';closeButton.setAttribute('aria-label','Закрыть');closeButton.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>';
 		const scroll=node('div',null,panel);scroll.className='pena-automation-scroll';
-		node('p','Первое совпавшее правило определяет папку. Ручная раскладка сохраняется.',scroll).className='pena-automation-hint';
 		const list = node('div',null,scroll); list.className='pena-automation-rules';
 		const bottom=node('div',null,panel);bottom.className='pena-automation-bottom';
 		const existingLabel=node('label',null,bottom);existingLabel.className='pena-automation-existing';
@@ -12876,11 +12875,9 @@ if (_presetChannel) {
 				const remove=button('×',head,()=>{rules.splice(index,1);draw();});remove.setAttribute('aria-label','Удалить правило');remove.className='pena-automation-icon-button';
 				const body=node('div',null,card);body.className='pena-automation-rule-body';
 				body.id=`pena-automation-body-${index}`;toggle.setAttribute('aria-controls',body.id);
-				const summary=node('div',`${rule.match==='any'?'Любое':'Все'} · условий: ${rule.conditions.length} → ${folders().find(folder=>folder.id===rule.folderId)?.title||'Папка не выбрана'}`,card);summary.className='pena-automation-rule-summary';
 				const setExpanded=(expanded,persist=true)=>{
 					if(expanded)collapsed.delete(rule.id);else{collapsed.add(rule.id);card.dispatchEvent(new Event('pena-collapse'));}
-					summary.textContent=`${rule.match==='any'?'Любое':'Все'} · условий: ${rule.conditions.length} → ${folders().find(folder=>folder.id===rule.folderId)?.title||'Папка не выбрана'}`;
-					body.hidden=!expanded;summary.hidden=expanded;card.classList.toggle('--collapsed',!expanded);
+					body.hidden=!expanded;card.classList.toggle('--collapsed',!expanded);
 					toggle.setAttribute('aria-expanded',String(expanded));toggle.setAttribute('aria-label',expanded?'Свернуть правило':'Развернуть правило');toggle.title=toggle.getAttribute('aria-label');if(persist)rememberCollapsed();
 				};
 				setExpanded(!collapsed.has(rule.id),false);
@@ -12923,7 +12920,7 @@ if (_presetChannel) {
 									const id=String(user.id),name=String(user.name||[user.first_name,user.last_name].filter(Boolean).join(' ')||id);
 									const option=button('',results,()=>{condition.value=id;condition.label=name;input.value=name;input.removeAttribute('aria-invalid');status.replaceChildren();hideResults();input.focus();});
 									option.className='pena-automation-person-option';option.dataset.personId=id;option.setAttribute('aria-label',`${name} · ${id}`);
-									node('strong',name,option);node('span',`${user.work_position?user.work_position+' · ':''}ID ${id}`,option);
+									node('strong',name,option);node('span',`${user.work_position?user.work_position+' · ':''}ID\u00a0${id}`,option);
 								}
 								if(!users.length&&!offset)node('span',project?'Проекты не найдены':'Сотрудники не найдены',results).className='pena-automation-lookup-status';
 								if(Number.isInteger(response.next)&&response.next>offset){const more=button('Показать ещё',results,()=>{more.remove();lookup(response.next);});}

@@ -64,7 +64,11 @@ try {
  const firstRule=page.locator('.pena-automation-rule').first();
  await firstRule.getByRole('button',{name:'Свернуть правило',exact:true}).click();
  assert.equal(await firstRule.locator('.pena-automation-rule-body').isVisible(),false);
- assert.match(await firstRule.locator('.pena-automation-rule-summary').innerText(),/условий: 1 → Тестовая папка/);
+ assert.equal(await firstRule.locator('.pena-automation-rule-summary').count(),0,'Collapsed rules do not add a second strip of explanatory text');
+ assert.equal(await firstRule.evaluate(card=>{
+  const head=card.querySelector('.pena-automation-rule-head');
+  return getComputedStyle(card).backgroundColor===getComputedStyle(head).backgroundColor&&Math.abs(card.getBoundingClientRect().height-head.getBoundingClientRect().height-2)<1;
+ }),true,'Collapsed card is one continuous surface with no empty strip');
  await firstRule.getByRole('button',{name:'Развернуть правило',exact:true}).press('Enter');
  assert.equal(await firstRule.locator('.pena-automation-rule-body').isVisible(),true);
  assert.equal(await page.getByLabel('Название правила').inputValue(),'Работы по участку А');
@@ -238,16 +242,21 @@ try {
  await page.getByRole('button',{name:'Опустить правило',exact:true}).first().click();
  await page.getByRole('button',{name:'Развернуть правило',exact:true}).click();
  await page.addStyleTag({content:'button{line-height:48px;text-indent:14px;letter-spacing:3px;text-transform:uppercase}'});
- for(const width of [1280,768,680,420,360]) {
+ for(const width of [1280,768,680,420,360,320]) {
   await page.setViewportSize({width,height:800});
   await verifyControlAlignment();
   const geometry=await page.locator('.pena-automation-panel').evaluate(panel=>({
    overflow:panel.scrollWidth>panel.clientWidth,
    bad:[...panel.querySelectorAll('input,select,button')].filter(el=>el.getClientRects().length&&el.getBoundingClientRect().width<15).map(el=>el.outerHTML),
    footer:panel.querySelector('footer').getBoundingClientRect().bottom<=panel.getBoundingClientRect().bottom,
-   headerHeight:panel.querySelector('header').getBoundingClientRect().height
+   headerHeight:panel.querySelector('header').getBoundingClientRect().height,
+   scrollPadding:parseFloat(getComputedStyle(panel.querySelector('.pena-automation-scroll')).paddingLeft),
+   bottomPadding:parseFloat(getComputedStyle(panel.querySelector('.pena-automation-bottom')).paddingLeft),
+   cards:[...panel.querySelectorAll('.pena-automation-rule')].map(card=>({overflow:card.scrollWidth>card.clientWidth,headPadding:parseFloat(getComputedStyle(card.querySelector('.pena-automation-rule-head')).paddingTop),background:getComputedStyle(card).backgroundColor,headBackground:getComputedStyle(card.querySelector('.pena-automation-rule-head')).backgroundColor}))
   }));
   assert.equal(geometry.overflow,false,JSON.stringify({width,geometry}));assert.deepEqual(geometry.bad,[]);assert.equal(geometry.footer,true);assert.equal(geometry.headerHeight,48);
+  assert.ok(geometry.scrollPadding>=16&&geometry.bottomPadding>=16,'Panel content has consistent outer spacing');
+  for(const card of geometry.cards){assert.equal(card.overflow,false);assert.ok(card.headPadding>=12);assert.equal(card.background,card.headBackground);}
  }
  await page.setViewportSize({width:1100,height:800});
  await page.getByRole('button',{name:'Свернуть правило',exact:true}).first().click();
