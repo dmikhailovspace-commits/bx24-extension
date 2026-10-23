@@ -11,7 +11,7 @@ export async function verifyEmployeeSearchIntegration(page, base) {
   BX.rest.callMethod=function(method,params,callback){
    if(method!=='im.search.user.list')return original.call(this,method,params,callback);
    employeeDirectoryCalls.push(params);
-   setTimeout(()=>callback({error:()=>null,data:()=>[{id:987654,name:'Мария Новая',work_position:'Дизайнер'}]}),60);
+   setTimeout(()=>callback({error:()=>null,data:()=>({'987654':{id:987654,name:'Мария Новая',work_position:'Дизайнер'}})}),60);
   };
   window.BX24={im:{openMessenger(id){employeeOpened.push(id);return true}}};
  });
@@ -47,14 +47,14 @@ export async function verifyEmployeeSearch(browser, source) {
    function _isDialogNativeLazyMode(){return false} function _pMode(){return window.mode} function _getDialogNativeSharedAuditScopeKey(){return window.scope} function _getBitrixListSearchInput(){return document.querySelector('input')}
    function _callBxRestReadPage(method,params,options){calls.push({method,params});return new Promise((resolve,reject)=>pending.push({resolve,reject,options}))}
    async function _openDialogControlViaBitrixApi(item){opened.push(item);return true}
-   ${['_syncPenaEmployeeSearch','_isPenaEmployeeSearchCurrent','_loadPenaEmployeeSearch','_renderPenaEmployeeSearch'].map(extract).join('\n')}
+   ${['_syncPenaEmployeeSearch','_isPenaEmployeeSearchCurrent','_normalizePenaDirectoryUsers','_loadPenaEmployeeSearch','_renderPenaEmployeeSearch'].map(extract).join('\n')}
    window.search=q=>{filters.query=q;_syncPenaEmployeeSearch()};window.answer=(i,data,next=null)=>pending[i].resolve({data,next});window.refresh=_syncPenaEmployeeSearch;
   `});
   await page.evaluate(()=>{search('');search('А')});await page.waitForTimeout(350);
   assert.equal(await page.evaluate(()=>calls.length),0,'No startup or one-letter requests');
   await page.evaluate(()=>{search('Мар');search('Мария')});await page.waitForFunction(()=>calls.length===1);
   assert.deepEqual(await page.evaluate(()=>calls[0]),{method:'im.search.user.list',params:{FIND:'Мария',OFFSET:0,LIMIT:20}});
-  await page.evaluate(()=>answer(0,[{id:907,name:'Мария Новая',work_position:'Дизайнер',avatar:'javascript:alert(1)'},{id:0,name:'bad'},{id:908,name:'bot',bot:true}],20));
+  await page.evaluate(()=>answer(0,{'907':{id:907,name:'Мария Новая',work_position:'Дизайнер',avatar:'javascript:alert(1)'},'0':{id:0,name:'bad'},'908':{id:908,name:'bot',bot:true}},20));
   await page.locator('[data-employee-id="907"]').waitFor();
   assert.equal(await page.locator('.pena-employee-search-person').count(),1);
   assert.equal(await page.locator('.pena-employee-search img').count(),0);

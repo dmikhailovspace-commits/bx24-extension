@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.51';
+	window.__ANITREC_RUNNING__ = '8.0.52';
 
-	const VER = '8.0.51';
+	const VER = '8.0.52';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -11216,6 +11216,14 @@ if (_presetChannel) {
 			state.query === String(filters.query || '').trim();
 	}
 
+	function _normalizePenaDirectoryUsers(data) {
+		const payload = data?.result ?? data;
+		if (!payload || typeof payload !== 'object') throw new Error('Invalid employee search response');
+		// im.search.user.list returns an ID-keyed object; an empty result is [].
+		const rows = Array.isArray(payload) ? payload : Object.entries(payload).map(([id, user]) => ({...user, id:user?.id ?? id}));
+		return rows.filter(user => user && /^[1-9]\d*$/.test(String(user.id)) &&
+			![true,'Y'].includes(user.bot) && ![true,'Y'].includes(user.connector));
+	}
 	async function _loadPenaEmployeeSearch(state, offset) {
 		if (!_isPenaEmployeeSearchCurrent(state)) return;
 		state.loading = true; state.error = ''; state.openError = ''; state.retryOffset = offset;
@@ -11224,8 +11232,7 @@ if (_presetChannel) {
 			const page = await _callBxRestReadPage('im.search.user.list', { FIND: state.query, OFFSET: offset, LIMIT: 20 },
 				{ attempts: 1, timeoutMs: 12000, isCurrent: () => _isPenaEmployeeSearchCurrent(state) });
 			if (!_isPenaEmployeeSearchCurrent(state)) return;
-			const rows = Array.isArray(page.data) ? page.data : page.data?.result;
-			if (!Array.isArray(rows)) throw new Error('Invalid employee search response');
+			const rows = _normalizePenaDirectoryUsers(page.data);
 			const users = new Map(state.users.map(user => [user.id, user]));
 			for (const row of rows) {
 				const id = String(row?.id || '');
@@ -12791,6 +12798,7 @@ if (_presetChannel) {
 		const rules = JSON.parse(JSON.stringify(_readDialogAutomation(mode)));
 		const previousFocus = document.activeElement;
 		const overlay = document.createElement('div'); overlay.className = 'pena-automation-overlay';
+		if (typeof overlay.showPopover === 'function') overlay.setAttribute('popover','manual');
 		const panel = document.createElement('section'); panel.className = 'pena-automation-panel';
 		panel.setAttribute('role','dialog'); panel.setAttribute('aria-modal','true'); panel.setAttribute('aria-label','Автосортировка');
 		overlay.append(panel);
@@ -12801,12 +12809,16 @@ if (_presetChannel) {
 			values.forEach(([id,title]) => { const option = node('option',title,el); option.value=id; }); el.value=value;
 			el.addEventListener('change',() => change(el.value)); return el;
 		};
-		const close = () => { overlay.remove(); document.removeEventListener('keydown',trap,true); previousFocus?.focus?.(); };
+		const close = () => { overlay.remove(); document.removeEventListener('keydown',trap,true); previousFocus?.focus?.({preventScroll:true}); };
 		const trap = event => {
 			if (document.querySelector('.pena-native-confirm-overlay')) return;
-			if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); close(); }
+			if (event.key === 'Escape') {
+				const dropdown = panel.querySelector('.pena-automation-results:not([hidden])');
+				event.preventDefault(); event.stopImmediatePropagation();
+				if (dropdown) { dropdown.hidden=true; dropdown.parentElement.querySelector('input')?.setAttribute('aria-expanded','false'); } else close();
+			}
 			if (event.key === 'Tab') {
-				const all = [...panel.querySelectorAll('button,input,select')].filter(el => !el.disabled);
+				const all = [...panel.querySelectorAll('button,input,select')].filter(el => !el.disabled && el.getClientRects().length);
 				if (event.shiftKey && document.activeElement === all[0]) {event.preventDefault(); all.at(-1)?.focus();}
 				if (!event.shiftKey && document.activeElement === all.at(-1)) {event.preventDefault(); all[0]?.focus();}
 			}
@@ -12814,32 +12826,43 @@ if (_presetChannel) {
 		document.addEventListener('keydown',trap,true);
 		overlay.addEventListener('click',event => { if (event.target === overlay) close(); });
 		const header = node('header',null,panel);
-		node('h2',`Автосортировка · ${mode === 'tasks' ? 'задачи' : 'чаты'}`,header);
-		button('Закрыть',header,close);
-		node('p','Правила проверяются сверху вниз. Первое совпадение выбирает папку. Диалоги, распределённые вручную, сохраняют своё место.',panel);
-		if (mode === 'tasks') node('p','Сотрудника можно найти по имени или указать ID. Для проекта используйте ID из ссылки Bitrix24. Недостающие данные задач загрузятся автоматически.',panel);
-		const list = node('div',null,panel); list.className='pena-automation-rules';
-		const existingLabel=node('label',null,panel);existingLabel.className='pena-automation-existing';
+		header.className='pena-automation-header';
+		const heading=node('div',null,header);heading.className='pena-automation-heading';
+		const icon=node('span',null,heading);icon.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h6v6H4zM14 15h6v6h-6zM7 11v7h7M10 8h7v7"/></svg>';
+		node('h2','Автосортировка',heading);
+		node('span',mode==='tasks'?'Задачи':'Чаты',heading).className='pena-automation-mode';
+		const closeButton=button('',header,close);closeButton.className='pena-native-popover-close';closeButton.setAttribute('aria-label','Закрыть');closeButton.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>';
+		const scroll=node('div',null,panel);scroll.className='pena-automation-scroll';
+		node('p','Первое совпавшее правило определяет папку. Ручная раскладка сохраняется.',scroll).className='pena-automation-hint';
+		const list = node('div',null,scroll); list.className='pena-automation-rules';
+		const bottom=node('div',null,panel);bottom.className='pena-automation-bottom';
+		const existingLabel=node('label',null,bottom);existingLabel.className='pena-automation-existing';
 		const includeExisting=node('input',null,existingLabel);includeExisting.type='checkbox';includeExisting.checked=false;
 		existingLabel.append(document.createTextNode('Распределить уже существующие диалоги'));
-		node('p','Без этой галочки правила применяются только к диалогам, появившимся после сохранения. Новое сообщение в старом диалоге не делает его новым.',panel);
-		const status = node('p','',panel); status.setAttribute('role','status');
+		node('p','Без галочки — только новые диалоги после сохранения.',bottom).className='pena-automation-hint';
+		const status = node('div','',bottom); status.className='pena-automation-status';status.setAttribute('role','status');
+		panel.addEventListener('input',()=>status.replaceChildren());
+		panel.addEventListener('change',()=>status.replaceChildren());
 		const folders = () => _getDialogControlItemsForMode(mode).filter(_isDialogControlFolder);
 		const draw = () => {
+			status.replaceChildren();
 			list.replaceChildren();
-			if (!rules.length) node('p','Правил пока нет. Создайте первое, чтобы новые диалоги попадали в нужную папку.',list);
+			if (!rules.length) {const empty=node('div',null,list);empty.className='pena-automation-empty';node('strong','Пока нет правил',empty);node('p','Добавьте условие и выберите папку назначения.',empty);}
 			rules.forEach((rule,index) => {
-				const card = node('fieldset',null,list); node('legend',`Правило ${index+1}`,card);
+				const card = node('fieldset',null,list); card.className='pena-automation-rule';card.setAttribute('aria-label',`Правило ${index+1}`);
 				const head = node('div',null,card); head.className='pena-automation-rule-head';
+				node('span',String(index+1).padStart(2,'0'),head).className='pena-automation-rule-number';
 				const label = node('label',null,head), enabled=node('input',null,label); enabled.type='checkbox'; enabled.checked=rule.enabled;
 				label.append(document.createTextNode('Включено')); enabled.addEventListener('change',()=>rule.enabled=enabled.checked);
 				const title=node('input',null,head); title.value=rule.name; title.maxLength=80; title.setAttribute('aria-label','Название правила'); title.addEventListener('input',()=>rule.name=title.value);
-				button('↑',head,()=>{ if(index>0){[rules[index-1],rules[index]]=[rules[index],rules[index-1]];draw();} }).setAttribute('aria-label','Поднять правило');
-				button('↓',head,()=>{ if(index<rules.length-1){[rules[index+1],rules[index]]=[rules[index],rules[index+1]];draw();} }).setAttribute('aria-label','Опустить правило');
-				button('Удалить',head,()=>{rules.splice(index,1);draw();});
-				select([['all','Все условия'],['any','Любое условие']],rule.match,'Совпадение условий',card,value=>rule.match=value);
+				const up=button('↑',head,()=>{[rules[index-1],rules[index]]=[rules[index],rules[index-1]];draw();});up.setAttribute('aria-label','Поднять правило');up.disabled=index===0;up.className='pena-automation-icon-button';
+				const down=button('↓',head,()=>{[rules[index+1],rules[index]]=[rules[index],rules[index+1]];draw();});down.setAttribute('aria-label','Опустить правило');down.disabled=index===rules.length-1;down.className='pena-automation-icon-button';
+				const remove=button('×',head,()=>{rules.splice(index,1);draw();});remove.setAttribute('aria-label','Удалить правило');remove.className='pena-automation-icon-button';
+				const body=node('div',null,card);body.className='pena-automation-rule-body';
+				const match=node('div',null,body);match.className='pena-automation-match';node('span','Если совпадают',match);
+				select([['all','Все условия'],['any','Любое условие']],rule.match,'Совпадение условий',match,value=>rule.match=value);
 				rule.conditions.forEach((condition,ci) => {
-					const row=node('div',null,card); row.className='pena-automation-condition';
+					const row=node('div',null,body); row.className='pena-automation-condition';
 					select(Object.entries(model.automationFields).filter(([field])=>mode==='tasks'?field!=='kind':['title','kind'].includes(field)).map(([field,spec])=>[field,spec[0]]),condition.field,'Поле условия',row,value=>{condition.field=value;condition.op=value==='title'?'contains':value==='deadline'?'overdue':'eq';condition.value='';delete condition.label;draw();});
 					const type=model.automationFields[condition.field]?.[1];
 					const operators=type==='text'?[['contains','содержит'],['notContains','не содержит'],['eq','равно'],['neq','не равно'],['starts','начинается с'],['ends','заканчивается на']]:type==='date'?[['overdue','просрочен'],['before','раньше'],['after','позже'],['empty','не задан'],['present','задан']]:[['eq','равно'],['neq','не равно']];
@@ -12847,56 +12870,80 @@ if (_presetChannel) {
 					const choices={kind:[['personal','Личная переписка'],['group','Групповой чат']],status:[['2','Ждёт выполнения'],['3','В работе'],['4','Ждёт контроля'],['5','Завершена'],['6','Отложена'],['7','Отклонена']],priority:[['0','Низкий'],['1','Обычный'],['2','Высокий']]};
 					if(choices[type]) select([['','Выберите значение'],...choices[type]],condition.value,'Значение условия',row,value=>condition.value=value);
 					else if(!['overdue','empty','present'].includes(condition.op)) {
-						const person=type==='ids' && condition.field!=='groupId';
+						const person=type==='ids', project=condition.field==='groupId';
 						const valueHost=person?node('div',null,row):row;
 						if(person)valueHost.className='pena-automation-person';
 						const input=node('input',null,valueHost); input.type=type==='date'?'date':'text'; input.value=condition.label||condition.value; input.maxLength=300;
-						input.placeholder=person?'Имя сотрудника или ID':type==='ids'?'ID проекта, например 42':'Текст без учёта регистра'; input.setAttribute('aria-label','Значение условия');
-						let lookupTimer=null;
+						input.placeholder=project?'Найти проект':person?'Найти сотрудника':'Введите текст'; input.setAttribute('aria-label','Значение условия');input.autocomplete='off';
+						let lookupTimer=null,lookupVersion=0;
 						const results=person?node('div',null,valueHost):null;
+						if(results){results.className='pena-automation-results';results.hidden=true;input.setAttribute('aria-expanded','false');input.setAttribute('aria-haspopup','true');}
+						const hideResults=()=>{if(results){results.hidden=true;input.setAttribute('aria-expanded','false');}lookupVersion++;clearTimeout(lookupTimer);};
+						const lookup=async(offset=0)=>{
+							const query=input.value.trim(),version=++lookupVersion;
+							const current=()=>input.isConnected&&version===lookupVersion&&input.value.trim()===query&&key===_dialogAutomationKey(mode)&&mode===_pMode();
+							results.hidden=false;input.setAttribute('aria-expanded','true');
+							if(!offset)results.replaceChildren();
+							const progress=node('span',project?'Загружаем проекты…':'Поиск…',results);progress.className='pena-automation-lookup-status';
+							try{
+								const response=project?{data:(await _loadDialogTimeProjects()).filter(item=>!query||item.name.toLocaleLowerCase('ru').includes(query.toLocaleLowerCase('ru'))||item.id===query)}:
+									await _callBxRestReadPage('im.search.user.list',{FIND:query,OFFSET:offset,LIMIT:20},{attempts:1,timeoutMs:12000,isCurrent:current});
+								if(!current())return;progress.remove();
+								const users=project?response.data:_normalizePenaDirectoryUsers(response.data);
+								for(const user of users){
+									const id=String(user.id),name=String(user.name||[user.first_name,user.last_name].filter(Boolean).join(' ')||id);
+									const option=button('',results,()=>{condition.value=id;condition.label=name;input.value=name;hideResults();input.focus();});
+									option.className='pena-automation-person-option';option.dataset.personId=id;option.setAttribute('aria-label',`${name} · ${id}`);
+									node('strong',name,option);node('span',user.work_position||`ID ${id}`,option);
+								}
+								if(!users.length&&!offset)node('span',project?'Проекты не найдены':'Сотрудники не найдены',results).className='pena-automation-lookup-status';
+								if(Number.isInteger(response.next)&&response.next>offset){const more=button('Показать ещё',results,()=>{more.remove();lookup(response.next);});}
+							}catch{if(current()){progress.textContent='Не удалось загрузить. ';button('Повторить',progress,()=>{progress.remove();lookup(offset);});}}
+						};
 						input.addEventListener('input',()=>{
-							delete condition.label;condition.value=input.value.trim();clearTimeout(lookupTimer);results?.replaceChildren();
-							if(!person||condition.value.length<2||/^\d+$/.test(condition.value))return;
-							const query=condition.value;
-							const current=()=>input.isConnected&&input.value.trim()===query&&key===_dialogAutomationKey(mode);
-							lookupTimer=setTimeout(async()=>{
-								if(!current())return;results.textContent='Поиск…';
-								try{
-									const response=await _callBxRestReadPage('im.search.user.list',{FIND:query,OFFSET:0,LIMIT:20},{attempts:1,timeoutMs:12000,isCurrent:current});
-									if(!current())return;
-									const users=Array.isArray(response.data)?response.data:response.data?.result;
-									if(!Array.isArray(users))throw new Error('Invalid users');results.replaceChildren();
-									for(const user of users){
-										const id=String(user.id||'');if(!/^[1-9]\d*$/.test(id)||user.bot===true||user.bot==='Y')continue;
-										const name=String(user.name||[user.first_name,user.last_name].filter(Boolean).join(' ')||id);
-										button(`${name} · ${id}`,results,()=>{condition.value=id;condition.label=`${name} · ${id}`;input.value=condition.label;results.replaceChildren();});
-									}
-									if(!results.childElementCount)results.textContent='Никого не найдено. Уточните имя или введите ID.';
-								}catch{if(current())results.textContent='Поиск недоступен. Можно указать ID сотрудника.';}
-							},300);
+							delete condition.label;condition.value=input.value.trim();hideResults();
+							if(!person)return;
+							if(!project&&condition.value.length<2){results.hidden=false;input.setAttribute('aria-expanded','true');results.textContent='Введите хотя бы 2 буквы';return;}
+							lookupTimer=setTimeout(()=>lookup(),300);
 						});
+						if(person){
+							input.addEventListener('focus',()=>{if(project&&!condition.label)lookup();});
+							input.addEventListener('keydown',event=>{if(event.key==='ArrowDown'&&!results.hidden){event.preventDefault();results.querySelector('button')?.focus();}});
+							results.addEventListener('keydown',event=>{const options=[...results.querySelectorAll('button')],index=options.indexOf(document.activeElement);if(['ArrowDown','ArrowUp'].includes(event.key)){event.preventDefault();if(event.key==='ArrowUp'&&index===0)input.focus();else options[Math.max(0,Math.min(options.length-1,index+(event.key==='ArrowDown'?1:-1)))]?.focus();}});
+							valueHost.addEventListener('focusout',event=>{if(!valueHost.contains(event.relatedTarget))hideResults();});
+						}
 					}
-					button('×',row,()=>{rule.conditions.splice(ci,1);draw();}).setAttribute('aria-label','Удалить условие');
+					if(['overdue','empty','present'].includes(condition.op))node('span','',row).className='pena-automation-no-value';
+					const removeCondition=button('×',row,()=>{rule.conditions.splice(ci,1);draw();});removeCondition.setAttribute('aria-label','Удалить условие');removeCondition.className='pena-automation-icon-button';
 				});
-				button('Добавить условие',card,()=>{if(rule.conditions.length<20){rule.conditions.push({field:'title',op:'contains',value:''});draw();}});
-				const dest=node('label','Перенести в папку ',card);
+				button('Добавить условие',body,()=>{if(rule.conditions.length<20){rule.conditions.push({field:'title',op:'contains',value:''});draw();}}).className='pena-automation-add-condition';
+				const dest=node('label','Перенести в папку',body);dest.className='pena-automation-destination';
 				select([['','Выберите папку'],...folders().map(folder=>[folder.id,folder.title])],rule.folderId,'Папка назначения',dest,value=>rule.folderId=value);
 			});
 		};
-		const add = () => { if(rules.length>=50)return; rules.push({id:`rule:${Date.now()}:${Math.random().toString(36).slice(2,8)}`,name:'Новое правило',enabled:true,folderId:defaultFolderId||folders()[0]?.id||'',match:'all',conditions:[{field:'title',op:'contains',value:''}]});draw(); };
-		const actions=node('footer',null,panel);
+		const add = () => { if(rules.length>=50)return; rules.push({id:`rule:${Date.now()}:${Math.random().toString(36).slice(2,8)}`,name:'Новое правило',enabled:true,folderId:defaultFolderId||folders()[0]?.id||'',match:'all',conditions:[{field:'title',op:'contains',value:''}]});draw();list.lastElementChild?.scrollIntoView({block:'nearest'});list.lastElementChild?.querySelector('input[aria-label="Название правила"]')?.select(); };
+		const folderEditor=node('div',null,bottom);folderEditor.className='pena-automation-folder-editor';folderEditor.hidden=true;
+		const folderName=node('input',null,folderEditor);folderName.setAttribute('aria-label','Название папки');folderName.placeholder='Название новой папки';folderName.maxLength=40;
+		const createFolder=()=>{if(!folderName.value.trim()||key!==_dialogAutomationKey(mode)||mode!==_pMode())return;const folder=_createDialogControlFolder({title:folderName.value.trim(),render:false,toast:false});defaultFolderId=folder.id;if(rules.length)rules.at(-1).folderId=folder.id;folderName.value='';folderEditor.hidden=true;draw();};
+		button('Создать',folderEditor,createFolder);button('Отмена',folderEditor,()=>folderEditor.hidden=true);
+		folderName.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();createFolder();}});
+		const actions=node('footer',null,bottom);
 		button('Добавить правило',actions,add);
-		button('Создать папку',actions,()=>_showDialogControlNamePrompt('Название папки','',{okLabel:'Создать',maxLength:40},title=>{
-			if(key!==_dialogAutomationKey(mode)||mode!==_pMode())return;
-			const folder=_createDialogControlFolder({title,render:false,toast:false});defaultFolderId=folder.id;draw();
-		}));
+		button('Создать папку',actions,()=>{folderEditor.hidden=!folderEditor.hidden;if(!folderEditor.hidden)folderName.focus();});
 		const valid = () => {
 			const ids=new Set(folders().map(folder=>folder.id));
 			return rules.every(rule=>!rule.enabled||(ids.has(rule.folderId)&&rule.conditions.length>0&&rule.conditions.every(condition=>
 				['overdue','empty','present'].includes(condition.op)||String(condition.value).trim()&&(model.automationFields[condition.field]?.[1]!=='ids'||/^\d+$/.test(condition.value)))));
 		};
 		button('Проверить',actions,()=>{
-			status.textContent=!valid()?'Заполните условия и выберите папку для каждого включённого правила.':!includeExisting.checked?'Существующие диалоги останутся на месте. Правила будут применяться к новым.':`Сейчас будут распределены: ${_applyDialogAutomation(mode,_getDialogControlItemsForMode(mode),rules)}. Подсчёт по уже загруженным данным.`;
+			if(!valid()){status.textContent='Заполните условия и выберите папку для каждого включённого правила.';return;}
+			const items=_getDialogControlItemsForMode(mode),folderMap=new Map(folders().map(folder=>[folder.id,folder.title])),folderIds=new Set(folderMap.keys());
+			const matches=[];let pending=0;
+			for(const item of items){if(_isDialogControlFolder(item)||item.folderId||item.automationHandled||_isDialogControlItemUnavailable(item))continue;const decision=model.automationDecision(rules,_dialogAutomationFacts(item),mode,folderIds);if(decision?.pending)pending++;if(decision?.folderId)matches.push({item,decision});}
+			status.replaceChildren();node('strong',`Совпадений: ${matches.length}`,status);
+			node('span',includeExisting.checked?`Сейчас будут распределены: ${matches.length}.`:'Существующие диалоги останутся на месте. Это проверка условий на текущем списке.',status);
+			if(pending)node('span',`Ещё ${pending} — ожидают данных Bitrix. Они не включены в число совпадений.`,status);
+			for(const {item,decision} of matches.slice(0,3))node('div',`${_dialogAutomationFacts(item).title} → ${folderMap.get(decision.folderId)}`,status).className='pena-automation-preview-row';
 		});
 		let saving=false;
 		button('Сохранить',actions,async()=>{
@@ -12904,7 +12951,7 @@ if (_presetChannel) {
 			if(key!==_dialogAutomationKey(mode)){status.textContent='Пользователь изменился. Откройте настройки заново.';return;}
 			if(!valid()){status.textContent='Заполните условия и выберите папку для каждого включённого правила.';return;}
 			if(localStorage.getItem(key)!==base){status.textContent='Правила изменились в другом окне. Закройте и откройте настройки заново.';return;}
-			saving=true;const controls=[...panel.querySelectorAll('input,select,footer button,fieldset button')];controls.forEach(el=>el.disabled=true);
+			saving=true;const controls=[...panel.querySelectorAll('input,select,button')].filter(el=>el!==closeButton&&!el.disabled);controls.forEach(el=>el.disabled=true);
 			status.textContent='Проверяем список существующих диалогов…';
 			const current=()=>overlay.isConnected&&key===_dialogAutomationKey(mode)&&mode===_pMode();
 			try{
@@ -12917,7 +12964,7 @@ if (_presetChannel) {
 			}catch(error){if(current())status.textContent=error.message||'Не удалось сохранить правила. Повторите попытку.';}
 			finally{saving=false;controls.forEach(el=>el.disabled=false);}
 		});
-		draw();document.body.append(overlay);header.querySelector('button').focus();
+		draw();document.body.append(overlay);try{overlay.showPopover?.();}catch{}header.querySelector('button').focus();
 	}
 	window.addEventListener('storage',event=>{if(event.key===_dialogAutomationKey('tasks')||event.key===_dialogAutomationKey('chats'))_scheduleDialogAutomation();});
 	window.addEventListener('online',()=>_scheduleDialogAutomation());
@@ -20312,7 +20359,7 @@ if (_presetChannel) {
 		}
 		workspaceTabs.append(makeWorkspaceTab('todo','Дела','<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="m8 12 3 3 5-6"/></svg>',{className:'pena-native-todo-button'}));
 		const rulesButton = document.createElement('button');rulesButton.type='button';rulesButton.className='pena-native-command-btn pena-native-rules-button';
-		rulesButton.textContent='Правила';rulesButton.setAttribute('aria-haspopup','dialog');rulesButton.title='Автосортировка диалогов по папкам';
+		rulesButton.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h6v6H4zM14 15h6v6h-6zM7 11v7h7M10 8h7v7"/></svg><span>Правила</span>';rulesButton.setAttribute('aria-haspopup','dialog');rulesButton.title='Автосортировка диалогов по папкам';
 		rulesButton.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();_openDialogAutomation();});workspaceTabs.append(rulesButton);
 		const syncChip = document.createElement('button');
 		const updateSlot = document.createElement('span');
