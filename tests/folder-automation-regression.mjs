@@ -216,6 +216,20 @@ try {
  await pull({RESPONSIBLE_ID:'77'});
  await page.waitForTimeout(500);
  assert.equal(await page.locator('.pena-native-rules-button.--pending').count(),0,'Returning to current destination cancels stale ticket');
+ await page.evaluate(()=>{
+  const key='pena.dialogControl.v1.tasks',items=JSON.parse(localStorage.getItem(key));
+  items.find(item=>item.id==='chat101').segmentId='segment:keep';
+  items.find(item=>item.id==='folder:other').segmentId='segment:keep';
+  localStorage.setItem(key,JSON.stringify(items));
+  window.dispatchEvent(new StorageEvent('storage',{key,newValue:JSON.stringify(items)}));
+ });
+ await pull({RESPONSIBLE_ID:'12'});
+ await page.locator('.task-host .pena-native-rules-button.--pending').waitFor();
+ await page.locator('.task-host .pena-native-rules-button').click();
+ await page.getByRole('button',{name:'Подтвердить перенос',exact:true}).click();
+ assert.equal(await taskFolder(),'');
+ assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('pena.dialogControl.v1.tasks')).find(item=>item.id==='chat101').segmentId),'segment:keep','Confirming removal from a folder preserves the dialog group');
+ await page.getByRole('button',{name:'Закрыть',exact:true}).click();
  await page.setViewportSize({width:1100,height:800});
  await page.evaluate(({key,original})=>{localStorage.setItem(key,original);localStorage.removeItem(key+'.review');window.dispatchEvent(new Event('online'));},savedConfig);
  await page.waitForTimeout(500);

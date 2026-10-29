@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.57';
+	window.__ANITREC_RUNNING__ = '8.0.58';
 
-	const VER = '8.0.57';
+	const VER = '8.0.58';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -12968,7 +12968,7 @@ if (_presetChannel) {
 						if(accept){
 							const folder=currentItems.find(item=>_isDialogControlFolder(item)&&item.id===ticket.to);
 							if(ticket.to&&!folder)return drawTickets();
-							item.folderId=ticket.to;item.segmentId=folder?.segmentId||'';
+							item.folderId=ticket.to;if(folder)item.segmentId=folder.segmentId||'';
 							item.automationHandled=true;item.automationRuleId=ticket.ruleId;
 							delete item.column;delete item.columnIndex;
 							_saveDialogControlItemsForMode(ticketMode,currentItems);
