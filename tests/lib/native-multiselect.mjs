@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
+import { nativeCounterCss, counterMarkup, counterAppearance, checkCounterVariants } from './native-counter-fixture.mjs';
 
 export async function checkOpenDialogMultiselect(browser, baseUrl, source) {
   for (const mode of ['chats', 'tasks']) {
@@ -33,6 +34,10 @@ export async function checkOpenDialogMultiselect(browser, baseUrl, source) {
         .bx-im-list-recent-item__date {font-size:11px;color:#a4adba}
         .bx-im-list-recent-item__message_container {color:#98a2b1}
         .bx-im-list-recent-item__wrap.--selected .bx-im-list-recent-item__message_container {color:white}` });
+      await page.addStyleTag({ content: nativeCounterCss });
+      await host.locator('[data-id="chat225"],[data-id="chat5"]').evaluateAll((rows,html) => rows.forEach(el => {
+        el.querySelector('.bx-im-list-recent-item__content_bottom').insertAdjacentHTML('beforeend',html);
+      }), counterMarkup);
       // Exercise the native selected paint, nested under a wrapper, and a dialog
       // that has never been saved in PENA's assignments (the common inbox case).
       await active.evaluate(el => {
@@ -71,6 +76,8 @@ export async function checkOpenDialogMultiselect(browser, baseUrl, source) {
       });
       await page.waitForTimeout(250);
       assert.deepEqual(await appearance(active), await appearance(other), `${mode}: a native class repaint must not restore the open-row fill`);
+      await checkCounterVariants(page, host, active, other, mode);
+      assert.deepEqual(await counterAppearance(active), await counterAppearance(other));
       assert.equal(await page.evaluate(() => __OPEN_MULTI__.item('chat225').folderId || ''), '', 'Selection must not assign a folder');
       mkdirSync('tests/artifacts', { recursive: true });
       await page.screenshot({ path: `tests/artifacts/open-dialog-multiselect-${mode}.png` });
@@ -87,6 +94,17 @@ export async function checkOpenDialogMultiselect(browser, baseUrl, source) {
       assert.deepEqual(await page.evaluate(() => __OPEN_MULTI__.selected()), []);
       assert.equal(await host.locator('[data-pena-native-multi-selected]').count(), 0, 'Escape clears paint even if Vue removed the PENA classes');
       assert.equal(await active.locator('.test-selection-shell > div').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(0, 172, 213)', 'Escape restores native active paint');
+      assert.equal(await active.locator('.bx-im-list-recent-item__counter_number').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(255, 255, 255)','Escape restores the native white counter');
+      for (const target of ['other-row','selected-row','empty-space']) {
+        await other.click({modifiers:['Control']});
+        assert.equal((await page.evaluate(()=>__OPEN_MULTI__.selected())).length,2);
+        await page.evaluate(()=>window.nativeRowClicks=[]);
+        if(target==='empty-space') await page.locator('body').click({position:{x:439,y:759}});
+        else await host.locator(target==='other-row'?'[data-id="chat77"]':'[data-id="chat5"]').click();
+        assert.deepEqual(await page.evaluate(()=>__OPEN_MULTI__.selected()),[],`${target}: ordinary click clears multi-selection`);
+        assert.equal(await host.locator('[data-pena-native-multi-selected]').count(),0);
+        if(target!=='empty-space') assert.equal((await page.evaluate(()=>window.nativeRowClicks)).length,1,'Plain click still reaches Bitrix');
+      }
       // Messenger's generic `id` can be a numeric chat entity, not the dialog
       // identity. A stale/malformed API answer must not hide a selected DOM row.
       for (const apiCase of ['chat-entity-id', 'stale-dialog', 'async-result']) {

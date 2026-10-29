@@ -4,6 +4,8 @@ import {mkdirSync,readFileSync} from 'node:fs';
 import {startHarnessServer, collectPageErrors} from './lib/harness-server.mjs';
 const require=createRequire(import.meta.url);
 const model=require('../extension/native-catalog.js');
+const {verifyAutomationAudit}=await import('./lib/automation-audit.mjs');
+await verifyAutomationAudit(model);
 const condition=(field,op,value)=>({field,op,value});
 const rule=(id,conditions,match='all')=>({id,enabled:true,folderId:'folder:test',conditions,match});
 const folders=new Set(['folder:test']);
@@ -203,6 +205,17 @@ try {
  await pull({RESPONSIBLE_ID:'77'});
  await page.locator('.task-host .pena-native-rules-button.--pending').waitFor();
  await page.locator('.task-host .pena-native-rules-button').click();
+ // A confirmation already drawn on screen must recheck a newer Pull before
+ // applying its captured destination, even before the scheduled redraw runs.
+ await page.evaluate(()=>{
+  const accept=[...document.querySelectorAll('.pena-automation-ticket button')].find(button=>button.textContent==='Подтвердить перенос');
+  (nativeCustomEventHandlers.get('onPullEvent-tasks')||[]).forEach(fn=>fn('task_update',{TASK_ID:'101',FIELDS_AFTER:{ID:'101',RESPONSIBLE_ID:'12'}}));
+  accept.click();
+ });
+ assert.equal(await taskFolder(),'folder:test','A stale confirmation cannot override changed conditions');
+ await page.getByText('Нет переносов для подтверждения',{exact:true}).waitFor();
+ await pull({RESPONSIBLE_ID:'77'});
+ await page.getByRole('button',{name:'Подтвердить перенос',exact:true}).waitFor();
  await page.screenshot({path:'tests/artifacts/folder-confirmations-desktop.png'});
  await page.setViewportSize({width:360,height:780});
  assert.equal(await page.locator('.pena-automation-panel').evaluate(el=>el.scrollWidth<=el.clientWidth),true);

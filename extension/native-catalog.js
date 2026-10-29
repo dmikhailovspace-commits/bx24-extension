@@ -503,7 +503,11 @@
 			if (op === 'present') return !!actual;
 			const date = Date.parse(actual);
 			if (!Number.isFinite(date)) return false;
-			if (op === 'overdue') return date >= now ? false : !hasOwn(facts, 'status') ? null : !['4','5','6','7'].includes(String(facts.status));
+			if (op === 'overdue') {
+				if (date >= now) return false;
+				const status = normalizeText(facts.status);
+				return !status ? null : !['4','5','6','7'].includes(status);
+			}
 			const threshold = Date.parse(value);
 			return Number.isFinite(threshold) && (op === 'before' ? date < threshold : op === 'after' ? date > threshold : false);
 		}

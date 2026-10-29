@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.60';
+	window.__ANITREC_RUNNING__ = '8.0.61';
 
-	const VER = '8.0.60';
+	const VER = '8.0.61';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -12705,12 +12705,13 @@ if (_presetChannel) {
 	}
 
 	let _dialogAutomationTimer = null;
+	let _dialogAutomationDeadlineTimer = null;
 	let _dialogAutomationLoading = '';
 	const _dialogAutomationAttempts = new Map();
 	const _dialogAutomationDirtyTasks = new Map();
 	const _dialogAutomationTaskRevisions = new Map();
 	function _receiveDialogAutomationTask(id, fields) {
-		if (!_readDialogAutomation('tasks').some(rule=>rule.enabled)) return;
+		if (!_isPenaExtensionEnabled() || !_readDialogAutomation('tasks').some(rule=>rule.enabled)) return;
 		const scope = _getDialogTimeIdentityScopeKey();
 		const taskKey = scope+':'+id;
 		_dialogAutomationTaskRevisions.set(taskKey,(_dialogAutomationTaskRevisions.get(taskKey)||0)+1);
@@ -12764,6 +12765,7 @@ if (_presetChannel) {
 		return { title:meta.displayTitle || item.title || '', kind:/^user\d+$/i.test(item.id) ? 'personal' : 'group', ...meta.automationFacts };
 	}
 	function _applyDialogAutomation(mode, items, previewRules = null) {
+		if (!_isPenaExtensionEnabled()) return 0;
 		const model = window.__PENA_NATIVE_CATALOG__;
 		const rules = previewRules || _readDialogAutomation(mode);
 		const excluded = new Set(previewRules ? [] : _readDialogAutomationConfig(mode).excludedIds || []);
@@ -12840,18 +12842,42 @@ if (_presetChannel) {
 			button.title = count ? `Ожидают подтверждения: ${count}` : 'Автосортировка диалогов по папкам';
 		});
 	}
+	function _scheduleDialogAutomationDeadline(scope) {
+		clearTimeout(_dialogAutomationDeadlineTimer);_dialogAutomationDeadlineTimer=null;
+		if (!_isPenaExtensionEnabled() || !scope || scope!==_getDialogTimeIdentityScopeKey() || document.hidden || navigator.onLine===false) return;
+		if (!_readDialogAutomation('tasks').some(rule=>rule.enabled&&(rule.conditions||[]).some(condition=>condition.field==='deadline'&&condition.op==='overdue'))) return;
+		const now=Date.now();let next=Infinity;
+		for (const item of _getDialogControlItemsForMode('tasks')) {
+			if (_isDialogControlFolder(item)||_isDialogControlItemUnavailable(item)) continue;
+			const facts=_dialogAutomationFacts(item),deadline=Date.parse(facts.deadline);
+			if (['4','5','6','7'].includes(String(facts.status))) continue;
+			if (Number.isFinite(deadline)&&deadline>=now) next=Math.min(next,deadline+1);
+		}
+		if (!Number.isFinite(next)) return;
+		// Wake at the next actual transition, without polling a quiet portal.
+		_dialogAutomationDeadlineTimer=setTimeout(()=>{
+			_dialogAutomationDeadlineTimer=null;
+			if(scope===_getDialogTimeIdentityScopeKey())_scheduleDialogAutomation();
+		},Math.min(2147483647,Math.max(1,next-now)));
+	}
 	function _scheduleDialogAutomation() {
-		if (_dialogAutomationTimer || !_getDialogTimeIdentityScopeKey()) return;
+		if (!_isPenaExtensionEnabled() || !_getDialogTimeIdentityScopeKey()) {
+			clearTimeout(_dialogAutomationTimer);_dialogAutomationTimer=null;
+			clearTimeout(_dialogAutomationDeadlineTimer);_dialogAutomationDeadlineTimer=null;return;
+		}
+		if (_dialogAutomationTimer) return;
+		clearTimeout(_dialogAutomationDeadlineTimer);_dialogAutomationDeadlineTimer=null;
 		if (!['chats','tasks'].some(mode => _readDialogAutomation(mode).some(rule => rule.enabled))) return;
 		_dialogAutomationTimer = setTimeout(async () => {
 			_dialogAutomationTimer = null;
-			if (document.hidden || navigator.onLine === false) return;
+			if (!_isPenaExtensionEnabled() || document.hidden || navigator.onLine === false) return;
 			let changed = false;
 			for (const mode of ['chats','tasks']) {
 				const items = _getDialogControlItemsForMode(mode);
 				if (_applyDialogAutomation(mode, items)) { _saveDialogControlItemsForMode(mode, items); changed = true; }
 			}
 			if (changed) { _dialogControlNativeViewSig = ''; _notifyDialogRecentDataChanged(); }
+			_scheduleDialogAutomationDeadline(_getDialogTimeIdentityScopeKey());
 			// Only unresolved task rules need detail reads. Reuse the shared REST
 			// queue, cap each batch, and fence responses across account switches.
 			const scope = _getDialogTimeIdentityScopeKey();
@@ -12867,12 +12893,12 @@ if (_presetChannel) {
 			_dialogAutomationLoading = scope;
 			try {
 				for (const item of pending) {
-					if (scope !== _getDialogTimeIdentityScopeKey() || document.hidden || navigator.onLine === false) break;
+					if (!_isPenaExtensionEnabled() || scope !== _getDialogTimeIdentityScopeKey() || document.hidden || navigator.onLine === false) break;
 					_dialogAutomationAttempts.set(`${scope}:${item.taskId}`, Date.now());
 					try {
 						const revision = _dialogAutomationTaskRevisions.get(scope+':'+item.taskId);
-						const data = await _callBxRestMethod('tasks.task.get', {taskId:item.taskId}, {timeoutMs:12000, isCurrent:()=>scope===_getDialogTimeIdentityScopeKey() && !document.hidden});
-						if (scope !== _getDialogTimeIdentityScopeKey()) break;
+						const data = await _callBxRestMethod('tasks.task.get', {taskId:item.taskId}, {timeoutMs:12000, isCurrent:()=>_isPenaExtensionEnabled() && scope===_getDialogTimeIdentityScopeKey() && !document.hidden});
+						if (!_isPenaExtensionEnabled() || scope !== _getDialogTimeIdentityScopeKey()) break;
 						if (_dialogAutomationTaskRevisions.get(scope+':'+item.taskId) !== revision) { _dialogAutomationAttempts.delete(scope+':'+item.taskId); continue; }
 						const task = _extractTaskRecordFromData(data);
 						if (String(task?.id ?? task?.ID) !== String(item.taskId)) continue;
@@ -13174,6 +13200,8 @@ if (_presetChannel) {
 		if(event.key===_dialogAutomationKey('tasks')+'.review'||event.key===_dialogAutomationKey('chats')+'.review')_syncDialogAutomationBadge();
 	});
 	window.addEventListener('online',()=>_scheduleDialogAutomation());
+	document.addEventListener('pena-extension-enabled-request',()=>_scheduleDialogAutomation());
+	document.addEventListener('pena-extension-enabled-applied',()=>_scheduleDialogAutomation());
 	document.addEventListener('visibilitychange',()=>{if(!document.hidden)_scheduleDialogAutomation();});
 
 	function _makeDialogControlFolderId() {
@@ -22230,7 +22258,9 @@ if (_presetChannel) {
 				_scheduleDialogControlPanelRender(filtersHost, 0);
 				return;
 			}
-			if (!row && _clearDialogControlMultiSelection()) {
+			// An ordinary click leaves multi-select and still reaches Bitrix.
+			// Context-menu/palette actions above retain the group they act on.
+			if (_clearDialogControlMultiSelection()) {
 				_syncDialogControlNativeMultiSelection();
 				_scheduleDialogControlPanelRender(filtersHost, 0);
 			}
@@ -29811,7 +29841,28 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .pena-native-chat-row[draggable="true"]{cursor:pointer}
 .pena-native-chat-row.--native-dragging{opacity:.48;cursor:grabbing;filter:saturate(.72)}
 [data-pena-native-multi-selected="1"] .bx-im-list-recent-item__container,[data-pena-native-multi-selected="1"] .bx-im-list-item__container,[data-pena-native-multi-selected="1"] .bx-messenger-cl-item-wrap,[data-pena-native-multi-selected="1"] .pena-native-chat-row-paint{background:transparent!important;background-color:transparent!important;box-shadow:none!important}
-[data-pena-native-multi-selected="1"] .bx-im-chat-title__text,[data-pena-native-multi-selected="1"] .pena-native-remote-title{color:#1f2937!important}[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__message_text,[data-pena-native-multi-selected="1"] .pena-native-remote-message{color:#98a2b1!important}[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__date,[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__date_text,[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__date-text,[data-pena-native-multi-selected="1"] .pena-native-remote-date{color:#a4adba!important}
+/* Keep native semantic colors; only undo the open-dialog inversion. */
+[data-pena-native-multi-selected="1"][data-pena-native-multi-selected="1"].--selected .bx-im-chat-title__text{color:var(--im-chat-title__font-color,#1f2937)}
+[data-pena-native-multi-selected="1"][data-pena-native-multi-selected="1"].--selected .bx-im-chat-title__text.--bot,[data-pena-native-multi-selected="1"][data-pena-native-multi-selected="1"].--selected .bx-im-chat-title__text.--copilot{color:var(--im-chat-title-bot-color)}
+[data-pena-native-multi-selected="1"][data-pena-native-multi-selected="1"].--selected .bx-im-chat-title__text.--extranet{color:var(--im-chat-title-extranet-color)}
+[data-pena-native-multi-selected="1"][data-pena-native-multi-selected="1"].--selected .bx-im-chat-title__text.--collaber,[data-pena-native-multi-selected="1"][data-pena-native-multi-selected="1"].--selected .bx-im-chat-title__text.--guest{color:var(--im-chat-title-collab-color)}
+[data-pena-native-multi-selected="1"][data-pena-native-multi-selected="1"].--selected .bx-im-chat-title__text.--network{color:var(--im-chat-title-network-color)}
+[data-pena-native-multi-selected="1"][data-pena-native-multi-selected="1"].--selected .bx-im-chat-title__text.--support24{color:var(--im-chat-title-support24-color)}
+[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__message_container{color:var(--im-list-recent-item__color_message,#98a2b1)!important}
+[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__date{color:var(--im-list-recent-item__color_date,#a4adba)!important}
+[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__counter_number,[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__mention{color:var(--im-list-recent-item__color_counter,#fff)!important;background-color:var(--im-list-recent-item__background-color_counter,#00ade3)!important}
+[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__mention-icon{background-color:var(--im-list-recent-item__color_counter,#fff)!important}
+[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__counters_wrap.--children-only .bx-im-list-recent-item__counter_number{background-color:var(--im-list-recent-item__background-color_comments,#9dcf00)!important}
+[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__counters_wrap.--with-children .bx-im-list-recent-item__counter_number::before{background-color:var(--im-color-palette-white-base,#fff)!important}
+[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__counters_wrap.--with-children .bx-im-list-recent-item__counter_number::after{background-color:var(--im-list-recent-item__background-color_comments,#9dcf00)!important}
+[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__counter_number.--with-unread::before,[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__counters_wrap.--with-children .bx-im-list-recent-item__counter_number.--with-unread::before{border-color:var(--im-list-recent-item__border-color_unread,#fff)!important;background-color:var(--im-list-recent-item__background-color_counter,#00ade3)!important}
+[data-pena-native-multi-selected="1"]:hover .bx-im-list-recent-item__counter_number.--with-unread::before,[data-pena-native-multi-selected="1"]:hover .bx-im-list-recent-item__counters_wrap.--with-children .bx-im-list-recent-item__counter_number.--with-unread::before{border-color:var(--im-list-recent-item__border-color_unread-hover,#fff)!important}
+[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__counters_wrap.--muted .bx-im-list-recent-item__counter_number,[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__counters_wrap.--muted .bx-im-list-recent-item__counter_number.--with-unread::before,[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__counters_wrap.--with-children.--muted .bx-im-list-recent-item__counter_number::after{background-color:var(--im-list-recent-item__background-color_muted,#a8adb4)!important}
+[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__avatar_counter{color:var(--ui-color-white-base,#fff)!important;background-color:var(--im-color-accent-blue,#00ade3)!important}
+[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__avatar_counter.--with-unread::before{border-color:var(--ui-color-white-base,#fff)!important;background-color:var(--im-color-accent-blue,#00ade3)!important}
+.bx-im-messenger__scope.--air-design [data-pena-native-multi-selected="1"] .bx-im-list-recent-item__avatar_counter,.bx-im-messenger__scope.--air-design [data-pena-native-multi-selected="1"] .bx-im-list-recent-item__avatar_counter.--with-unread::before{background-color:var(--ui-color-accent-main-primary,#00ade3)!important}
+[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__avatar_counter.--muted,[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__avatar_counter.--muted.--with-unread::before,.bx-im-messenger__scope.--air-design [data-pena-native-multi-selected="1"] .bx-im-list-recent-item__avatar_counter.--muted,.bx-im-messenger__scope.--air-design [data-pena-native-multi-selected="1"] .bx-im-list-recent-item__avatar_counter.--muted.--with-unread::before{background-color:var(--ui-color-gray-40,#a8adb4)!important}
+.bx-im-messenger__scope.--air-design [data-pena-native-multi-selected="1"] .bx-im-list-recent-item__counter_number.--air-counter,.bx-im-messenger__scope.--air-design [data-pena-native-multi-selected="1"] .bx-im-list-recent-item__avatar_counter.--air-counter{background-color:transparent!important}
 #anit-filters .controls-pop-close{position:absolute;top:8px;right:8px;width:22px;height:22px;border:0;background:transparent;color:rgba(255,255,255,.72);padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;line-height:1;border-radius:var(--pena-radius)}
 #anit-filters .controls-pop-close:hover{color:#fff;background:rgba(255,255,255,.08);transform:none}
 #anit-dialog-control-dock #anit_dialog_control_overlay{position:absolute;left:0;right:0;bottom:calc(100% + 8px);display:none;z-index:4;pointer-events:none}
