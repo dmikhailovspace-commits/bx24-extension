@@ -142,7 +142,7 @@ try {
  await open();
  assert.equal(await page.getByLabel('Значение условия').inputValue(),'Чат 5','Rules persist across reload');
  // A stale editor cannot overwrite another tab's saved rules.
- await page.evaluate(()=>{const key=Object.keys(localStorage).find(key=>key.startsWith('pena.automation.v1.'));localStorage.setItem(key,JSON.stringify({version:1,rules:[]}));});
+ await page.evaluate(()=>{const key=Object.keys(localStorage).find(key=>key.startsWith('pena.automation.v1.')&&key.endsWith('.chats'));localStorage.setItem(key,JSON.stringify({version:1,rules:[]}));});
  await page.getByRole('button',{name:'Сохранить',exact:true}).click();
  assert.match(await page.locator('.pena-automation-panel [role=status]').innerText(),/другом окне/);
  await page.keyboard.press('Escape');
