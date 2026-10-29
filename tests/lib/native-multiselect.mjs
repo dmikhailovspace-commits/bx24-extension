@@ -86,6 +86,19 @@ export async function checkNativeMultiselect(browser, baseUrl, source) {
     await row('chat5').click();
     assert.equal((await page.evaluate(() => window.nativeRowClicks)).length, 1, 'The next plain click opens normally');
     assert.deepEqual(await selected(), []);
+    await row('chat225').evaluate(el=>el.classList.add('is-selected'));
+    await row('chat5').click({modifiers:['Control']});
+    assert.deepEqual(new Set(await selected()),new Set(['chat225','chat5']),'The open task seeds the first additive selection');
+    const paints=await page.locator('.task-host .--native-multi-selected').evaluateAll(rows=>rows.map(el=>({
+      fill:getComputedStyle(el).backgroundColor,outline:getComputedStyle(el).boxShadow,
+      content:getComputedStyle(el.firstElementChild).backgroundColor
+    })));
+    assert.equal(paints.length,2);assert.deepEqual(paints[0],paints[1],'The open task has the same multi-selection appearance');
+    await page.keyboard.press('Escape');
+    assert.equal(await row('chat225').evaluate(el=>el.classList.contains('is-selected')),true,'Leaving multi-select preserves native active state');
+    await row('chat5').click({modifiers:['Shift']});
+    assert.ok((await selected()).includes('chat225')&&(await selected()).includes('chat5'),'Shift starts its range at the open task');
+    await page.keyboard.press('Escape');
     assert.deepEqual(errors, []);
     return { pinnedRead: true, muted: true, pinIcon: true, heldClick: true, rapidClicks: true, rowReplacement: true, meta: true, shift: true, cancel: true, plainClick: true };
   } finally {

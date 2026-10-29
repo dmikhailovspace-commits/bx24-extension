@@ -174,6 +174,51 @@ try {
  await page.getByRole('button',{name:'Сохранить',exact:true}).click();
  await page.waitForFunction(()=>JSON.parse(localStorage.getItem('pena.dialogControl.v1.tasks')||'[]').find(item=>item.id==='chat101')?.folderId==='folder:test',{},{timeout:15000});
  assert.ok(await page.evaluate(()=>window.automationDetailCalls>0),'Missing task fields must request detail');
+ // Existing tasks move only through the confirmation panel after Pull changes.
+ const savedConfig=await page.evaluate(()=>{
+  const key=Object.keys(localStorage).find(key=>key.startsWith('pena.automation.v1.')&&key.endsWith('.tasks'));
+  const original=localStorage.getItem(key),config=JSON.parse(original);
+  config.rules.push({...config.rules[0],id:'other-owner',conditions:[{field:'responsibleId',op:'eq',value:'77'}],folderId:'folder:other'});
+  const itemKey='pena.dialogControl.v1.tasks',items=JSON.parse(localStorage.getItem(itemKey));
+  items.push({id:'folder:other',type:'folder',title:'Новый исполнитель'});
+  localStorage.setItem(itemKey,JSON.stringify(items));
+  window.dispatchEvent(new StorageEvent('storage',{key:itemKey,newValue:JSON.stringify(items)}));
+  localStorage.setItem(key,JSON.stringify(config));window.dispatchEvent(new Event('online'));
+  return {key,original};
+ });
+ await page.waitForTimeout(700);
+ const pull=fields=>page.evaluate(fields=>(nativeCustomEventHandlers.get('onPullEvent-tasks')||[]).forEach(fn=>fn('task_update',{TASK_ID:'101',FIELDS_AFTER:{ID:'101',...fields}})),fields);
+ const taskFolder=()=>page.evaluate(()=>JSON.parse(localStorage.getItem('pena.dialogControl.v1.tasks')).find(item=>item.id==='chat101').folderId||'');
+ await pull({RESPONSIBLE_ID:'77'});
+ await page.locator('.task-host .pena-native-rules-button.--pending').waitFor();
+ assert.equal(await taskFolder(),'folder:test','A changed responsible must not move an existing task silently');
+ await page.locator('.task-host .pena-native-rules-button').click();
+ assert.equal(await page.getByRole('tab',{name:'Панель',exact:true}).getAttribute('aria-selected'),'true');
+ await page.getByRole('button',{name:'Оставить на месте',exact:true}).click();
+ await page.getByText('Нет переносов для подтверждения',{exact:true}).waitFor();
+ await page.getByRole('button',{name:'Закрыть',exact:true}).click();
+ await page.evaluate(()=>window.dispatchEvent(new Event('online')));await page.waitForTimeout(400);
+ assert.equal(await page.locator('.pena-native-rules-button.--pending').count(),0,'Rejected change does not reopen');
+ await pull({RESPONSIBLE_ID:'12'});await page.waitForTimeout(500);
+ await pull({RESPONSIBLE_ID:'77'});
+ await page.locator('.task-host .pena-native-rules-button.--pending').waitFor();
+ await page.locator('.task-host .pena-native-rules-button').click();
+ await page.screenshot({path:'tests/artifacts/folder-confirmations-desktop.png'});
+ await page.setViewportSize({width:360,height:780});
+ assert.equal(await page.locator('.pena-automation-panel').evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+ await page.screenshot({path:'tests/artifacts/folder-confirmations-mobile.png'});
+ await page.getByRole('button',{name:'Подтвердить перенос',exact:true}).click();
+ assert.equal(await taskFolder(),'folder:other');
+ await page.getByRole('button',{name:'Закрыть',exact:true}).click();
+ await pull({RESPONSIBLE_ID:'12',TITLE:'Переименованная задача'});
+ await page.locator('.task-host .pena-native-rules-button.--pending').waitFor();
+ assert.equal(await taskFolder(),'folder:other','Title no longer matching proposes removal without moving');
+ await pull({RESPONSIBLE_ID:'77'});
+ await page.waitForTimeout(500);
+ assert.equal(await page.locator('.pena-native-rules-button.--pending').count(),0,'Returning to current destination cancels stale ticket');
+ await page.setViewportSize({width:1100,height:800});
+ await page.evaluate(({key,original})=>{localStorage.setItem(key,original);localStorage.removeItem(key+'.review');window.dispatchEvent(new Event('online'));},savedConfig);
+ await page.waitForTimeout(500);
  // Directory fixtures follow the documented ID-keyed response, including paging,
  // duplicate names, empty replies, errors and responses arriving after query changes.
  await page.locator('.task-host .pena-native-rules-button').click();

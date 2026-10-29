@@ -109,7 +109,9 @@ await phase('update control remains visible without a release and supports manua
   const content=read('extension/content.js');
   await page.addScriptTag({content:"const _releaseVersion='8.0.20';\n"+content.slice(content.indexOf('  // Consent lives'),content.indexOf("  const _enabledKey"))});
   await page.evaluate(()=>document.dispatchEvent(new Event('pena-update-slot-ready')));
-  assert.equal(await page.evaluate(()=>testRoot.querySelector('.badge').textContent),'Обновления');
+  assert.equal(await page.evaluate(()=>testRoot.querySelector('.badge').getAttribute('aria-label')),'Обновление');
+  assert.equal(await page.evaluate(()=>testRoot.querySelector('.badge').textContent),'');
+  assert.equal(await page.evaluate(()=>testRoot.querySelectorAll('.badge svg').length),1);
   const click=async selector=>{const point=await page.evaluate(selector=>{const r=testRoot.querySelector(selector).getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};},selector);await page.mouse.click(point.x,point.y);};
   await click('.badge');
   await page.waitForFunction(()=>testRoot.querySelector('[role=status]').textContent.includes('актуальная версия 8.0.20'));
@@ -120,7 +122,7 @@ await phase('update control remains visible without a release and supports manua
   assert.equal(await page.evaluate(()=>!!testRoot.querySelector('.primary')),false);
   await page.evaluate(()=>{window.fail=false;window.remote='9.0.1';});await click('.actions button');
   await page.waitForFunction(()=>testRoot.querySelector('.primary'));
-  assert.equal(await page.evaluate(()=>testRoot.querySelector('.badge').textContent),'Доступно обновление');
+  assert.equal(await page.evaluate(()=>testRoot.querySelector('.badge').getAttribute('aria-label')),'Доступно обновление');
   assert.equal(await page.evaluate(()=>requests.filter(r=>r.action==='apply').length),0);
   await page.evaluate(()=>{document.querySelector('.pena-native-update-slot').replaceWith(Object.assign(document.createElement('span'),{className:'pena-native-update-slot'}));document.dispatchEvent(new Event('pena-update-slot-ready'));});
   assert.equal(await page.evaluate(()=>testRoot.host.isConnected&&!testRoot.querySelector('.badge').hidden),true);

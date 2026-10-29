@@ -69,6 +69,9 @@ try {
   await page.waitForFunction(() => !!window.__ANITREC_RUNNING__, null, { timeout: 15000 });
   assert.equal(await page.evaluate(() => window.__ANITREC_RUNNING__), build.version);
   await page.waitForFunction(() => !!document.querySelector('.pena-native-folder-switcher'), null, { timeout: 15000 });
+  await page.locator('.pena-extension-toolbar-controls .pena-native-update-slot > span').waitFor();
+  assert.equal(await page.locator('.pena-native-command-bar .pena-native-update-slot').count(),0,'Update icon belongs beside the extension toggle');
+  await page.screenshot({path:'tests/artifacts/update-toolbar.png'});
   assert.ok(await page.evaluate(() => window.__PENA_NATIVE_CATALOG__ || window.__PENA_TIME_CONTROL__));
   assert.ok(!requests.some(url => /github|raw\.githubusercontent|id-pr\.ru/.test(url)));
   assert.equal(await page.locator('script[src*="chrome-extension"],link[href*="injected.css"]').count(), 0);
@@ -126,3 +129,4 @@ try {
   writeFileSync('tests/artifacts/chrome-browser-regression.json', JSON.stringify({ packageSha256: build.sha256, phases, errors, consoleErrors, nativePermissionPromptTested: false, liveBitrixTested: false, grantedHostFixture: true }, null, 2));
 }
 console.log(`PASS actual MV3 browser: ${phases.length} scenarios; native permission dialog and live Bitrix remain manual checks`);
+await import('./update-delivery-regression.mjs');

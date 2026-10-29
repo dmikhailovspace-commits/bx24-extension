@@ -1089,7 +1089,13 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 /* Rules use the time workspace's 48px header, 32px controls and 8/16px spacing. */
 .pena-automation-overlay{position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;width:100%;height:100%;max-width:none;max-height:none;margin:0;padding:16px;border:0;box-sizing:border-box;background:rgba(15,23,42,.42);overflow:hidden}
 .pena-automation-overlay::backdrop{background:transparent}
-.pena-automation-panel{--pena-rules-ui:"Onest Variable",Onest,Arial,sans-serif;display:grid;grid-template-rows:48px minmax(0,1fr) auto;width:min(960px,100%);height:min(720px,calc(100dvh - 32px));margin:0;padding:0;overflow:hidden;border:1px solid #d6deea;border-radius:16px;background:#f7f9fc;color:#182237;box-shadow:0 24px 70px rgba(15,23,42,.28),0 3px 12px rgba(15,23,42,.12);font:500 12px/18px var(--pena-rules-ui);text-transform:none;letter-spacing:normal}
+.pena-automation-panel{--pena-rules-ui:"Onest Variable",Onest,Arial,sans-serif;display:grid;grid-template-rows:48px auto minmax(0,1fr) auto;width:min(960px,100%);height:min(720px,calc(100dvh - 32px));margin:0;padding:0;overflow:hidden;border:1px solid #d6deea;border-radius:16px;background:#f7f9fc;color:#182237;box-shadow:0 24px 70px rgba(15,23,42,.28),0 3px 12px rgba(15,23,42,.12);font:500 12px/18px var(--pena-rules-ui);text-transform:none;letter-spacing:normal}
+.pena-automation-tabs{display:flex;gap:8px;padding:8px 16px;border-bottom:1px solid #e2e7ee;background:#fff}
+.pena-automation-tabs [aria-selected=true]{background:#edf3ff;border-color:#7293f3;color:#2854d7}
+.pena-automation-tickets{display:grid;gap:16px}
+.pena-automation-ticket{display:grid;gap:8px;padding:16px;border:1px solid #d7dfeb;border-radius:8px;background:#fff;overflow-wrap:anywhere}
+.pena-automation-ticket-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+.pena-native-rules-button.--pending{box-shadow:0 0 0 2px #eab308 inset!important}
 .pena-automation-panel,.pena-automation-panel *{box-sizing:border-box}
 .pena-automation-panel [hidden]{display:none!important}
 .pena-automation-panel p{margin:0;font:inherit}

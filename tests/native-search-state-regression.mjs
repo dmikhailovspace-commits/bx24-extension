@@ -4,7 +4,7 @@ import {chromium} from 'playwright';
 import {startHarnessServer,collectPageErrors} from './lib/harness-server.mjs';
 const raw=readFileSync(process.env.PENA_STABILITY_SOURCE || new URL('../extension/injected.js',import.meta.url),'utf8');
 const source=raw.replace('\tasync function boot() {',`\tasync function boot() {
-window.stability={apply:applyFilters,arm:_armPenaSearchFlow,query:()=>filters.query,stored:_readStoredBitrixSearchQuery,pending:()=>_dialogControlReadActions.size,selected:()=>[..._dialogControlMultiSelected],unique:value=>{_setDialogControlViewPrefs({uniqueOnly:value});applyFilters()},unread:value=>{_setDialogControlViewPrefs({unreadOnly:value});applyFilters()}, folder:_setDialogControlNativeActiveFolderId, items:_getDialogControlItems,
+window.stability={apply:applyFilters,arm:_armPenaSearchFlow,query:()=>filters.query,stored:_readStoredBitrixSearchQuery,pending:()=>_dialogControlReadActions.size,selected:()=>[..._dialogControlMultiSelected],unique:value=>{_setDialogControlViewPrefs({uniqueOnly:value});applyFilters()},unread:value=>{_setDialogControlViewPrefs({unreadOnly:value});applyFilters()}, folder:_setDialogControlNativeActiveFolderId, items:_getDialogControlItems, save:_saveDialogControlItems,
 seed:meta=>_setDialogRecentMeta(_dialogRecentMeta,{..._getDialogRecentMeta(meta.id),...meta}), notify:_notifyDialogRecentCountersChanged, render:()=>_renderDialogControlNativeSwitcher(findContainer(),_getDialogControlItems())};`);
 const server=await startHarnessServer();const browser=await chromium.launch({headless:true});const report=[];
 try {
@@ -251,23 +251,23 @@ try {
  await page.waitForFunction(()=>!stability.pending()&&searchWrites.length===1);
  assert.deepEqual(await page.evaluate(()=>searchWrites[0].params),{DIALOG_ID:'708',ACTION:'Y'});
  await ordinary.click({modifiers:['Control']});await collab.click({modifiers:['Control']});
- assert.deepEqual(await page.evaluate(()=>stability.selected().sort()),['user707','user708']);
- assert.equal(await page.locator('.bx-im-search-item-layout__container.--native-multi-selected').count(),2,'Search selection must be visible');
+ assert.deepEqual(await page.evaluate(()=>stability.selected().sort()),['chat225','user707','user708']);
+ assert.equal(await page.locator('.bx-im-search-item-layout__container.--native-multi-selected').count(),3,'Search selection includes the open dialog');
  await collab.click({button:'right'});
  await menu.getByRole('menuitem',{name:'Прочитать позже',exact:true}).click();
- await page.waitForFunction(()=>!stability.pending()&&searchWrites.length===3);
- assert.deepEqual(await page.evaluate(()=>searchWrites.slice(1).map(x=>x.params.DIALOG_ID).sort()),['707','708']);
+ await page.waitForFunction(()=>!stability.pending()&&searchWrites.length===4);
+ assert.deepEqual(await page.evaluate(()=>searchWrites.slice(1).map(x=>x.params.DIALOG_ID).sort()),['707','708','chat225']);
  await collab.click({button:'right'});
  await menu.getByRole('menuitem',{name:'Снять отметку «прочитать позже»',exact:true}).click();
- await page.waitForFunction(()=>!stability.pending()&&searchWrites.length===5);
+ await page.waitForFunction(()=>!stability.pending()&&searchWrites.length===7);
  await collab.click({button:'right'});
  await menu.getByRole('menuitem',{name:'Прочитано',exact:true}).click();
- await page.waitForFunction(()=>!stability.pending()&&searchWrites.length===9);
- assert.deepEqual(await page.evaluate(()=>searchWrites.slice(5).filter(x=>x.method==='im.dialog.read').map(x=>x.params.DIALOG_ID).sort()),['707','708']);
+ await page.waitForFunction(()=>!stability.pending()&&searchWrites.length===13);
+ assert.deepEqual(await page.evaluate(()=>searchWrites.slice(7).filter(x=>x.method==='im.dialog.read').map(x=>x.params.DIALOG_ID).sort()),['707','708','chat225']);
  await collab.click({button:'right'});
  await menu.getByRole('menuitem',{name:'Добавить в новую папку',exact:true}).click();
  await page.locator('.pena-native-confirm-input').fill('Search users');await page.getByRole('button',{name:'Создать',exact:true}).click();
- assert.equal(await page.evaluate(()=>{const f=stability.items().find(x=>x.title==='Search users');return !!f&&['user707','user708'].every(id=>stability.items().find(x=>x.id===id)?.folderId===f.id)}),true);
+ assert.equal(await page.evaluate(()=>{const f=stability.items().find(x=>x.title==='Search users');return !!f&&['chat225','user707','user708'].every(id=>stability.items().find(x=>x.id===id)?.folderId===f.id)}),true);
  await collab.click({button:'right'});await menu.getByRole('menuitem',{name:'Цветовой маркер',exact:true}).click();
  await page.locator('.dialog-control-palette.--open .dialog-control-palette-tool.--random').click();
  assert.equal(await page.evaluate(()=>{const a=stability.items().find(x=>x.id==='user707'),b=stability.items().find(x=>x.id==='user708');return /^#[a-f0-9]{6}$/.test(a.color)&&a.color===b.color}),true);
@@ -275,10 +275,10 @@ try {
  assert.equal(await page.locator('.bx-im-search-item-layout__container[draggable="true"]').count()>=2,true);
  await page.keyboard.press('Escape');
  await ordinary.click({modifiers:['Control']});await collab.click({modifiers:['Shift']});
- assert.deepEqual(await page.evaluate(()=>stability.selected().sort()),['user707','user708'],'Shift selects visible search order, not hidden recent entries');
+ assert.deepEqual(await page.evaluate(()=>stability.selected().sort()),['chat225','user707','user708'],'Shift adds the visible search range to the open dialog');
  await page.keyboard.press('Escape');
  await page.evaluate(()=>stability.unread(true));await page.waitForTimeout(80);
- assert.equal(await page.getByText('Native chat225',{exact:true}).isVisible(),true);
+ assert.equal(await page.getByText('Native chat225',{exact:true}).isVisible(),false,'Bulk read includes the open dialog');
  assert.equal(await page.getByText('Native chat5',{exact:true}).isVisible(),false,'Unread filtering applies to real SearchItem without data-id');
  await page.evaluate(()=>stability.unread(false));await page.waitForTimeout(60);
  assert.equal(await page.getByText('Native chat5',{exact:true}).isVisible(),true,'Turning off unread restores the result');
@@ -389,7 +389,8 @@ try {
  assert.equal(await total.textContent(),'54','Clearing search restores full counters without erasing catalog notifications');
  // Current Bitrix removes the field on close. Cached native callbacks bypass
  // our wrapper; the detached old field still contains the previous query.
- await page.evaluate(()=>{stability.folder('folder:test');});await page.waitForTimeout(80);
+ // Restore the folder fixture after bulk actions also moved the open chat.
+ await page.evaluate(()=>{const items=stability.items();items.find(item=>item.id==='chat225').folderId='folder:test';stability.save(items);stability.folder('folder:test');});await page.waitForTimeout(80);
  const beforeCollapse=await visibleIds();assert.ok(beforeCollapse.length);
  await input.fill('collapsed query');await page.waitForTimeout(80);
  await page.evaluate(()=>{window.nativeCollapseInput=true;nativeSubscribedClose();});
