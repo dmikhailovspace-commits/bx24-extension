@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.61';
+	window.__ANITREC_RUNNING__ = '8.0.62';
 
-	const VER = '8.0.61';
+	const VER = '8.0.62';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -12579,7 +12579,9 @@ if (_presetChannel) {
 			const row = _findFreshBitrixChatElementById(opened);
 			if (row) currentItem = _ensureDialogControlItemFromElement(row, { silent: true, mark: false, segmentId: '' });
 		}
-		const current = currentItem?.id || (!opened ? _getDialogControlCurrentId(items) : '');
+		// Titles in the inbox are not evidence of an open conversation. In a
+		// cold empty pane, seed nothing and let the actual modifier-click win.
+		const current = currentItem?.id || '';
 		if (current && items.some(item => !_isDialogControlFolder(item) && String(item.id) === String(current))) {
 			_dialogControlMultiSelected.add(String(current));
 			_dialogControlMultiSelectionAnchorId = String(current);
@@ -20808,7 +20810,7 @@ if (_presetChannel) {
 			'.bx-messenger-cl-item-active[data-userid]'
 		].join(',');
 		const selected = Array.from((source || root.document)?.querySelectorAll?.(selectedSelector) || [])
-			.find(candidate => allowInteractionGrace || (
+			.find(candidate => allowInteractionGrace || (isVisibleElement(candidate) &&
 				!candidate.classList?.contains('pena-native-remote-row') &&
 				!candidate.closest?.('.pena-native-managed-list')
 			)) || null;
@@ -20819,6 +20821,7 @@ if (_presetChannel) {
 		}
 		if (root === window) {
 			for (const [id, row] of buildChatElementIndex()) {
+				if (!allowInteractionGrace && (!isVisibleElement(row) || (source && !source.contains(row)))) continue;
 				if (!allowInteractionGrace && (row.classList?.contains('pena-native-remote-row') || row.closest?.('.pena-native-managed-list'))) continue;
 				if (!_isLikelyActiveChatElement(row)) continue;
 				_setDialogControlCurrentId(id);
@@ -20831,8 +20834,8 @@ if (_presetChannel) {
 			const mode = _pMode();
 			const cached = normId(_dialogControlCurrentIds?.[mode]);
 			const seenAt = Math.max(0, Number(_dialogControlCurrentSeenAt?.[mode]) || 0);
-			const source = window.__PENA_ACTIVE_LIST_CONTEXT__?.list || findContainer() || null;
-			const sameSource = !!source && _dialogControlCurrentSources?.[mode] === source;
+			const activeSource = window.__PENA_ACTIVE_LIST_CONTEXT__?.list || findContainer() || null;
+			const sameSource = !!activeSource && _dialogControlCurrentSources?.[mode] === activeSource;
 			// Some Bitrix builds drop the selected class while recycling the active
 			// row. Keep an explicit user-opened task long enough to qualify one minute;
 			// a mode/source switch or another click replaces this grace immediately.
@@ -29836,6 +29839,9 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .pena-native-avatar-ring-host{position:relative!important;isolation:isolate!important}
 .pena-native-avatar-ring{position:absolute!important;inset:0 auto auto 0!important;width:100%!important;height:auto!important;aspect-ratio:1!important;transform:none!important;display:block!important;border:4px solid var(--pena-native-color,#3b82f6)!important;border-radius:999px!important;background:transparent!important;box-shadow:0 0 0 1px rgba(255,255,255,.96),inset 0 0 0 1px rgba(15,23,42,.42)!important;box-sizing:border-box!important;pointer-events:none!important;z-index:1!important}
 .pena-native-avatar-stack-host{isolation:isolate!important}
+/* Inline image baselines can push a 14px author portrait below its clip box. */
+.pena-dialog-native-mode .bx-im-list-recent-item__message_text .bx-im-list-recent-item__author-avatar{display:inline-flex!important;align-items:center;justify-content:center}
+.pena-dialog-native-mode .bx-im-list-recent-item__author-avatar>img{display:block}
 .pena-native-avatar-native-overlay,.pena-native-avatar-stack-host [class*="typing" i],.pena-native-avatar-stack-host [class*="writing" i],.pena-native-avatar-stack-host [aria-label*="печатает" i]{z-index:7!important}
 [data-pena-native-multi-selected="1"]{background:transparent!important;background-color:transparent!important;box-shadow:0 0 0 2px #20aee5 inset!important}
 .pena-native-chat-row[draggable="true"]{cursor:pointer}

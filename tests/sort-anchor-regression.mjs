@@ -41,7 +41,7 @@ try {for(const mode of ['chats','tasks']) {
   });
   assert.ok(scroll.before>0);assert.ok(Math.abs(scroll.before-scroll.after)<1,'Color change must not jump scrollbar');
   await row('chat77').click({modifiers:['Control']});await row('chat5').click({modifiers:['Shift']});
-  assert.deepEqual((await host.locator('.--native-multi-selected').evaluateAll(rows=>rows.map(r=>r.dataset.id))).sort(),['chat225','chat1000','chat5','chat77'].sort(),'Shift adds visible order to the open dialog');await page.keyboard.press('Escape');
+  assert.deepEqual((await host.locator('.--native-multi-selected').evaluateAll(rows=>rows.map(r=>r.dataset.id))).sort(),['chat1000','chat5','chat77'].sort(),'With no open dialog, Shift selects the visible range without the pinned first row');await page.keyboard.press('Escape');
   await page.evaluate(()=>{orderAudit.color('chat5','#111111');orderAudit.paint();});assert.deepEqual((await visual()).slice(0,4),['chat225','chat5','chat77','chat1000']);
   await page.evaluate(()=>{orderAudit.color('chat5','');orderAudit.paint();generalOrderParent.prepend(generalOrderParent.querySelector('[data-id="chat1000"]'));});
   await page.waitForFunction(()=>Number(getComputedStyle(document.querySelector('.test-host:not([hidden]) [data-id="chat1000"]')).order)<Number(getComputedStyle(document.querySelector('.test-host:not([hidden]) [data-id="chat77"]')).order));

@@ -37,6 +37,10 @@ try {
  await page.addScriptTag({url:`${server.baseUrl}/tests/fixtures/vendor/bitrix-vue-prod.js`});
  await page.evaluate(mode=>{
   const {createApp,h}=BX.Vue3;
+  // A successful native open exposes an explicit current dialog. A title in
+  // the search results alone must not stand in for that signal.
+  BX.Messenger||={};
+  BX.Messenger.Application={...BX.Messenger.Application,getCurrentDialogId:()=>window.nativeOpened||''};
   const host=document.querySelector(mode==='tasks'?'.task-host':'.recent-host');
   const oldInput=host.querySelector('input[type="search"]');const fieldRoot=document.createElement('div');oldInput.replaceWith(fieldRoot);
   const list=host.querySelector('.bx-im-list-container-recent__elements,.bx-im-list-container-task__elements');

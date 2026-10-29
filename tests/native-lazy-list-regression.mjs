@@ -125,7 +125,7 @@ try {
       assert.deepEqual(switchedAudit.leaks, [], 'Recycling, class rebinding and late pages must respect the current folder before paint');
       await page.evaluate(() => lazyAudit.folder('folder:test'));
       await old.click({ modifiers:['Control'], delay:800 });
-      assert.deepEqual(await page.evaluate(() => lazyAudit.selected()), ['chat225','chat1025'],'Selection adds the old folder member to the open dialog');
+      assert.deepEqual(await page.evaluate(() => lazyAudit.selected()), ['chat1025'],'With no open dialog, selection includes only the clicked old folder member');
       await page.keyboard.press('Escape');
       await page.evaluate(() => lazyAudit.folder(''));
       await page.waitForFunction(() => !document.querySelector('.pena-native-managed-viewport'));

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { nativeCounterCss, counterMarkup, counterAppearance, checkCounterVariants } from './native-counter-fixture.mjs';
+import { checkAuthorAvatars } from './author-avatar-fixture.mjs';
 
 export async function checkOpenDialogMultiselect(browser, baseUrl, source) {
   for (const mode of ['chats', 'tasks']) {
@@ -14,11 +15,22 @@ export async function checkOpenDialogMultiselect(browser, baseUrl, source) {
     try {
       await page.route('**/extension/injected.js', route => route.fulfill({ contentType: 'text/javascript', body: instrumented }));
       await page.goto(`${baseUrl}/tests/native-consistency-harness.html?mode=${mode}&nativeCatalog=1&nativeFirst=1&passThrough=1`);
-      await page.waitForFunction(() => window.__PENA_RECENT_SYNC__?.gateReady);
+      await page.locator('.pena-native-folder-switcher').waitFor({state:'visible'});
+      await page.waitForFunction(() => window.__PENA_RECENT_SYNC__?.gateReady && !document.querySelector('.pena-native-original-load-guard'));
       const host = page.locator(mode === 'tasks' ? '.task-host' : '.recent-host');
       const active = host.locator('[data-id="chat225"]');
       const other = host.locator('[data-id="chat5"]');
+      // A cold inbox has titles, but no open dialog. Its first title is not
+      // evidence of an active conversation and must never seed the selection.
+      for (const modifiers of [['Control'], ['Meta'], ['Shift']]) {
+        await other.click({modifiers});
+        assert.deepEqual(await page.evaluate(()=>__OPEN_MULTI__.selected()),['chat5'],`${mode}/${modifiers.join()}: empty open state selects only the clicked row`);
+        await page.keyboard.press('Escape');
+      }
       await page.locator('.test-host[hidden] [data-id="chat77"]').evaluate(el => el.classList.add('--selected'));
+      await other.click({modifiers:['Control']});
+      assert.deepEqual(await page.evaluate(()=>__OPEN_MULTI__.selected()),['chat5'],'A hidden list selection is not the open dialog');
+      await page.keyboard.press('Escape');
       // Sanitized structure observed on the portal; no messages/user data are
       // captured. Preserve the header/message nesting rather than a bare title.
       await host.locator('[data-id="chat225"],[data-id="chat5"]').evaluateAll(rows => rows.forEach(el => {
@@ -35,6 +47,7 @@ export async function checkOpenDialogMultiselect(browser, baseUrl, source) {
         .bx-im-list-recent-item__message_container {color:#98a2b1}
         .bx-im-list-recent-item__wrap.--selected .bx-im-list-recent-item__message_container {color:white}` });
       await page.addStyleTag({ content: nativeCounterCss });
+      await checkAuthorAvatars(page, host, active, other);
       await host.locator('[data-id="chat225"],[data-id="chat5"]').evaluateAll((rows,html) => rows.forEach(el => {
         el.querySelector('.bx-im-list-recent-item__content_bottom').insertAdjacentHTML('beforeend',html);
       }), counterMarkup);
