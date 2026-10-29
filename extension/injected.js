@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.59';
+	window.__ANITREC_RUNNING__ = '8.0.60';
 
-	const VER = '8.0.59';
+	const VER = '8.0.60';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -12564,10 +12564,16 @@ if (_presetChannel) {
 
 	function _seedDialogControlMultiSelection(items) {
 		if (_dialogControlMultiSelected.size) return;
-		// The open Messenger dialog is authoritative. The old title/task lookup
-		// could miss native aria-selected or resolve a different task pane/title.
-		const opened = _readDialogControlOpenedId(window, false, findContainer());
-		let currentItem = opened && items.find(item => !_isDialogControlFolder(item) &&
+		// The visible native selection is the row the user sees. Messenger APIs
+		// may still describe another pane, or return a chat entity ID / Promise.
+		const selectedRow = _getDialogControlNativeRows(findContainer()).find(row =>
+			isVisibleElement(row) && !row.classList.contains('pena-native-remote-row') &&
+			!row.closest('.pena-native-managed-list') && _isLikelyActiveChatElement(row));
+		const opened = selectedRow ? getChatIdFromElement(selectedRow)
+			: _readDialogControlOpenedId(window, false, findContainer());
+		let currentItem = selectedRow
+			? _ensureDialogControlItemFromElement(selectedRow, { silent: true, mark: false, segmentId: '' })
+			: opened && items.find(item => !_isDialogControlFolder(item) &&
 			_getDialogControlItemIdentityKeys(item).includes(opened));
 		if (opened && !currentItem) {
 			const row = _findFreshBitrixChatElementById(opened);
@@ -21800,10 +21806,25 @@ if (_presetChannel) {
 		return (titleKey && index.byTitle.get(titleKey)) || null;
 	}
 
+	function _isDialogControlNativeRowMultiSelected(row, item) {
+		if (!item || !_dialogControlMultiSelected.has(String(item.id))) return false;
+		const nativeIds = _getDialogControlNativeRowIdentityKeys(row);
+		return !nativeIds.length || _getDialogControlItemIdentityKeys(item).some(id => nativeIds.includes(id));
+	}
+
+	function _setDialogControlNativeMultiSelected(row, selected) {
+		row.classList.toggle('--native-multi-selected', selected);
+		// Vue rewrites the native class attribute on focus/read/message updates.
+		// Own the paint through a separate attribute that its class binding keeps.
+		if (selected) {
+			if (row.dataset.penaNativeMultiSelected !== '1') row.dataset.penaNativeMultiSelected = '1';
+		} else delete row.dataset.penaNativeMultiSelected;
+	}
+
 	function _syncDialogControlNativeMultiSelection(container = findContainer()) {
 		if (IS_OL_FRAME || !container || !_isDialogControlNativeMode()) return;
 		if (!_dialogControlMultiSelected.size) {
-			container.querySelectorAll?.('.--native-multi-selected').forEach(row => row.classList.remove('--native-multi-selected'));
+			container.querySelectorAll?.('.--native-multi-selected,[data-pena-native-multi-selected]').forEach(row => _setDialogControlNativeMultiSelected(row, false));
 			return;
 		}
 		const items = _getDialogControlItems();
@@ -21811,8 +21832,8 @@ if (_presetChannel) {
 		_pruneDialogControlMultiSelection(items);
 		_getDialogControlNativeRows(container, { includeSearch: true }).forEach(row => {
 			const item = _getDialogControlItemForNativeRow(row, items, itemIndex);
-			const selected = !!item && _dialogControlMultiSelected.has(String(item.id));
-			row.classList.toggle('--native-multi-selected', selected);
+			const selected = _isDialogControlNativeRowMultiSelected(row, item);
+			_setDialogControlNativeMultiSelected(row, selected);
 		});
 	}
 
@@ -22374,6 +22395,7 @@ if (_presetChannel) {
 		delete row.dataset.penaNativeOriginalOrder;
 		delete row.dataset.penaNativeDialogId;
 		delete row.dataset.penaNativeColor;
+		delete row.dataset.penaNativeMultiSelected;
 		delete row.dataset.penaNativeNeedsPosition;
 		row.querySelectorAll?.('.pena-native-color-label,.pena-native-avatar-ring').forEach(el => el.remove());
 		_clearDialogControlNativeAvatarLayers(row);
@@ -22769,8 +22791,8 @@ if (_presetChannel) {
 		row.classList.toggle('--native-collapsed', !!parentFolder?.collapsed);
 		row.classList.toggle('--native-light-bg', hasLightNativeBg);
 		_ensureDialogControlNativeColorLabel(row, effectiveColor);
-		const isMultiSelected = _dialogControlMultiSelected.has(String(item.id));
-		row.classList.toggle('--native-multi-selected', isMultiSelected);
+		const isMultiSelected = _isDialogControlNativeRowMultiSelected(row, item);
+		_setDialogControlNativeMultiSelected(row, isMultiSelected);
 		if (parentFolder) row.dataset.penaNativeFolderId = String(parentFolder.id || '');
 		else delete row.dataset.penaNativeFolderId;
 		_getDialogControlNativePaintTargets(row).forEach(target => {
@@ -29785,11 +29807,11 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .pena-native-avatar-ring{position:absolute!important;inset:0 auto auto 0!important;width:100%!important;height:auto!important;aspect-ratio:1!important;transform:none!important;display:block!important;border:4px solid var(--pena-native-color,#3b82f6)!important;border-radius:999px!important;background:transparent!important;box-shadow:0 0 0 1px rgba(255,255,255,.96),inset 0 0 0 1px rgba(15,23,42,.42)!important;box-sizing:border-box!important;pointer-events:none!important;z-index:1!important}
 .pena-native-avatar-stack-host{isolation:isolate!important}
 .pena-native-avatar-native-overlay,.pena-native-avatar-stack-host [class*="typing" i],.pena-native-avatar-stack-host [class*="writing" i],.pena-native-avatar-stack-host [aria-label*="печатает" i]{z-index:7!important}
-.pena-native-chat-row.--native-multi-selected{background:transparent!important;background-color:transparent!important;box-shadow:0 0 0 2px #20aee5 inset!important}
+[data-pena-native-multi-selected="1"]{background:transparent!important;background-color:transparent!important;box-shadow:0 0 0 2px #20aee5 inset!important}
 .pena-native-chat-row[draggable="true"]{cursor:pointer}
 .pena-native-chat-row.--native-dragging{opacity:.48;cursor:grabbing;filter:saturate(.72)}
-.pena-native-chat-row.--native-multi-selected>.bx-im-list-recent-item__container,.pena-native-chat-row.--native-multi-selected>.bx-im-list-item__container,.pena-native-chat-row.--native-multi-selected>.bx-messenger-cl-item-wrap,.pena-native-chat-row.--native-multi-selected .pena-native-chat-row-paint{background:transparent!important;background-color:transparent!important;box-shadow:none!important}
-.pena-native-chat-row.--native-multi-selected .bx-im-chat-title__text,.pena-native-chat-row.--native-multi-selected .pena-native-remote-title{color:#1f2937!important}.pena-native-chat-row.--native-multi-selected .bx-im-list-recent-item__message_text,.pena-native-chat-row.--native-multi-selected .pena-native-remote-message{color:#98a2b1!important}.pena-native-chat-row.--native-multi-selected .bx-im-list-recent-item__date,.pena-native-chat-row.--native-multi-selected .bx-im-list-recent-item__date_text,.pena-native-chat-row.--native-multi-selected .bx-im-list-recent-item__date-text,.pena-native-chat-row.--native-multi-selected .pena-native-remote-date{color:#a4adba!important}
+[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__container,[data-pena-native-multi-selected="1"] .bx-im-list-item__container,[data-pena-native-multi-selected="1"] .bx-messenger-cl-item-wrap,[data-pena-native-multi-selected="1"] .pena-native-chat-row-paint{background:transparent!important;background-color:transparent!important;box-shadow:none!important}
+[data-pena-native-multi-selected="1"] .bx-im-chat-title__text,[data-pena-native-multi-selected="1"] .pena-native-remote-title{color:#1f2937!important}[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__message_text,[data-pena-native-multi-selected="1"] .pena-native-remote-message{color:#98a2b1!important}[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__date,[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__date_text,[data-pena-native-multi-selected="1"] .bx-im-list-recent-item__date-text,[data-pena-native-multi-selected="1"] .pena-native-remote-date{color:#a4adba!important}
 #anit-filters .controls-pop-close{position:absolute;top:8px;right:8px;width:22px;height:22px;border:0;background:transparent;color:rgba(255,255,255,.72);padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;line-height:1;border-radius:var(--pena-radius)}
 #anit-filters .controls-pop-close:hover{color:#fff;background:rgba(255,255,255,.08);transform:none}
 #anit-dialog-control-dock #anit_dialog_control_overlay{position:absolute;left:0;right:0;bottom:calc(100% + 8px);display:none;z-index:4;pointer-events:none}
@@ -32090,6 +32112,14 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 		};
 
 		obs = new MutationObserver((mutations) => {
+		if (!IS_OL_FRAME && _isDialogControlNativeMode() && _dialogControlMultiSelected.size) {
+			const recycled = new Set(mutations.filter(mutation => mutation.type === 'attributes' &&
+				rowIdentityAttributes.has(mutation.attributeName)).map(getMutationOwnerRow).filter(Boolean));
+			for (const row of recycled) {
+				const item = _getDialogControlItemForNativeRow(row);
+				_setDialogControlNativeMultiSelected(row, _isDialogControlNativeRowMultiSelected(row, item));
+			}
+		}
 		if (!IS_OL_FRAME && _isDialogNativeLazyMode() && _isDialogControlNativeMode() && _isDialogControlNativePassThrough()) {
 			// Bitrix inserts/recycles rows before the debounced catalog refresh. Apply
 			// only their visibility in this microtask, before the browser can paint.

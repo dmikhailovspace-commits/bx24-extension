@@ -135,10 +135,9 @@ if (process.env.PENA_REQUIRE_RELEASE_ARTIFACTS === '1') {
 assert.match(setup, /extension\\fonts\\\*";\s+DestDir:\s+"\{#StageDir\}\\fonts"/i, 'Windows installer omits bundled fonts');
 const nativeRowCssBlock = source => {
   const start = source.indexOf('.bx-im-list-recent-item__wrap.pena-native-chat-row');
-  const endRule = '.pena-native-chat-row.--native-multi-selected .pena-native-chat-row-paint';
+  const endRule = '#anit-filters .controls-pop-close';
   const endStart = source.indexOf(endRule, start);
-  const end = source.indexOf('\n', endStart);
-  return start >= 0 && endStart >= 0 ? source.slice(start, end >= 0 ? end : source.length).trim() : '';
+  return start >= 0 && endStart >= 0 ? source.slice(start, endStart).trim() : '';
 };
 assert.ok(nativeRowCssBlock(injectedCss), 'native row CSS contract is missing');
 assert.equal(nativeRowCssBlock(injected), nativeRowCssBlock(injectedCss), 'inline and manifest native row CSS diverged');

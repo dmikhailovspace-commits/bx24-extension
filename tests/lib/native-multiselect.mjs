@@ -18,11 +18,21 @@ export async function checkOpenDialogMultiselect(browser, baseUrl, source) {
       const active = host.locator('[data-id="chat225"]');
       const other = host.locator('[data-id="chat5"]');
       await page.locator('.test-host[hidden] [data-id="chat77"]').evaluate(el => el.classList.add('--selected'));
+      // Sanitized structure observed on the portal; no messages/user data are
+      // captured. Preserve the header/message nesting rather than a bare title.
       await host.locator('[data-id="chat225"],[data-id="chat5"]').evaluateAll(rows => rows.forEach(el => {
-        const date = document.createElement('span');
-        date.className = 'bx-im-list-recent-item__date'; date.textContent = '13:17';
-        el.firstElementChild.append(date);
+        const title = el.querySelector('.bx-im-chat-title__text').textContent;
+        el.innerHTML = `<div class="bx-im-list-recent-item__container"><div class="bx-im-list-recent-item__avatar_container"><div class="test-avatar"></div></div><div class="bx-im-list-recent-item__content_container"><div class="bx-im-list-recent-item__content_header"><span class="bx-im-chat-title__text"></span><span class="bx-im-list-recent-item__date">13:17</span></div><div class="bx-im-list-recent-item__content_bottom"><div class="bx-im-list-recent-item__message_container"><span class="bx-im-list-recent-item__message_text">Пример сообщения</span></div></div></div></div>`;
+        el.querySelector('.bx-im-chat-title__text').textContent = title;
       }));
+      await page.addStyleTag({ content: `.test-host {font:14px/20px Arial,sans-serif;color:#1f2937}
+        .bx-im-list-recent-item__wrap {height:70px;border-radius:8px;margin:2px 0}
+        .bx-im-list-recent-item__container {display:flex;align-items:center;padding:8px;box-sizing:border-box}
+        .bx-im-list-recent-item__content_container {flex:1;min-width:0}
+        .bx-im-list-recent-item__content_header {display:flex;justify-content:space-between}
+        .bx-im-list-recent-item__date {font-size:11px;color:#a4adba}
+        .bx-im-list-recent-item__message_container {color:#98a2b1}
+        .bx-im-list-recent-item__wrap.--selected .bx-im-list-recent-item__message_container {color:white}` });
       // Exercise the native selected paint, nested under a wrapper, and a dialog
       // that has never been saved in PENA's assignments (the common inbox case).
       await active.evaluate(el => {
@@ -32,7 +42,8 @@ export async function checkOpenDialogMultiselect(browser, baseUrl, source) {
         el.firstElementChild.before(shell);
         shell.append(el.children[1]);
         const style = document.createElement('style');
-        style.textContent = `.bx-im-list-recent-item__wrap.--selected .test-selection-shell > div { background:#00acd5; }
+        style.textContent = `.bx-im-list-recent-item__wrap.--selected { background-color:rgb(0,172,227); }
+          .bx-im-list-recent-item__wrap.--selected .test-selection-shell > div { background:#00acd5; }
           .bx-im-list-recent-item__wrap.--selected .bx-im-chat-title__text { color:white; }
           .bx-im-list-recent-item__wrap.--selected .bx-im-list-recent-item__date { color:white; }
           .test-selection-shell { width:100%;height:100%; }`;
@@ -50,13 +61,48 @@ export async function checkOpenDialogMultiselect(browser, baseUrl, source) {
         date: getComputedStyle(el.querySelector('.bx-im-list-recent-item__date')).color
       }));
       assert.deepEqual(await appearance(active), await appearance(other), `${mode}: native selected paint must match the other selected row`);
+      // Observed on bx24.id-pr.ru: --selected and aria-current belong to the
+      // wrapper. Vue owns its class binding and can replace the whole attribute
+      // on a read/message/focus update, without replacing the node or its ID.
+      await active.evaluate(el => {
+        el.className = '--selected bx-im-list-recent-item__wrap --focus-visible';
+        el.setAttribute('aria-current', 'true');
+        el.querySelectorAll('.pena-native-chat-row-paint').forEach(n => n.classList.remove('pena-native-chat-row-paint'));
+      });
+      await page.waitForTimeout(250);
+      assert.deepEqual(await appearance(active), await appearance(other), `${mode}: a native class repaint must not restore the open-row fill`);
       assert.equal(await page.evaluate(() => __OPEN_MULTI__.item('chat225').folderId || ''), '', 'Selection must not assign a folder');
       mkdirSync('tests/artifacts', { recursive: true });
       await page.screenshot({ path: `tests/artifacts/open-dialog-multiselect-${mode}.png` });
+      const recycledPaint = await other.evaluate(async el => {
+        el.dataset.id = 'chat777777'; // Native identity can change before the title.
+        await new Promise(requestAnimationFrame);
+        const marked = el.hasAttribute('data-pena-native-multi-selected');
+        el.dataset.id = 'chat5';
+        await new Promise(requestAnimationFrame);
+        return { marked, restored: el.getAttribute('data-pena-native-multi-selected') };
+      });
+      assert.deepEqual(recycledPaint, { marked: false, restored: '1' }, 'A recycled row uses its new ID before the next paint, never the stale title');
       await page.keyboard.press('Escape');
       assert.deepEqual(await page.evaluate(() => __OPEN_MULTI__.selected()), []);
+      assert.equal(await host.locator('[data-pena-native-multi-selected]').count(), 0, 'Escape clears paint even if Vue removed the PENA classes');
       assert.equal(await active.locator('.test-selection-shell > div').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(0, 172, 213)', 'Escape restores native active paint');
+      // Messenger's generic `id` can be a numeric chat entity, not the dialog
+      // identity. A stale/malformed API answer must not hide a selected DOM row.
+      for (const apiCase of ['chat-entity-id', 'stale-dialog', 'async-result']) {
+        await page.evaluate(kind => {
+          const api = kind === 'chat-entity-id' ? { getCurrentDialog: () => ({ id: 225 }) }
+            : { getCurrentDialogId: () => kind === 'async-result' ? Promise.resolve('chat225') : 'chat999999' };
+          window.BX.Messenger = { ...window.BX.Messenger, Application: api };
+        }, apiCase);
+        await other.click({ modifiers: ['Control'] });
+        assert.deepEqual(new Set(await page.evaluate(() => __OPEN_MULTI__.selected())), new Set(['chat225', 'chat5']), `${mode}/${apiCase}: visible native selection must join the set`);
+        assert.deepEqual(await appearance(active), await appearance(other), `${mode}/${apiCase}: open row uses the same paint`);
+        await page.keyboard.press('Escape');
+      }
+      await page.evaluate(() => { window.BX.Messenger.Application = {}; });
       await active.evaluate(el => el.classList.remove('--selected'));
+      await active.evaluate(el => el.removeAttribute('aria-current'));
       await other.evaluate(el => el.setAttribute('aria-selected', 'true'));
       await active.click({ modifiers: ['Meta'] });
       assert.deepEqual(new Set(await page.evaluate(() => __OPEN_MULTI__.selected())), new Set(['chat225', 'chat5']), 'Native aria-selected on the row is sufficient');
