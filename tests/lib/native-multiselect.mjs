@@ -1,8 +1,86 @@
 import assert from 'node:assert/strict';
+import { mkdirSync } from 'node:fs';
+
+export async function checkOpenDialogMultiselect(browser, baseUrl, source) {
+  for (const mode of ['chats', 'tasks']) {
+    const page = await browser.newPage({ viewport: { width: 440, height: 760 } });
+    const instrumented = source.replace('\tasync function boot() {', `\tasync function boot() {
+      window.__OPEN_MULTI__ = { selected: () => [..._dialogControlMultiSelected],
+        forget: id => { const items = _getDialogControlItems(); const i = items.findIndex(x => x.id === id); if (i >= 0) items.splice(i, 1); },
+        item: id => _getDialogControlItems().find(x => x.id === id),
+        targets: id => _getDialogControlMoveGroupIds(id),
+        repaint: () => _syncDialogControlNativeMultiSelection() };`);
+    try {
+      await page.route('**/extension/injected.js', route => route.fulfill({ contentType: 'text/javascript', body: instrumented }));
+      await page.goto(`${baseUrl}/tests/native-consistency-harness.html?mode=${mode}&nativeCatalog=1&nativeFirst=1&passThrough=1`);
+      await page.waitForFunction(() => window.__PENA_RECENT_SYNC__?.gateReady);
+      const host = page.locator(mode === 'tasks' ? '.task-host' : '.recent-host');
+      const active = host.locator('[data-id="chat225"]');
+      const other = host.locator('[data-id="chat5"]');
+      await page.locator('.test-host[hidden] [data-id="chat77"]').evaluate(el => el.classList.add('--selected'));
+      await host.locator('[data-id="chat225"],[data-id="chat5"]').evaluateAll(rows => rows.forEach(el => {
+        const date = document.createElement('span');
+        date.className = 'bx-im-list-recent-item__date'; date.textContent = '13:17';
+        el.firstElementChild.append(date);
+      }));
+      // Exercise the native selected paint, nested under a wrapper, and a dialog
+      // that has never been saved in PENA's assignments (the common inbox case).
+      await active.evaluate(el => {
+        el.classList.add('--selected');
+        const shell = document.createElement('div');
+        shell.className = 'test-selection-shell';
+        el.firstElementChild.before(shell);
+        shell.append(el.children[1]);
+        const style = document.createElement('style');
+        style.textContent = `.bx-im-list-recent-item__wrap.--selected .test-selection-shell > div { background:#00acd5; }
+          .bx-im-list-recent-item__wrap.--selected .bx-im-chat-title__text { color:white; }
+          .bx-im-list-recent-item__wrap.--selected .bx-im-list-recent-item__date { color:white; }
+          .test-selection-shell { width:100%;height:100%; }`;
+        document.head.append(style);
+        window.__OPEN_MULTI__.forget('chat225');
+      });
+      assert.equal(await active.locator('.test-selection-shell > div').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(0, 172, 213)');
+      await other.click({ modifiers: ['Control'] });
+      assert.deepEqual(new Set(await page.evaluate(() => __OPEN_MULTI__.selected())), new Set(['chat225', 'chat5']), `${mode}: the open unsaved dialog must join the first selection`);
+      assert.deepEqual(new Set(await page.evaluate(() => __OPEN_MULTI__.targets('chat5'))), new Set(['chat225', 'chat5']), 'Bulk operations must include the open dialog');
+      const appearance = async row => row.evaluate(el => ({
+        fill: getComputedStyle(el).backgroundColor, outline: getComputedStyle(el).boxShadow,
+        content: getComputedStyle(el.querySelector('.bx-im-list-item__container,.bx-im-list-recent-item__container')).backgroundColor,
+        title: getComputedStyle(el.querySelector('.bx-im-chat-title__text')).color,
+        date: getComputedStyle(el.querySelector('.bx-im-list-recent-item__date')).color
+      }));
+      assert.deepEqual(await appearance(active), await appearance(other), `${mode}: native selected paint must match the other selected row`);
+      assert.equal(await page.evaluate(() => __OPEN_MULTI__.item('chat225').folderId || ''), '', 'Selection must not assign a folder');
+      mkdirSync('tests/artifacts', { recursive: true });
+      await page.screenshot({ path: `tests/artifacts/open-dialog-multiselect-${mode}.png` });
+      await page.keyboard.press('Escape');
+      assert.deepEqual(await page.evaluate(() => __OPEN_MULTI__.selected()), []);
+      assert.equal(await active.locator('.test-selection-shell > div').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(0, 172, 213)', 'Escape restores native active paint');
+      await active.evaluate(el => el.classList.remove('--selected'));
+      await other.evaluate(el => el.setAttribute('aria-selected', 'true'));
+      await active.click({ modifiers: ['Meta'] });
+      assert.deepEqual(new Set(await page.evaluate(() => __OPEN_MULTI__.selected())), new Set(['chat225', 'chat5']), 'Native aria-selected on the row is sufficient');
+      await active.click({ modifiers: ['Control'] });
+      assert.deepEqual(await page.evaluate(() => __OPEN_MULTI__.selected()), ['chat5']);
+      await other.click({ modifiers: ['Control'] });
+      assert.deepEqual(await page.evaluate(() => __OPEN_MULTI__.selected()), [], 'The current row can be explicitly removed from the set');
+      await other.evaluate(el => {
+        el.removeAttribute('aria-selected');
+        window.BX.Messenger = { ...window.BX.Messenger, Application: { getCurrentDialogId: () => 'chat5' } };
+      });
+      await active.click({ modifiers: ['Control'] });
+      assert.deepEqual(new Set(await page.evaluate(() => __OPEN_MULTI__.selected())), new Set(['chat225', 'chat5']), 'Messenger current dialog wins over unrelated visible titles');
+      await page.keyboard.press('Escape');
+      await other.click({ modifiers: ['Shift'] });
+      assert.deepEqual(await page.evaluate(() => __OPEN_MULTI__.selected()), ['chat5'], 'Shift on the open dialog selects it once');
+    } finally { await page.close(); }
+  }
+}
 
 // Bitrix TaskList/RecentItem: pinned rows share the normal row wrapper; when
 // read, ItemCounters replaces the number with __pinned-icon (also when muted).
 export async function checkNativeMultiselect(browser, baseUrl, source) {
+  await checkOpenDialogMultiselect(browser, baseUrl, source);
   const page = await browser.newPage();
   const errors = [];
   page.on('pageerror', error => errors.push(String(error)));

@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.58';
+	window.__ANITREC_RUNNING__ = '8.0.59';
 
-	const VER = '8.0.58';
+	const VER = '8.0.59';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -12564,7 +12564,16 @@ if (_presetChannel) {
 
 	function _seedDialogControlMultiSelection(items) {
 		if (_dialogControlMultiSelected.size) return;
-		const current = _getDialogControlCurrentId(items);
+		// The open Messenger dialog is authoritative. The old title/task lookup
+		// could miss native aria-selected or resolve a different task pane/title.
+		const opened = _readDialogControlOpenedId(window, false, findContainer());
+		let currentItem = opened && items.find(item => !_isDialogControlFolder(item) &&
+			_getDialogControlItemIdentityKeys(item).includes(opened));
+		if (opened && !currentItem) {
+			const row = _findFreshBitrixChatElementById(opened);
+			if (row) currentItem = _ensureDialogControlItemFromElement(row, { silent: true, mark: false, segmentId: '' });
+		}
+		const current = currentItem?.id || (!opened ? _getDialogControlCurrentId(items) : '');
 		if (current && items.some(item => !_isDialogControlFolder(item) && String(item.id) === String(current))) {
 			_dialogControlMultiSelected.add(String(current));
 			_dialogControlMultiSelectionAnchorId = String(current);
@@ -12633,15 +12642,10 @@ if (_presetChannel) {
 
 	function _isLikelyActiveChatElement(el) {
 		if (!el) return false;
-		const className = String(el.className || '').replace(/\banit-dialog-control-selected\b/g, '');
-		const own = [
-			className,
-			el.getAttribute?.('aria-selected'),
-			el.getAttribute?.('aria-current'),
-			el.getAttribute?.('data-selected'),
-			el.getAttribute?.('data-active')
-		].join(' ');
-		if (/(^|\s|_|-)(selected|active|current|opened)(\s|_|-|$)/i.test(own)) return true;
+		if (['aria-selected', 'aria-current', 'data-selected', 'data-active'].some(name => el.getAttribute?.(name) === 'true')) return true;
+		const className = Array.from(el.classList || []).filter(name =>
+			name !== 'anit-dialog-control-selected' && !name.startsWith('--native-') && !name.startsWith('--pena-')).join(' ');
+		if (/(^|\s|_|-)(selected|active|current|opened)(\s|_|-|$)/i.test(className)) return true;
 		try {
 			return !!el.querySelector?.('[aria-selected="true"],[aria-current="true"],[data-selected="true"],[data-active="true"],[class*="--selected"],[class*="--active"],[class*="_selected"],[class*="_active"]');
 		} catch {}
@@ -20746,7 +20750,7 @@ if (_presetChannel) {
 		}, 180);
 	}
 
-	function _readDialogControlOpenedId(root = window, allowInteractionGrace = true) {
+	function _readDialogControlOpenedId(root = window, allowInteractionGrace = true, source = null) {
 		const values = [];
 		try { values.push(root.BX?.Messenger?.Application?.getCurrentDialogId?.()); } catch {}
 		try { values.push(root.BX?.Messenger?.Application?.getCurrentDialog?.()?.dialogId); } catch {}
@@ -20769,7 +20773,7 @@ if (_presetChannel) {
 			'[class*="bx-im-list" i] [data-id][class*="--active"]',
 			'.bx-messenger-cl-item-active[data-userid]'
 		].join(',');
-		const selected = Array.from(root.document?.querySelectorAll?.(selectedSelector) || [])
+		const selected = Array.from((source || root.document)?.querySelectorAll?.(selectedSelector) || [])
 			.find(candidate => allowInteractionGrace || (
 				!candidate.classList?.contains('pena-native-remote-row') &&
 				!candidate.closest?.('.pena-native-managed-list')
@@ -29785,7 +29789,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .pena-native-chat-row[draggable="true"]{cursor:pointer}
 .pena-native-chat-row.--native-dragging{opacity:.48;cursor:grabbing;filter:saturate(.72)}
 .pena-native-chat-row.--native-multi-selected>.bx-im-list-recent-item__container,.pena-native-chat-row.--native-multi-selected>.bx-im-list-item__container,.pena-native-chat-row.--native-multi-selected>.bx-messenger-cl-item-wrap,.pena-native-chat-row.--native-multi-selected .pena-native-chat-row-paint{background:transparent!important;background-color:transparent!important;box-shadow:none!important}
-.pena-native-chat-row.--native-multi-selected .bx-im-chat-title__text,.pena-native-chat-row.--native-multi-selected .pena-native-remote-title{color:#1f2937!important}.pena-native-chat-row.--native-multi-selected .bx-im-list-recent-item__message_text,.pena-native-chat-row.--native-multi-selected .pena-native-remote-message{color:#98a2b1!important}.pena-native-chat-row.--native-multi-selected .pena-native-remote-date{color:#a4adba!important}
+.pena-native-chat-row.--native-multi-selected .bx-im-chat-title__text,.pena-native-chat-row.--native-multi-selected .pena-native-remote-title{color:#1f2937!important}.pena-native-chat-row.--native-multi-selected .bx-im-list-recent-item__message_text,.pena-native-chat-row.--native-multi-selected .pena-native-remote-message{color:#98a2b1!important}.pena-native-chat-row.--native-multi-selected .bx-im-list-recent-item__date,.pena-native-chat-row.--native-multi-selected .bx-im-list-recent-item__date_text,.pena-native-chat-row.--native-multi-selected .bx-im-list-recent-item__date-text,.pena-native-chat-row.--native-multi-selected .pena-native-remote-date{color:#a4adba!important}
 #anit-filters .controls-pop-close{position:absolute;top:8px;right:8px;width:22px;height:22px;border:0;background:transparent;color:rgba(255,255,255,.72);padding:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;line-height:1;border-radius:var(--pena-radius)}
 #anit-filters .controls-pop-close:hover{color:#fff;background:rgba(255,255,255,.08);transform:none}
 #anit-dialog-control-dock #anit_dialog_control_overlay{position:absolute;left:0;right:0;bottom:calc(100% + 8px);display:none;z-index:4;pointer-events:none}
