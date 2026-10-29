@@ -54,6 +54,7 @@ const open=async()=>{
  await page.locator('.recent-host .pena-native-folder-tab').filter({hasText:'Тестовая папка'}).click({button:'right'});
  await page.getByRole('menuitem',{name:'Автосортировка',exact:true}).click();
  await page.getByRole('dialog',{name:'Автосортировка',exact:true}).waitFor();
+ await page.getByRole('tab',{name:'Правила',exact:true}).click();
 };
 try {
  await page.goto(`${server.baseUrl}/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&passThrough=1`);
@@ -195,8 +196,8 @@ try {
  await page.locator('.task-host .pena-native-rules-button.--pending').waitFor();
  assert.equal(await taskFolder(),'folder:test','A changed responsible must not move an existing task silently');
  await page.locator('.task-host .pena-native-rules-button').click();
- assert.equal(await page.getByRole('tab',{name:'Панель',exact:true}).getAttribute('aria-selected'),'true');
- await page.getByRole('button',{name:'Оставить на месте',exact:true}).click();
+ assert.equal(await page.getByRole('tab',{name:'Пересортировка',exact:true}).getAttribute('aria-selected'),'true');
+ await page.getByRole('button',{name:'Пропустить',exact:true}).click();
  await page.getByText('Нет переносов для подтверждения',{exact:true}).waitFor();
  await page.getByRole('button',{name:'Закрыть',exact:true}).click();
  await page.evaluate(()=>window.dispatchEvent(new Event('online')));await page.waitForTimeout(400);
@@ -339,6 +340,7 @@ try {
  await page.getByRole('button',{name:'Сохранить',exact:true}).click();
  await page.locator('.pena-automation-panel').waitFor({state:'detached',timeout:15000});
  await page.locator('.task-host .pena-native-rules-button').click();
+ await page.getByRole('tab',{name:'Правила',exact:true}).click();
  await page.getByLabel('Значение условия').last().fill('Быстрый');
  await page.getByRole('button',{name:'Закрыть',exact:true}).click();
  await page.waitForTimeout(400);
@@ -346,5 +348,7 @@ try {
  assert.deepEqual(errors,[]);
  const {verifyEmployeeSearch}=await import('./lib/employee-search.mjs');
  await verifyEmployeeSearch(browser,readFileSync(new URL('../extension/injected.js',import.meta.url),'utf8'));
+ const {verifyResorting}=await import('./lib/resorting-confirmations.mjs');
+ await verifyResorting(browser,server,readFileSync(new URL('../extension/injected.js',import.meta.url),'utf8'));
  console.log('PASS folder automation: model, editor, preview, persistence, live arrival, concurrency, responsive layout');
 } finally {await browser.close();await server.close();}

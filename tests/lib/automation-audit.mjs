@@ -88,15 +88,15 @@ export async function verifyAutomationAudit(model,injectedSource) {
  assert.equal(api.apply('tasks',items.tasks),0);assert.equal(api.tickets('tasks').length,0);
  api.receive('1',{RESPONSIBLE_ID:'3'});api.apply('tasks',items.tasks);
  assert.equal(task.folderId,'folder:a');assert.equal(api.tickets('tasks')[0][1].ticket.to,'folder:b');
- // A manual move cancels the pending suggestion and becomes the new baseline.
- task.folderId='manual';api.apply('tasks',items.tasks);assert.equal(api.tickets('tasks').length,0);
+ // A manual move replaces the proposal's source, without hiding the conflict.
+ task.folderId='manual';api.apply('tasks',items.tasks);assert.equal(api.tickets('tasks')[0][1].ticket.from,'manual');
  api.apply('tasks',items.tasks);assert.equal(task.folderId,'manual');
  api.receive('1',{RESPONSIBLE_ID:'2'});api.apply('tasks',items.tasks);assert.equal(api.tickets('tasks')[0][1].ticket.to,'folder:a');
  const removedFolder=items.tasks.shift();api.apply('tasks',items.tasks);
  assert.equal(api.tickets('tasks')[0][1].ticket.to,'','A deleted destination cannot remain in a pending ticket');
  items.tasks.unshift(removedFolder);api.apply('tasks',items.tasks);
  assert.equal(api.tickets('tasks')[0][1].ticket.to,'folder:a');
- task.unavailable=true;api.apply('tasks',items.tasks);assert.equal(api.tickets('tasks').length,0);task.unavailable=false;
+ task.unavailable=true;api.apply('tasks',items.tasks);assert.equal(api.tickets('tasks').length,0);task.unavailable=false;task.folderId='folder:a';
  // A genuinely new task with unknown owner stays pending and is assigned only
  // once the first authoritative owner arrives; no confirmation is required.
  const fresh={id:'chat2',taskId:'2',title:'New task'};items.tasks.push(fresh);metas.set(fresh.id,{id:fresh.id,taskId:'2',automationFacts:{}});
@@ -148,4 +148,16 @@ export async function verifyAutomationAudit(model,injectedSource) {
   metas.get('deadline-task').automationFacts.status=status;api.schedule();await timers.shift()();
   assert.equal(timers.length,0,`Status ${status} needs no overdue wake-up`);
  }
+ // Thousands of conflicts must fit in normal browser localStorage. Rules are
+ // shared journal metadata, not copied into each stored proposal.
+ scope='large.test~1';
+ storage.set(key(),JSON.stringify({version:1,rules:Array.from({length:50},(_,i)=>makeRule([{field:'responsibleId',op:'eq',value:'2'}],'all',{id:'rule:'+i,folderId:'folder:b'})),excludedIds:[]}));
+ items.tasks=[{id:'folder:a',type:'folder'},{id:'folder:b',type:'folder'},...Array.from({length:4000},(_,i)=>({id:'bulk'+i,folderId:'folder:a',title:'Manual placement '+i}))];
+ for(const item of items.tasks.slice(2))metas.set(item.id,{id:item.id,automationFacts:{responsibleId:'2'}});
+ assert.equal(api.apply('tasks',items.tasks),0);assert.equal(api.tickets('tasks').length,4000);
+ assert.ok(storage.get(key()+'.review').length*2<4_000_000,'The review journal must leave storage room for the catalog');
+ storage.set(key()+'.locks',JSON.stringify(['bulk0']));
+ storage.set(key(),JSON.stringify({version:1,rules:[],excludedIds:[]}));api.schedule();
+ assert.equal(api.tickets('tasks').length,0,'Disabling all rules clears pending confirmations immediately');
+ assert.equal(storage.get(key()+'.locks'),JSON.stringify(['bulk0']),'Disabling rules must preserve permanent exceptions');
 }

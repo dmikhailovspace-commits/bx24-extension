@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.62';
+	window.__ANITREC_RUNNING__ = '8.0.63';
 
-	const VER = '8.0.62';
+	const VER = '8.0.63';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -12766,18 +12766,22 @@ if (_presetChannel) {
 		const meta = _getDialogRecentMeta(item.id) || {};
 		return { title:meta.displayTitle || item.title || '', kind:/^user\d+$/i.test(item.id) ? 'personal' : 'group', ...meta.automationFacts };
 	}
+	function _dialogAutomationLocks(mode) {
+		try { const ids=JSON.parse(localStorage.getItem(_dialogAutomationKey(mode)+'.locks')||'[]');return new Set(Array.isArray(ids)?ids:[]); } catch { return new Set(); }
+	}
 	function _applyDialogAutomation(mode, items, previewRules = null) {
 		if (!_isPenaExtensionEnabled()) return 0;
 		const model = window.__PENA_NATIVE_CATALOG__;
 		const rules = previewRules || _readDialogAutomation(mode);
 		const excluded = new Set(previewRules ? [] : _readDialogAutomationConfig(mode).excludedIds || []);
+		const locked = _dialogAutomationLocks(mode);
 		if (!model?.automationDecision) return 0;
 		const reviewKey = _dialogAutomationKey(mode) + '.review';
 		if (!rules.some(rule=>rule.enabled)) {
 			if (!previewRules && localStorage.getItem(reviewKey)) { localStorage.removeItem(reviewKey);_syncDialogAutomationBadge(); }
 			return 0;
 		}
-		const rulesSig = JSON.stringify(rules);
+		const rulesSig = JSON.stringify(rules.map(({id,enabled,folderId,match,conditions})=>({id,enabled,folderId,match,conditions})));
 		const before = localStorage.getItem(reviewKey) || '';
 		let reviews = {};
 		try { const journal = JSON.parse(before); if(journal.rulesSig===rulesSig) reviews=journal.records || {}; } catch {}
@@ -12788,24 +12792,29 @@ if (_presetChannel) {
 		let changed = 0;
 		for (const item of items) {
 			if (_isDialogControlFolder(item) || _isDialogControlItemUnavailable(item)) { delete reviews[item.id]; continue; }
-			if (_dialogAutomationDirtyTasks.has(_getDialogTimeIdentityScopeKey()+':'+item.taskId)) continue;
+			if (locked.has(item.id) || _dialogAutomationDirtyTasks.has(_getDialogTimeIdentityScopeKey()+':'+item.taskId)) { if(reviews[item.id])reviews[item.id].ticket=null;continue; }
 			const facts = _dialogAutomationFacts(item);
 			const decision = model.automationDecision(rules, facts, mode, folderIds);
 			if (!previewRules && enabledRules.length) {
 				const target = decision?.folderId || '', previous = reviews[item.id];
 				const relevant = Object.fromEntries(fields.map(field=>[field,facts[field]]));
 				const factsSig = JSON.stringify(relevant);
-				if (decision?.pending) continue;
-				const record = previous || {factsSig,target,placement:item.folderId || ''};
-				// A manual move or a changed rule starts a new baseline. Re-evaluation
-				// never silently overrides a user's placement.
-				if (record.placement !== (item.folderId || '')) { record.ticket = null; record.factsSig = factsSig; record.target = target; record.placement = item.folderId || ''; }
-				if (record.factsSig !== factsSig || record.target !== target) {
-					if (record.target !== target && target !== (item.folderId || '')) {
-						record.ticket = {from:item.folderId || '',to:target,ruleId:decision?.ruleId || '',title:facts.title,reason:record.factsSig === factsSig ? 'Изменились условия правила' : 'Изменились данные диалога',updatedAt:Date.now()};
-					} else if (target === (item.folderId || '')) record.ticket = null;
-					record.factsSig = factsSig; record.target = target;
-				}
+				if (decision?.pending) { if(previous)previous.ticket=null;continue; }
+				const placement=item.folderId || '';
+				const record = previous || {factsSig,target,placement};
+				// Existing manual placements need a proposal even on the first scan.
+				// A dismissed proposal stays closed until its actual inputs change.
+				// The journal owns rulesSig once; duplicating all rules per ticket can
+				// exhaust localStorage on portals with thousands of matching dialogs.
+				const signature=JSON.stringify([factsSig,placement,target,decision?.ruleId||'']);
+				if(target || record.placement!==placement)record.proposeRemoval=false;
+				else if(previous && record.target && placement)record.proposeRemoval=true;
+				if(record.dismissedSig && record.dismissedSig!==signature)delete record.dismissedSig;
+				record.reviewRequired=!!(record.reviewRequired || placement || item.automationHandled || (previous && record.target!==target));
+				if(record.reviewRequired && (target || record.proposeRemoval) && target!==placement && record.dismissedSig!==signature){
+					if(record.ticket?.signature!==signature)record.ticket={from:placement,to:target,ruleId:decision?.ruleId||'',title:facts.title,reason:target?'Правило предлагает другую папку':'Диалог больше не подходит под правила',signature,updatedAt:Date.now()};
+				}else record.ticket=null;
+				record.factsSig=factsSig;record.target=target;record.placement=placement;
 				reviews[item.id] = record;
 				if (record.ticket) record.ticket.title = facts.title;
 				if (previous || item.folderId || item.automationHandled || excluded.has(item.id)) continue;
@@ -12869,7 +12878,10 @@ if (_presetChannel) {
 		}
 		if (_dialogAutomationTimer) return;
 		clearTimeout(_dialogAutomationDeadlineTimer);_dialogAutomationDeadlineTimer=null;
-		if (!['chats','tasks'].some(mode => _readDialogAutomation(mode).some(rule => rule.enabled))) return;
+		if (!['chats','tasks'].some(mode => _readDialogAutomation(mode).some(rule => rule.enabled))) {
+			for(const mode of ['chats','tasks'])_applyDialogAutomation(mode,[]);
+			return;
+		}
 		_dialogAutomationTimer = setTimeout(async () => {
 			_dialogAutomationTimer = null;
 			if (!_isPenaExtensionEnabled() || document.hidden || navigator.onLine === false) return;
@@ -12974,33 +12986,45 @@ if (_presetChannel) {
 		const closeButton=button('',header,close);closeButton.className='pena-native-popover-close';closeButton.setAttribute('aria-label','Закрыть');closeButton.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>';
 		const tabs=node('div',null,panel);tabs.className='pena-automation-tabs';tabs.setAttribute('role','tablist');
 		const editorTab=button('Правила',tabs,()=>showTab(false));editorTab.setAttribute('role','tab');
-		const reviewTab=button('Панель',tabs,()=>showTab(true));reviewTab.setAttribute('role','tab');
+		const reviewTab=button('Пересортировка',tabs,()=>showTab(true));reviewTab.setAttribute('role','tab');
 		const scroll=node('div',null,panel);scroll.className='pena-automation-scroll';
 		const list = node('div',null,scroll); list.className='pena-automation-rules';
 		const tickets=node('div',null,scroll);tickets.className='pena-automation-tickets';tickets.hidden=true;
 		const bottom=node('div',null,panel);bottom.className='pena-automation-bottom';
+		const lockDrafts=new Map();
 		const drawTickets=()=>{
 			tickets.replaceChildren();
+			node('p','Переносы выполняются только после подтверждения. «Пропустить» закрывает текущее предложение до изменения условий.',tickets).className='pena-automation-hint';
+			let ticketCount=0;
 			for(const ticketMode of ['chats','tasks']){
 				const items=_getDialogControlItemsForMode(ticketMode);
 				const changed=_applyDialogAutomation(ticketMode,items);
 				if(changed)_saveDialogControlItemsForMode(ticketMode,items);
+				const shownRulesSig=JSON.parse(localStorage.getItem(_dialogAutomationKey(ticketMode)+'.review')||'{}').rulesSig;
 				for(const [id,record] of _dialogAutomationTickets(ticketMode)){
+					ticketCount++;
 					const ticket=record.ticket,card=node('article',null,tickets);card.className='pena-automation-ticket';
 					node('strong',ticket.title||id,card);
 					const folderName=id=>items.find(item=>item.id===id)?.title||'Без папки';
 					node('p',`${folderName(ticket.from)} → ${folderName(ticket.to)}`,card);
 					node('p',ticket.reason,card);
+					const rule=_readDialogAutomation(ticketMode).find(rule=>rule.id===ticket.ruleId);
+					if(rule)node('p',`Правило: ${rule.name||'Без названия'}`,card);
+					const lockLabel=node('label',null,card);lockLabel.className='pena-automation-existing';
+					const proposalIdentity=shownRulesSig+':'+ticket.signature;
+					const lock=node('input',null,lockLabel);lock.type='checkbox';lock.checked=lockDrafts.get(ticketMode+':'+id)===proposalIdentity;
+					lockLabel.append(document.createTextNode('Больше не предлагать переносы для этого диалога'));
 					const actions=node('div',null,card);actions.className='pena-automation-ticket-actions';
 					const resolve=accept=>{
 						if(key!==_dialogAutomationKey(mode))return close();
+						if(!_isPenaExtensionEnabled() || (accept&&lock.checked))return;
 						const currentItems=_getDialogControlItemsForMode(ticketMode);
-						_applyDialogAutomation(ticketMode,currentItems);
+						if(_applyDialogAutomation(ticketMode,currentItems))_saveDialogControlItemsForMode(ticketMode,currentItems);
 						const reviewKey=_dialogAutomationKey(ticketMode)+'.review';
 						const state=JSON.parse(localStorage.getItem(reviewKey)||'{}');
 						const item=currentItems.find(item=>item.id===id);
 						if(_dialogAutomationDirtyTasks.has(_getDialogTimeIdentityScopeKey()+':'+item?.taskId)) { _showDialogDockToast('Проверяем актуальные данные задачи. Повторите после проверки.');return; }
-						if(!item||JSON.stringify(state.records?.[id]?.ticket)!==JSON.stringify(ticket))return drawTickets();
+						if(!item||state.rulesSig!==shownRulesSig||JSON.stringify(state.records?.[id]?.ticket)!==JSON.stringify(ticket))return drawTickets();
 						const decision=window.__PENA_NATIVE_CATALOG__.automationDecision(_readDialogAutomation(ticketMode),_dialogAutomationFacts(item),ticketMode,new Set(currentItems.filter(_isDialogControlFolder).map(folder=>folder.id)));
 						if(decision?.pending || (decision?.folderId||'')!==ticket.to) { _scheduleDialogAutomation();return drawTickets(); }
 						if(accept){
@@ -13011,15 +13035,36 @@ if (_presetChannel) {
 							delete item.column;delete item.columnIndex;
 							_saveDialogControlItemsForMode(ticketMode,currentItems);
 						}
+						if(!accept){
+							state.records[id].dismissedSig=ticket.signature;
+							if(lock.checked){const ids=_dialogAutomationLocks(ticketMode);ids.add(id);localStorage.setItem(_dialogAutomationKey(ticketMode)+'.locks',JSON.stringify([...ids]));}
+						}
+						lockDrafts.delete(ticketMode+':'+id);
 						state.records[id].ticket=null;state.records[id].placement=item.folderId||'';
 						localStorage.setItem(reviewKey,JSON.stringify(state));
 						_syncDialogAutomationBadge();_dialogControlNativeViewSig='';_notifyDialogRecentDataChanged();drawTickets();
 					};
-					button('Подтвердить перенос',actions,()=>resolve(true));
-					button('Оставить на месте',actions,()=>resolve(false));
+					const acceptButton=button('Подтвердить перенос',actions,()=>resolve(true));acceptButton.disabled=lock.checked;
+					const skipButton=button(lock.checked?'Оставить и больше не предлагать':'Пропустить',actions,()=>resolve(false));
+					lock.addEventListener('change',()=>{lockDrafts.set(ticketMode+':'+id,lock.checked?proposalIdentity:'');acceptButton.disabled=lock.checked;skipButton.querySelector('span').textContent=lock.checked?'Оставить и больше не предлагать':'Пропустить';});
 				}
 			}
-			if(!tickets.childElementCount)node('p','Нет переносов для подтверждения',tickets);
+			if(!ticketCount)node('p','Нет переносов для подтверждения',tickets);
+			for(const lockedMode of ['chats','tasks'])for(const id of _dialogAutomationLocks(lockedMode)){
+				const item=_getDialogControlItemsForMode(lockedMode).find(item=>item.id===id);
+				const card=node('article',null,tickets);card.className='pena-automation-ticket pena-automation-locked';
+				node('strong',item?_dialogAutomationFacts(item).title||id:id,card);
+				node('p','Переносы по правилам отключены для этого диалога. Ручное перемещение доступно.',card);
+				button('Снова предлагать переносы',card,()=>{
+					if(key!==_dialogAutomationKey(mode))return close();
+					const currentItems=_getDialogControlItemsForMode(lockedMode),current=currentItems.find(item=>item.id===id);
+					if(current){current.automationHandled=true;_saveDialogControlItemsForMode(lockedMode,currentItems);}
+					const ids=_dialogAutomationLocks(lockedMode);ids.delete(id);localStorage.setItem(_dialogAutomationKey(lockedMode)+'.locks',JSON.stringify([...ids]));
+					const reviewKey=_dialogAutomationKey(lockedMode)+'.review',state=JSON.parse(localStorage.getItem(reviewKey)||'{}');
+					if(state.records?.[id]){delete state.records[id].dismissedSig;localStorage.setItem(reviewKey,JSON.stringify(state));}
+					drawTickets();_scheduleDialogAutomation();
+				});
+			}
 		};
 		function showTab(review){
 			clearLookups();list.hidden=review;bottom.hidden=review;tickets.hidden=!review;
@@ -13039,7 +13084,7 @@ if (_presetChannel) {
 		const existingLabel=node('label',null,bottom);existingLabel.className='pena-automation-existing';
 		const includeExisting=node('input',null,existingLabel);includeExisting.type='checkbox';includeExisting.checked=false;
 		existingLabel.append(document.createTextNode('Распределить уже существующие диалоги'));
-		node('p','Без галочки — только новые диалоги после сохранения.',bottom).className='pena-automation-hint';
+		node('p','Без галочки — автоматически распределяются только новые диалоги. Конфликты с ручным размещением появятся в «Пересортировке».',bottom).className='pena-automation-hint';
 		const status = node('div','',bottom); status.className='pena-automation-status';status.setAttribute('role','status');
 		panel.addEventListener('input',()=>status.replaceChildren());
 		panel.addEventListener('change',()=>status.replaceChildren());
@@ -13168,7 +13213,8 @@ if (_presetChannel) {
 			if(!valid()){showInvalid();return;}
 			const items=_getDialogControlItemsForMode(mode),folderMap=new Map(folders().map(folder=>[folder.id,folder.title])),folderIds=new Set(folderMap.keys());
 			const matches=[];let pending=0;
-			for(const item of items){if(_isDialogControlFolder(item)||item.folderId||item.automationHandled||_isDialogControlItemUnavailable(item))continue;const decision=model.automationDecision(rules,_dialogAutomationFacts(item),mode,folderIds);if(decision?.pending)pending++;if(decision?.folderId)matches.push({item,decision});}
+			const locked=_dialogAutomationLocks(mode);
+			for(const item of items){if(_isDialogControlFolder(item)||item.folderId||item.automationHandled||locked.has(item.id)||_isDialogControlItemUnavailable(item))continue;const decision=model.automationDecision(rules,_dialogAutomationFacts(item),mode,folderIds);if(decision?.pending)pending++;if(decision?.folderId)matches.push({item,decision});}
 			status.replaceChildren();node('strong',`Совпадений: ${matches.length}`,status);
 			node('span',includeExisting.checked?`Сейчас будут распределены: ${matches.length}.`:'Существующие диалоги останутся на месте. Это проверка условий на текущем списке.',status);
 			if(pending)node('span',`Ещё ${pending} — ожидают данных Bitrix. Они не включены в число совпадений.`,status);
@@ -13189,16 +13235,23 @@ if (_presetChannel) {
 				if(localStorage.getItem(key)!==base)throw new Error('Правила изменились в другом окне. Откройте настройки заново.');
 				if(!valid())throw new Error('Папка назначения удалена. Выберите другую папку.');
 				localStorage.setItem(key,JSON.stringify({version:1,rules,excludedIds:includeExisting.checked?[]:ids,activatedAt:Date.now()}));
-				localStorage.removeItem(key+'.review');
+				// Saving unchanged rules must not reopen a skipped proposal. Only
+				// reset untouched unassigned baselines when explicitly distributing them.
+				if(includeExisting.checked){
+					const review=JSON.parse(localStorage.getItem(key+'.review')||'{}');
+					for(const item of _getDialogControlItemsForMode(mode))if(!_isDialogControlFolder(item)&&!item.folderId&&!item.automationHandled&&!review.records?.[item.id]?.dismissedSig)delete review.records?.[item.id];
+					if(review.records)localStorage.setItem(key+'.review',JSON.stringify(review));
+				}
 				_syncDialogAutomationBadge();
 				close();_scheduleDialogAutomation();_showDialogDockToast('Правила сохранены', 'ok');
 			}catch(error){if(current())status.textContent=error.message||'Не удалось сохранить правила. Повторите попытку.';}
 			finally{saving=false;controls.forEach(el=>el.disabled=false);}
 		});
+		for(const ticketMode of ['chats','tasks']){const items=_getDialogControlItemsForMode(ticketMode);if(_applyDialogAutomation(ticketMode,items))_saveDialogControlItemsForMode(ticketMode,items);}
 		draw();showTab(['chats','tasks'].some(mode=>_dialogAutomationTickets(mode).length>0));document.body.append(overlay);try{overlay.showPopover?.();}catch{}header.querySelector('button').focus();
 	}
 	window.addEventListener('storage',event=>{
-		if(event.key===_dialogAutomationKey('tasks')||event.key===_dialogAutomationKey('chats'))_scheduleDialogAutomation();
+		if(['chats','tasks'].some(mode=>event.key===_dialogAutomationKey(mode)||event.key===_dialogAutomationKey(mode)+'.locks'))_scheduleDialogAutomation();
 		if(event.key===_dialogAutomationKey('tasks')+'.review'||event.key===_dialogAutomationKey('chats')+'.review')_syncDialogAutomationBadge();
 	});
 	window.addEventListener('online',()=>_scheduleDialogAutomation());
