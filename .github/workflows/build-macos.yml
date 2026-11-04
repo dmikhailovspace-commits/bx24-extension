@@ -20,7 +20,7 @@ jobs:
       - name: Checkout release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: v8.0.64
+          ref: v8.0.65
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -90,7 +90,7 @@ jobs:
       - name: Checkout release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: v8.0.64
+          ref: v8.0.65
 
       - name: Read and verify version
         id: version
@@ -133,7 +133,7 @@ jobs:
 
   build-macos:
     name: Build and verify Universal DMG
-    runs-on: macos-26-intel
+    runs-on: macos-26
     timeout-minutes: 20
     needs: verify-source
 
@@ -141,7 +141,7 @@ jobs:
       - name: Checkout release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: v8.0.64
+          ref: v8.0.65
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -249,7 +249,7 @@ jobs:
       - name: Checkout verified release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: v8.0.64
+          ref: v8.0.65
 
       - name: Download verified installers
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
