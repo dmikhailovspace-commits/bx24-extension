@@ -14,7 +14,7 @@ show_error() {
     local message="${1:-Неизвестная ошибка}"
     /usr/bin/osascript - "$message" <<'APPLESCRIPT' >/dev/null 2>&1 || true
 on run argv
-    display alert "PENA BX24" message (item 1 of argv) as critical buttons {"Закрыть"} default button 1
+    display alert "Сортировщик чатов" message (item 1 of argv) as critical buttons {"Закрыть"} default button 1
 end run
 APPLESCRIPT
 }
@@ -35,7 +35,7 @@ VERSION="$(/usr/bin/sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/
 choice="$(/usr/bin/osascript - "$VERSION" <<'APPLESCRIPT'
 on run argv
     set appVersion to item 1 of argv
-    display alert "Установить PENA BX24?" message ("Версия " & appVersion & "\n\nРасширение будет установлено для приложения Bitrix24. Терминал не откроется.") buttons {"Отмена", "Установить"} default button "Установить" cancel button "Отмена"
+    display alert "Установить сортировщик чатов Bitrix24?" message ("Версия " & appVersion & "\n\nРасширение будет установлено для приложения Bitrix24. Терминал не откроется.") buttons {"Отмена", "Установить"} default button "Установить" cancel button "Отмена"
     return button returned of result
 end run
 APPLESCRIPT
@@ -113,7 +113,7 @@ PLIST_FILE="$HOME/Library/LaunchAgents/ru.pena-agency.updater.plist"
 /bin/rm -f "$PLIST_FILE"
 /bin/rm -rf "$LAUNCHER_APP"
 /bin/rm -rf "$INSTALL_DIR"
-/usr/bin/osascript -e 'display alert "PENA BX24 удалён" message "Расширение, launcher и автообновление удалены." buttons {"Закрыть"} default button 1' >/dev/null 2>&1 || true
+/usr/bin/osascript -e 'display alert "Сортировщик чатов удалён" message "Расширение, launcher и автообновление удалены." buttons {"Закрыть"} default button 1' >/dev/null 2>&1 || true
 UNINSTALL
 /bin/chmod 755 "$UNINSTALL_PATH"
 
@@ -121,7 +121,7 @@ trap - ERR
 result="$(/usr/bin/osascript - "$VERSION" <<'APPLESCRIPT'
 on run argv
     set appVersion to item 1 of argv
-    display alert "PENA BX24 установлен" message ("Версия " & appVersion & " готова к работе.\n\nЗапускайте Bitrix24 через приложение «Bitrix24 + Фильтр чатов» в папке Applications.") buttons {"Закрыть", "Запустить Bitrix24"} default button "Запустить Bitrix24"
+    display alert "Сортировщик чатов установлен" message ("Версия " & appVersion & " готова к работе.\n\nЗапускайте Bitrix24 через приложение «Bitrix24 + Фильтр чатов» в папке Applications.") buttons {"Закрыть", "Запустить Bitrix24"} default button "Запустить Bitrix24"
     return button returned of result
 end run
 APPLESCRIPT

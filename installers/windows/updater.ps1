@@ -406,7 +406,7 @@ function Register-NativeHost {
         # Генерируем манифест с абсолютным путём (env-переменные здесь не работают)
         $manifest = @{
             name            = 'com.pena.agency.helper'
-            description     = 'PENA Agency native helper'
+            description     = 'BX24 Chat Sorter native helper'
             path            = $hostBatDst
             type            = 'stdio'
             allowed_origins = @('chrome-extension://hlhefpcndfepdlgbjcokkcodcbfnnepm/')
@@ -442,6 +442,26 @@ function MakeShortcut($Path, $Target, $LnkArgs, $WorkDir, $Desc, $Icon) {
     } catch { return $false }
 }
 
+function RenameLegacyShortcuts {
+    $oldName = 'Bitrix24 (PENA Agency).lnk'
+    $newName = 'Bitrix24 (Сортировщик чатов).lnk'
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    $programs = [Environment]::GetFolderPath([System.Environment+SpecialFolder]::Programs)
+    foreach ($folder in @($desktop, "$programs\BX24 Chat Sorter")) {
+        if (-not $folder) { continue }
+        $oldPath = Join-Path $folder $oldName
+        $newPath = Join-Path $folder $newName
+        if (-not (Test-Path -LiteralPath $oldPath)) { continue }
+        try {
+            if (Test-Path -LiteralPath $newPath) {
+                Remove-Item -LiteralPath $oldPath -Force -ErrorAction Stop
+            } else {
+                Move-Item -LiteralPath $oldPath -Destination $newPath -ErrorAction Stop
+            }
+        } catch { Log "Не удалось переименовать старый ярлык: $oldPath" }
+    }
+}
+
 if ($InstallFrom) {
     try {
         Invoke-WithUpdateLock {
@@ -463,6 +483,7 @@ if ($InstallFrom) {
 # ==============================================================
 if ($Setup) {
     Log "=== РЕЖИМ НАСТРОЙКИ ==="
+    RenameLegacyShortcuts
 
     # -- Находим Bitrix24 --
     $BitrixCandidates = @(
@@ -522,7 +543,7 @@ if ($Setup) {
         # Сохраняем путь для режимов -Launch / -LaunchWithUpdate
         $BitrixExe | Set-Content -Path $BITRIX_PATH_FILE -Encoding UTF8
 
-        $LnkName    = "Bitrix24 (PENA Agency)"
+        $LnkName    = "Bitrix24 (Сортировщик чатов)"
         $DesktopDir = [Environment]::GetFolderPath('Desktop')
         if ([string]::IsNullOrEmpty($DesktopDir)) { $DesktopDir = "$env:USERPROFILE\Desktop" }
 
@@ -588,7 +609,7 @@ if ($Setup) {
             -Action $action `
             -Trigger $trigger `
             -Settings $settings `
-            -Description "Ежедневная проверка обновлений PENA Agency" `
+            -Description "Ежедневная проверка обновлений сортировщика чатов" `
             -RunLevel Limited `
             -Force | Out-Null
         Log "Задача планировщика зарегистрирована: $TASK_NAME (ежедневно в 10:00)"
@@ -609,7 +630,7 @@ if ($Setup) {
 # Читает путь Bitrix24 из bitrix_path.txt (сохранён в -Setup)
 # ==============================================================
 if ($CreateDesktopShortcut) {
-    $LnkName    = "Bitrix24 (PENA Agency)"
+    $LnkName    = "Bitrix24 (Сортировщик чатов)"
     $DesktopDir = [Environment]::GetFolderPath('Desktop')
 
     # Ярлык запускает updater.ps1 -LaunchWithUpdate (проверка + скачивание + запуск)
@@ -660,7 +681,7 @@ if ($Launch) {
         }
     }
     # 2. Ищем в ярлыке
-    $lnk = "$Desktop\Bitrix24 (PENA Agency).lnk"
+    $lnk = "$Desktop\Bitrix24 (Сортировщик чатов).lnk"
     if (Test-Path $lnk) {
         $sc = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
         if (Test-Path $sc.TargetPath) {
@@ -684,13 +705,14 @@ if ($Launch) {
 
 # ==============================================================
 # РЕЖИМ ЗАПУСКА С ОБНОВЛЕНИЕМ (-LaunchWithUpdate)
-# Вызывается из ярлыка «Bitrix24 (PENA Agency)».
+# Вызывается из ярлыка «Bitrix24 (Сортировщик чатов)».
 # 1. Проверяет update.json (макс. 8 сек)
 # 2. Если есть обновление — проверяет его в staging и атомарно публикует
 # 3. Запускает Bitrix24 с --load-extension
 # ==============================================================
 if ($LaunchWithUpdate) {
     # The extension checks the channel without delaying startup. Installation requires per-version consent.
+    RenameLegacyShortcuts
     Register-NativeHost
     $extArgs = "--disable-extensions-except=`"$INSTALL_DIR`" --load-extension=`"$INSTALL_DIR`""
     $BitrixExe = Get-BitrixExecutable
@@ -763,9 +785,9 @@ try {
     if ($bitrixExe) {
         Start-Process -FilePath $bitrixExe -ArgumentList $extArgs
         Log "Bitrix24 перезапущен: $bitrixExe"
-        ShowBalloon "PENA Agency обновлён" "Установлена версия $remoteVersion. Bitrix24 перезапускается."
+        ShowBalloon "Сортировщик чатов обновлён" "Установлена версия $remoteVersion. Bitrix24 перезапускается."
     } else {
-        ShowBalloon "PENA Agency обновлён" "Установлена версия $remoteVersion. Перезапустите Bitrix24 вручную."
+        ShowBalloon "Сортировщик чатов обновлён" "Установлена версия $remoteVersion. Перезапустите Bitrix24 вручную."
         Log "Bitrix24.exe не найден — перезапуск вручную."
     }
 
@@ -773,7 +795,7 @@ try {
 
 } catch {
     Log "ОШИБКА обновления: $($_.Exception.Message)"
-    ShowBalloon "PENA Agency — ошибка обновления" "Не удалось обновить до v$remoteVersion. Подробности: $LOG_FILE"
+    ShowBalloon "Ошибка обновления сортировщика чатов" "Не удалось обновить до v$remoteVersion. Подробности: $LOG_FILE"
     exit 1
 }
 # The native host invokes this script inside PowerShell and reads LASTEXITCODE.

@@ -16,7 +16,7 @@ const channelFixture = {
   local: update, published: structuredClone(update), current: {version:'0.0.0'},
   latest: {tag_name:'v'+update.version},
   release: {tag_name:'v'+update.version,draft:false,prerelease:false,assets:
-    [`PENA_Agency_Windows_v${update.version}.exe`,`PENA_Agency_macOS_Universal_v${update.version}.dmg`,`BX24_Chat_Sorter_Chrome_v${update.version}.zip`]
+    [`BX24_Chat_Sorter_Windows_v${update.version}.exe`,`BX24_Chat_Sorter_macOS_Universal_v${update.version}.dmg`,`BX24_Chat_Sorter_Chrome_v${update.version}.zip`]
       .flatMap(name=>[name,name+'.sha256']).map(name=>({name,size:1,digest:'sha256:'+'a'.repeat(64)}))}
 };
 validateUpdatePublication(channelFixture);
@@ -94,10 +94,10 @@ assert.match(windowsUpdaterSource, /fonts\/Onest-Variable\.ttf/);
 assert.match(windowsUpdaterSource, /fonts\/Unbounded-Variable\.ttf/);
 
 const expectedReleaseArtifacts = [
-  `PENA_Agency_Windows_v${manifest.version}.exe`,
-  `PENA_Agency_Windows_v${manifest.version}.exe.sha256`,
-  `PENA_Agency_macOS_Universal_v${manifest.version}.dmg`,
-  `PENA_Agency_macOS_Universal_v${manifest.version}.dmg.sha256`
+  `BX24_Chat_Sorter_Windows_v${manifest.version}.exe`,
+  `BX24_Chat_Sorter_Windows_v${manifest.version}.exe.sha256`,
+  `BX24_Chat_Sorter_macOS_Universal_v${manifest.version}.dmg`,
+  `BX24_Chat_Sorter_macOS_Universal_v${manifest.version}.dmg.sha256`
 ];
 const presentReleaseArtifacts = existsSync(distDir)
   ? readdirSync(distDir, { withFileTypes: true })
@@ -208,7 +208,7 @@ assert.ok(!existsSync(join(root, 'installers/macos/install.command')), 'terminal
 assert.ok(!existsSync(join(root, 'installers/build')), 'legacy installer build folder must stay removed');
 assert.match(macInstaller, /VERSION=.*manifest\.json/);
 assert.match(macInstaller, /pena_updater\.sh/);
-assert.match(macInstaller, /display alert "Установить PENA BX24\?"/);
+assert.match(macInstaller, /display alert "Установить сортировщик чатов Bitrix24\?"/);
 assert.doesNotMatch(macInstaller, /tell application "Terminal"/);
 assert.doesNotMatch(macInstaller, /printf\s+'[^']*%q/);
 assert.doesNotMatch(macInstaller, /launcher-template\.sh/);
@@ -218,8 +218,8 @@ assert.match(macInstaller, /extension-directory\.path/);
 assert.match(macUpdater, /PENA_LAUNCHER=/);
 assert.match(macBuilder, /hdiutil create/);
 assert.match(macBuilder, /hdiutil verify/);
-assert.match(macBuilder, /PENA_Agency_macOS_Universal_v\$\{VERSION\}\.dmg/);
-assert.match(macBuilder, /PENA BX24 Installer\.app/);
+assert.match(macBuilder, /BX24_Chat_Sorter_macOS_Universal_v\$\{VERSION\}\.dmg/);
+assert.match(macBuilder, /BX24 Chat Sorter Installer\.app/);
 assert.match(macBuilder, /install-gui\.sh/);
 assert.match(macBuilder, /GOARCH=amd64/);
 assert.match(macBuilder, /GOARCH=arm64/);
@@ -279,14 +279,14 @@ assert.match(releaseWorkflow, /permissions:\s*\n\s*contents:\s*write/, 'release 
 assert.match(releaseWorkflow, /GH_TOKEN:\s*\$\{\{ github\.token \}\}/);
 assert.match(releaseWorkflow, /gh release upload[^\n]*--clobber/);
 assert.match(releaseWorkflow, /gh release create[^\n]*--verify-tag/);
-assert.match(releaseWorkflow, /PENA_Agency_Windows_v/);
-assert.match(releaseWorkflow, /PENA_Agency_macOS_Universal_v/);
+assert.match(releaseWorkflow, /BX24_Chat_Sorter_Windows_v/);
+assert.match(releaseWorkflow, /BX24_Chat_Sorter_macOS_Universal_v/);
 const publishStep = releaseWorkflow.split('- name: Publish installers')[1] || '';
 for (const artifact of [
-  'PENA_Agency_Windows_v${GITHUB_REF_NAME#v}.exe',
-  'PENA_Agency_Windows_v${GITHUB_REF_NAME#v}.exe.sha256',
-  'PENA_Agency_macOS_Universal_v${GITHUB_REF_NAME#v}.dmg',
-  'PENA_Agency_macOS_Universal_v${GITHUB_REF_NAME#v}.dmg.sha256'
+  'BX24_Chat_Sorter_Windows_v${GITHUB_REF_NAME#v}.exe',
+  'BX24_Chat_Sorter_Windows_v${GITHUB_REF_NAME#v}.exe.sha256',
+  'BX24_Chat_Sorter_macOS_Universal_v${GITHUB_REF_NAME#v}.dmg',
+  'BX24_Chat_Sorter_macOS_Universal_v${GITHUB_REF_NAME#v}.dmg.sha256'
 ]) {
   assert.equal(publishStep.split(`${artifact}"`).length - 1, 2, `publish step must upload and create exact artifact: ${artifact}`);
 }

@@ -34,8 +34,8 @@ if ($Versions.Count -ne 1) {
 $Version = [string]$Manifest.version
 $SuiteCount = [regex]::Matches($TestRunner, "'[^']+\.mjs'").Count
 $RuntimeCount = @($Update.extension_files).Count
-$WindowsName = "PENA_Agency_Windows_v$Version.exe"
-$MacName = "PENA_Agency_macOS_Universal_v$Version.dmg"
+$WindowsName = "BX24_Chat_Sorter_Windows_v$Version.exe"
+$MacName = "BX24_Chat_Sorter_macOS_Universal_v$Version.dmg"
 $WindowsPath = Join-Path $ProjectRoot "dist\$WindowsName"
 $MacPath = Join-Path $ProjectRoot "dist\$MacName"
 $WindowsValue = if (Test-Path -LiteralPath $WindowsPath) {

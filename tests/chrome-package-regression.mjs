@@ -18,11 +18,18 @@ assert.ok(!files.get('popup.js').toString().includes('fetch('));
 assert.ok(!files.get('injected.js').toString().includes('https://bx24.id-pr.ru'));
 assert.ok(!files.get('injected.js').toString().includes('append(projectSettings, fullReport'));
 assert.ok(!files.get('content.js').toString().includes('script.src ='));
+for (const name of ['content.js', 'background.js']) {
+  const source = files.get(name).toString();
+  assert.ok(!source.includes('pena.update.v1'), `${name} must not retain the desktop update channel`);
+  assert.ok(!source.includes('raw.githubusercontent.com'), `${name} must not fetch the desktop update feed`);
+  assert.ok(!source.includes('sendNativeMessage'), `${name} must not call the desktop helper`);
+}
+assert.ok(files.get('content.js').toString().includes('Обновления из Chrome Web Store устанавливаются браузером автоматически.'));
 for (const name of ['Onest', 'Unbounded']) assert.ok(files.get(`licenses/${name}-OFL.txt`).toString().includes('SIL OPEN FONT LICENSE Version 1.1'));
 assert.ok(files.get('privacy.html').toString().includes('<h1>Политика конфиденциальности</h1>'));
 const originalFiles = JSON.parse(readFileSync(new URL('../update.json', import.meta.url))).extension_files;
 assert.equal(Object.keys(sourceHashes).length, originalFiles.length);
-const changed = new Set(['manifest.json', 'content.js', 'injected.js', 'injected.css', 'popup.html', 'popup.js', manifest.background.service_worker, 'icons/icon16.png', 'icons/icon48.png', 'icons/icon128.png', 'icons/logo.png']);
+const changed = new Set(['manifest.json', 'content.js', 'background.js', 'injected.js', 'injected.css', 'popup.html', 'popup.js', manifest.background.service_worker, 'icons/icon16.png', 'icons/icon48.png', 'icons/icon128.png', 'icons/logo.png']);
 for (const name of originalFiles.filter(name => !changed.has(name))) assert.deepEqual(files.get(name), readFileSync(new URL(`../extension/${name}`, import.meta.url)), `Shared file unchanged: ${name}`);
 for (const [name, data] of files) if (name.endsWith('.js')) new Script(data.toString(), { filename: name });
 for (const size of [16, 48, 128]) {

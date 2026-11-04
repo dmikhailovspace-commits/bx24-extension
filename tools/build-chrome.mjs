@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { deflateRawSync } from 'node:zlib';
 import { transformChromeContent } from '../chrome/content-transform.mjs';
+import { transformChromeBackground } from '../chrome/background-transform.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -70,6 +71,7 @@ export function chromeFiles() {
   manifest.web_accessible_resources = [{ resources: ['manifest.json', 'icons/*', 'fonts/*'], matches: ['https://*/*'] }];
   files.set('manifest.json', Buffer.from(JSON.stringify(manifest, null, 2) + '\n'));
   files.set('content.js', Buffer.from(transformChromeContent(files.get('content.js').toString())));
+  files.set('background.js', Buffer.from(transformChromeBackground(files.get('background.js').toString())));
   files.set(manifest.background.service_worker, Buffer.from(files.get(manifest.background.service_worker).toString() + "\nimportScripts('portal-worker.js');\n"));
   for (const name of ['popup.html', 'popup.css', 'popup.js', 'portal-worker.js']) files.set(name, readFileSync(join(root, 'chrome', name)));
   for (const name of ['icon16.png', 'icon48.png', 'icon128.png', 'logo.png']) files.set(`icons/${name}`, readFileSync(join(root, 'chrome/assets', name)));
@@ -77,8 +79,6 @@ export function chromeFiles() {
   let injected = files.get('injected.js').toString();
   injected = exactReplace(injected, "const _PENA_TIME_REPORT_URL = 'https://bx24.id-pr.ru/services/timecontrol-new/?login=yes';", "const _PENA_TIME_REPORT_URL = ''; // No portal-specific external report in Chrome.");
   injected = exactReplace(injected, "headerActions.append(projectSettings, fullReport, _createDialogControlPopoverClose('Закрыть учёт времени'));", "headerActions.append(projectSettings, _createDialogControlPopoverClose('Закрыть учёт времени'));");
-  injected = exactReplace(injected, 'version.textContent = `PENA v${VER}`;', 'version.textContent = `v${VER}`;');
-  injected = injected.replaceAll('Выключить расширение PENA', 'Выключить сортировщик чатов').replaceAll('Включить расширение PENA', 'Включить сортировщик чатов').replaceAll('PENA Agency', 'Сортировщик чатов');
   files.set('injected.js', Buffer.from(injected));
   let css = files.get('injected.css').toString();
   for (const font of ['Onest-Variable.ttf', 'Unbounded-Variable.ttf']) {

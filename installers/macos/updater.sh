@@ -136,7 +136,7 @@ register_native_host() {
     mkdir -p "$parent" || return 1
     printf '#!/bin/bash\nexec /bin/bash %q --native-host "$@"\n' "$INSTALL_DIR/pena_updater.sh" > "$host"
     chmod 755 "$host"
-    manifest=$(/usr/bin/osascript -l JavaScript -e 'function run(a){return JSON.stringify({name:"com.pena.agency.helper",description:"PENA BX24 update helper",path:a[0],type:"stdio",allowed_origins:["chrome-extension://hlhefpcndfepdlgbjcokkcodcbfnnepm/"]})}' "$host") || return 1
+    manifest=$(/usr/bin/osascript -l JavaScript -e 'function run(a){return JSON.stringify({name:"com.pena.agency.helper",description:"BX24 Chat Sorter update helper",path:a[0],type:"stdio",allowed_origins:["chrome-extension://hlhefpcndfepdlgbjcokkcodcbfnnepm/"]})}' "$host") || return 1
     for dir in 'Google/Chrome' Chromium 'Microsoft Edge'; do
         mkdir -p "$HOME/Library/Application Support/$dir/NativeMessagingHosts" || return 1
         printf '%s' "$manifest" > "$HOME/Library/Application Support/$dir/NativeMessagingHosts/com.pena.agency.helper.json"
@@ -466,5 +466,5 @@ for p in "$HOME/Applications/Bitrix24.app" "/Applications/Bitrix24.app"; do
 done
 fi
 
-notify "PENA Agency обновлён" "Установлена версия $REMOTE_VERSION. Bitrix24 перезапускается."
+notify "Сортировщик чатов обновлён" "Установлена версия $REMOTE_VERSION. Bitrix24 перезапускается."
 log "Обновление до $REMOTE_VERSION завершено успешно."

@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.63';
+	window.__ANITREC_RUNNING__ = '8.0.64';
 
-	const VER = '8.0.63';
+	const VER = '8.0.64';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -11032,7 +11032,7 @@ if (_presetChannel) {
 			controls.addEventListener('click', e => e.stopPropagation());
 			const version = document.createElement('span');
 			version.className = 'pena-extension-toolbar-version';
-			version.textContent = `PENA v${VER}`;
+			version.textContent = `v${VER}`;
 			const toggle = document.createElement('button');
 			toggle.type = 'button';
 			toggle.className = 'pena-extension-toolbar-toggle';
@@ -11060,7 +11060,7 @@ if (_presetChannel) {
 		const toggle = controls.querySelector('.pena-extension-toolbar-toggle');
 		if (toggle) {
 			toggle.setAttribute('aria-pressed', enabled ? 'true' : 'false');
-			toggle.setAttribute('aria-label', enabled ? 'Выключить расширение PENA' : 'Включить расширение PENA');
+			toggle.setAttribute('aria-label', enabled ? 'Выключить сортировщик чатов' : 'Включить сортировщик чатов');
 			toggle.title = enabled ? 'Выключить расширение' : 'Включить расширение';
 		}
 		document.dispatchEvent(new CustomEvent('pena-update-slot-ready'));
@@ -26606,8 +26606,8 @@ if (_presetChannel) {
 				<div class="dialog-control-header">
 					<div class="dialog-control-brand">
 						${_PENA_LOGO_URL
-							? `<img src="${_PENA_LOGO_URL}" class="dialog-control-logo" alt="PENA Agency">`
-							: `<span class="dialog-control-logo-fallback" aria-hidden="true">PA</span>`}
+							? `<img src="${_PENA_LOGO_URL}" class="dialog-control-logo" alt="Сортировщик чатов">`
+							: `<span class="dialog-control-logo-fallback" aria-hidden="true">✓</span>`}
 						<div class="dialog-control-section">Контроль</div>
 					</div>
 					<div class="dialog-control-actions">
@@ -29347,7 +29347,7 @@ if (_presetChannel) {
 		}
 		if (shouldHide) {
 			_forceCloseDialogControlPalettes();
-			document.querySelectorAll('#anit_controls_pop,#anit_help_popup,#anit_preset_manage_panel,#anit_cat_manage_panel').forEach(el => el.classList.remove('--show'));
+			document.querySelectorAll('#anit_controls_pop,#anit_help_popup,#anit_about_popup,#anit_preset_manage_panel,#anit_cat_manage_panel').forEach(el => el.classList.remove('--show'));
 		}
 		return pane;
 	}
@@ -29528,7 +29528,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-filters select:focus-visible{outline:2px solid rgba(77,157,255,.6);outline-offset:2px}
 #anit-filters .brand{display:flex;align-items:center;gap:10px;min-width:0;flex:1 1 auto;overflow:hidden}
 #anit-filters .brand-icon{width:20px;height:20px;display:inline-flex;flex:0 0 20px}
-#anit-filters .brand-logo{height:22px;width:auto;max-width:120px;filter:invert(1);mix-blend-mode:screen;flex-shrink:0;display:block}
+#anit-filters .brand-logo{height:22px;width:22px;object-fit:contain;flex-shrink:0;display:block}
 #anit-filters .brand > div{min-width:0;max-width:100%;overflow:hidden}
 #anit-filters .brand-title{font-size:var(--pena-font-subheading);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--pena-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #anit-filters .brand-sub{font-size:var(--pena-font-heading);font-weight:700;opacity:.97;letter-spacing:.1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2}
@@ -30251,10 +30251,10 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
   <div class="header">
     <div class="brand">
       ${_PENA_LOGO_URL
-        ? `<img src="${_PENA_LOGO_URL}" class="brand-logo" alt="PENA Agency">`
-        : `<span class="brand-icon" aria-hidden="true"><svg viewBox="0 0 100 100" width="20" height="20" xmlns="http://www.w3.org/2000/svg"><rect width="100" height="100" rx="18" fill="#1e2024"/><text x="50" y="68" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="46" font-weight="800" fill="#ffffff">PA</text></svg></span>`}
+        ? `<img src="${_PENA_LOGO_URL}" class="brand-logo" alt="Сортировщик чатов">`
+        : `<span class="brand-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="white" stroke-width="2"><rect x="6" y="3" width="15" height="13" rx="3"/><rect x="3" y="7" width="15" height="13" rx="3"/><path d="m7 14 2.5 2.5L14 12"/></svg></span>`}
       <div>
-        ${!_PENA_LOGO_URL ? `<div class="brand-title">PENA Agency</div>` : ''}
+        ${!_PENA_LOGO_URL ? `<div class="brand-title">Сортировщик чатов</div>` : ''}
         <div class="brand-sub">${IS_OL_FRAME ? 'Контакт-центр' : (isTasksMode ? 'Чаты задач' : 'Чаты')}</div>
       </div>
     </div>
@@ -30275,6 +30275,9 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
       </div>
       <button id="anit_help_btn" class="icon-btn" type="button" title="Горячие клавиши">
         <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="opacity:.65"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/></svg>
+      </button>
+      <button id="anit_about_btn" class="icon-btn" type="button" title="О разработчике" aria-label="О разработчике" aria-expanded="false" aria-controls="anit_about_popup" style="opacity:.45">
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8v.2" stroke-linecap="round"/></svg>
       </button>
       <button id="anit_toggle_btn" class="anit-toggle icon-btn" type="button" title="Скрыть/показать (Ctrl+Alt+F)"><svg viewBox="0 0 24 24" aria-hidden="true" style="fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M9 5v14"/><path d="m15 9-3 3 3 3"/></svg></button>
     </div>
@@ -30408,6 +30411,13 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
     <tr><td><span class="kbd-seq"><span class="kbd">Ctrl</span><span class="kbd-plus">+</span><span class="kbd">Shift</span><span class="kbd-plus">+</span><span class="kbd">A</span></span><br><span class="kbd-seq"><span class="kbd">⌘</span><span class="kbd-plus">+</span><span class="kbd">Shift</span><span class="kbd-plus">+</span><span class="kbd">A</span></span></td><td>Сброс всех фильтров</td></tr>
     <tr><td><span class="kbd-seq"><span class="kbd">Ctrl</span><span class="kbd-plus">+</span><span class="kbd">1</span><span class="kbd-plus">…</span><span class="kbd">9</span></span><br><span class="kbd-seq"><span class="kbd">⌘</span><span class="kbd-plus">+</span><span class="kbd">1</span><span class="kbd-plus">…</span><span class="kbd">9</span></span></td><td>Быстрый выбор пресета</td></tr>
   </table>
+</div>
+<div id="anit_about_popup" class="pena-fpop" role="dialog" aria-label="О разработчике">
+  <div class="pena-fpop-header">
+    <span class="pena-fpop-title">О разработчике</span>
+    <button type="button" class="pena-fpop-close" id="anit_about_popup_close" title="Закрыть"><svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M10.4 2.4 9.6 1.6 6 5.2 2.4 1.6 1.6 2.4 5.2 6 1.6 9.6 2.4 10.4 6 6.8 9.6 10.4 10.4 9.6 6.8 6z"/></svg></button>
+  </div>
+  <div style="font-size:11px;line-height:1.5;color:#c7d3e4">Сортировщик чатов Bitrix24<br>Разработчик: Дмитрий Михайлов<br><a href="https://dmitrymikhailov.com/" target="_blank" rel="noopener noreferrer" style="color:#9dc5f9">dmitrymikhailov.com</a><br><a href="mailto:d.mikhailov.space@gmail.com" style="color:#9dc5f9">Связаться по email</a></div>
 </div>
 <div class="anit-preset-toast" id="anit_preset_toast"></div>
 <div id="anit_debug_overlay"><span class="anit-debug-flag"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.04.04a2 2 0 1 1-2.83 2.83l-.04-.04A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.06A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.88.34l-.04.04a2 2 0 1 1-2.83-2.83l.04-.04A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.06A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.88l-.04-.04a2 2 0 1 1 2.83-2.83l.04.04A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.06A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.88-.34l.04-.04a2 2 0 1 1 2.83 2.83l-.04.04A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.06A1.7 1.7 0 0 0 19.4 15Z"/></svg><span>Режим отладки</span></span></div>
@@ -31187,6 +31197,20 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 			if (!_helpPop.classList.contains('--show')) return;
 			if (!_helpPop.contains(e.target) && e.target !== _helpBtn) _helpPop.classList.remove('--show');
 		}, true);
+	}
+	const _aboutBtn = host.querySelector('#anit_about_btn');
+	const _aboutPop = host.querySelector('#anit_about_popup');
+	if (_aboutBtn && _aboutPop) {
+		const closeAbout = () => { _aboutPop.classList.remove('--show'); _aboutBtn.setAttribute('aria-expanded', 'false'); };
+		_aboutBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			const open = !_aboutPop.classList.contains('--show');
+			_aboutPop.classList.toggle('--show', open);
+			_aboutBtn.setAttribute('aria-expanded', String(open));
+			if (open) requestAnimationFrame(() => _positionFpop(_aboutPop, _aboutBtn));
+		});
+		_aboutPop.querySelector('#anit_about_popup_close')?.addEventListener('click', closeAbout);
+		document.addEventListener('click', (e) => { if (!_aboutPop.contains(e.target) && e.target !== _aboutBtn) closeAbout(); }, true);
 	}
 
 	const controlsBtn = host.querySelector('#anit_controls_btn');

@@ -71,6 +71,10 @@ try {
   await page.waitForFunction(() => !!document.querySelector('.pena-native-folder-switcher'), null, { timeout: 15000 });
   await page.locator('.pena-extension-toolbar-controls .pena-native-update-slot > span').waitFor();
   assert.equal(await page.locator('.pena-native-command-bar .pena-native-update-slot').count(),0,'Update icon belongs beside the extension toggle');
+  const updateButton = page.locator('.pena-extension-toolbar-controls .pena-native-update-slot button[aria-label="Обновление"]');
+  await updateButton.click();
+  assert.equal(await updateButton.getAttribute('aria-expanded'), 'true');
+  assert.match(await page.locator('.pena-extension-toolbar-controls .pena-native-update-slot [role="status"]').innerText(), /Обновления из Chrome Web Store устанавливаются браузером автоматически/);
   await page.screenshot({path:'tests/artifacts/update-toolbar.png'});
   assert.ok(await page.evaluate(() => window.__PENA_NATIVE_CATALOG__ || window.__PENA_TIME_CONTROL__));
   assert.ok(!requests.some(url => /github|raw\.githubusercontent|id-pr\.ru/.test(url)));

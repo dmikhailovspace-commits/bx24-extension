@@ -55,7 +55,7 @@ try{
   });
   await page.addScriptTag({content:`const VER='test';function _isPenaExtensionEnabled(){return true} function _setPenaExtensionEnabled(){} ${['_getBitrixListSearchHost','_ensureBitrixListSystemToolbarSticky','_ensurePenaExtensionToolbarControls','_armPenaExtensionToolbarControls'].map(extract).join('\n')} _armPenaExtensionToolbarControls();`});
   await page.locator('.pena-extension-toolbar-version').waitFor({state:'visible',timeout:3000});
-  assert.equal(await page.locator('.pena-extension-toolbar-version').textContent(),'PENA vtest');
+  assert.equal(await page.locator('.pena-extension-toolbar-version').textContent(),'vtest');
   assert.equal(await page.locator('.pena-extension-toolbar-toggle').getAttribute('aria-pressed'),'true');
   await page.close();return {badgeVisible:true,toggleEnabled:true};
  });

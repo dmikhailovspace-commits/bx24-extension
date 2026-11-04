@@ -14,10 +14,10 @@ command -v lipo >/dev/null 2>&1 || { echo "lipo is required to assemble the Univ
 
 TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/pena-bx24-dmg.XXXXXX")"
 PAYLOAD_DIR="$TEMP_ROOT/payload"
-INSTALLER_APP="$PAYLOAD_DIR/PENA BX24 Installer.app"
+INSTALLER_APP="$PAYLOAD_DIR/BX24 Chat Sorter Installer.app"
 APP_CONTENTS="$INSTALLER_APP/Contents"
 BUILD_DIR="$TEMP_ROOT/build"
-OUTPUT_DMG="$DIST_DIR/PENA_Agency_macOS_Universal_v${VERSION}.dmg"
+OUTPUT_DMG="$DIST_DIR/BX24_Chat_Sorter_macOS_Universal_v${VERSION}.dmg"
 trap 'rm -rf "$TEMP_ROOT"' EXIT INT TERM
 
 mkdir -p "$APP_CONTENTS/MacOS" "$APP_CONTENTS/Resources/extension" "$BUILD_DIR" "$DIST_DIR"
@@ -31,18 +31,18 @@ lipo -create \
 /usr/bin/ditto "$SCRIPT_DIR/updater.sh" "$APP_CONTENTS/Resources/pena-updater.sh"
 /usr/bin/ditto "$SCRIPT_DIR/launcher-Info.plist" "$APP_CONTENTS/Resources/launcher-Info.plist"
 /usr/bin/ditto "$SCRIPT_DIR/install-gui.sh" "$APP_CONTENTS/Resources/install-gui.sh"
-/usr/bin/ditto "$BUILD_DIR/pena-launcher-universal" "$APP_CONTENTS/MacOS/PENA BX24 Installer"
+/usr/bin/ditto "$BUILD_DIR/pena-launcher-universal" "$APP_CONTENTS/MacOS/BX24 Chat Sorter Installer"
 /usr/bin/ditto "$BUILD_DIR/pena-launcher-universal" "$APP_CONTENTS/Resources/pena-launcher"
-chmod 755 "$APP_CONTENTS/MacOS/PENA BX24 Installer" "$APP_CONTENTS/Resources/install-gui.sh" "$APP_CONTENTS/Resources/pena-launcher" "$APP_CONTENTS/Resources/pena-updater.sh"
+chmod 755 "$APP_CONTENTS/MacOS/BX24 Chat Sorter Installer" "$APP_CONTENTS/Resources/install-gui.sh" "$APP_CONTENTS/Resources/pena-launcher" "$APP_CONTENTS/Resources/pena-updater.sh"
 cat > "$APP_CONTENTS/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleExecutable</key><string>PENA BX24 Installer</string>
+    <key>CFBundleExecutable</key><string>BX24 Chat Sorter Installer</string>
     <key>CFBundleIdentifier</key><string>agency.pena.bx24.installer</string>
-    <key>CFBundleName</key><string>PENA BX24 Installer</string>
-    <key>CFBundleDisplayName</key><string>PENA BX24 Installer</string>
+    <key>CFBundleName</key><string>BX24 Chat Sorter Installer</string>
+    <key>CFBundleDisplayName</key><string>BX24 Chat Sorter Installer</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>$VERSION</string>
     <key>LSMinimumSystemVersion</key><string>12.0</string>
@@ -53,7 +53,7 @@ PLIST
 
 rm -f "$OUTPUT_DMG"
 hdiutil create \
-    -volname "PENA BX24 Installer" \
+    -volname "BX24 Chat Sorter Installer" \
     -srcfolder "$PAYLOAD_DIR" \
     -format UDZO \
     -fs HFS+ \

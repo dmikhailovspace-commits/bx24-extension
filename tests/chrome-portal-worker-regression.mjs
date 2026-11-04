@@ -142,9 +142,9 @@ await phase('deterministic strict transform retains release verification, health
   assert.match(result, /void _ensureRepositoryWorker\(\)/);
   assert.match(result, /pena\.dialog\.repository\.v2/);
   assert.doesNotMatch(result, /script\.src\s*=|link\.href\s*=/);
-  assert.throws(() => transformChromeContent(content + content), /expected once/);
+  assert.throws(() => transformChromeContent(content + content), /desktop updater anchors changed/);
   assert.throws(() => transformChromeContent(content.replace("await inject('native-catalog.js');", "await inject('changed.js');")), /ordered runtime launch/);
-  assert.throws(() => transformChromeContent(result), /expected once/);
+  assert.throws(() => transformChromeContent(result), /desktop updater anchors changed/);
 });
 
 mkdirSync(new URL('./artifacts/', import.meta.url), { recursive: true });

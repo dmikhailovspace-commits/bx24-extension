@@ -26,7 +26,7 @@ func openLog() io.WriteCloser {
 	if os.MkdirAll(logDir, 0755) != nil {
 		return nil
 	}
-	logFile, err := os.OpenFile(filepath.Join(logDir, "PENA BX24 Installer.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	logFile, err := os.OpenFile(filepath.Join(logDir, "BX24 Chat Sorter Installer.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		return nil
 	}

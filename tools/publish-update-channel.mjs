@@ -15,7 +15,7 @@ export function validateUpdatePublication({local, published, release, latest, cu
   const first=cmp.findIndex((part,i)=>part!==prev[i]);assert.ok(first<0||cmp[first]>prev[first],'Never downgrade the update channel');
   assert.equal(local.distribution,'github');assert.ok(local.raw_base_url.endsWith('/'+tag));
   assert.ok(local.extension_files.includes('manifest.json'));
-  for(const name of [`PENA_Agency_Windows_v${version}.exe`,`PENA_Agency_macOS_Universal_v${version}.dmg`,`BX24_Chat_Sorter_Chrome_v${version}.zip`]) {
+  for(const name of [`BX24_Chat_Sorter_Windows_v${version}.exe`,`BX24_Chat_Sorter_macOS_Universal_v${version}.dmg`,`BX24_Chat_Sorter_Chrome_v${version}.zip`]) {
     for(const file of [name,name+'.sha256']) {
       const matches=release.assets.filter(asset=>asset.name===file);
       assert.equal(matches.length,1,`Missing/duplicate release asset: ${file}`);
