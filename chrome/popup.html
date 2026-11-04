@@ -11,10 +11,13 @@
   <main>
     <section class="card" aria-labelledby="portal-heading">
       <h2 id="portal-heading">Подключите ваш Bitrix24</h2>
-      <p id="intro">Откройте портал в этой вкладке и разрешите расширению работать на нём.</p>
+      <p id="intro">Укажите адрес вашего портала. Расширение попросит доступ только к нему.</p>
+      <label for="portal-url">Адрес портала</label>
+      <input id="portal-url" type="text" inputmode="url" autocomplete="url" spellcheck="false" placeholder="https://your-portal.bitrix24.ru/">
       <div id="host" class="host" hidden></div>
       <button id="connect" type="button" disabled>Подключить портал</button>
       <button id="reload" type="button" class="secondary" hidden>Обновить вкладку</button>
+      <a id="open" class="button secondary" target="_blank" rel="noopener noreferrer" hidden>Открыть портал</a>
       <p id="status" role="status" aria-live="polite"></p>
     </section>
     <section id="portals-section" hidden aria-labelledby="portals-heading">

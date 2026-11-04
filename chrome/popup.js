@@ -3,8 +3,20 @@
   const $ = id => document.getElementById(id);
   const channel = 'pena.chrome.portal.v1';
   let tab = null;
-  let originPattern = null;
   let busy = false;
+  const parsePortal = value => {
+    const input = String(value || '').trim();
+    if (!input) return null;
+    try {
+      const url = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(input) ? input : `https://${input}`);
+      if (url.protocol !== 'https:' || url.username || url.password || url.port || !url.hostname.includes('.') || url.hostname.includes('*')) return null;
+      return { pattern: `https://${url.hostname}/*`, url: `https://${url.hostname}/`, host: url.hostname };
+    } catch { return null; }
+  };
+  const selectedPortal = () => parsePortal($('portal-url').value);
+  const activePortal = () => {
+    try { return parsePortal(tab?.url)?.pattern || null; } catch { return null; }
+  };
   const status = (message, error = false) => {
     $('status').textContent = message;
     $('status').dataset.error = String(error);
@@ -16,6 +28,8 @@
   async function renderPermissions() {
     const { origins = [] } = await chrome.permissions.getAll();
     const portals = origins.filter(origin => /^https:\/\/[^*/]+\/\*$/.test(origin)).sort();
+    const selected = selectedPortal();
+    const connected = !!selected && portals.includes(selected.pattern);
     $('portals').replaceChildren();
     $('portals-section').hidden = portals.length === 0;
     for (const origin of portals) {
@@ -36,42 +50,54 @@
           await sync();
           await renderPermissions();
           status('Портал отключён. Обновите его открытые вкладки, чтобы завершить работу расширения.');
-          $('reload').hidden = origin !== originPattern;
+          $('reload').hidden = origin !== activePortal();
         } catch { status('Не удалось отключить портал. Повторите попытку.', true); }
         finally { busy = false; remove.disabled = false; }
       });
       row.append(host, remove);
       $('portals').appendChild(row);
     }
-    const connected = !!originPattern && await chrome.permissions.contains({ origins: [originPattern] });
+    $('host').textContent = selected ? `Доступ только к ${selected.host}` : '';
+    $('host').hidden = !selected;
     $('connect').hidden = connected;
-    $('connect').disabled = !originPattern;
-    $('portal-heading').textContent = connected ? 'Портал подключён' : 'Подключите ваш Bitrix24';
+    $('connect').disabled = !selected || busy;
+    $('portal-heading').textContent = connected ? 'Портал подключён' : portals.length ? 'Добавить портал' : 'Подключите ваш Bitrix24';
     $('intro').textContent = connected
       ? 'Откройте чаты Bitrix24. Если вкладка была открыта до подключения, обновите её после сохранения черновиков.'
-      : 'Откройте портал в этой вкладке и разрешите расширению работать на нём.';
-    if (connected) $('reload').hidden = false;
+      : 'Укажите адрес вашего портала. Расширение попросит доступ только к нему.';
+    $('reload').hidden = !connected || activePortal() !== selected.pattern;
+    $('open').hidden = !connected || activePortal() === selected.pattern;
+    if (connected) $('open').href = selected.url;
+    else $('open').removeAttribute('href');
   }
+  $('portal-url').addEventListener('input', () => {
+    status($('portal-url').value.trim() && !selectedPortal() ? 'Укажите адрес портала с HTTPS без логина и нестандартного порта.' : '', !!$('portal-url').value.trim() && !selectedPortal());
+    void renderPermissions().catch(() => status('Не удалось прочитать настройки Chrome.', true));
+  });
   $('connect').addEventListener('click', async () => {
-    if (!originPattern || busy) return;
+    const selected = selectedPortal();
+    if (!selected || busy) return;
     busy = true;
     $('connect').disabled = true;
     try {
       // Keep request directly inside the click handler: Chrome requires a user gesture.
-      const granted = await chrome.permissions.request({ origins: [originPattern] });
+      const granted = await chrome.permissions.request({ origins: [selected.pattern] });
       if (!granted) { status('Доступ не выдан. Подключить портал можно позже.'); return; }
+      $('portal-url').value = selected.url;
       await sync();
       await renderPermissions();
-      status('Готово. Сохраните черновики и обновите вкладку Bitrix24.');
+      status(activePortal() === selected.pattern
+        ? 'Готово. Сохраните черновики и обновите вкладку Bitrix24.'
+        : 'Готово. Откройте портал, чтобы начать работу.');
     } catch { status('Не удалось подключить портал. Повторите попытку.', true); }
-    finally { busy = false; $('connect').disabled = !originPattern; }
+    finally { busy = false; $('connect').disabled = !selectedPortal(); }
   });
   $('reload').addEventListener('click', async () => {
     if (!Number.isInteger(tab?.id)) return;
     try {
       // Never reload a tab that navigated away while this popup was open.
       const current = await chrome.tabs.get(tab.id);
-      if (new URL(current.url).origin !== new URL(tab.url).origin) {
+      if (parsePortal(current.url)?.pattern !== selectedPortal()?.pattern || activePortal() !== selectedPortal()?.pattern) {
         status('Адрес вкладки изменился. Откройте окно расширения снова.', true);
         return;
       }
@@ -82,17 +108,14 @@
   async function init() {
     $('version').textContent = `v${chrome.runtime.getManifest().version}`;
     [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    try {
-      const url = new URL(tab?.url);
-      if (url.protocol === 'https:' && !url.username && !url.password) {
-        originPattern = `https://${url.hostname}/*`;
-        $('host').textContent = url.host;
-        $('host').hidden = false;
-      }
-    } catch { /* Internal Chrome pages do not expose a supported portal URL. */ }
     await sync();
+    const { origins = [] } = await chrome.permissions.getAll();
+    const portals = origins.filter(origin => /^https:\/\/[^*/]+\/\*$/.test(origin));
+    const current = activePortal();
+    if (current && portals.includes(current)) $('portal-url').value = current.slice(0, -1);
+    else if (portals.length === 1) $('portal-url').value = portals[0].slice(0, -1);
     await renderPermissions();
-    if (!originPattern) status('Откройте Bitrix24 по адресу https:// и снова нажмите значок расширения.');
+    if (!portals.length) $('portal-url').focus();
   }
   init().catch(() => status('Не удалось прочитать настройки Chrome. Закройте это окно и откройте снова.', true));
 })();

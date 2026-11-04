@@ -14,7 +14,7 @@ async function fixture(config = {}) {
   page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(config => {
     const s = window.popupFixture = {
-      origins: config.origins || [], url: config.url || 'https://demo.example.test:8443/online/?dialog=42',
+      origins: config.origins || [], url: config.url || 'https://demo.example.test/online/?dialog=42',
       grant: config.grant !== false, requestError: false, hold: false,
       calls: [], closes: 0, syncFailures: 0, ...config
     };
@@ -69,9 +69,12 @@ async function snapshot(page) {
     status: document.querySelector('#status').textContent,
     error: document.querySelector('#status').dataset.error || '',
     host: document.querySelector('#host').textContent,
+    portalInput: document.querySelector('#portal-url').value,
     connectDisabled: document.querySelector('#connect').disabled,
     connectHidden: document.querySelector('#connect').hidden,
     reloadHidden: document.querySelector('#reload').hidden,
+    openHidden: document.querySelector('#open').hidden,
+    openHref: document.querySelector('#open').getAttribute('href'),
     portals: [...document.querySelectorAll('#portals li > span')].map(node => node.textContent),
     calls: window.popupFixture.calls,
     origins: window.popupFixture.origins,
@@ -91,24 +94,42 @@ async function phase(name, config, run) {
   } finally { if (page) await page.close(); }
 }
 try {
-  await phase('cold HTTPS shows host and waits for explicit permission click', {}, async page => {
+  await phase('first activation asks for portal address without requesting access', {}, async page => {
     const s = await snapshot(page);
-    assert.equal(s.host, 'demo.example.test:8443');
-    assert.equal(s.connectDisabled, false);
+    assert.equal(s.portalInput, '');
+    assert.equal(s.host, '');
+    assert.equal(s.connectDisabled, true);
     assert.equal(s.connectHidden, false);
     assert.equal(s.calls.filter(call => call.method === 'request').length, 0);
     assert.equal(await page.locator('a[href="privacy.html"]').count(), 1);
     assert.equal(await page.locator('h1').textContent(), 'Сортировщик чатов');
     await page.screenshot({ path: new URL('./artifacts/chrome-popup-cold.png', import.meta.url).pathname.replace(/^\/(\w:)/, '$1') });
   });
-  await phase('chrome internal URL cannot request portal access', { url: 'chrome://extensions/' }, async page => {
-    await status(page, 'https://');
+  await phase('invalid or insecure addresses cannot request access', { url: 'chrome://extensions/' }, async page => {
+    for (const value of ['http://demo.example.test/', 'https://user:pass@demo.example.test/', 'https://demo.example.test:8443/', 'localhost']) {
+      await page.locator('#portal-url').fill(value);
+      assert.equal((await snapshot(page)).connectDisabled, true, value);
+    }
     const s = await snapshot(page);
     assert.equal(s.connectDisabled, true);
     assert.equal(s.origins.length, 0);
     assert.equal(s.calls.filter(call => call.method === 'request').length, 0);
   });
+  await phase('manual domain entry on unrelated tab grants only the typed portal', { url: 'chrome://newtab/' }, async page => {
+    await page.locator('#portal-url').fill('demo.example.test/online/?login=yes');
+    const before = await snapshot(page);
+    assert.equal(before.host, 'Доступ только к demo.example.test');
+    assert.equal(before.connectDisabled, false);
+    assert.equal(before.calls.filter(call => call.method === 'request').length, 0);
+    await page.locator('#connect').click(); await status(page, 'Готово');
+    const s = await snapshot(page);
+    assert.deepEqual(s.calls.filter(call => call.method === 'request').map(call => call.origins), [['https://demo.example.test/*']]);
+    assert.equal(s.openHidden, false);
+    assert.equal(s.openHref, 'https://demo.example.test/');
+    assert.equal(s.reloadHidden, true);
+  });
   await phase('permission denial leaves usable retry and no registered origin', { grant: false }, async page => {
+    await page.locator('#portal-url').fill('https://demo.example.test/');
     await page.locator('#connect').click(); await status(page, 'Доступ не выдан');
     const s = await snapshot(page);
     assert.equal(s.connectDisabled, false);
@@ -116,7 +137,8 @@ try {
     assert.equal(s.origins.length, 0);
     assert.equal(s.calls.filter(call => call.method === 'sync').length, 1);
   });
-  await phase('trusted grant requests exact HTTPS hostname without path, wildcard subdomain or port', {}, async page => {
+  await phase('trusted grant requests exact HTTPS hostname without path or wildcard subdomain', {}, async page => {
+    await page.locator('#portal-url').fill('https://demo.example.test/online/?dialog=42');
     await page.locator('#connect').click(); await status(page, 'Готово');
     const s = await snapshot(page); const requests = s.calls.filter(call => call.method === 'request');
     assert.deepEqual(requests, [{ method: 'request', origins: ['https://demo.example.test/*'], active: true, trusted: true }]);
@@ -125,6 +147,7 @@ try {
     assert.equal(s.calls.filter(call => call.method === 'reload').length, 0, 'Grant must not discard unsaved work by automatically reloading');
   });
   await phase('permission API error is visible and next explicit attempt succeeds', { requestError: true }, async page => {
+    await page.locator('#portal-url').fill('demo.example.test');
     await page.locator('#connect').click(); await status(page, 'Не удалось подключить');
     const failed = await snapshot(page);
     assert.equal(failed.error, 'true'); assert.equal(failed.connectDisabled, false);
@@ -143,6 +166,7 @@ try {
     assert.equal(s.calls.filter(call => call.method === 'reload').length, 0);
   });
   await phase('held permission prompt bounds repeated actual clicks to one request', { hold: true }, async page => {
+    await page.locator('#portal-url').fill('demo.example.test');
     const button = page.locator('#connect'); const box = await button.boundingBox();
     await button.click();
     await page.waitForFunction(() => popupFixture.calls.some(call => call.method === 'request'));

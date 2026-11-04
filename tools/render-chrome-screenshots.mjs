@@ -42,35 +42,28 @@ for (const [from,to] of [
 }
 const demoStyle = `<style>
 html,body{margin:0;width:1280px;height:800px;overflow:hidden}
-body{font:14px/1.45 'Onest Variable',Arial,sans-serif;color:#233a35;background:#eaf1ee}
+body{font:14px/1.45 'Onest Variable',Arial,sans-serif;color:#161616;background:#ececec}
 body>button{display:none}#test-output{display:none}
 .demo-heading{position:absolute;top:28px;left:28px;margin:0;font-size:24px;font-weight:650;letter-spacing:-.6px}
-.demo-subtitle{position:absolute;top:68px;left:29px;margin:0;color:#60756e;font-size:14px}
-.test-host{position:absolute;top:110px;left:28px;width:376px;height:658px;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 12px #173e400a}
+.demo-subtitle{position:absolute;top:68px;left:29px;margin:0;color:#595959;font-size:14px}
+.test-host{position:absolute;top:110px;left:28px;width:376px;height:658px;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 3px 14px #00000012}
 .bx-im-list-container-recent__header_container,.bx-im-list-container-task__header_container{padding:14px 12px 8px}
-.test-host input[type=search]{width:100%;height:34px;box-sizing:border-box;border:1px solid #dce7e1;border-radius:8px;padding:0 10px;font:13px 'Onest Variable',Arial,sans-serif;background:#f7f9f8;color:#29473d}
+.test-host input[type=search]{width:100%;height:34px;box-sizing:border-box;border:1px solid #dedede;border-radius:8px;padding:0 10px;font:13px 'Onest Variable',Arial,sans-serif;background:#f8f8f8;color:#292929}
 .bx-im-list-container-recent__container,.bx-im-list-container-task__container{width:376px;height:600px}
 .bx-im-list-container-recent__scroll-container,.bx-im-list-container-task__scroll-container{width:376px;height:570px}
 .bx-im-list-container-recent__elements,.bx-im-list-container-task__elements{width:376px;min-height:570px}
-.bx-im-list-recent-item__wrap,.bx-im-list-item{width:364px;height:64px;color:#263b35;font:14px/1.4 'Onest Variable',Arial,sans-serif}
+.bx-im-list-recent-item__wrap,.bx-im-list-item{width:364px;height:64px;color:#292929;font:14px/1.4 'Onest Variable',Arial,sans-serif}
 .bx-im-list-recent-item__container,.bx-im-list-item__container{padding-left:12px;gap:2px}
 .bx-im-chat-title__text{font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.bx-im-list-recent-item__counter_number{margin-left:auto;margin-right:14px;border-radius:9px;background:#267c70;color:#fff;padding:1px 6px;font-size:11px}
-.test-avatar{background:#d9e9e0}
-.demo-thread{position:absolute;top:110px;left:424px;right:28px;height:658px;box-sizing:border-box;background:#f8fbf9;border-radius:14px;overflow:hidden}
-.demo-thread h2{margin:0;padding:23px 28px 7px;background:#fff;font-size:17px;font-weight:600}
-.demo-thread .hint{margin:0;background:#fff;padding:0 28px 22px;color:#6b8078;font-size:12px;border-bottom:1px solid #e7eeea}
-.demo-day{display:block;margin:26px auto;text-align:center;color:#7c8e86;font-size:12px}
-.demo-bubble{margin:0 100px 18px 28px;padding:16px 19px;border-radius:12px;background:#fff;color:#385249;line-height:1.6;max-width:450px}
-.demo-bubble.outgoing{margin:0 28px 18px auto;background:#e0eee7}
-.demo-compose{position:absolute;left:24px;right:24px;bottom:24px;padding:18px;background:#fff;border:1px solid #e0e9e3;border-radius:10px;color:#90a197}
+.bx-im-list-recent-item__counter_number{margin-left:auto;margin-right:14px;border-radius:9px;background:#333;color:#fff;padding:1px 6px;font-size:11px}
+.test-avatar{background:#e0e0e0}
+.demo-thread{position:absolute;top:110px;left:424px;right:28px;height:658px;box-sizing:border-box;background:#f9f9f9;border:1px solid #d8d8d8;border-radius:14px;overflow:hidden}
+.demo-thread h2{margin:0;padding:23px 28px 18px;background:#fff;font-size:17px;font-weight:600;border-bottom:1px solid #e5e5e5}
+.demo-empty{position:absolute;inset:80px 0 0;display:grid;place-items:center;color:#898989;font-size:14px}
 </style>`;
 fixture = fixture.replace('</head>', `${demoStyle}</head>`).replace('<body>', `<body>
-<h1 class="demo-heading">Чаты и задачи Bitrix24</h1><p class="demo-subtitle">Папки, цветовые метки и учёт времени в одном окне</p>
-<main class="demo-thread"><h2>Команда проекта</h2><p class="hint">Рабочее обсуждение · демонстрационный пример</p>
-<span class="demo-day">Сегодня</span><p class="demo-bubble">Структура сайта готова. Следующий шаг — проверить макет страницы.</p>
-<p class="demo-bubble outgoing">Материалы собраны в папке проекта. Вернёмся к ним на следующем этапе.</p>
-<div class="demo-compose">Написать сообщение…</div></main>`);
+<h1 class="demo-heading">Сортировщик чатов Bitrix24</h1><p class="demo-subtitle">Папки, фильтры и учёт времени</p>
+<main class="demo-thread"><h2>Чаты</h2><div class="demo-empty">Выберите чат и начните общение</div></main>`);
 fixture = fixture.replaceAll('<script>', '<script nonce="demo">');
 
 const profile = mkdtempSync(join(tmpdir(),'bx24-store-screenshots-'));
@@ -107,7 +100,7 @@ try {
   const labelDemo = () => page.evaluate(()=>{
     let badge=document.getElementById('store-demo-badge');
     if(!badge){badge=document.createElement('div');badge.id='store-demo-badge';badge.textContent='Демонстрационные данные';badge.setAttribute('popover','manual');document.body.append(badge);}
-    badge.style.cssText='position:fixed;inset:18px 24px auto auto;margin:0;padding:7px 11px;border:1px solid #ccdcd2;border-radius:7px;background:#f5faf6;color:#4a695c;font:12px Arial,sans-serif;pointer-events:none';
+    badge.style.cssText='position:fixed;inset:18px 24px auto auto;margin:0;padding:7px 11px;border:1px solid #b8b8b8;border-radius:7px;background:#fff;color:#333;font:12px Arial,sans-serif;pointer-events:none';
     if(badge.matches(':popover-open'))badge.hidePopover();
     badge.showPopover();
   });
@@ -119,15 +112,19 @@ try {
     mkdirSync(output,{recursive:true});writeFileSync(join(output,name),bytes);
     report.screenshots.push({name,width:1280,height:800,sha256:createHash('sha256').update(bytes).digest('hex'),checks});
   };
-  const folders=page.locator('.task-host .pena-native-folder-tab');
-  assert(await folders.count()>0,'Real folder controls must be present');
-  await capture('screenshot-chats.png',{runtimeVersion:build.version,folderTabs:await folders.count(),toolbar:'Сегодня 1:30'});
   await page.locator('.task-host .pena-native-time-button').click();
   await page.waitForFunction(()=>document.querySelector('.pena-native-time-total-value')?.textContent==='1 ч 30 мин',null,{timeout:12000});
   await page.evaluate(()=>window.dispatchNativeTaskMessage('chat5'));
   await page.waitForFunction(()=>document.querySelector('.pena-native-time-suggestions .pena-native-time-section-copy strong')?.textContent==='Контакты · 1',null,{timeout:12000});
   assert.equal(await page.locator('.pena-native-time-entry-row').count(),2);
   await capture('screenshot-time.png',{total:'1 ч 30 мин',entries:2,qualifiedContacts:1});
+  await page.goto(`${origin}/online/?mode=chats&passThrough=1&nativeCatalog=1&nativeFirst=1&catalogRows=8`);
+  await page.waitForFunction(version=>window.__ANITREC_RUNNING__===version,build.version,{timeout:20000});
+  await page.locator('.recent-host .pena-native-folder-switcher').waitFor({state:'visible',timeout:20000});
+  await page.locator('.pena-native-load-guard,.pena-native-original-load-guard').waitFor({state:'hidden',timeout:30000});
+  const folders=page.locator('.recent-host .pena-native-folder-tab');
+  assert(await folders.count()>0,'Real chat folder controls must be present');
+  await capture('screenshot-chats.png',{runtimeVersion:build.version,folderTabs:await folders.count(),mode:'chats'});
   assert.deepEqual(report.errors,[]);assert.deepEqual(report.consoleErrors,[]);
 } finally {
   await context?.close();

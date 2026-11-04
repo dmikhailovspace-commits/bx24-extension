@@ -9,16 +9,18 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const assets = resolve(root, 'chrome/assets');
 await mkdir(assets, { recursive:true });
 const icon = await readFile(resolve(assets, 'icon.svg'), 'utf8');
-const promo = await readFile(resolve(assets, 'promo.svg'), 'utf8');
 const font = await readFile(resolve(root, 'extension/fonts/Onest-Variable.ttf'));
-assert(!/https?:\/\/(?!www\.w3\.org\/2000\/svg)/i.test(icon + promo), 'Assets must not load remote resources');
+assert(!/https?:\/\/(?!www\.w3\.org\/2000\/svg)/i.test(icon), 'Assets must not load remote resources');
+const promo = await readFile(resolve(assets, 'promo.png'));
+assert.equal(promo.subarray(1, 4).toString(), 'PNG');
+assert.equal(promo.readUInt32BE(16), 440);
+assert.equal(promo.readUInt32BE(20), 280);
 const browser = await chromium.launch({ headless:true });
 const results = [];
 try {
   for (const [name, width, height, svg] of [
     ['icon16.png',16,16,icon], ['icon48.png',48,48,icon],
-    ['icon128.png',128,128,icon], ['logo.png',256,256,icon],
-    ['promo.png',440,280,promo]
+    ['icon128.png',128,128,icon], ['logo.png',256,256,icon]
   ]) {
     const page = await browser.newPage({ viewport:{width,height}, deviceScaleFactor:1 });
     await page.route('**/*', route => route.abort());

@@ -103,7 +103,7 @@ try {
   await page.bringToFront();
   await popup.reload();
   await popup.waitForFunction(() => document.getElementById('portal-heading').textContent === 'Портал подключён');
-  assert.equal(await popup.locator('#host').textContent(), 'portal.chrome.test');
+  assert.equal(await popup.locator('#host').textContent(), 'Доступ только к portal.chrome.test');
   assert.equal(await popup.locator('#connect').isVisible(), false);
   assert.equal(await popup.locator('#reload').isVisible(), true);
   assert.equal(await popup.evaluate(() => document.body.scrollWidth > innerWidth), false);
