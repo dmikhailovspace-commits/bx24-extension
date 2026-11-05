@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.65';
+	window.__ANITREC_RUNNING__ = '8.0.66';
 
-	const VER = '8.0.65';
+	const VER = '8.0.66';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -8257,7 +8257,7 @@
 						_refreshDialogNativeVisibleWindow(); applyFilters();
 						if (!missing()) break;
 						clearTimeout(statusTimer);
-						stop(bridge); status('Часть диалогов не найдена в списке Bitrix. Привязки к папке сохранены.', true);
+						stop(bridge); status('');
 						return { exhausted: true, pages };
 					}
 					const before = [...nativeIds()].join(',');
@@ -11051,7 +11051,12 @@ if (_presetChannel) {
 				_setPenaExtensionEnabled(enabled);
 			});
 			const updateSlot=document.createElement('span');updateSlot.className='pena-native-update-slot';
-			controls.append(toggle, updateSlot, version);
+			const credit = document.createElement('a');
+			credit.className = 'pena-extension-toolbar-credit'; credit.textContent = 'by Dmitry Mikhailov';
+			credit.href = 'https://dmitrymikhailov.com/'; credit.target = '_blank'; credit.rel = 'noopener noreferrer';
+			credit.title = 'О разработчике';
+			credit.style.cssText = 'font:9px/1.2 system-ui;color:#8a929c;text-decoration:none;overflow:hidden;text-overflow:ellipsis;min-width:0';
+			controls.append(toggle, updateSlot, version, credit);
 			toolbar.appendChild(controls);
 		}
 		const enabled = _isPenaExtensionEnabled();
@@ -12289,15 +12294,15 @@ if (_presetChannel) {
 	function _normalizeDialogControlSegmentOrder(order, segments = _getDialogControlSegments()) {
 		const segmentIds = (Array.isArray(segments) ? segments : []).map(segment => String(segment?.id || '')).filter(Boolean);
 		const valid = new Set([_DIALOG_CONTROL_ALL_SEGMENT_ID, ...segmentIds]);
-		const next = [];
+		const next = [], seen = new Set();
 		(Array.isArray(order) ? order : []).forEach(id => {
 			const value = String(id || '').trim();
-			if (!value || !valid.has(value) || next.includes(value)) return;
-			next.push(value);
+			if (!value || !valid.has(value) || seen.has(value)) return;
+			next.push(value); seen.add(value);
 		});
 		if (!next.includes(_DIALOG_CONTROL_ALL_SEGMENT_ID)) next.unshift(_DIALOG_CONTROL_ALL_SEGMENT_ID);
 		segmentIds.forEach(id => {
-			if (!next.includes(id)) next.push(id);
+			if (!seen.has(id)) next.push(id); seen.add(id);
 		});
 		return next;
 	}
@@ -12310,13 +12315,13 @@ if (_presetChannel) {
 			if (Array.isArray(data)) parsed = data;
 		} catch {}
 		const normalized = _normalizeDialogControlSegmentOrder(parsed, segments);
-		try { localStorage.setItem(_dialogControlSegmentOrderKey(mode), JSON.stringify(normalized)); } catch {}
+		try { const key = _dialogControlSegmentOrderKey(mode), raw = JSON.stringify(normalized); if (localStorage.getItem(key) !== raw) localStorage.setItem(key, raw); } catch {}
 		return normalized;
 	}
 
 	function _saveDialogControlSegmentOrder(order, segments = _getDialogControlSegments(), mode = _pMode()) {
 		const normalized = _normalizeDialogControlSegmentOrder(order, segments);
-		try { localStorage.setItem(_dialogControlSegmentOrderKey(mode), JSON.stringify(normalized)); } catch {}
+		try { const key = _dialogControlSegmentOrderKey(mode), raw = JSON.stringify(normalized); if (localStorage.getItem(key) !== raw) localStorage.setItem(key, raw); } catch {}
 		return normalized;
 	}
 
@@ -12728,6 +12733,110 @@ if (_presetChannel) {
 			_dialogAutomationAttempts.delete(taskKey);
 		}
 		_scheduleDialogAutomation();
+	}
+	function _sortingTransferSnapshot() {
+		const scope = _getDialogTimeIdentityScopeKey();
+		if (!scope) throw new Error('Дождитесь определения пользователя Bitrix24.');
+		const modes = {};
+		for (const mode of ['chats','tasks']) {
+            const segments=_getDialogControlSegments(mode), source=_getDialogControlItemsForMode(mode);
+            const placement=window.__PENA_NATIVE_CATALOG__.createPlacementIndex(source,segments);
+            const folders=new Set(source.filter(_isDialogControlFolder).map(x=>x.id));
+            const automation=_readDialogAutomationConfig(mode);
+            modes[mode]={segments,items:source.map(item=>({...item,folderId:_isDialogControlFolder(item)?'':placement.folderOf(item),segmentId:placement.segmentOf(item)})),
+                automation:{...automation,rules:automation.rules.map(rule=>({...rule,enabled:!!rule.enabled&&folders.has(rule.folderId)}))},locks:[..._dialogAutomationLocks(mode)]};
+        }
+		return window.__PENA_NATIVE_CATALOG__.sortingTransfer({format:'bx24-chat-sorter',version:1,scope,modes},scope);
+	}
+	function _sortingTransferEntries(snapshot) {
+		const entries = [];
+		for (const mode of ['chats','tasks']) {
+			const data = snapshot.modes[mode], key = _dialogAutomationKey(mode);
+			entries.push([`${_LS_DIALOG_CONTROL}.${mode}`,JSON.stringify(data.items)],
+				[_dialogControlSegmentsKey(mode),JSON.stringify(data.segments)],
+				[key,JSON.stringify(data.automation)],[key+'.locks',JSON.stringify(data.locks)],
+				[key+'.review',null]);
+		}
+		return entries;
+	}
+	function _commitSortingTransfer(entries) {
+		const before = entries.map(([key])=>[key,localStorage.getItem(key)]);
+		const write = ([key,value]) => value === null ? localStorage.removeItem(key) : localStorage.setItem(key,value);
+		try { entries.forEach(write); }
+		catch (error) { before.forEach(write); throw error; }
+		_dialogControlItems = {}; _dialogControlStorageRaw = {}; _dialogControlDataRevision++;
+		_dialogControlLastSig = ''; _dialogControlNativeViewSig = ''; _dialogControlNativeSwitcherSig = '';
+		_clearDialogControlMultiSelection();
+		_notifyDialogRecentDataChanged(); _scheduleDialogAutomation();
+	}
+	function _openSortingTransfer() {
+		if (document.querySelector('.pena-sorting-transfer')) return;
+		const scope = _getDialogTimeIdentityScopeKey(), model = window.__PENA_NATIVE_CATALOG__;
+		if (!scope) { _showDialogDockToast('Дождитесь определения пользователя Bitrix24','danger');return; }
+		const previousFocus = document.activeElement;
+		const overlay = document.createElement('div'); overlay.className='pena-automation-overlay pena-sorting-transfer';
+		if (overlay.showPopover) overlay.setAttribute('popover','manual');
+		const panel = document.createElement('section'); panel.className='pena-automation-panel';
+		panel.style.cssText='width:min(480px,calc(100vw - 32px));padding:24px;display:flex;gap:16px;flex-direction:column';
+		panel.setAttribute('role','dialog');panel.setAttribute('aria-modal','true');panel.setAttribute('aria-label','Перенос настроек');overlay.append(panel);
+		const node = (tag,text) => {const el=document.createElement(tag);el.textContent=text;panel.append(el);return el;};
+		node('h2','Перенос настроек');
+		node('p','Папки, правила и распределение диалогов между приложением и Chrome. Файл подходит только для этого портала и пользователя.');
+		const status=node('p','');status.setAttribute('role','status');status.style.whiteSpace='pre-line';
+		const current = () => {if(scope!==_getDialogTimeIdentityScopeKey())throw new Error('Пользователь изменился. Откройте перенос заново.');};
+		const action = (label,fn) => {const b=node('button',label);b.type='button';b.addEventListener('click',()=>{try{current();fn();}catch(e){status.textContent=e.message;}});return b;};
+		action('Скачать файл',()=>{
+			const url=URL.createObjectURL(new Blob([JSON.stringify(_sortingTransferSnapshot(),null,2)],{type:'application/json'}));
+			const link=document.createElement('a');link.href=url;link.download='bx24-sorting.json';panel.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
+			status.textContent='Файл подготовлен. Откройте его в настройках другой версии сортировщика.';
+		});
+		const input=node('input','');input.type='file';input.accept='.json,application/json';input.setAttribute('aria-label','Файл настроек');
+		let staged=null, baseline=null, reading=0;
+		const backupKey=`pena.sortingTransfer.backup.v1.${scope}`;
+		const confirm=action('Подтвердить импорт',()=>{
+			if(!staged)return;
+			const now=_sortingTransferSnapshot();
+			if(JSON.stringify(now)!==baseline)throw new Error('Настройки изменились. Выберите файл заново.');
+			const merged={...staged,modes:{}};
+			for(const mode of ['chats','tasks']) merged.modes[mode]=model.mergeSortingTransfer({
+				items:_getDialogControlItemsForMode(mode),segments:now.modes[mode].segments,locks:now.modes[mode].locks
+			},staged.modes[mode]);
+			const entries=_sortingTransferEntries(merged);
+			const backup={scope,entries:entries.map(([key])=>[key,localStorage.getItem(key)])};
+			localStorage.setItem(backupKey,JSON.stringify(backup));
+			_commitSortingTransfer(entries);staged=null;confirm.disabled=true;restore.disabled=false;
+			status.textContent='Настройки перенесены. Прежние папки сохранены. Спорные переносы появятся в «Пересортировке».';
+		});confirm.disabled=true;
+		input.addEventListener('change',async()=>{
+			const token=++reading;staged=null;confirm.disabled=true;
+			try {
+				current();const file=input.files?.[0];if(!file)return;
+				if(file.size>10*1024*1024)throw new Error('Файл слишком большой: максимум 10 МБ.');
+				const text=await file.text();current();if(token!==reading||!overlay.isConnected)return;
+				staged=model.sortingTransfer(JSON.parse(text),scope);baseline=JSON.stringify(_sortingTransferSnapshot());
+				const modes=Object.values(staged.modes);
+				status.textContent=`Папок: ${modes.reduce((n,x)=>n+x.items.filter(i=>i.type==='folder').length,0)}. Диалогов: ${modes.reduce((n,x)=>n+x.items.filter(i=>i.type!=='folder').length,0)}. Правил: ${modes.reduce((n,x)=>n+x.automation.rules.length,0)}.\nНазначения совпавших диалогов и правила заменятся данными файла. Остальные папки и диалоги сохранятся. Перед импортом будет создана резервная копия.`;
+				confirm.disabled=false;
+			} catch(e){staged=null;status.textContent=e instanceof SyntaxError?'Не удалось прочитать файл настроек.':e.message;}
+		});
+		const restore=action('Отменить последний импорт',()=>{
+			_showDialogControlNativeActionConfirm('Отменить импорт?','Настройки сортировки вернутся к состоянию перед последним импортом. Изменения после него будут отменены.','Восстановить','Отмена',()=>{
+				try {
+					current();const backup=JSON.parse(localStorage.getItem(backupKey)||'null');
+					const allowed=new Set(_sortingTransferEntries(_sortingTransferSnapshot()).map(([key])=>key));
+					if(backup?.scope!==scope||!Array.isArray(backup.entries)||backup.entries.length!==allowed.size||backup.entries.some(([key,value])=>!allowed.delete(key)||(value!==null&&typeof value!=='string')))throw new Error('Резервная копия недоступна.');
+					_commitSortingTransfer(backup.entries);localStorage.removeItem(backupKey);restore.disabled=true;confirm.disabled=true;staged=null;status.textContent='Настройки восстановлены.';
+				}catch(e){status.textContent=e.message;}
+			},{parent:overlay});
+		});restore.disabled=!localStorage.getItem(backupKey);
+		const close=()=>{reading++;overlay.remove();document.removeEventListener('keydown',trap,true);previousFocus?.focus?.({preventScroll:true});};
+		const closeButton=action('Закрыть',close);
+		const trap=e=>{
+			if(document.querySelector('.pena-native-confirm-overlay'))return;
+			if(e.key==='Escape'){e.preventDefault();e.stopImmediatePropagation();close();}
+			if(e.key==='Tab'){const all=[...panel.querySelectorAll('button:not(:disabled),input')];const first=all[0],last=all.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}
+		};
+		document.addEventListener('keydown',trap,true);document.body.append(overlay);overlay.showPopover?.();closeButton.focus();
 	}
 	function _dialogAutomationKey(mode = _pMode()) {
 		const scope = _getDialogTimeIdentityScopeKey();
@@ -14249,15 +14358,15 @@ if (_presetChannel) {
 			.map(folder => String(folder?.id || ''))
 			.filter(Boolean);
 		const valid = new Set([_DIALOG_CONTROL_ALL_NATIVE_FOLDER_ID, ...folderIds]);
-		const next = [];
+		const next = [], seen = new Set();
 		(Array.isArray(order) ? order : []).forEach(id => {
 			const value = String(id || '').trim();
-			if (!value || !valid.has(value) || next.includes(value)) return;
-			next.push(value);
+			if (!value || !valid.has(value) || seen.has(value)) return;
+			next.push(value); seen.add(value);
 		});
 		if (!next.includes(_DIALOG_CONTROL_ALL_NATIVE_FOLDER_ID)) next.unshift(_DIALOG_CONTROL_ALL_NATIVE_FOLDER_ID);
 		folderIds.forEach(id => {
-			if (!next.includes(id)) next.push(id);
+			if (!seen.has(id)) next.push(id); seen.add(id);
 		});
 		return next;
 	}
@@ -14270,13 +14379,13 @@ if (_presetChannel) {
 			if (Array.isArray(data)) parsed = data;
 		} catch {}
 		const normalized = _normalizeDialogControlNativeFolderOrder(parsed, folders);
-		try { localStorage.setItem(_dialogControlNativeFolderOrderKey(segmentId), JSON.stringify(normalized)); } catch {}
+		try { const key = _dialogControlNativeFolderOrderKey(segmentId), raw = JSON.stringify(normalized); if (localStorage.getItem(key) !== raw) localStorage.setItem(key, raw); } catch {}
 		return normalized;
 	}
 
 	function _saveDialogControlNativeFolderOrder(order, folders = [], segmentId = _getDialogControlActiveSegmentId()) {
 		const normalized = _normalizeDialogControlNativeFolderOrder(order, folders);
-		try { localStorage.setItem(_dialogControlNativeFolderOrderKey(segmentId), JSON.stringify(normalized)); } catch {}
+		try { const key = _dialogControlNativeFolderOrderKey(segmentId), raw = JSON.stringify(normalized); if (localStorage.getItem(key) !== raw) localStorage.setItem(key, raw); } catch {}
 		return normalized;
 	}
 
@@ -20163,10 +20272,15 @@ if (_presetChannel) {
 		const segmentStatus = _getDialogControlNotificationStatus(placement
 			? filteredSegmentDialogItems.filter(item => !placement.folderOf(item))
 			: filteredSegmentDialogItems, visibleChatIndex);
-		const folderStatuses = new Map();
+		const folderStatuses = new Map(), folderChildren = new Map();
+		for (const item of filteredSegmentDialogItems) {
+			const id = String(item.folderId || '');
+			if (!folderChildren.has(id)) folderChildren.set(id, []);
+			folderChildren.get(id).push(item);
+		}
 		segmentFolders.forEach(folder => {
 			const id = String(folder.id || '');
-			const children = filteredSegmentDialogItems.filter(item => String(item.folderId || '') === id);
+			const children = folderChildren.get(id) || [];
 			folderStatuses.set(id, _getDialogControlNotificationStatus(children, visibleChatIndex));
 		});
 		const switcherSig = [
@@ -20356,6 +20470,10 @@ if (_presetChannel) {
 			});
 			syncStatus.append(syncStatusText, syncButton);
 			filterPanel.append(_createDialogControlPopoverClose('Закрыть фильтры'), sortControls, unreadLabel, syncStatus);
+			const settings=document.createElement('details');settings.style.cssText='flex:1 1 100%;font:12px/1.5 system-ui;color:#64748b';
+			const label=document.createElement('summary');label.textContent='Настройки';settings.append(label);
+			const advanced=document.createElement('details'), advancedLabel=document.createElement('summary');advancedLabel.textContent='Дополнительно';advanced.append(advancedLabel);settings.append(advanced);
+			const transfer=document.createElement('button');transfer.type='button';transfer.textContent='Перенос настроек';transfer.addEventListener('click',()=>_openSortingTransfer());advanced.append(transfer);filterPanel.append(settings);
 			workspaceTabs.appendChild(filterPanel);
 		}
 		const uniqueLabel = document.createElement('label');
@@ -25609,7 +25727,7 @@ if (_presetChannel) {
 		actions.append(cancel, remove);
 		dialog.append(title, text, actions);
 		overlay.appendChild(dialog);
-		document.body.appendChild(overlay);
+		(options.parent || document.body).appendChild(overlay);
 		document.addEventListener('keydown', onKeyDown, true);
 		requestAnimationFrame(() => {
 			overlay.classList.add('--show');
@@ -32249,8 +32367,10 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 		if (!IS_OL_FRAME && _isDialogControlNativeMode() && _dialogControlMultiSelected.size) {
 			const recycled = new Set(mutations.filter(mutation => mutation.type === 'attributes' &&
 				rowIdentityAttributes.has(mutation.attributeName)).map(getMutationOwnerRow).filter(Boolean));
+			const items = _getDialogControlItems();
+			const itemIndex = recycled.size ? _buildDialogControlNativeItemIndex(items) : null;
 			for (const row of recycled) {
-				const item = _getDialogControlItemForNativeRow(row);
+				const item = _getDialogControlItemForNativeRow(row, items, itemIndex);
 				_setDialogControlNativeMultiSelected(row, _isDialogControlNativeRowMultiSelected(row, item));
 			}
 		}

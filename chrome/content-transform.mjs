@@ -23,7 +23,7 @@ export function transformChromeContent(source) {
         host.style.cssText = 'display:inline-flex;position:relative;flex:0 0 auto';
         const root = host.attachShadow({ mode: 'open' });
         const style = document.createElement('style');
-        style.textContent = ':host{all:initial;display:inline-flex}*{box-sizing:border-box}button{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:2px;border:0;border-radius:6px;background:transparent;color:#526071;cursor:pointer}button:focus-visible{outline:2px solid #2563eb;outline-offset:2px}svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}p{position:absolute;right:0;top:24px;z-index:2147483647;width:280px;margin:0;padding:12px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;color:#263241;box-shadow:0 8px 28px #0f172a30;font:12px/1.5 system-ui}p[hidden]{display:none}';
+        style.textContent = ':host{all:initial;display:inline-flex}*{box-sizing:border-box}button{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:2px;border:0;border-radius:6px;background:transparent;color:#526071;cursor:pointer}button:focus-visible{outline:2px solid #2563eb;outline-offset:2px}svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}p{position:relative;width:100%;margin:0;padding:12px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;color:#263241;box-shadow:0 8px 28px #0f172a30;font:12px/1.5 system-ui}p[hidden]{display:none}';
         const button = document.createElement('button');
         button.type = 'button';
         button.title = 'Обновление';
@@ -34,15 +34,33 @@ export function transformChromeContent(source) {
         panel.hidden = true;
         panel.setAttribute('role', 'status');
         panel.textContent = 'Версия ' + _releaseVersion + '. Обновления из Chrome Web Store устанавливаются браузером автоматически. При ручной установке ZIP обновляйте расширение вручную.';
-        const close = () => { panel.hidden = true; button.setAttribute('aria-expanded', 'false'); };
+        const popup = document.createElement('div');
+        popup.className = 'pena-chrome-update-popup';
+        popup.style.cssText = 'position:fixed;z-index:2147483647;margin:0;padding:0;border:0;background:transparent;max-width:calc(100vw - 16px)';
+        if (popup.showPopover) popup.setAttribute('popover', 'manual');
+        const popupRoot = popup.attachShadow({ mode: 'open' });
+        popupRoot.append(style.cloneNode(true), panel);
+        const close = () => { panel.hidden = true; if(popup.hidePopover && popup.matches(':popover-open')) popup.hidePopover(); popup.remove(); button.setAttribute('aria-expanded', 'false'); };
+        const place = () => {
+          if (panel.hidden) return;
+          if (!host.isConnected || !host.getClientRects().length) { close(); return; }
+          const rect = button.getBoundingClientRect(), width = Math.min(280, innerWidth - 16);
+          popup.style.width = width + 'px';
+          popup.style.left = Math.max(8, Math.min(innerWidth - width - 8, rect.right - width)) + 'px';
+          const height = popup.getBoundingClientRect().height;
+          popup.style.top = Math.max(8, Math.min(innerHeight - height - 8, rect.bottom + 6)) + 'px';
+        };
         button.addEventListener('click', event => {
           if (!event.isTrusted) return;
-          panel.hidden = !panel.hidden;
-          button.setAttribute('aria-expanded', String(!panel.hidden));
+          if (!panel.hidden) { close(); return; }
+          document.body.append(popup); panel.hidden = false; popup.showPopover?.(); place();
+          button.setAttribute('aria-expanded', 'true');
         });
-        document.addEventListener('pointerdown', event => { if (!event.composedPath().includes(host)) close(); }, true);
+        document.addEventListener('pointerdown', event => { if (!event.composedPath().includes(host) && !event.composedPath().includes(popup)) close(); }, true);
         document.addEventListener('keydown', event => { if (event.key === 'Escape') close(); }, true);
-        root.append(style, button, panel);
+        window.addEventListener('resize', place);
+        document.addEventListener('scroll', place, true);
+        root.append(style, button);
       }
       if (host.parentElement !== slot) slot.append(host);
     };

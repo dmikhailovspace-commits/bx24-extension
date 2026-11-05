@@ -11,7 +11,15 @@ const anchor = '\tasync function boot() {';
 assert.equal(raw.split(anchor).length - 1, 1, 'DOM regression instrumentation anchor changed');
 const source = raw.replace(anchor, `${anchor}
 		window.__PENA_DOM_AUDIT__ = {
-			eventRowContracts() {
+			preferenceWrites() {
+                _getDialogControlSegmentOrder(); _getDialogControlNativeFolderOrder([],'');
+                const original = Storage.prototype.setItem; let writes = 0;
+                Storage.prototype.setItem = function(...args) { writes++; return original.apply(this,args); };
+                try { for(let i=0;i<100;i++) { _getDialogControlSegmentOrder(); _getDialogControlNativeFolderOrder([],''); } }
+                finally { Storage.prototype.setItem = original; }
+                return writes;
+            },
+            eventRowContracts() {
 				const originalFind = findContainer;
 				const originalManaged = _dialogControlManagedRoot;
 				const originalSource = _dialogControlManagedSource;
@@ -95,6 +103,7 @@ try {
  }, null, { timeout: 30000 });
  await page.waitForTimeout(1500);
  result = await page.evaluate(async () => {
+  const preferenceWrites = window.__PENA_DOM_AUDIT__.preferenceWrites();
   const source = window.__PENA_ACTIVE_LIST_CONTEXT__.list;
   const viewport = window.__PENA_ACTIVE_LIST_CONTEXT__.viewport;
   const rows = Array.from(source.querySelectorAll('.bx-im-list-recent-item__wrap'));
@@ -161,7 +170,7 @@ try {
    nativeOverlayPreserved = replacement.parentElement === host && replacement.classList.contains('pena-native-avatar-native-overlay') && ring.parentElement === host;
    replacement.remove();
   }
-  return { rows: rows.length, mutationRecords: mutations.length, repaintMs: durations, sourceStable, scrollStable: viewport.scrollTop === top, toolbarScans, nativeOverlayPreserved, stableTrackerMutations: labelMutations.length, outsideRowReads, outsideDiscoveryReads, nativeClicks };
+  return { preferenceWrites, rows: rows.length, mutationRecords: mutations.length, repaintMs: durations, sourceStable, scrollStable: viewport.scrollTop === top, toolbarScans, nativeOverlayPreserved, stableTrackerMutations: labelMutations.length, outsideRowReads, outsideDiscoveryReads, nativeClicks };
  });
  result.eventRowContracts = await page.evaluate(() => window.__PENA_DOM_AUDIT__.eventRowContracts());
  const routeNoise = await page.evaluate(async () => {
@@ -286,6 +295,7 @@ try {
   assert.equal(state.staleHosts, 0, `Replaced portrait retained ring styles: ${JSON.stringify(state)}`);
  }
  assert.ok(result.rows >= 1000, `Large native row fixture was not materialized: ${JSON.stringify(result)}`);
+ assert.equal(result.preferenceWrites,0,'200 unchanged order projections must not synchronously write localStorage');
  assert.ok(result.mutationRecords < result.rows, `Repeated projection flooded native observers: ${JSON.stringify(result)}`);
  assert.equal(result.toolbarScans, 0, `PENA toolbar classes triggered native route scans: ${JSON.stringify(result)}`);
  assert.equal(result.sourceStable, true, 'Repaint replaced native row identity');

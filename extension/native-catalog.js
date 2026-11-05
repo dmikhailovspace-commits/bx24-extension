@@ -536,7 +536,64 @@
 		return null;
 	}
 
+	// Portable data has a closed schema: no storage keys, credentials or message cache.
+	function sortingTransfer(value, scope) {
+		const fail = () => { throw new Error('Файл переноса повреждён или имеет неподдерживаемый формат.'); };
+		if (!scope || value?.format !== 'bx24-chat-sorter' || value.version !== 1) fail();
+		if (value.scope !== scope) throw new Error('Файл предназначен для другого портала или пользователя Bitrix24.');
+		const text = (v, max = 200, empty = true) => {
+			if (typeof v !== 'string' || v.length > max || (!empty && !v.length)) fail();
+			return v;
+		};
+		const id = v => { text(v, 160, false); if (!/^[\w:.-]+$/.test(v) || ['__proto__','constructor','prototype'].includes(v)) fail(); return v; };
+		const array = (v, max) => { if (!Array.isArray(v) || v.length > max) fail(); return v; };
+		const unique = list => { const ids = list.map(x => x.id); if (new Set(ids).size !== ids.length) fail(); return list; };
+		const result = { format:value.format, version:1, scope, modes:{} };
+		for (const mode of ['chats','tasks']) {
+			const data = value.modes?.[mode]; if (!data) fail();
+			const segments = unique(array(data.segments, 1000).map(x => ({id:id(x.id),title:text(x.title,32,false)})));
+			const segmentIds = new Set(segments.map(x=>x.id));
+			const items = unique(array(data.items, 50000).map(x => {
+				const item = { id:id(x.id), type:text(x.type || 'chat',40), title:text(x.title || '',500),
+					folderId:text(x.folderId || '',160),segmentId:text(x.segmentId || '',160),
+					color:text(x.color || '',100),colorMode:text(x.colorMode || '',40),icon:text(x.icon || '',40) };
+				if (x.taskId != null) { item.taskId=String(x.taskId); if (!/^[1-9]\d*$/.test(item.taskId)) fail(); }
+				if (item.type !== 'folder' && !/^(chat|user)[1-9]\d*$/.test(item.id)) fail();
+				if (item.segmentId && !segmentIds.has(item.segmentId)) fail();
+				if (item.type === 'folder' && item.folderId) fail();
+				return item;
+			}));
+			const folders = new Set(items.filter(x=>x.type==='folder').map(x=>x.id));
+			for (const item of items) if (item.folderId && !folders.has(item.folderId)) fail();
+			const config = data.automation; if (config?.version !== 1) fail();
+			const rules = unique(array(config.rules,50).map(x => {
+				if (typeof x.enabled !== 'boolean' || !['all','any'].includes(x.match) || (x.enabled && !folders.has(x.folderId))) fail();
+				const conditions = array(x.conditions,50).map(c => {
+					const spec = automationFields[c.field];
+					if (!spec || (mode === 'chats' && !['title','kind'].includes(c.field))) fail();
+					const ops = spec[1] === 'text' ? ['eq','neq','contains','notContains','starts','ends'] : spec[1] === 'date' ? ['empty','present','overdue','before','after'] : ['eq','neq'];
+					if (!ops.includes(c.op)) fail();
+					return {field:c.field,op:c.op,value:text(String(c.value ?? ''),1000)};
+				});
+				if (!conditions.length) fail();
+				return {id:id(x.id),name:text(x.name,200),enabled:x.enabled,folderId:text(x.folderId || '',160),match:x.match,conditions};
+			}));
+			const listIds = values => [...new Set(array(values,50000).map(id))];
+			result.modes[mode] = {segments,items,automation:{version:1,rules,excludedIds:listIds(config.excludedIds || [])},locks:listIds(data.locks || [])};
+		}
+		return result;
+	}
+
+	function mergeSortingTransfer(local, incoming) {
+		const merge = (a,b) => { const map=new Map(a.map(x=>[x.id,{...x}])); for(const x of b)map.set(x.id,{...map.get(x.id),...x});return [...map.values()]; };
+		const items = merge(local.items,incoming.items).map(x=>x.type==='folder'?x:{...x,automationHandled:true});
+		return {items,segments:merge(local.segments,incoming.segments),
+			automation:{...incoming.automation,excludedIds:[...new Set([...incoming.automation.excludedIds,...items.filter(x=>x.type!=='folder').map(x=>x.id)])]},
+			locks:[...new Set([...local.locks,...incoming.locks])]};
+	}
+
 	return Object.freeze({
+		sortingTransfer, mergeSortingTransfer,
 		automationFields, taskAutomationFacts, automationCondition, automationDecision,
 		createPlacementIndex,
 		buildIndex,

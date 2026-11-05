@@ -479,3 +479,43 @@ assert.deepEqual(physicalTail({}), ['chat1103', 'chat1104', 'chat1105', 'chat110
 tailRows.reverse();
 assert.deepEqual(physicalTail({}), ['chat1103', 'chat1104', 'chat1105', 'chat1106', 'chat1107']);
 console.log('ok - physical tail anchors survive DOM presentation reordering');
+
+// Portable sorting is scoped, closed-schema, validated before any storage writes.
+{
+ const mode = {segments:[{id:'segment:one',title:'Work'}],items:[{id:'folder:one',type:'folder',title:'Projects',segmentId:'segment:one'},
+  {id:'chat42',type:'chat',title:'Dialog',folderId:'folder:one',segmentId:'segment:one',taskId:42,lastText:'SECRET',token:'SECRET'}],
+  automation:{version:1,rules:[{id:'rule:one',name:'Project',enabled:true,folderId:'folder:one',match:'all',conditions:[{field:'title',op:'contains',value:'Project'}]}],excludedIds:['chat42']},locks:['chat42']};
+ const input={format:'bx24-chat-sorter',version:1,scope:'portal.test~7',modes:{chats:mode,tasks:mode}};
+ const result=catalog.sortingTransfer(input,input.scope);
+ assert.ok(!JSON.stringify(result).includes('SECRET'));
+ assert.equal(result.modes.tasks.items[1].taskId,'42');
+ assert.deepEqual(catalog.sortingTransfer(result,input.scope),result,'Round trip is stable');
+ assert.throws(()=>catalog.sortingTransfer(input,'other.test~7'),/другого/);
+ assert.throws(()=>catalog.sortingTransfer(input,'portal.test~8'),/другого/);
+ for(const change of [x=>x.version=2,x=>x.modes.chats.items.push(x.modes.chats.items[0]),x=>x.modes.chats.items[1].folderId='missing',
+  x=>x.modes.chats.items[0].segmentId='missing',x=>x.modes.chats.automation.rules[0].conditions[0].field='unknown',
+  x=>x.modes.chats.automation.rules[0].conditions[0].op='unknown',x=>x.modes.chats.items[1].id='__proto__']) {
+  const broken=structuredClone(input);change(broken);assert.throws(()=>catalog.sortingTransfer(broken,input.scope));
+ }
+ const local={items:[{id:'chat42',folderId:'old',lastText:'local'}, {id:'chat77',title:'Retained'}],segments:[{id:'local',title:'Local'}],locks:['chat77']};
+ const before=JSON.stringify(local), merged=catalog.mergeSortingTransfer(local,result.modes.chats);
+ assert.equal(JSON.stringify(local),before);
+ assert.equal(merged.items.find(x=>x.id==='chat42').folderId,'folder:one');
+ assert.equal(merged.items.find(x=>x.id==='chat42').lastText,'local');
+ assert.ok(merged.items.filter(x=>x.type!=='folder').every(x=>x.automationHandled));
+ assert.deepEqual(merged.locks,['chat77','chat42']);assert.equal(merged.segments.length,2);
+ console.log('ok - scoped sorting transfer round trip, validation, private-field exclusion and safe merge');
+}
+
+{
+ const code=extractInjectedFunction(accessSource,'_commitSortingTransfer','_openSortingTransfer');
+ const values=new Map([['a','old-a'],['b','old-b']]);let failure=true, notifications=0;
+ const context={localStorage:{getItem:key=>values.get(key)??null,setItem:(key,v)=>{if(key==='b'&&failure){failure=false;throw Error('quota');}values.set(key,v);},removeItem:key=>values.delete(key)},
+  _dialogControlItems:{},_dialogControlStorageRaw:{},_dialogControlDataRevision:0,_dialogControlLastSig:'',_dialogControlNativeViewSig:'',_dialogControlNativeSwitcherSig:'',
+  _clearDialogControlMultiSelection:()=>{},_notifyDialogRecentDataChanged:()=>notifications++,_scheduleDialogAutomation:()=>{}};
+ vm.createContext(context);vm.runInContext(code,context);
+ assert.throws(()=>context._commitSortingTransfer([['a','new-a'],['b','new-b']]),/quota/);
+ assert.deepEqual([...values],[['a','old-a'],['b','old-b']]);assert.equal(notifications,0);
+ context._commitSortingTransfer([['a','new-a'],['b','new-b']]);assert.equal(notifications,1);
+ console.log('ok - failed import restores every touched storage key before updating UI');
+}

@@ -218,7 +218,8 @@ try {
       assert.equal(await page.evaluate(() => nativeServiceCalls.length), stalledCalls, 'Stop a broken cursor without an endless request loop');
       await page.evaluate(() => { window.nativeServiceStall = false; });
       await page.locator('.pena-native-folder-status button').click();
-      await page.waitForFunction(() => !lazyAudit.active() && document.querySelector('.pena-native-folder-status')?.textContent.includes('не найдена'));
+      await page.waitForFunction(() => !lazyAudit.active());
+      assert.equal(await page.locator('.pena-native-folder-status').count(),0,'Completed retry silently retains missing saved dialogs');
       assert.equal(await page.evaluate(() => lazyAudit.items().some(item => item.id === 'chat9000' && item.folderId === 'folder:test')), true, 'A native tail is not a tombstone for missing saved dialogs');
       assert.equal(await page.locator('.pena-native-original-load-guard,.pena-native-managed-row').count(), 0);
       assert.deepEqual(errors, [], 'No page errors during native folder/search interactions');
@@ -281,7 +282,8 @@ try {
       assert.equal(await page.locator('.pena-native-folder-status').count(),0,'A private busy flag and delayed final render must not lose a folder member');
       assert.equal(await page.evaluate(()=>nativeServiceCalls.length),1,'No duplicate request while the native service is busy');
       await page.evaluate(()=>{lazyAudit.assign('chat9000');lazyAudit.apply();});
-      await page.waitForFunction(()=>!lazyAudit.active()&&document.querySelector('.pena-native-folder-status button'));
+      await page.waitForFunction(()=>!lazyAudit.active());
+      assert.equal(await page.locator('.pena-native-folder-status').count(),0,'Exhausted native list is silent and keeps saved assignments');
       assert.equal(await page.evaluate(()=>lazyAudit.items().find(x=>x.id==='chat9000')?.folderId),'folder:test','An absent recent row never deletes folder membership');
       await page.evaluate(mode=>{
         const list=document.querySelector(mode==='tasks'?'.task-host .bx-im-list-container-task__elements':'.recent-host .bx-im-list-container-recent__elements');
