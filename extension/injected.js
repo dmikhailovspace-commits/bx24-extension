@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.66';
+	window.__ANITREC_RUNNING__ = '8.0.67';
 
-	const VER = '8.0.66';
+	const VER = '8.0.67';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -11051,10 +11051,8 @@ if (_presetChannel) {
 				_setPenaExtensionEnabled(enabled);
 			});
 			const updateSlot=document.createElement('span');updateSlot.className='pena-native-update-slot';
-			const credit = document.createElement('a');
+			const credit = document.createElement('span');
 			credit.className = 'pena-extension-toolbar-credit'; credit.textContent = 'by Dmitry Mikhailov';
-			credit.href = 'https://dmitrymikhailov.com/'; credit.target = '_blank'; credit.rel = 'noopener noreferrer';
-			credit.title = 'О разработчике';
 			credit.style.cssText = 'font:9px/1.2 system-ui;color:#8a929c;text-decoration:none;overflow:hidden;text-overflow:ellipsis;min-width:0';
 			controls.append(toggle, updateSlot, version, credit);
 			toolbar.appendChild(controls);

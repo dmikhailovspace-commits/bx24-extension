@@ -5,13 +5,18 @@
 <!-- AUTO:BEGIN -->
 ## Current release facts (generated)
 
-- Version: **8.0.66**
+- Version: **8.0.67**
 - Release date: **2026-11-05**
 - Runtime files: **19**
 - Regression suites: **89**
-- Windows artifact: `dist/BX24_Chat_Sorter_Windows_v8.0.66.exe` - SHA-256: `26293AC91953E4180C87EEE436417559B25FE4C0D9E7764A10FC0F2EE0BA2167`
-- macOS artifact: `dist/BX24_Chat_Sorter_macOS_Universal_v8.0.66.dmg` - SHA-256: `7731DAEA6DC337A00F6E3229A267F2F04725ACA0A80909199119871D09D0CF17`
+- Windows artifact: _not built_
+- macOS artifact: _not built_
 <!-- AUTO:END -->
+
+## Изменения 8.0.67: подпись без ссылки
+
+- По указанию пользователя подпись by Dmitry Mikhailov рядом с включением стала обычным серым текстом (span), без href, target, обработчика перехода и подсказки ссылки. Изменение общее для desktop и Chrome. Не возвращать ссылку без нового запроса.
+- Релизный профиль остаётся точным search-focused из 16 наборов; статус внешней поставки фиксируется после проверенного выпуска.
 
 ## Изменения 8.0.66: перенос настроек и Chrome
 
