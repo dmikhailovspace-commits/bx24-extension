@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.67';
+	window.__ANITREC_RUNNING__ = '8.0.66';
 
-	const VER = '8.0.67';
+	const VER = '8.0.66';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -4228,7 +4228,7 @@
 		// Decoration alone does not re-evaluate display. Apply the active
 		// projection after either a native counter event or a metadata update.
 		const nativeFolderFilter = _getDialogControlNativeFilter();
-		_getCurrentFilterRows(container).forEach(row => _applyDialogControlRowFilter(row, nativeFolderFilter));
+		_applyDialogControlRowFilters(_getCurrentFilterRows(container), nativeFolderFilter);
 	}
 
 	function _notifyDialogRecentDataChanged() {
@@ -11311,7 +11311,7 @@ if (_presetChannel) {
 				if (!container) return;
 				_invalidateDialogControlDomReadCache();
 				const nativeFilter = _getDialogControlNativeFilter();
-				_getCurrentFilterRows(container).forEach(row => _applyDialogControlRowFilter(row, nativeFilter));
+				_applyDialogControlRowFilters(_getCurrentFilterRows(container), nativeFilter);
 				_applyDialogControlColorSort(container);
 			});
 		}
@@ -11887,12 +11887,12 @@ if (_presetChannel) {
 		});
 	}
 
-	function _applyDialogControlRowFilter(el, nativeFolderFilter = null) {
+	function _applyDialogControlRowFilter(el, nativeFolderFilter = null, viewPrefs = null) {
 		if (!el) return false;
 		if (_isDialogNativeLazyMode()) {
 			const meta = _getDialogRowFilterMeta(el);
 			const searching = !!String(filters.query || '').trim();
-			const unread = _getDialogControlViewPrefs().unreadOnly || filters.unreadOnly;
+			const unread = (viewPrefs || _getDialogControlViewPrefs()).unreadOnly || filters.unreadOnly;
 			let visible = searching ? (!unread || _isDialogControlUnreadMeta(meta)) : matchByFilters(meta);
 			if (visible && nativeFolderFilter) visible = _matchesDialogControlNativeFilter(el, meta, nativeFolderFilter);
 			el.classList.toggle('pena-native-filter-hidden', !visible);
@@ -11914,6 +11914,13 @@ if (_presetChannel) {
 			el.style.display = visible ? el.dataset.penaNativeOriginalDisplay : 'none';
 		}
 		return visible;
+	}
+
+	function _applyDialogControlRowFilters(rows, nativeFolderFilter = null) {
+		// A batch is synchronous. Re-read on the next batch rather than caching
+		// across preference changes, modes, portals or recycled native rows.
+		const viewPrefs = _isDialogNativeLazyMode() ? _getDialogControlViewPrefs() : null;
+		for (const row of rows) _applyDialogControlRowFilter(row, nativeFolderFilter, viewPrefs);
 	}
 
 	function applyFilters() {
@@ -11955,7 +11962,7 @@ if (_presetChannel) {
 					// the already visible native rows interactive while it is collected.
 					_scheduleDialogNativeModeLoad('view-demand', 220);
 				}
-				_getCurrentFilterRows(container).forEach(row => _applyDialogControlRowFilter(row, nativeFolderFilter));
+				_applyDialogControlRowFilters(_getCurrentFilterRows(container), nativeFolderFilter);
 				_scheduleDialogControlNativeView(container, { restoreDisplay: false, forceShow: true });
 			} else {
 				_scheduleDialogControlNativeView(container, { restoreDisplay: true, forceShow: true });
@@ -11971,7 +11978,7 @@ if (_presetChannel) {
 	const items = _getCurrentFilterRows(container);
 	const nativeFolderFilter = !IS_OL_FRAME ? _getDialogControlNativeFilter() : null;
 
-	for (const el of items) _applyDialogControlRowFilter(el, nativeFolderFilter);
+	_applyDialogControlRowFilters(items, nativeFolderFilter);
 	if (!isTasksChatsModeNow() && window.__anitProjectLookup && (filters.sortMode === 'project' || filters.sortMode === 'projectName')) {
 		const visible = items.filter(el => el.style.display !== 'none');
 		const hidden = items.filter(el => el.style.display === 'none');
@@ -20170,10 +20177,9 @@ if (_presetChannel) {
 		const placement = _getDialogControlUniqueOnly() ? _getDialogControlPlacementIndex(source) : null;
 
 		source.forEach(item => {
-			if (_isDialogControlFolder(item) || _isDialogControlItemUnavailable(item) ||
-				(!searching && !_matchesDialogControlGlobalFilters(item, catalogOnlyIndex))) return;
+			if (_isDialogControlFolder(item) || _isDialogControlItemUnavailable(item)) return;
 			const meta = _getDialogControlItemLiveMeta(item, catalogOnlyIndex);
-			if (!meta) return;
+			if (!meta || (!searching && !_matchesDialogControlGlobalFilters(item, catalogOnlyIndex, meta))) return;
 			if (placement) {
 				const segmentId = placement.segmentOf(item), folderId = placement.folderOf(item);
 				addMeta(groupStatuses.get(segmentId), meta);
@@ -20218,6 +20224,36 @@ if (_presetChannel) {
 		return [...source.filter(_isDialogControlFolder), ...result.values()];
 	}
 
+	function _getDialogControlCounterProjection(source, groupTabs, activeSegmentId, segmentFolders, visibleChatIndex, searching, uniqueOnly) {
+		// Temporary projection for this render only. One dialog can belong to its
+		// own group and its folder's group in the non-exclusive view.
+		const placement = uniqueOnly ? _getDialogControlPlacementIndex(source) : null;
+		const folderGroups = new Map(source.filter(_isDialogControlFolder)
+			.map(folder => [String(folder.id || ''), String(folder.segmentId || '')]));
+		const groups = new Map(), folderChildren = new Map(), active = [], unfiled = [], metaCache = new Map();
+		const append = (map, id, item) => { if (!map.has(id)) map.set(id, []); map.get(id).push(item); };
+		for (const item of source) {
+			if (_isDialogControlFolder(item) || _isDialogControlItemUnavailable(item)) continue;
+			const meta = _getDialogControlItemLiveMeta(item, visibleChatIndex);
+			if (!searching && !_matchesDialogControlGlobalFilters(item, visibleChatIndex, meta)) continue;
+			metaCache.set(item, meta);
+			const memberships = placement ? new Set([placement.segmentOf(item)]) : new Set([
+				'', String(item.segmentId || ''), folderGroups.get(String(item.folderId || '')) || ''
+			]);
+			for (const id of memberships) append(groups, id, item);
+			if (!memberships.has(activeSegmentId)) continue;
+			active.push(item);
+			if (placement && !placement.folderOf(item)) unfiled.push(item);
+			append(folderChildren, String(item.folderId || ''), item);
+		}
+		const status = items => _getDialogControlNotificationStatus(items || [], visibleChatIndex, metaCache);
+		return {
+			groupStatuses: new Map(groupTabs.map(group => [String(group.id || ''), status(groups.get(String(group.id || '')))])),
+			folderStatuses: new Map(segmentFolders.map(folder => [String(folder.id || ''), status(folderChildren.get(String(folder.id || '')))])),
+			segmentStatus: status(placement ? unfiled : active)
+		};
+	}
+
 	function _renderDialogControlNativeSwitcher(container, items) {
 		if (window.__PENA_TEST_PERF_METRICS__) {
 			window.__PENA_TEST_PERF_METRICS__.switcherRenders =
@@ -20239,7 +20275,6 @@ if (_presetChannel) {
 		const viewPrefs = _getDialogControlViewPrefs();
 		const searching = _isDialogNativeLazyMode() && !!String(filters.query || '').trim();
 		const counterSource = _getDialogControlCounterItems(source, container);
-		const segmentDialogItems = _getDialogControlNativeDialogItemsForSegment(counterSource, activeSegmentId);
 		const segmentFolders = _getDialogControlNativeFoldersForSegment(source, activeSegmentId);
 		let activeFolderId = _getDialogControlNativeActiveFolderId();
 		if (activeFolderId && !segmentFolders.some(folder => String(folder.id || '') === activeFolderId)) {
@@ -20249,38 +20284,8 @@ if (_presetChannel) {
 		switcher.classList.remove('--filtering');
 		switcher.style.removeProperty('height');
 		const visibleChatIndex = buildChatElementIndex();
-		const allDialogItems = counterSource.filter(item => !_isDialogControlFolder(item));
-		const filteredDialogItems = allDialogItems.filter(item => searching
-			? !_isDialogControlItemUnavailable(item) : _matchesDialogControlGlobalFilters(item, visibleChatIndex));
-		// Segment helpers retain source object references. Reuse this render's filter
-		// result for all tabs; the next render reads fresh filters and live metadata.
-		const filteredDialogSet = new Set(filteredDialogItems);
-		const groupStatuses = new Map();
-		groupTabs.forEach(group => {
-			const id = String(group.id || '');
-			const dialogs = group.isAll && !viewPrefs.uniqueOnly
-				? filteredDialogItems
-				: _getDialogControlNativeDialogItemsForSegment(counterSource, id)
-					.filter(item => filteredDialogSet.has(item));
-			groupStatuses.set(id, _getDialogControlNotificationStatus(dialogs, visibleChatIndex));
-		});
-		const filteredSegmentDialogItems = segmentDialogItems
-			.filter(item => filteredDialogSet.has(item));
-		const placement = viewPrefs.uniqueOnly ? _getDialogControlPlacementIndex(source) : null;
-		const segmentStatus = _getDialogControlNotificationStatus(placement
-			? filteredSegmentDialogItems.filter(item => !placement.folderOf(item))
-			: filteredSegmentDialogItems, visibleChatIndex);
-		const folderStatuses = new Map(), folderChildren = new Map();
-		for (const item of filteredSegmentDialogItems) {
-			const id = String(item.folderId || '');
-			if (!folderChildren.has(id)) folderChildren.set(id, []);
-			folderChildren.get(id).push(item);
-		}
-		segmentFolders.forEach(folder => {
-			const id = String(folder.id || '');
-			const children = folderChildren.get(id) || [];
-			folderStatuses.set(id, _getDialogControlNotificationStatus(children, visibleChatIndex));
-		});
+		const { groupStatuses, folderStatuses, segmentStatus } = _getDialogControlCounterProjection(
+			counterSource, groupTabs, activeSegmentId, segmentFolders, visibleChatIndex, searching, viewPrefs.uniqueOnly);
 		const switcherSig = [
 			_pMode(),
 			viewPrefs.uniqueOnly ? 1 : 0,
@@ -23031,7 +23036,7 @@ if (_presetChannel) {
 		_applyDialogControlColorSort(container, rows, allItems);
 		if (_isDialogNativeLazyMode() && searchRows.length) {
 			const nativeFilter = _getDialogControlNativeFilter();
-			searchRows.forEach(row => _applyDialogControlRowFilter(row, nativeFilter));
+			_applyDialogControlRowFilters(searchRows, nativeFilter);
 		}
 		const oldNodes = Array.from(container.querySelectorAll('.pena-native-folder-header,.pena-native-row-folder-badge'));
 		if (rows.length || oldNodes.length) _markDialogControlNativeMutation();
@@ -24197,8 +24202,8 @@ if (_presetChannel) {
 			? null : _getCachedDialogControlElementMeta(el));
 	}
 
-	function _getDialogControlItemFilterMeta(item, visibleChatIndex) {
-		const live = _getDialogControlItemLiveMeta(item, visibleChatIndex) || {};
+	function _getDialogControlItemFilterMeta(item, visibleChatIndex, liveMeta = undefined) {
+		const live = (liveMeta === undefined ? _getDialogControlItemLiveMeta(item, visibleChatIndex) : liveMeta) || {};
 		const recent = _getDialogRecentMeta(item?.id);
 		return Object.assign({}, live, {
 			id: normId(item?.id || live.id),
@@ -24214,12 +24219,12 @@ if (_presetChannel) {
 		});
 	}
 
-	function _matchesDialogControlGlobalFilters(item, visibleChatIndex) {
+	function _matchesDialogControlGlobalFilters(item, visibleChatIndex, liveMeta = undefined) {
 		if (_isDialogControlItemUnavailable(item)) return false;
-		return matchByFilters(_getDialogControlItemFilterMeta(item, visibleChatIndex));
+		return matchByFilters(_getDialogControlItemFilterMeta(item, visibleChatIndex, liveMeta));
 	}
 
-	function _getDialogControlNotificationStatus(dialogItems, visibleChatIndex) {
+	function _getDialogControlNotificationStatus(dialogItems, visibleChatIndex, metaCache = null) {
 		const children = (Array.isArray(dialogItems) ? dialogItems : []).filter(item =>
 			!_isDialogControlFolder(item) && !_isDialogControlItemUnavailable(item)
 		);
@@ -24228,7 +24233,7 @@ if (_presetChannel) {
 		let hasMention = false;
 		let hasLater = false;
 		children.forEach(child => {
-			const meta = _getDialogControlItemLiveMeta(child, visibleChatIndex);
+			const meta = metaCache?.has(child) ? metaCache.get(child) : _getDialogControlItemLiveMeta(child, visibleChatIndex);
 			if (!meta) return;
 			if (meta.hasMention) hasMention = true;
 			if (meta.hasLater && !meta.hasUnread) hasLater = true;
@@ -24261,13 +24266,14 @@ if (_presetChannel) {
 		});
 		const folders = source.filter(_isDialogControlFolder);
 		const folderUnits = new Map(folders.map(folder => [String(folder.id || ''), { root: folder, children: [], index: sourceIndex.get(folder) || 0 }]));
-		const units = [];
+		const units = [], liveMeta = new Map();
 		source.forEach(item => {
 			if (_isDialogControlFolder(item)) {
 				units.push(folderUnits.get(String(item.id || '')));
 				return;
 			}
 			const meta = _getDialogControlItemLiveMeta(item, visibleChatIndex);
+			liveMeta.set(item, meta);
 			if (prefs.unreadOnly && !_isDialogControlUnreadMeta(meta)) return;
 			const parent = item.folderId ? folderUnits.get(String(item.folderId)) : null;
 			if (parent) parent.children.push(item);
@@ -24276,7 +24282,7 @@ if (_presetChannel) {
 		const filteredUnits = prefs.unreadOnly
 			? units.filter(unit => !_isDialogControlFolder(unit.root) || unit.children.length > 0)
 			: units;
-		const dialogDate = (item) => Number(_getDialogControlItemLiveMeta(item, visibleChatIndex)?.lastMessageTs) || 0;
+		const dialogDate = (item) => Number(liveMeta.get(item)?.lastMessageTs) || 0;
 		const dialogRank = (item) => liveOrder.get(normId(item?.id)) ?? (1000000 + (sourceIndex.get(item) || 0));
 		const unitRank = (unit) => _isDialogControlFolder(unit.root)
 			? Math.min(...unit.children.map(dialogRank), 1000000 + unit.index)
@@ -24299,11 +24305,16 @@ if (_presetChannel) {
 			if (!bColor) return -1;
 			return aColor.localeCompare(bColor) * direction;
 		};
+		const unitDates = new Map(), unitRanks = new Map();
+		if (prefs.sortMode === 'date') for (const unit of filteredUnits) {
+			unitDates.set(unit, _isDialogControlFolder(unit.root) ? folderDate(unit) : dialogDate(unit.root));
+			unitRanks.set(unit, unitRank(unit));
+		}
 		const compare = (a, b) => {
 			if (prefs.sortMode === 'date') {
-				const aDate = _isDialogControlFolder(a.root) ? folderDate(a) : dialogDate(a.root);
-				const bDate = _isDialogControlFolder(b.root) ? folderDate(b) : dialogDate(b.root);
-				return compareDates(aDate, bDate) || ((unitRank(a) - unitRank(b)) * direction) || (a.index - b.index);
+				const aDate = unitDates.get(a);
+				const bDate = unitDates.get(b);
+				return compareDates(aDate, bDate) || ((unitRanks.get(a) - unitRanks.get(b)) * direction) || (a.index - b.index);
 			}
 			if (prefs.sortMode === 'color') return compareColors(colorRank(a.root), colorRank(b.root)) || (a.index - b.index);
 			return a.index - b.index;
@@ -32402,10 +32413,11 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 				_applyDialogControlColorSort(container);
 				_invalidateDialogControlDomReadCache();
 				const nativeFilter = _getDialogControlNativeFilter();
+				const viewPrefs = _getDialogControlViewPrefs();
 				changedRows.forEach(row => {
 					const owner = row.parentElement?.closest?.(itemSel);
 					if (container.contains(row) && (!owner || !container.contains(owner))) {
-						_applyDialogControlRowFilter(row, nativeFilter);
+						_applyDialogControlRowFilter(row, nativeFilter, viewPrefs);
 					}
 				});
 			}

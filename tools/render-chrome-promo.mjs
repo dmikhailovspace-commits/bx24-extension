@@ -15,7 +15,9 @@ const browser = await chromium.launch({ headless: true });
 try {
   for (const { name, width, height, className } of [
     { name: 'promo-wide.png', width: 1400, height: 560, className: 'wide' },
-    { name: 'promo.png', width: 440, height: 280, className: 'small' }
+    { name: 'promo.png', width: 440, height: 280, className: 'small' },
+    { name: 'screenshot-promo-wide.png', width: 1280, height: 800, className: 'wide gallery' },
+    { name: 'screenshot-promo.png', width: 1280, height: 800, className: 'small gallery' }
   ]) {
     const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
     await page.route('**/*', route => route.abort());
@@ -39,6 +41,10 @@ try {
       .small .frame{inset:9px}.small .eyebrow{top:28px;left:24px;font-size:9px}.small .line{left:24px;top:49px;width:225px}
       .small h1{top:80px;left:22px;font-size:26px;line-height:1.16}.small p{top:171px;left:24px;width:265px;font-size:12px;line-height:1.42}
       .small .footer{bottom:26px;left:24px;font-size:9px}
+      .gallery .frame{inset:24px}.gallery .eyebrow{top:110px;left:76px;font-size:17px}.gallery .line{top:160px;left:76px;width:470px}
+      .gallery h1{top:245px;left:72px;font-size:60px;line-height:1.18}.gallery p{top:445px;left:76px;width:590px;font-size:25px;line-height:1.45}
+      .gallery .footer{bottom:90px;left:76px;font-size:15px}
+      .small.gallery .art{background-position:70% center}.small.gallery .shade{background:linear-gradient(90deg,#08090bf5 0%,#08090bee 28%,#08090b9c 58%,#08090b10 100%)}
     </style><body class="${className}"><div class="art"></div><div class="shade"></div><div class="frame"></div>
     <div class="eyebrow">СОРТИРОВЩИК ЧАТОВ ДЛЯ BITRIX24</div><div class="line"></div>
     <h1>Каждому чату —<br>своё место.</h1>

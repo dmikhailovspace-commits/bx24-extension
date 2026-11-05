@@ -81,6 +81,7 @@ try {
     const r=el.getBoundingClientRect();return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)===el;
   }),true,'Update explanation is above native panels, not just inside viewport');
   assert.equal(await page.locator('.pena-extension-toolbar-credit').innerText(),'by Dmitry Mikhailov');
+  assert.equal(await page.locator('.pena-extension-toolbar-credit').evaluate(el => el.tagName === 'SPAN' && !el.closest('a') && !el.hasAttribute('tabindex')),true,'Developer credit must remain plain text without a website link');
   await page.screenshot({path:'tests/artifacts/update-toolbar.png'});
   await page.keyboard.press('Escape');
   assert.equal(await page.locator('.pena-chrome-update-popup').count(),0);

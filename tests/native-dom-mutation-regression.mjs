@@ -322,3 +322,6 @@ try {
  await browser.close();
  await server.close();
 }
+
+// The same release gate checks measured render projection equivalence.
+if (!process.env.PENA_DOM_AUDIT_SOURCE) await import('./render-performance-regression.mjs');
