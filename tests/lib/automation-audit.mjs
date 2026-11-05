@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {runInNewContext} from 'node:vm';
+import {verifyAutomationConditionMatrix} from './automation-condition-matrix.mjs';
 
 export async function verifyAutomationAudit(model,injectedSource) {
+ verifyAutomationConditionMatrix(model);
  const now=Date.parse('2026-10-29T12:00:00Z');
  const check=(field,op,value,actual,expected)=>assert.equal(model.automationCondition({field,op,value},{[field]:actual},'tasks',now),expected,`${field}/${op}: ${JSON.stringify(actual)}`);
  for(const [op,value,yes,no] of [
@@ -12,7 +14,7 @@ export async function verifyAutomationAudit(model,injectedSource) {
  ]) {check('title',op,value,yes,true);check('title',op,value,no,false);}
  for(const field of ['responsibleId','createdBy','accomplices','auditors','groupId','status','priority']) {
   for(const op of ['eq','neq']) {
-   check(field,op,'2',2,op==='eq');check(field,op,'2','12',op==='neq');
+   check(field,op,'2',2,op==='eq');check(field,op,'2',['status','priority'].includes(field)?'1':'12',op==='neq');
    assert.equal(model.automationCondition({field,op,value:'2'},{},'tasks',now),null,`${field}/${op} unknown`);
    assert.equal(model.automationCondition({field,op,value:'2'},{[field]:null},'tasks',now),null);
   }

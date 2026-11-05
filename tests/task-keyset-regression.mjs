@@ -52,7 +52,7 @@ function setup({count=100,deleteAfterFirst=false,ignoreCursor=false,reverse=fals
   _mergeDialogTaskCatalogRows:batch=>batch.length,
   findContainer:()=>null,_getDialogNativeSourceRows:()=>[],
   _dialogControlNativeWorkspaceTab:'time',document:{visibilityState:'visible'},navigator:{onLine:true},
-  _dialogTimeTaskRevisions:new Map(), _dialogTimeTaskLogEvidence:new Map(),_dialogTimeView:'day',_dialogTimeManualSearchQuery:'',
+  _dialogTimeTaskRevisions:new Map(), _dialogAutomationTaskRevisions:new Map(), _dialogTimeTaskLogEvidence:new Map(),_dialogTimeView:'day',_dialogTimeManualSearchQuery:'',
   _getDialogTimeSelectedRange:()=>({}),_loadDialogTimeRange:async()=>{},_sleepDialogControl:async()=>{}
  });
  // Native pagination delays are controlled here; immediately resolving the

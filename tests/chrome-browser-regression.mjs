@@ -75,6 +75,7 @@ try {
   await updateButton.click();
   assert.equal(await updateButton.getAttribute('aria-expanded'), 'true');
   assert.match(await page.locator('.pena-chrome-update-popup [role="status"]').innerText(), /Обновления из Chrome Web Store устанавливаются браузером автоматически/);
+  assert.deepEqual(await page.locator('.pena-chrome-update-popup .release-notes li').allTextContents(),JSON.parse(readFileSync('update.json','utf8')).release_notes);
   const popupBox = await page.locator('.pena-chrome-update-popup').boundingBox();
   assert.ok(popupBox.x >= 0 && popupBox.x + popupBox.width <= 1280 && popupBox.y + popupBox.height <= 800);
   assert.equal(await page.locator('.pena-chrome-update-popup').evaluate(el => {

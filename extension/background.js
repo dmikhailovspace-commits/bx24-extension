@@ -919,7 +919,9 @@ async function readUpdateChannel(force = false) {
         if (!/^\d+\.\d+\.\d+(\.\d+)?$/.test(info.version) ||
           info.raw_base_url !== `https://raw.githubusercontent.com/${UPDATE_REPO}/v${info.version}` ||
           info.release_url !== `https://github.com/${UPDATE_REPO}/releases/tag/v${info.version}`) throw new Error('Invalid update channel');
-        const next = {version:info.version, at:Date.now()};
+        const rawNotes=Array.isArray(info.release_notes)?info.release_notes:typeof info.changelog==='string'?info.changelog.split(/\r?\n/):[];
+        const notes=rawNotes.filter(note=>typeof note==='string').map(note=>note.trim().slice(0,240)).filter(Boolean).slice(0,6);
+        const next = {version:info.version, notes, at:Date.now()};
         await storageSet('local', {'pena.update.channel.v1':next});
         updateFailureAt = 0;
         return next;
@@ -951,7 +953,7 @@ async function handleUpdateMessage(message, sender) {
   }
   if (message.action === 'check') {
     const info = await readUpdateChannel(message.force === true);
-    return {available:compareUpdateVersions(info.version, chrome.runtime.getManifest().version) > 0, version:info.version, desktop, stale:info.stale === true};
+    return {available:compareUpdateVersions(info.version, chrome.runtime.getManifest().version) > 0, version:info.version, notes:info.notes, desktop, stale:info.stale === true};
   }
   if (message.action !== 'apply' || !/^\d+\.\d+\.\d+(\.\d+)?$/.test(message.version)) throw new Error('Invalid update action');
   if (updateApply) return updateApply;

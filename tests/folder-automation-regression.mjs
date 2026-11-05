@@ -106,9 +106,10 @@ try {
  assert.ok(!(await items()).find(item=>item.id==='chat5')?.folderId,'Existing chat remains excluded after a new arrival');
  await open();
  const savedBeforeCollapse=await page.evaluate(()=>localStorage.getItem(Object.keys(localStorage).find(key=>key.startsWith('pena.automation.v1.')&&key.endsWith('.chats'))));
- await page.getByRole('button',{name:'Свернуть правило',exact:true}).click();
+ assert.equal(await page.locator('.pena-automation-rule-body:visible').count(),0,'Saved rules start collapsed');
+ await page.getByRole('button',{name:'Развернуть правило',exact:true}).click();
  await page.getByRole('button',{name:'Закрыть',exact:true}).click();await open();
- assert.equal(await page.getByRole('button',{name:'Развернуть правило',exact:true}).count(),1,'Accordion state survives reopening');
+ assert.equal(await page.getByRole('button',{name:'Развернуть правило',exact:true}).count(),1,'Every reopening collapses saved rules');
  assert.equal(await page.evaluate(()=>localStorage.getItem(Object.keys(localStorage).find(key=>key.startsWith('pena.automation.v1.')&&key.endsWith('.chats')))),savedBeforeCollapse,'Folding does not rewrite active rules');
  await page.getByRole('button',{name:'Развернуть правило',exact:true}).click();
  await page.getByLabel('Распределить уже существующие диалоги').check();
@@ -251,6 +252,7 @@ try {
  // duplicate names, empty replies, errors and responses arriving after query changes.
  await page.locator('.task-host .pena-native-rules-button').click();
  assert.equal(await page.locator('.task-host .pena-native-rules-button svg').count(),1);
+ await page.getByRole('button',{name:'Развернуть правило',exact:true}).click();
  await page.getByRole('button',{name:'Добавить правило',exact:true}).click();
  await page.getByLabel('Поле условия').last().selectOption('createdBy');
  await page.evaluate(()=>{
@@ -306,13 +308,13 @@ try {
  await page.getByLabel('Название папки',{exact:true}).fill('Автоматические');
  await page.getByLabel('Название папки',{exact:true}).press('Enter');
  assert.match(await page.getByLabel('Папка назначения').last().locator('option:checked').innerText(),/Автоматические/);
- await page.getByRole('button',{name:'Поднять правило',exact:true}).last().click();
+ await page.getByRole('button',{name:'Переместить правило',exact:true}).last().press('Alt+ArrowUp');
  assert.equal(await page.getByLabel('Поле условия').first().inputValue(),'groupId');
- await page.getByRole('button',{name:'Опустить правило',exact:true}).first().click();
+ await page.getByRole('button',{name:'Переместить правило',exact:true}).first().press('Alt+ArrowDown');
  await page.getByRole('button',{name:'Свернуть правило',exact:true}).first().click();
- await page.getByRole('button',{name:'Поднять правило',exact:true}).last().click();
+ await page.getByRole('button',{name:'Переместить правило',exact:true}).last().press('Alt+ArrowUp');
  assert.equal(await page.locator('.pena-automation-rule').last().locator('.pena-automation-rule-body').isVisible(),false,'Folded state follows the rule when reordered');
- await page.getByRole('button',{name:'Опустить правило',exact:true}).first().click();
+ await page.getByRole('button',{name:'Переместить правило',exact:true}).first().press('Alt+ArrowDown');
  await page.getByRole('button',{name:'Развернуть правило',exact:true}).click();
  await page.addStyleTag({content:'button{line-height:48px;text-indent:14px;letter-spacing:3px;text-transform:uppercase}'});
  for(const width of [1280,768,680,420,360,320]) {
@@ -341,6 +343,7 @@ try {
  await page.locator('.pena-automation-panel').waitFor({state:'detached',timeout:15000});
  await page.locator('.task-host .pena-native-rules-button').click();
  await page.getByRole('tab',{name:'Правила',exact:true}).click();
+ await page.getByRole('button',{name:'Развернуть правило',exact:true}).click();
  await page.getByLabel('Значение условия').last().fill('Быстрый');
  await page.getByRole('button',{name:'Закрыть',exact:true}).click();
  await page.waitForTimeout(400);

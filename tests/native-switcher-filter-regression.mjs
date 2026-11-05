@@ -17,7 +17,7 @@ assert.ok(boundary > 0);
 // construction; browser/native suites separately cover those event handlers.
 const renderProbe = renderSource.slice(0, boundary) + `
 return { groups: Object.fromEntries(groupStatuses), segment: segmentStatus,
-  folders: Object.fromEntries(folderStatuses), ids: filteredSegmentDialogItems.map(item => item.id) };
+  folders: Object.fromEntries(folderStatuses), ids: _lastProjectedStatusItems.map(item => item.id) };
 }`;
 const phases = [];
 function phase(name, run) {
@@ -40,7 +40,7 @@ function fixture() {
   const sandbox = {
     window: {}, IS_OL_FRAME: false, _currentPanelMode: 'tasks', filters: {},
     _dialogControlNativeWorkspaceTab: '',
-    _isDialogControlNativeMode: () => true, _clearDialogControlNativeSwitcher: noop,
+    _isDialogControlNativeMode: () => true, _isDialogNativeLazyMode: () => false, _clearDialogControlNativeSwitcher: noop,
     _ensureDialogControlNativeSwitcher: () => ({ classList: { toggle: noop, remove: noop }, style: { removeProperty: noop } }),
     _markDialogControlNativeMutation: noop,
     _getDialogControlSegments: () => [],
@@ -59,19 +59,29 @@ function fixture() {
   };
   vm.createContext(sandbox);
   for (const name of ['_getDialogControlNativeDialogItemsForSegment', '_getDialogControlNativeFoldersForSegment',
-    '_getDialogControlNotificationStatus', '_getDialogControlItemFilterMeta', '_matchesDialogControlGlobalFilters', 'matchByFilters']) {
+    '_getDialogControlNotificationStatus', '_getDialogControlItemFilterMeta', '_matchesDialogControlGlobalFilters', 'matchByFilters',
+    '_getDialogControlCounterItems', '_getDialogControlCounterProjection']) {
     vm.runInContext(extract(name), sandbox);
   }
   const actualFilter = sandbox._matchesDialogControlGlobalFilters;
-  sandbox._matchesDialogControlGlobalFilters = (item, index) => {
+  sandbox._matchesDialogControlGlobalFilters = (item, index, meta) => {
     state.calls.set(item, (state.calls.get(item) || 0) + 1);
-    return actualFilter(item, index);
+    return actualFilter(item, index, meta);
+  };
+  // The optimized render no longer keeps filteredSegmentDialogItems locally.
+  // Capture the actual children passed to the final (active-segment) status
+  // projection; preserve all production membership/filter/count calculations.
+  const actualStatus=sandbox._getDialogControlNotificationStatus;
+  sandbox._getDialogControlNotificationStatus=(items,index,cache)=>{
+    sandbox._lastProjectedStatusItems=items;
+    return actualStatus(items,index,cache);
   };
   vm.runInContext(renderProbe, sandbox);
   return { rows, state, sandbox, render() {
     state.calls.clear();
     const result = JSON.parse(JSON.stringify(sandbox._renderDialogControlNativeSwitcher({}, rows)));
-    assert.equal(state.calls.size, rows.filter(item => item.type !== 'folder').length);
+    assert.equal(state.calls.size, rows.filter(item => item.type !== 'folder' && !item.unavailable).length);
+    assert.ok(rows.filter(item=>item.unavailable).every(item=>!state.calls.has(item)),'unavailable rows are rejected before metadata/filter work');
     assert.ok([...state.calls.values()].every(count => count === 1), `filter calls per item: ${JSON.stringify([...state.calls].map(([item, count]) => [item.id, count]))}`);
     return result;
   } };

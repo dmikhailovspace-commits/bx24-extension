@@ -63,6 +63,7 @@ export async function verifyResorting(browser, server, source) {
   await page.getByRole('button',{name:'Снова предлагать переносы',exact:true}).waitFor();
   await page.getByRole('tab',{name:'Правила',exact:true}).click();
   await page.getByLabel('Название правила').fill('Изменённое правило после исключения');
+  await page.getByRole('button',{name:'Развернуть правило',exact:true}).click();
   await page.getByLabel('Оператор',{exact:true}).selectOption('starts');
   await page.getByLabel('Распределить уже существующие диалоги').check();
   await page.getByRole('button',{name:'Сохранить',exact:true}).click();

@@ -6,7 +6,11 @@ const name='_armPenaExtensionToolbarControls';const start=source.indexOf(`\tfunc
 let callback,queries=0,refreshes=0;
 const header={isConnected:true,matches:()=>true,querySelector:()=>({}),contains:node=>node?.insideHeader===true};let activeHeader=header;
 const leaf=()=>({nodeType:1,matches:()=>false,querySelector:()=>{queries++;return null},querySelectorAll:()=>{queries++;return []}});
-const root=leaf();const context=vm.createContext({IS_OL_FRAME:false,window:{},document:{getElementById:()=>({}),documentElement:{}},requestAnimationFrame:fn=>fn(),MutationObserver:class{constructor(fn){callback=fn}observe(){}},_ensureBitrixListSystemToolbarSticky:()=>{refreshes++;return activeHeader},_getBitrixListSearchHost:()=>activeHeader,_isPenaNativeListSearchInput:()=>false});
+// The toolbar now also tracks native search input remounts. This discovery
+// fixture owns a mounted header and no active lazy search; supply that state
+// without replacing the production observer or relaxing its scan budget.
+const root=leaf();const context=vm.createContext({IS_OL_FRAME:false,window:{},document:{getElementById:()=>({}),documentElement:{}},requestAnimationFrame:fn=>fn(),MutationObserver:class{constructor(fn){callback=fn}observe(){}},_ensureBitrixListSystemToolbarSticky:()=>{refreshes++;return activeHeader},_getBitrixListSearchHost:()=>activeHeader,_isPenaNativeListSearchInput:()=>false,
+ _bitrixSearchSourceInput:null,_getBitrixListSearchInput:()=>null,_isDialogNativeLazyMode:()=>false});
 vm.runInContext(source.slice(start,start+1+match.index)+`\n${name}();`,context);
 callback([{type:'childList',target:root,addedNodes:Array.from({length:240},leaf),removedNodes:[]}]);const popupQueries=queries,popupRefreshes=refreshes-1;
 const input=leaf();input.insideHeader=true;callback([{type:'childList',target:input,addedNodes:[leaf()],removedNodes:[]}]);const headerReplacementRefreshes=refreshes-1-popupRefreshes;

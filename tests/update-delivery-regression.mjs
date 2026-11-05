@@ -10,7 +10,7 @@ const report={platform:process.platform,phases:[]};
 async function phase(name,fn){try{report.phases.push({name,status:'PASS',evidence:await fn()});}catch(e){report.phases.push({name,status:'FAIL',error:e.stack});}console.log(report.phases.at(-1));}
 const origin='https://portal.test/online/';
 const repo='dmikhailovspace-commits/bx24-extension';
-const metadata=version=>({version,raw_base_url:`https://raw.githubusercontent.com/${repo}/v${version}`,release_url:`https://github.com/${repo}/releases/tag/v${version}`});
+const metadata=version=>({version,release_notes:['Улучшена сортировка'],raw_base_url:`https://raw.githubusercontent.com/${repo}/v${version}`,release_url:`https://github.com/${repo}/releases/tag/v${version}`});
 await phase('publication requires public channel readback, including already-published releases',async()=>{
  const expected=metadata('9.0.1');let calls=0,waits=0;
  await verifyPublicUpdateChannel(expected,{attempts:3,wait:async()=>waits++,fetchImpl:async(url,options)=>{
@@ -30,6 +30,7 @@ await phase('automatic check sees a new release after one minute; manual check b
  }});
  const check=force=>new Promise(resolve=>listener({channel:'pena.update.v1',action:'check',force},{id:'test',url:origin},resolve));
  assert.equal((await check()).result.available,false);
+ assert.deepEqual(Array.from((await check()).result.notes),['Улучшена сортировка'],'Validated update metadata reaches the desktop UI');
  remote='8.0.21';now+=61000;
  assert.equal((await check()).result.version,remote);assert.equal(calls.length,2,'Do not reuse the old one-hour cache');
  remote='8.0.22';
@@ -72,7 +73,7 @@ await phase('closed-shadow consent requires a real click and preserves visible d
    window.chrome={runtime:{sendMessage:(message,callback)=>{requests.push(message);callback({ok:true,result:message.action==='check'?{available:true,version:'9.0.1',desktop:mode.desktop}:message.action==='prepare'?mode:{started:true}});}}};
   },mode);
   const content=read('extension/content.js');
-  await page.addScriptTag({content:"const _releaseVersion='8.0.20';\n"+content.slice(content.indexOf('  // Consent lives'),content.indexOf("  const _enabledKey"))});
+  await page.addScriptTag({content:"const _releaseVersion='8.0.20';\n"+content.slice(content.indexOf('  // Keep these installed-version notes'),content.indexOf("  const _enabledKey"))});
   await page.evaluate(()=>document.dispatchEvent(new Event('pena-update-slot-ready')));
   await page.waitForFunction(()=>testRoot.querySelector('.badge').hidden===false);
   assert.equal(await page.evaluate(()=>shadowMode),'closed');
@@ -107,7 +108,7 @@ await phase('update control remains visible without a release and supports manua
    window.chrome={runtime:{sendMessage:(message,callback)=>{requests.push(message);callback(window.fail?{ok:false,error:'Не удалось проверить обновления. Повторите.'}:{ok:true,result:message.action==='check'?{available:remote!=='8.0.20',version:remote,desktop:true}:{native:true,desktop:true}});}}};
   });
   const content=read('extension/content.js');
-  await page.addScriptTag({content:"const _releaseVersion='8.0.20';\n"+content.slice(content.indexOf('  // Consent lives'),content.indexOf("  const _enabledKey"))});
+  await page.addScriptTag({content:"const _releaseVersion='8.0.20';\n"+content.slice(content.indexOf('  // Keep these installed-version notes'),content.indexOf("  const _enabledKey"))});
   await page.evaluate(()=>document.dispatchEvent(new Event('pena-update-slot-ready')));
   assert.equal(await page.evaluate(()=>testRoot.querySelector('.badge').getAttribute('aria-label')),'Обновление');
   assert.equal(await page.evaluate(()=>testRoot.querySelector('.badge').textContent),'');

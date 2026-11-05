@@ -21,6 +21,22 @@
   const _logoUrl = chrome.runtime.getURL('icons/logo.png');
   const _runtimeManifest = chrome.runtime.getManifest();
   const _releaseVersion = _runtimeManifest.version;
+  // Keep these installed-version notes in sync with update.json.release_notes.
+  const _releaseNotes = [
+    'Правила можно перетаскивать: верхнее имеет приоритет.',
+    'Проверка показывает пересечения правил и победителя.',
+    'Исправлены обновление условий и подтверждения переносов.',
+    'Настройки и правила можно переносить между версиями.'
+  ];
+  const _makeReleaseNotes = value => {
+    const section=document.createElement('section');section.className='release-notes';
+    const heading=document.createElement('strong');heading.textContent='Что нового';section.append(heading);
+    const lines=(Array.isArray(value)?value:typeof value==='string'?value.split(/\r?\n/):[])
+      .filter(line=>typeof line==='string').map(line=>line.trim().slice(0,240)).filter(Boolean).slice(0,6);
+    if(lines.length){const list=document.createElement('ul');for(const line of lines){const item=document.createElement('li');item.textContent=line;list.append(item);}section.append(list);}
+    else {const text=document.createElement('p');text.textContent='Описание изменений не опубликовано.';section.append(text);}
+    return section;
+  };
   // Consent lives in the isolated world and a closed shadow root. Page events
   // may request mounting, but can never request installation or forge a click.
   (() => {
@@ -57,11 +73,13 @@
       if (!event.isTrusted) return;
       close();panel.replaceChildren();panel.hidden=false;button.setAttribute('aria-expanded','true');
       const requestId=opened;
-      const title=document.createElement('strong');title.textContent='Обновления';
+      const title=document.createElement('strong');title.textContent=`Версия ${_releaseVersion}`;
+      const notes=_makeReleaseNotes(_releaseNotes);
+      const hint=document.createElement('small');hint.className='update-hint';hint.textContent='Новые версии проверяются автоматически.';
       const text=document.createElement('p');text.setAttribute('role','status');text.textContent='Проверяем новую версию…';
       const actions=document.createElement('div');actions.className='actions';
       const later=document.createElement('button');later.textContent='Позже';later.addEventListener('click',()=>{close();button.focus();});
-      actions.append(later);panel.append(title,text,actions);
+      actions.append(later);panel.append(title,notes,hint,text,actions);
       if (typeof panel.showPopover==='function') panel.showPopover();
       position();later.focus();
       if (pending) {text.textContent='Загружаем обновление. Bitrix24 перезапустится после проверки файлов.';position();return;}
@@ -80,6 +98,7 @@
         later.textContent='Закрыть';actions.prepend(retry);position();return;
       }
       title.textContent=`Обновление ${info.version}`;
+      notes.replaceWith(_makeReleaseNotes(info.notes));
       text.textContent='Проверяем способ установки…';
       const approved=info.version;
       let mode;
@@ -123,7 +142,7 @@
       if (!host) {
         host=document.createElement('span');host.style.cssText='display:inline-flex;position:relative;flex:0 0 auto';
         root=host.attachShadow({mode:'closed'});
-        const style=document.createElement('style');style.textContent=`:host{all:initial;display:inline-flex}*{box-sizing:border-box}[hidden]{display:none!important}button,a{font:600 11px/1.3 system-ui;cursor:pointer;color:#1d4ed8;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:5px 7px;text-decoration:none}button:disabled{opacity:.65;cursor:wait}button:focus-visible,a:focus-visible{outline:2px solid #2563eb;outline-offset:2px}.badge{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:2px;border:0;background:transparent;color:#526071}.badge svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.badge.available{background:#fff4c2;color:#805500}.panel{position:fixed;inset:auto;margin:0;width:min(330px,calc(100vw - 16px));padding:14px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;color:#263241;box-shadow:0 8px 28px #0f172a30;font:13px/1.4 system-ui;z-index:2147483647}.panel strong{font-size:14px}.panel p{margin:10px 0 14px}.actions{display:flex;flex-wrap:wrap;gap:8px}.primary{background:#2563eb;border-color:#2563eb;color:#fff}`;
+        const style=document.createElement('style');style.textContent=`:host{all:initial;display:inline-flex}*{box-sizing:border-box}[hidden]{display:none!important}button,a{font:600 11px/1.3 system-ui;cursor:pointer;color:#1d4ed8;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:5px 7px;text-decoration:none}button:disabled{opacity:.65;cursor:wait}button:focus-visible,a:focus-visible{outline:2px solid #2563eb;outline-offset:2px}.badge{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:2px;border:0;background:transparent;color:#526071}.badge svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.badge.available{background:#fff4c2;color:#805500}.panel{position:fixed;inset:auto;margin:0;width:min(330px,calc(100vw - 16px));padding:14px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;color:#263241;box-shadow:0 8px 28px #0f172a30;font:13px/1.4 system-ui;z-index:2147483647}.panel{max-height:calc(100vh - 16px);overflow:auto}.panel strong{font-size:14px}.release-notes{margin-top:12px}.release-notes ul{margin:8px 0 12px;padding-left:18px}.release-notes li+li{margin-top:6px}.update-hint{display:block;color:#68778d;font-size:11px}.panel p{margin:10px 0 14px}.actions{display:flex;flex-wrap:wrap;gap:8px}.primary{background:#2563eb;border-color:#2563eb;color:#fff}`;
         button=document.createElement('button');button.type='button';button.className='badge';button.hidden=true;button.setAttribute('aria-haspopup','dialog');button.setAttribute('aria-expanded','false');button.addEventListener('click',open);
         panel=document.createElement('div');panel.className='panel';panel.hidden=true;panel.setAttribute('role','dialog');panel.setAttribute('aria-label','Обновление расширения');
         if (typeof panel.showPopover==='function') panel.setAttribute('popover','manual');else panel.style.cssText='position:absolute;left:0;top:32px';

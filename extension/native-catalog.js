@@ -488,7 +488,12 @@
 		const facts = { ...previous };
 		for (const [field, api] of Object.entries({ title:'TITLE', responsibleId:'RESPONSIBLE_ID', createdBy:'CREATED_BY',
 			accomplices:'ACCOMPLICES', auditors:'AUDITORS', groupId:'GROUP_ID', status:'STATUS', priority:'PRIORITY', deadline:'DEADLINE' })) {
-			if (hasOwn(task, field) || hasOwn(task, api)) facts[field] = task[field] ?? task[api] ?? '';
+			if (hasOwn(task, field) || hasOwn(task, api)) {
+				const value = hasOwn(task, field) ? task[field] : task[api];
+				// A cleared deadline is known to be absent; missing person/status/title
+				// data is unknown and must not satisfy a negative condition.
+				facts[field] = value == null ? (field === 'deadline' ? '' : null) : value;
+			}
 		}
 		return facts;
 	}
@@ -496,6 +501,8 @@
 		const { field, op, value } = condition || {};
 		const spec = automationFields[field];
 		if (!spec || (mode !== 'tasks' && !['title', 'kind'].includes(field))) return false;
+		const operators = spec[1] === 'text' ? ['eq','neq','contains','notContains','starts','ends'] : spec[1] === 'date' ? ['empty','present','overdue','before','after'] : ['eq','neq'];
+		if (!operators.includes(op)) return false;
 		if (!hasOwn(facts, field) || facts[field] == null) return null;
 		const actual = facts[field], expected = normalizeText(value);
 		if (spec[1] === 'date') {
@@ -506,12 +513,30 @@
 			if (op === 'overdue') {
 				if (date >= now) return false;
 				const status = normalizeText(facts.status);
-				return !status ? null : !['4','5','6','7'].includes(status);
+				return !['1','2','3','4','5','6','7'].includes(status) ? null : !['4','5','6','7'].includes(status);
 			}
 			const threshold = Date.parse(value);
 			return Number.isFinite(threshold) && (op === 'before' ? date < threshold : op === 'after' ? date > threshold : false);
 		}
 		if (!expected) return false;
+		if (spec[1] === 'ids') {
+			if (!/^[1-9]\d*$/.test(expected)) return false;
+			let unknown = false;
+			const ids = (Array.isArray(actual) ? actual : [actual]).map(entry => {
+				const id = normalizeText(entry && typeof entry === 'object' ? entry.id ?? entry.ID : entry);
+				if (!/^\d+$/.test(id) || (id === '0' && field !== 'groupId')) unknown = true;
+				return id;
+			});
+			const contains = ids.includes(expected);
+			if (!contains && unknown) return null;
+			return op === 'eq' ? contains : !contains;
+		}
+		if (spec[1] === 'text' && (typeof actual !== 'string' || !normalizeText(actual))) return null;
+		const enums = {kind:['personal','group'],status:['1','2','3','4','5','6','7'],priority:['0','1','2']};
+		if (enums[spec[1]]) {
+			if (!enums[spec[1]].includes(expected)) return false;
+			if (!enums[spec[1]].includes(normalizeText(actual))) return null;
+		}
 		const values = (Array.isArray(actual) ? actual : [actual]).map(value => normalizeText(value?.id ?? value));
 		if (op === 'eq') return values.includes(expected);
 		if (op === 'neq') return !values.includes(expected);

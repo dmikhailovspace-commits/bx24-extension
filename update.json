@@ -34,7 +34,13 @@
     "installers/macos/updater.sh"
   ],
   "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v8.0.66/extension/injected.js",
-  "changelog": "v8.0.66: Developer credit is plain text without a website link",
+  "changelog": "Перетаскивание и приоритет правил, проверка пересечений, исправления сортировки и перенос настроек.",
+  "release_notes": [
+    "Правила можно перетаскивать: верхнее имеет приоритет.",
+    "Проверка показывает пересечения правил и победителя.",
+    "Исправлены обновление условий и подтверждения переносов.",
+    "Настройки и правила можно переносить между версиями."
+  ],
   "verification_profile": "search-focused",
   "distribution": "github",
   "release_targets": [
