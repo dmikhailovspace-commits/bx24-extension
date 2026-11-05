@@ -19,5 +19,5 @@
 - [x] Add collapsed on/off switches, same-folder conflict suppression and live/lookup/dirty-fact badge refresh.
 - [x] Add priority model/journal and browser drag tests: up/down/end, cancellation, auto-scroll, expanded cards, pending preview, save/reopen, narrow layout.
 - [x] Add shared installed release notes and desktop remote changelog; test safe rendering and platform instructions.
-- [x] Run affected suites, full gate, context verification; rebuild and verify local 8.0.66 preview. Publish nothing.
-- [ ] New user instruction supersedes the internal-only restriction: after verification, replace GitHub release and Store submission under 8.0.66; preserve old release, verify frozen CI artifacts and public update channel, update delivery folder.
+- [x] Run affected suites, full gate, context verification; rebuild and verify local 8.0.66 preview. Full gate: 96/96, no reruns.
+- [x] New user instruction supersedes the internal-only restriction: replace GitHub release and Store submission under 8.0.66; preserve old release, verify frozen CI artifacts and public update channel, update delivery folder. Source cf006f1; CI 42078247151 passed; Store submission awaits review with automatic publication enabled.
