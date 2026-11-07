@@ -1197,29 +1197,26 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 @media(max-width:420px){.pena-automation-match{flex-wrap:wrap}.pena-automation-match>span{white-space:nowrap}.pena-automation-condition{grid-template-columns:minmax(0,1fr) 32px}.pena-automation-condition>:first-child{grid-column:1;grid-row:1}.pena-automation-condition>:nth-child(2){grid-column:1;grid-row:2}.pena-automation-condition>:nth-child(3){grid-column:1;grid-row:3}.pena-automation-condition>button:last-child{grid-column:2;grid-row:1}.pena-automation-condition>.pena-automation-no-value{display:none}}
 @media(prefers-reduced-motion:reduce){.pena-automation-rule-toggle svg{transition:none}}
 
-/* Rule priority drag: the insertion marker never participates in card layout. */
-.pena-settings-panel.pena-native-filter-panel{display:flex;flex-direction:column;align-items:stretch;gap:0;width:min(336px,calc(100vw - 24px));max-height:min(560px,70dvh);padding:18px;border-radius:14px;background:#fff;color:#25334a;font:500 13px/1.5 "Onest Variable",Arial,sans-serif;overscroll-behavior:contain}
-.pena-settings-panel h3{margin:0 32px 18px 0;font:650 15px/1.4 "Onest Variable",Arial,sans-serif;color:#182237}
-.pena-settings-panel .pena-settings-section{display:grid;gap:8px;padding:0 0 16px}
-.pena-settings-panel .pena-settings-label{font-size:12px;color:#68778d}
-.pena-settings-panel .pena-native-sort-controls{display:flex;width:100%;padding:3px;gap:3px;border:1px solid #e5eaf1;border-radius:9px;background:#f4f6f9}
-.pena-settings-panel .pena-native-sort-controls button{flex:1;height:34px;border:0;border-radius:6px;background:transparent;color:#68778d;font:600 12px/1.4 "Onest Variable",Arial,sans-serif}
-.pena-settings-panel .pena-native-sort-controls button[aria-pressed=true]{background:#fff;color:#244ed0;box-shadow:0 1px 4px #1822371a}
-.pena-settings-panel .pena-native-unread-filter{display:flex;flex-direction:row-reverse;justify-content:space-between;gap:12px;width:100%;padding:8px 0;color:#25334a;font-size:13px}
-.pena-settings-panel .pena-native-sync-status{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 12px;padding:10px 12px;border-radius:8px;background:#f7f9fc;font-size:11px;color:#68778d}
-.pena-settings-panel .pena-settings-advanced{padding-top:12px;border-top:1px solid #e5eaf1}
-.pena-settings-advanced summary{padding:6px 0;cursor:pointer;color:#68778d;font-size:12px}
-.pena-settings-advanced p{margin:8px 0 12px;color:#68778d;font-size:12px;line-height:1.5}
-.pena-settings-panel .pena-settings-transfer{width:100%;height:36px;padding:0 12px;border:1px solid #d7dfeb;border-radius:8px;background:#fff;color:#25334a;font:600 12px/1.4 "Onest Variable",Arial,sans-serif;cursor:pointer}
-.pena-settings-panel .pena-settings-transfer:hover{background:#f1f5fd;border-color:#a8bdef}
-.pena-settings-panel :focus-visible{outline:2px solid #7293f3;outline-offset:2px}
+/* Settings are scoped to their own disclosure; filter controls retain their original layout. */
+.pena-settings-section{flex:1 1 100%;min-width:0;border-top:1px solid #e5eaf1;padding-top:8px;font:12px/1.5 system-ui;color:#526174}
+.pena-settings-section summary{padding:5px 0;cursor:pointer}
+.pena-settings-section>summary{font-weight:600}
+.pena-settings-section .pena-settings-advanced{margin:4px 0 0;padding:8px 10px;background:#f7f9fc;border:1px solid #e5eaf1;border-radius:8px}
+.pena-settings-section p{margin:8px 0 12px;color:#68778d;font-size:12px;line-height:1.5}
+.pena-settings-section .pena-settings-transfer{width:100%;min-height:34px;padding:6px 10px;border:1px solid #d7dfeb;border-radius:6px;background:#fff;color:#25334a;font:600 12px/1.4 system-ui;cursor:pointer}
+.pena-settings-section .pena-settings-transfer:hover{background:#f1f5fd;border-color:#a8bdef}
+.pena-settings-section :focus-visible{outline:2px solid #7293f3;outline-offset:2px}
 .pena-transfer-panel.pena-automation-panel{display:flex;flex-direction:column;width:min(560px,100%);height:auto;max-height:calc(100dvh - 32px);background:#fff}
 .pena-transfer-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:20px 24px;border-bottom:1px solid #e5eaf1;flex-shrink:0}
 .pena-transfer-header h2{margin:0;font:650 18px/1.4 var(--pena-rules-ui);color:#182237}
 .pena-transfer-panel .pena-transfer-close{border:0;color:#68778d;background:transparent}
-.pena-transfer-body{min-height:0;overflow:auto;overscroll-behavior:contain;padding:20px 24px;display:grid;gap:20px}
+.pena-transfer-body{min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding:20px 24px;display:block}
+.pena-transfer-body>*+*{margin-top:20px}
+.pena-transfer-body>p:first-child{margin-top:0}
 .pena-transfer-panel .pena-transfer-intro,.pena-transfer-section>p{color:#68778d;font-size:13px;line-height:1.6}
-.pena-transfer-section{min-width:0;padding:18px;border:1px solid #e1e7f0;border-radius:12px;display:grid;gap:12px;background:#fafbfd}
+.pena-transfer-section{min-width:0;padding:18px;border:1px solid #e1e7f0;border-radius:12px;background:#fafbfd}
+.pena-transfer-section>*{margin:0}
+.pena-transfer-section>*+*{margin-top:12px}
 .pena-transfer-section h3{margin:0;font:650 14px/1.4 var(--pena-rules-ui);color:#182237}
 .pena-transfer-actions{display:flex;flex-wrap:wrap;gap:8px}
 .pena-transfer-panel button{height:36px;padding:0 12px}
@@ -1231,10 +1228,13 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 .pena-transfer-footer{display:flex;flex-wrap:wrap;gap:8px;padding:16px 24px;border-top:1px solid #e5eaf1;flex-shrink:0;background:#fff}
 .pena-transfer-footer [role=status]{width:100%;white-space:pre-line;overflow-wrap:anywhere;max-height:120px;overflow:auto;color:#526480;line-height:1.6}
 .pena-transfer-footer [role=status]:empty{display:none}
+.pena-transfer-footer [role=status]{margin:0}
 .pena-transfer-footer [data-state=error]{color:#ae3434}
 .pena-transfer-panel .pena-transfer-primary{background:#315fe8;border-color:#315fe8;color:#fff}
 .pena-transfer-panel .pena-transfer-primary:hover{background:#244ed0;color:#fff}
 @media(max-width:560px){.pena-transfer-panel.pena-automation-panel{max-height:calc(100dvh - 16px)}.pena-transfer-header{padding:16px}.pena-transfer-header h2{font-size:16px}.pena-transfer-body{padding:16px;gap:16px}.pena-transfer-section{padding:14px}.pena-transfer-footer{padding:12px 16px}.pena-transfer-footer button{flex:1 1 100%}.pena-transfer-footer [role=status]{max-height:88px}.pena-transfer-actions button{flex:1}}
+@media(max-height:440px){.pena-transfer-header{padding:8px 16px}.pena-transfer-footer{padding:8px 16px}.pena-transfer-footer [role=status]{max-height:44px}.pena-transfer-footer button{flex:1 1 42%;height:auto;min-height:36px;white-space:normal;line-height:1.3}}
+/* Rule priority drag: the insertion marker never participates in card layout. */
 .pena-automation-panel .pena-automation-priority{margin:0 0 16px;line-height:1.5}
 .pena-automation-panel .pena-automation-drag-handle{order:-2;width:32px;min-width:32px;padding:0;border-color:transparent;background:transparent;color:#8491a4;cursor:grab;touch-action:none}
 .pena-automation-panel .pena-automation-drag-handle svg{stroke-width:4;stroke-linecap:round}

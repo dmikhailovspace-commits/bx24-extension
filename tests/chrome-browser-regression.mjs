@@ -4,7 +4,7 @@ import { resolve, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { buildChrome } from '../tools/build-chrome.mjs';
-import {checkTransferCode} from './lib/settings-transfer-ui.mjs';
+import {checkTransferCode,openTransferSettings} from './lib/settings-transfer-ui.mjs';
 const require = createRequire(import.meta.url), { chromium } = require('playwright');
 mkdirSync(resolve('tests/artifacts'), { recursive:true });
 const packageDir = mkdtempSync(resolve('tests/artifacts/chrome-browser-package-'));
@@ -101,9 +101,7 @@ try {
   assert.ok(!requests.some(url => url.startsWith(origin) && url.includes('/fonts/')), 'packaged fonts never request portal-relative paths');
   phases.push({ name: 'granted HTTPS Messenger loads real worker + MAIN runtime under nonce-only script CSP', status: 'PASS', version: build.version });
   await page.evaluate(()=>{BX.message=key=>key==='USER_ID'?'7':'';});
-  await page.getByRole('button',{name:'Фильтры',exact:true}).click();
-  await page.locator('summary').filter({hasText:'Дополнительно'}).click();
-  await page.getByRole('button',{name:'Перенос настроек',exact:true}).click();
+  await openTransferSettings(page);
   const transfer=page.getByRole('dialog',{name:'Перенос настроек',exact:true});
   await transfer.waitFor();
   const firstDownload=page.waitForEvent('download');
@@ -137,9 +135,7 @@ try {
   assert.ok(!(await page.evaluate(()=>localStorage.getItem('pena.dialogControl.v1.chats'))).includes('folder:transfer'));
   await transfer.getByRole('button',{name:'Закрыть',exact:true}).click();
   phases.push({name:'sorting transfer: scope rejection, inert preview, explicit merge, download and undo',status:'PASS'});
-  if(!await page.locator('.pena-settings-panel').isVisible())await page.getByRole('button',{name:'Фильтры',exact:true}).click();
-  if(!await page.getByRole('button',{name:'Перенос настроек',exact:true}).isVisible())await page.getByText('Дополнительно',{exact:true}).click();
-  await page.getByRole('button',{name:'Перенос настроек',exact:true}).click();
+  await openTransferSettings(page);
   await checkTransferCode(page,'chrome');
   phases.push({name:'code transfer: clipboard denial, schema/scope validation, stale confirmation, responsive layout and undo after reopen',status:'PASS'});
 

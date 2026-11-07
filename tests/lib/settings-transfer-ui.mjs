@@ -1,5 +1,14 @@
 import assert from 'node:assert/strict';
 
+export async function openTransferSettings(page) {
+ if(!await page.locator('.pena-native-filter-panel').isVisible())await page.getByRole('button',{name:'Фильтры',exact:true}).click();
+ const settings=page.locator('.pena-settings-section');
+ if(!await settings.evaluate(el=>el.open))await settings.locator(':scope > summary').click();
+ const advanced=settings.locator('details');
+ if(!await advanced.evaluate(el=>el.open))await advanced.locator('summary').click();
+ await settings.getByRole('button',{name:'Перенос настроек',exact:true}).click();
+}
+
 export async function checkTransferCode(page, platform) {
  const panel=page.getByRole('dialog',{name:'Перенос настроек',exact:true});
  const status=panel.getByRole('status'),confirm=panel.getByRole('button',{name:'Подтвердить импорт'});
@@ -33,19 +42,27 @@ export async function checkTransferCode(page, platform) {
  await panel.getByRole('button',{name:'Скопировать код'}).click();await status.filter({hasText:'Код выделен'}).waitFor();
  assert.deepEqual(JSON.parse(await panel.getByLabel('Код экспорта').inputValue()).modes.chats.automation.rules,snapshot.modes.chats.automation.rules);
  // The UI must remain usable without downloads or clipboard in the desktop host.
- for (const viewport of [{width:1100,height:800},{width:360,height:640},{width:640,height:400}]) {
+ for (const viewport of [{width:1100,height:800},{width:360,height:640},{width:640,height:400},{width:360,height:320}]) {
   await page.setViewportSize(viewport);
   const box=await panel.boundingBox();assert.ok(box.x>=0&&box.y>=0&&box.x+box.width<=viewport.width+1&&box.y+box.height<=viewport.height+1,`${platform} dialog stays in viewport`);
   assert.equal(await panel.evaluate(el=>el.scrollWidth<=el.clientWidth+1),true,'No horizontal overflow');
+  const body=panel.locator('.pena-transfer-body');
+  assert.equal(await body.evaluate(el=>el.clientHeight>=64),true,'Expanded settings retain a usable scrolling area');
+  assert.equal(await body.evaluate(el=>{const sections=[...el.querySelectorAll('.pena-transfer-section')];return sections.every((s,i)=>!i||s.getBoundingClientRect().top>=sections[i-1].getBoundingClientRect().bottom);}),true,'Expanded sections never overlap');
+  // Reach both ends using the wheel, rather than letting Playwright hide clipping by scrolling ancestors.
+  await body.hover({position:{x:5,y:20}});await page.mouse.wheel(0,-3000);
+  await page.waitForFunction(()=>document.querySelector('.pena-transfer-body').scrollTop===0);
+  assert.equal(await panel.getByText('Папки, правила и распределение диалогов между приложением и Chrome. Только для того же портала и пользователя Bitrix24.',{exact:true}).evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+10,r.y+8));}),true,'First content is reachable');
+  await page.mouse.wheel(0,3000);
+  await page.waitForFunction(()=>{const el=document.querySelector('.pena-transfer-body');return el.scrollTop+el.clientHeight>=el.scrollHeight-2;});
+  assert.equal(await check.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}),true,'Last import control is reachable by scrolling');
   const button=panel.getByRole('button',{name:'Отменить последний импорт'});await button.scrollIntoViewIfNeeded();
   assert.equal(await button.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}),true,'Footer actions are not covered');
   await page.screenshot({path:`tests/artifacts/settings-${platform}-${viewport.width}.png`});
  }
  await page.setViewportSize({width:1280,height:800});
  await panel.getByRole('button',{name:'Закрыть',exact:true}).click();
- if(!await page.locator('.pena-settings-panel').isVisible())await page.getByRole('button',{name:'Фильтры',exact:true}).click();
- if(!await page.getByRole('button',{name:'Перенос настроек',exact:true}).isVisible())await page.getByText('Дополнительно',{exact:true}).click();
- await page.getByRole('button',{name:'Перенос настроек',exact:true}).click();
+ await openTransferSettings(page);
  await panel.getByRole('button',{name:'Отменить последний импорт'}).click();
  await page.getByRole('button',{name:'Восстановить',exact:true}).click();await status.filter({hasText:'Настройки восстановлены'}).waitFor();
  await page.keyboard.press('Escape');assert.equal(await panel.count(),0);

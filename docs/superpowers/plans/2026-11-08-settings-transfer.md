@@ -22,3 +22,10 @@
 - [x] Group existing filter/settings controls, flatten nested settings details; remove conflict counter implementation/styles, update relevant browser tests.
 - [x] Verify model, Chrome transfer, shared desktop fixture, rules drag/races, responsive screenshots and exact release profile; update PROJECT_CONTEXT.md and delivery documentation. Local final search-focused 16/16 in 390.5s; source 98133cb; Chrome package f96d1439…; rules drag 7 phases, preview races 9 phases and release notes passed separately.
 - [x] Retrieve verified Windows/macOS preview installers from CI 42415082497; sidecars, frozen source and identical local/CI Chrome package verified. Public 8.0.66 is already published in Chrome; next release version awaits user response, so no public assets/channel/Store submission are changed.
+
+## Correction after user review
+
+- Restore original filter layout and appearance; scope visual changes to the Settings disclosure and transfer dialog only.
+- Use natural block flow inside the scrolling transfer body, with fixed header/actions and compact footer on short windows.
+- Verify both expanded sections with real wheel scrolling to first/last control at 1100x800, 360x640, 640x400 and 360x320. Preserve file/code validation and undo checks.
+- User confirmed work under 8.0.67 (message says 6.67; interpreted explicitly as 8.0.67). Replace the earlier preview only after tests; no further version increase.

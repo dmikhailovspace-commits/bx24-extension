@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '8.0.66';
+	window.__ANITREC_RUNNING__ = '8.0.67';
 
-	const VER = '8.0.66';
+	const VER = '8.0.67';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -20615,8 +20615,7 @@ if (_presetChannel) {
 
 		if (_dialogControlNativeWorkspaceTab === 'filters') {
 			const filterPanel = document.createElement('div');
-			filterPanel.className = 'pena-native-filter-panel pena-native-command-popover pena-settings-panel';
-			filterPanel.setAttribute('aria-label','Настройки списка');
+			filterPanel.className = 'pena-native-filter-panel pena-native-command-popover';
 			const applyViewPreference = (patch, needsFilterPass = false) => {
 				const next = _setDialogControlViewPrefs(patch);
 				_syncDialogControlNativePreferenceControls(switcher, next);
@@ -20680,16 +20679,19 @@ if (_presetChannel) {
 				}
 			});
 			syncStatus.append(syncStatusText, syncButton);
-			const settingsTitle=document.createElement('h3');settingsTitle.textContent='Настройки списка';
-			const sortSection=document.createElement('div');sortSection.className='pena-settings-section';
-			const sortLabel=document.createElement('span');sortLabel.className='pena-settings-label';sortLabel.textContent='Сортировка';
-			sortControls.setAttribute('role','group');sortControls.setAttribute('aria-label','Сортировка');sortSection.append(sortLabel,sortControls);
-			const visibilitySection=document.createElement('div');visibilitySection.className='pena-settings-section';visibilitySection.append(unreadLabel);
-			filterPanel.append(_createDialogControlPopoverClose('Закрыть фильтры'),settingsTitle,sortSection,visibilitySection,syncStatus);
-			const advanced=document.createElement('details');advanced.className='pena-settings-advanced';
+			filterPanel.append(_createDialogControlPopoverClose('Закрыть фильтры'),sortControls,unreadLabel,syncStatus);
+			const settings=document.createElement('details');settings.className='pena-settings-section';
+			const settingsLabel=document.createElement('summary');settingsLabel.textContent='Настройки';settings.append(settingsLabel);
+			settings.addEventListener('toggle',()=>{
+				// Limit the expanded settings to the space below the existing toolbar.
+				// dvh keeps the limit responsive without a permanent resize listener.
+				if(settings.open)filterPanel.style.maxHeight=`min(360px, max(64px, calc(100dvh - ${Math.ceil(workspaceTabs.getBoundingClientRect().top)+43}px)))`;
+				else filterPanel.style.removeProperty('max-height');
+			});
+			const advanced=document.createElement('details');advanced.className='pena-settings-advanced';settings.append(advanced);
 			const advancedLabel=document.createElement('summary');advancedLabel.textContent='Дополнительно';advanced.append(advancedLabel);
 			const transfer=document.createElement('button');transfer.type='button';transfer.className='pena-settings-transfer';transfer.textContent='Перенос настроек';transfer.setAttribute('aria-haspopup','dialog');transfer.addEventListener('click',()=>_openSortingTransfer());
-			const transferHint=document.createElement('p');transferHint.textContent='Сохранить папки и правила или перенести их между приложением и Chrome.';advanced.append(transferHint,transfer);filterPanel.append(advanced);
+			const transferHint=document.createElement('p');transferHint.textContent='Папки, правила и распределение диалогов — файлом или кодом.';advanced.append(transferHint,transfer);filterPanel.append(settings);
 			workspaceTabs.appendChild(filterPanel);
 		}
 		const uniqueLabel = document.createElement('label');

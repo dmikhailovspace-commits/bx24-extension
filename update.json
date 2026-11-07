@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "8.0.66",
-  "release_date": "2026-11-05",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v8.0.66",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v8.0.66",
+  "version": "8.0.67",
+  "release_date": "2026-11-08",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v8.0.67",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v8.0.67",
   "extension_files": [
-    "worker-v8_0_66.js",
+    "worker-v8_0_67.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,10 +33,10 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v8.0.66/extension/injected.js",
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v8.0.67/extension/injected.js",
   "changelog": "Обновлённая панель настроек, исправленный экспорт и перенос файлом или кодом. Убраны показатели пересечений правил.",
   "release_notes": [
-    "Обновлён вид панели настроек без дополнительных вкладок.",
+    "Исправлены раскрытие и прокрутка настроек. Привычный вид фильтров сохранён.",
     "Исправлен экспорт папок, правил и распределения диалогов.",
     "Настройки можно перенести файлом или кодом и отменить импорт.",
     "Убраны показатели пересечений в правилах сортировки."
