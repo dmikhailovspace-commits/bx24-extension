@@ -582,7 +582,8 @@
 				const item = { id:id(x.id), type:text(x.type || 'chat',40), title:text(x.title || '',500),
 					folderId:text(x.folderId || '',160),segmentId:text(x.segmentId || '',160),
 					color:text(x.color || '',100),colorMode:text(x.colorMode || '',40),icon:text(x.icon || '',40) };
-				if (x.taskId != null) { item.taskId=String(x.taskId); if (!/^[1-9]\d*$/.test(item.taskId)) fail(); }
+				// Ordinary chat records carry taskId: '' in the shared runtime.
+				if (x.taskId != null && x.taskId !== '') { item.taskId=String(x.taskId); if (!/^[1-9]\d*$/.test(item.taskId)) fail(); }
 				if (item.type !== 'folder' && !/^(chat|user)[1-9]\d*$/.test(item.id)) fail();
 				if (item.segmentId && !segmentIds.has(item.segmentId)) fail();
 				if (item.type === 'folder' && item.folderId) fail();

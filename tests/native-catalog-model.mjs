@@ -489,6 +489,14 @@ console.log('ok - physical tail anchors survive DOM presentation reordering');
  const result=catalog.sortingTransfer(input,input.scope);
  assert.ok(!JSON.stringify(result).includes('SECRET'));
  assert.equal(result.modes.tasks.items[1].taskId,'42');
+ for (const emptyTaskId of ['', null, undefined]) {
+  const ordinary=structuredClone(input); ordinary.modes.chats.items[1].taskId=emptyTaskId;
+  assert.equal(catalog.sortingTransfer(ordinary,input.scope).modes.chats.items[1].taskId,undefined,'Ordinary chats have no task id');
+ }
+ for (const invalidTaskId of ['0','broken','-5']) {
+  const invalid=structuredClone(input); invalid.modes.chats.items[1].taskId=invalidTaskId;
+  assert.throws(()=>catalog.sortingTransfer(invalid,input.scope),'Nonempty invalid task IDs must still be rejected');
+ }
  assert.deepEqual(catalog.sortingTransfer(result,input.scope),result,'Round trip is stable');
  assert.throws(()=>catalog.sortingTransfer(input,'other.test~7'),/другого/);
  assert.throws(()=>catalog.sortingTransfer(input,'portal.test~8'),/другого/);

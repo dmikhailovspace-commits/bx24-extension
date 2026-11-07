@@ -23,10 +23,10 @@
   const _releaseVersion = _runtimeManifest.version;
   // Keep these installed-version notes in sync with update.json.release_notes.
   const _releaseNotes = [
-    'Правила можно перетаскивать: верхнее имеет приоритет.',
-    'Проверка показывает пересечения правил и победителя.',
-    'Исправлены обновление условий и подтверждения переносов.',
-    'Настройки и правила можно переносить между версиями.'
+    'Обновлён вид панели настроек без дополнительных вкладок.',
+    'Исправлен экспорт папок, правил и распределения диалогов.',
+    'Настройки можно перенести файлом или кодом и отменить импорт.',
+    'Убраны показатели пересечений в правилах сортировки.'
   ];
   const _makeReleaseNotes = value => {
     const section=document.createElement('section');section.className='release-notes';

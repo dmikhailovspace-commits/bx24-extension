@@ -12798,48 +12798,76 @@ if (_presetChannel) {
 		const previousFocus = document.activeElement;
 		const overlay = document.createElement('div'); overlay.className='pena-automation-overlay pena-sorting-transfer';
 		if (overlay.showPopover) overlay.setAttribute('popover','manual');
-		const panel = document.createElement('section'); panel.className='pena-automation-panel';
-		panel.style.cssText='width:min(480px,calc(100vw - 32px));padding:24px;display:flex;gap:16px;flex-direction:column';
+		const panel = document.createElement('section'); panel.className='pena-automation-panel pena-transfer-panel';
 		panel.setAttribute('role','dialog');panel.setAttribute('aria-modal','true');panel.setAttribute('aria-label','Перенос настроек');overlay.append(panel);
-		const node = (tag,text) => {const el=document.createElement(tag);el.textContent=text;panel.append(el);return el;};
-		node('h2','Перенос настроек');
-		node('p','Папки, правила и распределение диалогов между приложением и Chrome. Файл подходит только для этого портала и пользователя.');
-		const status=node('p','');status.setAttribute('role','status');status.style.whiteSpace='pre-line';
-		const current = () => {if(scope!==_getDialogTimeIdentityScopeKey())throw new Error('Пользователь изменился. Откройте перенос заново.');};
-		const action = (label,fn) => {const b=node('button',label);b.type='button';b.addEventListener('click',()=>{try{current();fn();}catch(e){status.textContent=e.message;}});return b;};
+		const node = (tag,text,parent=panel) => {const el=document.createElement(tag);el.textContent=text;parent.append(el);return el;};
+		const header=node('header','');header.className='pena-transfer-header';node('h2','Перенос настроек',header);
+		const body=node('div','');body.className='pena-transfer-body';
+		node('p','Папки, правила и распределение диалогов между приложением и Chrome. Только для того же портала и пользователя Bitrix24.',body).className='pena-transfer-intro';
+		const exportSection=node('section','',body);exportSection.className='pena-transfer-section';node('h3','Сохранить настройки',exportSection);
+		node('p','Скачайте файл или скопируйте код для переноса на другое устройство.',exportSection);
+		const exportActions=node('div','',exportSection);exportActions.className='pena-transfer-actions';
+		const exportDetails=node('details','',exportSection);node('summary','Код для переноса',exportDetails);
+		const exportCode=node('textarea','',exportDetails);exportCode.readOnly=true;exportCode.setAttribute('aria-label','Код экспорта');exportCode.spellcheck=false;
+		const importSection=node('section','',body);importSection.className='pena-transfer-section';node('h3','Загрузить настройки',importSection);
+		node('p','Выберите файл или вставьте код. Сначала проверим данные — до подтверждения ничего не изменится.',importSection);
+		const footer=node('div','');footer.className='pena-transfer-footer';
+		const status=node('p','',footer);status.setAttribute('role','status');status.setAttribute('aria-live','polite');
+		const current = () => {if(!overlay.isConnected||scope!==_getDialogTimeIdentityScopeKey())throw new Error('Пользователь изменился. Откройте перенос заново.');};
+		const showError=e=>{status.dataset.state='error';status.textContent=e instanceof SyntaxError?'Не удалось прочитать настройки. Выберите файл JSON или вставьте полный код.':e.message;};
+		const action = (label,fn,parent=footer) => {const b=node('button',label,parent);b.type='button';b.addEventListener('click',async()=>{try{current();status.dataset.state='';await fn();}catch(e){if(overlay.isConnected)showError(e);}});return b;};
+		const prepareExport=()=>{const text=JSON.stringify(_sortingTransferSnapshot(),null,2);exportCode.value=text;return text;};
 		action('Скачать файл',()=>{
-			const url=URL.createObjectURL(new Blob([JSON.stringify(_sortingTransferSnapshot(),null,2)],{type:'application/json'}));
+			const text=prepareExport();exportDetails.open=true;
+			const url=URL.createObjectURL(new Blob([text],{type:'application/json'}));
 			const link=document.createElement('a');link.href=url;link.download='bx24-sorting.json';panel.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
-			status.textContent='Файл подготовлен. Откройте его в настройках другой версии сортировщика.';
-		});
-		const input=node('input','');input.type='file';input.accept='.json,application/json';input.setAttribute('aria-label','Файл настроек');
+			status.textContent='Файл подготовлен. Если приложение не начало скачивание, используйте код для переноса.';
+		},exportActions);
+		action('Скопировать код',async()=>{
+			const text=prepareExport();exportDetails.open=true;exportCode.focus();exportCode.select();
+			try {if(!navigator.clipboard?.writeText)throw Error();await navigator.clipboard.writeText(text);current();status.textContent='Код скопирован. Вставьте его в настройках другой версии сортировщика.';}
+			catch {if(overlay.isConnected){exportCode.focus();exportCode.select();status.textContent='Код выделен. Нажмите Ctrl+C (на Mac — ⌘C), чтобы скопировать.';}}
+		},exportActions);
+		exportDetails.addEventListener('toggle',()=>{if(exportDetails.open&&!exportCode.value){try{current();prepareExport();}catch(e){showError(e);}}});
+		const input=node('input','',importSection);input.type='file';input.accept='.json,application/json';input.setAttribute('aria-label','Файл настроек');
+		const importDetails=node('details','',importSection);node('summary','Вставить код вместо файла',importDetails);
+		const importCode=node('textarea','',importDetails);importCode.setAttribute('aria-label','Код импорта');importCode.placeholder='Вставьте скопированный код';importCode.spellcheck=false;
 		let staged=null, baseline=null, reading=0;
+		const resetImport=()=>{reading++;staged=null;baseline=null;confirm.disabled=true;status.textContent='';status.dataset.state='';};
+		const stage=text=>{
+			current();if(new Blob([text]).size>10*1024*1024)throw new Error('Слишком много данных: максимум 10 МБ.');
+			const parsed=model.sortingTransfer(JSON.parse(text.replace(/^\uFEFF/,'')),scope);
+			baseline=JSON.stringify(_sortingTransferSnapshot());staged=parsed;
+			const modes=Object.values(staged.modes);
+			status.textContent=`Папок: ${modes.reduce((n,x)=>n+x.items.filter(i=>i.type==='folder').length,0)} · Диалогов: ${modes.reduce((n,x)=>n+x.items.filter(i=>i.type!=='folder').length,0)} · Правил: ${modes.reduce((n,x)=>n+x.automation.rules.length,0)}\nПравила и назначения совпавших диалогов заменятся. Остальные папки и диалоги сохранятся. Импорт можно отменить.`;
+			confirm.disabled=false;
+		};
+		importCode.addEventListener('input',()=>{resetImport();input.value='';});
+		action('Проверить код',()=>{resetImport();stage(importCode.value);},importDetails);
 		const backupKey=`pena.sortingTransfer.backup.v1.${scope}`;
 		const confirm=action('Подтвердить импорт',()=>{
 			if(!staged)return;
 			const now=_sortingTransferSnapshot();
-			if(JSON.stringify(now)!==baseline)throw new Error('Настройки изменились. Выберите файл заново.');
+			if(JSON.stringify(now)!==baseline){resetImport();input.value='';throw new Error('Настройки изменились. Проверьте код или выберите файл заново.');}
 			const merged={...staged,modes:{}};
 			for(const mode of ['chats','tasks']) merged.modes[mode]=model.mergeSortingTransfer({
 				items:_getDialogControlItemsForMode(mode),segments:now.modes[mode].segments,locks:now.modes[mode].locks
 			},staged.modes[mode]);
 			const entries=_sortingTransferEntries(merged);
 			const backup={scope,entries:entries.map(([key])=>[key,localStorage.getItem(key)])};
+			const previousBackup=localStorage.getItem(backupKey);
 			localStorage.setItem(backupKey,JSON.stringify(backup));
-			_commitSortingTransfer(entries);staged=null;confirm.disabled=true;restore.disabled=false;
+			try {_commitSortingTransfer(entries);}catch(error){if(previousBackup===null)localStorage.removeItem(backupKey);else localStorage.setItem(backupKey,previousBackup);throw error;}
+			resetImport();input.value='';restore.disabled=false;exportCode.value='';
 			status.textContent='Настройки перенесены. Прежние папки сохранены. Спорные переносы появятся в «Пересортировке».';
-		});confirm.disabled=true;
+		});confirm.disabled=true;confirm.className='pena-transfer-primary';
 		input.addEventListener('change',async()=>{
-			const token=++reading;staged=null;confirm.disabled=true;
+			resetImport();importCode.value='';const token=reading;
 			try {
 				current();const file=input.files?.[0];if(!file)return;
 				if(file.size>10*1024*1024)throw new Error('Файл слишком большой: максимум 10 МБ.');
-				const text=await file.text();current();if(token!==reading||!overlay.isConnected)return;
-				staged=model.sortingTransfer(JSON.parse(text),scope);baseline=JSON.stringify(_sortingTransferSnapshot());
-				const modes=Object.values(staged.modes);
-				status.textContent=`Папок: ${modes.reduce((n,x)=>n+x.items.filter(i=>i.type==='folder').length,0)}. Диалогов: ${modes.reduce((n,x)=>n+x.items.filter(i=>i.type!=='folder').length,0)}. Правил: ${modes.reduce((n,x)=>n+x.automation.rules.length,0)}.\nНазначения совпавших диалогов и правила заменятся данными файла. Остальные папки и диалоги сохранятся. Перед импортом будет создана резервная копия.`;
-				confirm.disabled=false;
-			} catch(e){staged=null;status.textContent=e instanceof SyntaxError?'Не удалось прочитать файл настроек.':e.message;}
+				status.textContent='Читаем файл…';const text=await file.text();if(token!==reading||!overlay.isConnected)return;stage(text);
+			} catch(e){if(token===reading&&overlay.isConnected){staged=null;input.value='';showError(e);}}
 		});
 		const restore=action('Отменить последний импорт',()=>{
 			_showDialogControlNativeActionConfirm('Отменить импорт?','Настройки сортировки вернутся к состоянию перед последним импортом. Изменения после него будут отменены.','Восстановить','Отмена',()=>{
@@ -12847,17 +12875,18 @@ if (_presetChannel) {
 					current();const backup=JSON.parse(localStorage.getItem(backupKey)||'null');
 					const allowed=new Set(_sortingTransferEntries(_sortingTransferSnapshot()).map(([key])=>key));
 					if(backup?.scope!==scope||!Array.isArray(backup.entries)||backup.entries.length!==allowed.size||backup.entries.some(([key,value])=>!allowed.delete(key)||(value!==null&&typeof value!=='string')))throw new Error('Резервная копия недоступна.');
-					_commitSortingTransfer(backup.entries);localStorage.removeItem(backupKey);restore.disabled=true;confirm.disabled=true;staged=null;status.textContent='Настройки восстановлены.';
-				}catch(e){status.textContent=e.message;}
+					_commitSortingTransfer(backup.entries);localStorage.removeItem(backupKey);restore.disabled=true;resetImport();exportCode.value='';status.textContent='Настройки восстановлены.';
+				}catch(e){showError(e);}
 			},{parent:overlay});
 		});restore.disabled=!localStorage.getItem(backupKey);
-		const close=()=>{reading++;overlay.remove();document.removeEventListener('keydown',trap,true);previousFocus?.focus?.({preventScroll:true});};
-		const closeButton=action('Закрыть',close);
+		const close=()=>{reading++;overlay.remove();document.removeEventListener('keydown',trap,true);const target=previousFocus?.isConnected?previousFocus:document.querySelector('[data-pena-workspace-tab="filters"]');target?.focus?.({preventScroll:true});};
+		const closeButton=node('button','Закрыть',header);closeButton.type='button';closeButton.className='pena-transfer-close';closeButton.addEventListener('click',close);
 		const trap=e=>{
 			if(document.querySelector('.pena-native-confirm-overlay'))return;
 			if(e.key==='Escape'){e.preventDefault();e.stopImmediatePropagation();close();}
-			if(e.key==='Tab'){const all=[...panel.querySelectorAll('button:not(:disabled),input')];const first=all[0],last=all.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}
+			if(e.key==='Tab'){const all=[...panel.querySelectorAll('button:not(:disabled),input,textarea,summary')].filter(el=>el.getClientRects().length);const first=all[0],last=all.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}
 		};
+		overlay.addEventListener('click',event=>{if(event.target===overlay)close();});
 		document.addEventListener('keydown',trap,true);document.body.append(overlay);overlay.showPopover?.();closeButton.focus();
 	}
 	function _dialogAutomationKey(mode = _pMode()) {
@@ -13134,7 +13163,7 @@ if (_presetChannel) {
 			values.forEach(([id,title]) => { const option = node('option',title,el); option.value=id; }); el.value=value;
 			el.addEventListener('change',() => change(el.value)); return el;
 		};
-		const close = () => { finishRuleDrag(false);cancelRuleConflicts();clearLookups();overlay.remove(); document.removeEventListener('pena-automation-review-changed',refreshTickets);document.removeEventListener('pena-automation-facts-changed',refreshTickets);window.removeEventListener('storage',refreshTickets);document.removeEventListener('keydown',trap,true); previousFocus?.focus?.({preventScroll:true}); };
+		const close = () => { finishRuleDrag(false);clearLookups();overlay.remove(); document.removeEventListener('pena-automation-review-changed',refreshTickets);document.removeEventListener('pena-automation-facts-changed',refreshTickets);window.removeEventListener('storage',refreshTickets);document.removeEventListener('keydown',trap,true); previousFocus?.focus?.({preventScroll:true}); };
 		const trap = event => {
 			if (document.querySelector('.pena-native-confirm-overlay')) return;
 			if (event.key === 'Escape') {
@@ -13167,32 +13196,6 @@ if (_presetChannel) {
 		const dropMarker=node('div',null,scroll);dropMarker.className='pena-automation-drop-marker';dropMarker.hidden=true;dropMarker.setAttribute('aria-hidden','true');
 		const dragAnnouncement=node('span',null,panel);dragAnnouncement.className='pena-automation-sr-only';dragAnnouncement.setAttribute('aria-live','polite');dragAnnouncement.setAttribute('aria-atomic','true');
 		let ruleDrag=null;
-		let conflictTimer=0,conflictRun=0;
-		function cancelRuleConflicts(){clearTimeout(conflictTimer);conflictRun++;}
-		function scheduleRuleConflicts(){
-			cancelRuleConflicts();const run=conflictRun;
-			conflictTimer=setTimeout(()=>{
-				if(!overlay.isConnected||list.hidden||ruleDrag)return;
-				const items=_getDialogControlItemsForMode(mode),folderIds=new Set(folders().map(folder=>folder.id));
-				const counts=new Map();let cursor=0;
-				const step=()=>{
-					if(run!==conflictRun||!overlay.isConnected||list.hidden)return;
-					// Chunk local-only checks so a large catalog never blocks pointer/input.
-					const end=Math.min(items.length,cursor+80);
-					for(;cursor<end;cursor++){
-						const item=items[cursor];if(_isDialogControlFolder(item)||_isDialogControlItemUnavailable(item))continue;
-						const facts=_dialogAutomationFacts(item),cached=previewFacts.get(item.id);
-						const identity=JSON.stringify([_dialogAutomationTaskRevisions.get(_getDialogTimeIdentityScopeKey()+':'+item.taskId),facts]);
-						if(_dialogAutomationDirtyTasks.has(_getDialogTimeIdentityScopeKey()+':'+item.taskId)&&cached?.identity!==identity)continue;
-						const known=cached?.identity===identity?cached.facts:facts;
-						const matching=rules.filter(rule=>model.automationDecision([rule],known,mode,folderIds)?.folderId);
-						if(new Set(matching.map(rule=>rule.folderId)).size>1)for(const rule of matching)counts.set(rule.id,(counts.get(rule.id)||0)+1);
-					}
-					if(cursor<items.length){conflictTimer=setTimeout(step,0);return;}
-					for(const card of list.children){const badge=card.querySelector('.pena-automation-conflict');if(!badge)continue;const count=counts.get(card.dataset.ruleId)||0;badge.hidden=!count;badge.textContent=`Пересечение · ${count}`;badge.title=`Подходит одновременно с другими правилами, ведущими в разные папки. Диалогов: ${count}. Побеждает первое подходящее правило сверху. Нажмите «Проверить», чтобы увидеть примеры.`;}
-				};step();
-			},180);
-		}
 		function reorderRule(id,to){
 			if(saving)return;
 			const from=rules.findIndex(rule=>rule.id===id);
@@ -13208,7 +13211,7 @@ if (_presetChannel) {
 			try{drag.handle.releasePointerCapture(drag.pointerId);}catch{}
 			if(commit&&drag.active&&drag.target!=null)reorderRule(drag.id,drag.target);
 			else drag.handle.focus({preventScroll:true});
-			scheduleRuleConflicts();
+
 		}
 		function placeRuleDrag(){
 			const drag=ruleDrag;if(!drag?.active)return;
@@ -13225,7 +13228,7 @@ if (_presetChannel) {
 		}
 		function startRuleDrag(event,id,handle,card){
 			if(event.button!==0||saving||rules.length<2||ruleDrag)return;
-			cancelRuleConflicts();
+
 			event.preventDefault();handle.focus({preventScroll:true});
 			const events=new AbortController(),drag=ruleDrag={id,handle,card,events,pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,x:event.clientX,y:event.clientY,active:false,target:null,frame:0};
 			try{handle.setPointerCapture(event.pointerId);}catch{}
@@ -13329,15 +13332,15 @@ if (_presetChannel) {
 			}
 		};
 		function showTab(review){
-			finishRuleDrag(false);cancelRuleConflicts();clearLookups();priorityHint.hidden=review;list.hidden=review;bottom.hidden=review;tickets.hidden=!review;
+			finishRuleDrag(false);clearLookups();priorityHint.hidden=review;list.hidden=review;bottom.hidden=review;tickets.hidden=!review;
 			editorTab.setAttribute('aria-selected',String(!review));reviewTab.setAttribute('aria-selected',String(review));
-			if(review)drawTickets();else scheduleRuleConflicts();
+			if(review)drawTickets();
 		}
 		let refreshQueued=false;
 		function refreshTickets(){
 			if(!overlay.isConnected)return;
 			if(key!==_dialogAutomationKey(mode))return close();
-			if(tickets.hidden){scheduleRuleConflicts();return;}
+			if(tickets.hidden){return;}
 			if(refreshQueued)return;
 			refreshQueued=true;queueMicrotask(()=>{
 				refreshQueued=false;
@@ -13352,12 +13355,12 @@ if (_presetChannel) {
 		existingLabel.append(document.createTextNode('Распределить уже существующие диалоги'));
 		node('p','Без галочки — автоматически распределяются только новые диалоги. Конфликты с ручным размещением появятся в «Пересортировке».',bottom).className='pena-automation-hint';
 		const status = node('div','',bottom); status.className='pena-automation-status';status.setAttribute('role','status');
-		panel.addEventListener('input',()=>{status.replaceChildren();scheduleRuleConflicts();});
-		panel.addEventListener('change',()=>{status.replaceChildren();scheduleRuleConflicts();});
+		panel.addEventListener('input',()=>{status.replaceChildren();});
+		panel.addEventListener('change',()=>{status.replaceChildren();});
 		const folders = () => _getDialogControlItemsForMode(mode).filter(_isDialogControlFolder);
 		const draw = () => {
 			finishRuleDrag(false);
-			scheduleRuleConflicts();
+
 			const active=document.activeElement,activeCard=active?.closest?.('.pena-automation-rule');
 			const activeRuleId=activeCard?.dataset.ruleId,activeIndex=activeCard?[...activeCard.querySelectorAll('button,input,select')].indexOf(active):-1;
 			const scrollTop=scroll.scrollTop;
@@ -13380,7 +13383,6 @@ if (_presetChannel) {
 				handle.addEventListener('pointerdown',event=>startRuleDrag(event,rule.id,handle,card));
 				handle.addEventListener('keydown',event=>{if(!saving&&event.altKey&&['ArrowUp','ArrowDown'].includes(event.key)){event.preventDefault();reorderRule(rule.id,index+(event.key==='ArrowUp'?-1:1));}});
 				const remove=button('×',head,()=>{rules.splice(index,1);draw();});remove.setAttribute('aria-label','Удалить правило');remove.className='pena-automation-icon-button';
-				const conflict=node('span',null,head);conflict.className='pena-automation-conflict';conflict.hidden=true;
 				const body=node('div',null,card);body.className='pena-automation-rule-body';
 				body.id=`pena-automation-body-${index}`;toggle.setAttribute('aria-controls',body.id);
 				const setExpanded=expanded=>{
@@ -13426,7 +13428,7 @@ if (_presetChannel) {
 								const users=project?response.data:_normalizePenaDirectoryUsers(response.data);
 								for(const user of users){
 									const id=String(user.id),name=String(user.name||[user.first_name,user.last_name].filter(Boolean).join(' ')||id);
-									const option=button('',results,()=>{condition.value=id;condition.label=name;input.value=name;input.removeAttribute('aria-invalid');status.replaceChildren();hideResults();input.focus();scheduleRuleConflicts();});
+									const option=button('',results,()=>{condition.value=id;condition.label=name;input.value=name;input.removeAttribute('aria-invalid');status.replaceChildren();hideResults();input.focus();});
 									option.className='pena-automation-person-option';option.dataset.personId=id;option.setAttribute('aria-label',`${name} · ${id}`);
 									node('strong',name,option);node('span',`${user.work_position?user.work_position+' · ':''}ID\u00a0${id}`,option);
 								}
@@ -13516,8 +13518,7 @@ if (_presetChannel) {
 				const decision=model.automationDecision(rules,factsFor(item),mode,folderIds);
 				if(decision?.pending){pending++;continue;}
 				if(!decision?.folderId)continue;
-				const competing=rules.filter(rule=>model.automationDecision([rule],factsFor(item),mode,folderIds)?.folderId);
-				matches.push({item,decision,competing});
+				matches.push({item,decision});
 				if(locked.has(item.id))protectedCount++;
 				else if(item.folderId===decision.folderId)unchanged++;
 				else if(item.folderId||item.automationHandled)confirm++;
@@ -13531,13 +13532,9 @@ if (_presetChannel) {
 			if(protectedCount)node('span',`Переносы отключены для ${protectedCount} диалогов.`,status);
 			if(skipped)node('span',`Ранее пропущены: ${skipped}. Автоматический перенос не выполняется.`,status);
 			if(pending)node('span',`Ещё ${pending} — ожидают данных Bitrix. Пока не проверено верхнее правило, нижние не применяются. Нажмите «Проверить» ещё раз, чтобы продолжить.`,status);
-			const overlaps=matches.filter(match=>match.competing.length>1);
-			scheduleRuleConflicts();
-			if(overlaps.length)node('span',`Пересечения: ${overlaps.length}. Побеждает первое подходящее правило сверху.`,status);
-			const examples=[...overlaps,...matches.filter(match=>match.competing.length===1)].slice(0,3);
-			for(const {item,decision,competing} of examples){
+			for(const {item,decision} of matches.slice(0,3)){
 				const index=rules.findIndex(rule=>rule.id===decision.ruleId),winner=rules[index];
-				node('div',`${factsFor(item).title} → ${folderMap.get(decision.folderId)} · №${index+1} «${winner?.name||'Без названия'}»${competing.length>1?` (совпало правил: ${competing.length})`:''}`,status).className='pena-automation-preview-row';
+				node('div',`${factsFor(item).title} → ${folderMap.get(decision.folderId)} · №${index+1} «${winner?.name||'Без названия'}»`,status).className='pena-automation-preview-row';
 			}
 		});
 		let saving=false;
@@ -20618,7 +20615,8 @@ if (_presetChannel) {
 
 		if (_dialogControlNativeWorkspaceTab === 'filters') {
 			const filterPanel = document.createElement('div');
-			filterPanel.className = 'pena-native-filter-panel pena-native-command-popover';
+			filterPanel.className = 'pena-native-filter-panel pena-native-command-popover pena-settings-panel';
+			filterPanel.setAttribute('aria-label','Настройки списка');
 			const applyViewPreference = (patch, needsFilterPass = false) => {
 				const next = _setDialogControlViewPrefs(patch);
 				_syncDialogControlNativePreferenceControls(switcher, next);
@@ -20682,11 +20680,16 @@ if (_presetChannel) {
 				}
 			});
 			syncStatus.append(syncStatusText, syncButton);
-			filterPanel.append(_createDialogControlPopoverClose('Закрыть фильтры'), sortControls, unreadLabel, syncStatus);
-			const settings=document.createElement('details');settings.style.cssText='flex:1 1 100%;font:12px/1.5 system-ui;color:#64748b';
-			const label=document.createElement('summary');label.textContent='Настройки';settings.append(label);
-			const advanced=document.createElement('details'), advancedLabel=document.createElement('summary');advancedLabel.textContent='Дополнительно';advanced.append(advancedLabel);settings.append(advanced);
-			const transfer=document.createElement('button');transfer.type='button';transfer.textContent='Перенос настроек';transfer.addEventListener('click',()=>_openSortingTransfer());advanced.append(transfer);filterPanel.append(settings);
+			const settingsTitle=document.createElement('h3');settingsTitle.textContent='Настройки списка';
+			const sortSection=document.createElement('div');sortSection.className='pena-settings-section';
+			const sortLabel=document.createElement('span');sortLabel.className='pena-settings-label';sortLabel.textContent='Сортировка';
+			sortControls.setAttribute('role','group');sortControls.setAttribute('aria-label','Сортировка');sortSection.append(sortLabel,sortControls);
+			const visibilitySection=document.createElement('div');visibilitySection.className='pena-settings-section';visibilitySection.append(unreadLabel);
+			filterPanel.append(_createDialogControlPopoverClose('Закрыть фильтры'),settingsTitle,sortSection,visibilitySection,syncStatus);
+			const advanced=document.createElement('details');advanced.className='pena-settings-advanced';
+			const advancedLabel=document.createElement('summary');advancedLabel.textContent='Дополнительно';advanced.append(advancedLabel);
+			const transfer=document.createElement('button');transfer.type='button';transfer.className='pena-settings-transfer';transfer.textContent='Перенос настроек';transfer.setAttribute('aria-haspopup','dialog');transfer.addEventListener('click',()=>_openSortingTransfer());
+			const transferHint=document.createElement('p');transferHint.textContent='Сохранить папки и правила или перенести их между приложением и Chrome.';advanced.append(transferHint,transfer);filterPanel.append(advanced);
 			workspaceTabs.appendChild(filterPanel);
 		}
 		const uniqueLabel = document.createElement('label');

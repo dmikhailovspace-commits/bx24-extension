@@ -54,7 +54,7 @@ async function release(page){await page.evaluate(()=>{raceHold=false;raceHeld.sp
 async function snapshot(page){return page.evaluate(()=>({items:localStorage.getItem('pena.dialogControl.v1.tasks'),rules:localStorage.getItem(previewRace.key('tasks'))}));}
 async function phase(name,fn){const page=await fixture();try{await fn(page);phases.push({name,passed:true});console.log('PASS '+name);}finally{await page.close();}}
 try{
- await phase('Conflict badges follow lookup selection, live facts and dirty task invalidation without saving',async page=>{
+ await phase('Lookup and live facts keep intersection indicators absent',async page=>{
   await page.evaluate(()=>{
    previewRace.save('tasks',[...previewRace.items('tasks'),{id:'folder:conflict',type:'folder',title:'Другая папка'}]);
    const call=BX.rest.callMethod;BX.rest.callMethod=function(method,params,callback){if(method==='im.search.user.list'){callback({error:()=>null,data:()=>[{id:7,name:'Тестовый исполнитель'}]});return;}return call.call(this,method,params,callback);};
@@ -62,18 +62,18 @@ try{
   await addOwnerRule(page);await page.getByRole('button',{name:'Добавить правило',exact:true}).click();
   await page.getByLabel('Поле условия').last().selectOption('responsibleId');await page.getByLabel('Значение условия').last().fill('7');await page.getByLabel('Папка назначения').last().selectOption('folder:conflict');
   await page.evaluate(()=>{const item=previewRace.items('tasks').find(x=>x.taskId);window.conflictId=String(item.taskId);previewRace.receive(conflictId,{RESPONSIBLE_ID:'7'});});
-  await page.waitForFunction(()=>document.querySelectorAll('.pena-automation-conflict:not([hidden])').length===2);
+  assert.equal(await page.locator('.pena-automation-conflict').count(),0);
   await page.getByLabel('Значение условия').last().fill('Тестовый');
-  await page.waitForFunction(()=>document.querySelectorAll('.pena-automation-conflict:not([hidden])').length===0);
+  assert.equal(await page.locator('.pena-automation-conflict').count(),0);
   await page.locator('.pena-automation-person-option').last().click();
-  await page.waitForFunction(()=>document.querySelectorAll('.pena-automation-conflict:not([hidden])').length===2);
+  assert.equal(await page.locator('.pena-automation-conflict').count(),0);
   await page.evaluate(()=>previewRace.receive(conflictId,{}));
-  await page.waitForFunction(()=>document.querySelectorAll('.pena-automation-conflict:not([hidden])').length===0);
+  assert.equal(await page.locator('.pena-automation-conflict').count(),0);
   await page.evaluate(()=>previewRace.receive(conflictId,{RESPONSIBLE_ID:'7'}));
   await check(page); // A partial Pull patch cannot clear unknown fields; a detail read can.
-  await page.waitForFunction(()=>document.querySelectorAll('.pena-automation-conflict:not([hidden])').length===2);
+  assert.equal(await page.locator('.pena-automation-conflict').count(),0);
   await page.evaluate(()=>previewRace.receive(conflictId,{RESPONSIBLE_ID:'8'}));
-  await page.waitForFunction(()=>document.querySelectorAll('.pena-automation-conflict:not([hidden])').length===0);
+  assert.equal(await page.locator('.pena-automation-conflict').count(),0);
  });
  await phase('Twelve dirty tasks progress across two preview batches without writes',async page=>{
   await addOwnerRule(page);const ids=await dirty(page,12),before=await snapshot(page);

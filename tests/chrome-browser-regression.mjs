@@ -4,6 +4,7 @@ import { resolve, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { buildChrome } from '../tools/build-chrome.mjs';
+import {checkTransferCode} from './lib/settings-transfer-ui.mjs';
 const require = createRequire(import.meta.url), { chromium } = require('playwright');
 mkdirSync(resolve('tests/artifacts'), { recursive:true });
 const packageDir = mkdtempSync(resolve('tests/artifacts/chrome-browser-package-'));
@@ -101,11 +102,14 @@ try {
   phases.push({ name: 'granted HTTPS Messenger loads real worker + MAIN runtime under nonce-only script CSP', status: 'PASS', version: build.version });
   await page.evaluate(()=>{BX.message=key=>key==='USER_ID'?'7':'';});
   await page.getByRole('button',{name:'Фильтры',exact:true}).click();
-  await page.locator('summary').filter({hasText:'Настройки'}).click();
   await page.locator('summary').filter({hasText:'Дополнительно'}).click();
   await page.getByRole('button',{name:'Перенос настроек',exact:true}).click();
   const transfer=page.getByRole('dialog',{name:'Перенос настроек',exact:true});
   await transfer.waitFor();
+  const firstDownload=page.waitForEvent('download');
+  await transfer.getByRole('button',{name:'Скачать файл'}).click();
+  const firstExport=JSON.parse(readFileSync(await (await firstDownload).path(),'utf8'));
+  assert.ok(firstExport.modes.chats.items.length>0,'Real ordinary-chat snapshot exports before any import');
   const empty={segments:[],items:[],automation:{version:1,rules:[],excludedIds:[]},locks:[]};
   const portable={format:'bx24-chat-sorter',version:1,scope:'portal.chrome.test~7',modes:{chats:{...empty,items:[{id:'folder:transfer',type:'folder',title:'Transferred'},{id:'chat100',type:'chat',title:'Example',folderId:'folder:transfer'}]},tasks:empty}};
   const upload=async data=>transfer.locator('input[type=file]').setInputFiles({name:'sorting.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(data))});
@@ -114,7 +118,7 @@ try {
   assert.equal(await transfer.getByRole('button',{name:'Подтвердить импорт'}).isDisabled(),true);
   await upload(portable);
   await transfer.getByRole('button',{name:'Подтвердить импорт'}).waitFor();
-  await page.waitForFunction(()=>!document.querySelector('.pena-sorting-transfer button:nth-of-type(2)')?.disabled);
+  await page.waitForFunction(()=>!document.querySelector('.pena-transfer-primary')?.disabled);
   await page.screenshot({path:'tests/artifacts/sorting-transfer-preview.png'});
   assert.ok(!(await page.evaluate(()=>localStorage.getItem('pena.dialogControl.v1.chats'))).includes('folder:transfer'),'Preview never changes assignments');
   await transfer.getByRole('button',{name:'Подтвердить импорт'}).click();
@@ -133,6 +137,11 @@ try {
   assert.ok(!(await page.evaluate(()=>localStorage.getItem('pena.dialogControl.v1.chats'))).includes('folder:transfer'));
   await transfer.getByRole('button',{name:'Закрыть',exact:true}).click();
   phases.push({name:'sorting transfer: scope rejection, inert preview, explicit merge, download and undo',status:'PASS'});
+  if(!await page.locator('.pena-settings-panel').isVisible())await page.getByRole('button',{name:'Фильтры',exact:true}).click();
+  if(!await page.getByRole('button',{name:'Перенос настроек',exact:true}).isVisible())await page.getByText('Дополнительно',{exact:true}).click();
+  await page.getByRole('button',{name:'Перенос настроек',exact:true}).click();
+  await checkTransferCode(page,'chrome');
+  phases.push({name:'code transfer: clipboard denial, schema/scope validation, stale confirmation, responsive layout and undo after reopen',status:'PASS'});
 
 
   const task = await context.newPage();
