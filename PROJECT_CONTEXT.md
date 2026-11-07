@@ -9,8 +9,8 @@
 - Release date: **2026-11-05**
 - Runtime files: **19**
 - Regression suites: **97**
-- Windows artifact: _not built_
-- macOS artifact: _not built_
+- Windows artifact: `dist/BX24_Chat_Sorter_Windows_v8.0.66.exe` - SHA-256: `60402D002260E773E5AA276BB3E2ED8187BA5E783AE3124208F5A91335E91E6C`
+- macOS artifact: `dist/BX24_Chat_Sorter_macOS_Universal_v8.0.66.dmg` - SHA-256: `9374B87957D64E9EED3853A447FB1FF0F182AC43B05C00B7F90055681312DA48`
 <!-- AUTO:END -->
 
 ## Настройки и перенос — 08.11.2026, подготовка выпуска
@@ -21,6 +21,8 @@
 - По новому запросу удалены показатели пересечений и их фоновый подсчёт. Приоритет первого активного правила, drag-and-drop, выключатели и подтверждения пересортировки сохранены. «Проверить» показывает совпадения, назначение и победившее правило без счётчика пересечений.
 - Добавлен settings-transfer-regression для общего desktop runtime в Chromium; тот же набор проверяет настоящий Chrome MV3 в chrome-browser-regression. Это не запуск на физическом Mac или авторизованном портале. Релизный профиль остаётся точным search-focused 16; дополнительные затронутые сценарии запускаются отдельно.
 - 8.0.66 уже доступна в публичном Chrome Web Store (обновлена 06.11.2026). Новый код пока не опубликован: номер следующего выпуска уточняется, поскольку пользователь ранее требовал сохранить 66.
+- Предпросмотр зафиксирован в source `98133cba8406ceb60b7bf7979c3bed068c7e0d3d`. Локально окончательный search-focused 16/16 за 390,5 s; CI 16/16 за 417,9 s. [CI 42415082497](https://github.com/dmikhailovspace-commits/bx24-extension/actions/runs/42415082497) успешно проверил source, Chrome, Windows и Universal DMG; публикация пропущена, так как запуск сделан на ветке, не на теге. Вручную пройдены отдельные автоматические UI-наборы settings-transfer, rules-drag (7 фаз), rules-preview-races (9 фаз), release-notes. Это не ручной тест живого Bitrix.
+- Комплект `E:\Codex\Previews\BX24-settings-transfer`: Chrome ZIP/unpacked, Windows EXE, macOS Universal DMG, их sidecar-хеши, README и verification. Все 19 исходников сверены с замороженным Git-коммитом; 24 файла Chrome и ZIP совпадают с CI. SHA-256: Chrome `f96d14393493840617a9ef4b9d64aefe92015a92dea24fb447ca8fc5e5fa1d54`, Windows `60402d002260e773e5aa276bb3e2ed8187ba5e783ae3124208f5a91335e91e6c`, macOS `9374b87957d64e9eed3853a447fb1ff0f182ac43b05c00b7f90055681312da48`. Release-integrity после получения установщиков прошёл. На машине пользователя ничего не установлено, публичный тег v8.0.66 остаётся cf006f1; Release, Диск, канал и Store не заменялись.
 
 ## Публикация исправлений правил 8.0.66 — 05.11.2026
 

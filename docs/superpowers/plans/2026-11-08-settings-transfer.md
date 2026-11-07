@@ -17,7 +17,8 @@
 - Layout must scroll at 360px and short viewports; focus and Escape must work.
 
 ## Tasks
-- [ ] Reproduce empty taskId failure in tests/native-catalog-model.mjs; repair extension/native-catalog.js and verify strict round trip.
-- [ ] Rebuild _openSortingTransfer in extension/injected.js with explicit file/code export and import validation; retain safe commit/backup and add accessible status/layout in extension/injected.css.
-- [ ] Group existing filter/settings controls, flatten nested settings details; remove conflict counter implementation/styles, update relevant browser tests.
-- [ ] Verify model, Chrome transfer, shared desktop fixture, rules drag/races, responsive screenshots and exact release profile; update PROJECT_CONTEXT.md and delivery documentation.
+- [x] Reproduce empty taskId failure in tests/native-catalog-model.mjs; repair extension/native-catalog.js and verify strict round trip.
+- [x] Rebuild _openSortingTransfer in extension/injected.js with explicit file/code export and import validation; retain safe commit/backup and add accessible status/layout in extension/injected.css.
+- [x] Group existing filter/settings controls, flatten nested settings details; remove conflict counter implementation/styles, update relevant browser tests.
+- [x] Verify model, Chrome transfer, shared desktop fixture, rules drag/races, responsive screenshots and exact release profile; update PROJECT_CONTEXT.md and delivery documentation. Local final search-focused 16/16 in 390.5s; source 98133cb; Chrome package f96d1439…; rules drag 7 phases, preview races 9 phases and release notes passed separately.
+- [x] Retrieve verified Windows/macOS preview installers from CI 42415082497; sidecars, frozen source and identical local/CI Chrome package verified. Public 8.0.66 is already published in Chrome; next release version awaits user response, so no public assets/channel/Store submission are changed.
