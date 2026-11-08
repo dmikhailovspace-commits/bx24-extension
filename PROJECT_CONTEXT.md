@@ -9,8 +9,8 @@
 - Release date: **2026-11-08**
 - Runtime files: **19**
 - Regression suites: **100**
-- Windows artifact: _not built_
-- macOS artifact: _not built_
+- Windows artifact: `dist/BX24_Chat_Sorter_Windows_v8.0.67.exe` - SHA-256: `BEB527F3E4147224BBF8A604E0E195CDEDCCD115E81E8633D942630CF920AEDE`
+- macOS artifact: `dist/BX24_Chat_Sorter_macOS_Universal_v8.0.67.dmg` - SHA-256: `34720F7ACA4150286954813360E7A83FEE703A7069AED1407F064E1C48378D7B`
 <!-- AUTO:END -->
 
 ## Текущая правка: компактный перенос — 08.11.2026, предпросмотр 8.0.67
@@ -18,6 +18,9 @@
 - Пользователь отклонил резервирование пустого места. Окно теперь по содержимому, ограничено viewport; при необходимости прокручивается тело. Ширина и отступы сохраняются, но высота меняется при явном раскрытии содержимого.
 - В idle видны одинаково оформленные «Скачать файл» и «Собрать код». Поле кода, Copy и прогресс скрыты без занимаемого места. «Собрать код» показывает прогресс; после успеха — код и Copy. Download не раскрывает код. Пустой status в footer не занимает строку.
 - Порционная сборка, кэш, scope/изменение состояния/отмена и полный clipboard остаются прежними. Версия **8.0.67**, публичные артефакты и канал не менять до утверждения.
+
+- Итоговый source `6d0ddaed4bd605a034a6eb608e696cd402ed7fec`, runtime идентичен `e9ef0a9`. [CI 42485789918](https://github.com/dmikhailovspace-commits/bx24-extension/actions/runs/42485789918): **16/16**, четыре целевые проверки, Chrome/Windows/macOS PASS, Publish skipped. Первый CI прошёл16, но обнаружил гонку нового cache-теста со стартовой загрузкой fixture; исправлен только тест (settled +1200ms неизменного state), строгая cache-проверка сохранена.
+- Предпросмотр `E:\Codex\Previews\BX24-settings-8.0.67-review4`, README/checks/verification.json. Все19runtime и24unpackedфайла сверены, ChromeZIP побайтово совпадает с CI; release-integrity с обязательными EXE/DMG PASS. SHA-256: BX24_Chat_Sorter_Chrome_v8.0.67.zip `19b686815c3db7f5b0eba22142cb383c9aadf083d699f6cbc5d33daa5c57a356`; BX24_Chat_Sorter_Windows_v8.0.67.exe `beb527f3e4147224bbf8a604e0e195cdedccd115e81e8633d942630cf920aede`; BX24_Chat_Sorter_macOS_Universal_v8.0.67.dmg `34720f7aca4150286954813360e7a83fee703a7069aed1407f064e1c48378d7b`. Подробности: `docs/qa/settings-transfer-compact-8.0.67.md`.
 
 ## Предыдущая работа: отзывчивость переноса — 08.11.2026, предпросмотр 8.0.67
 
