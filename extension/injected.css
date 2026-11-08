@@ -1202,9 +1202,9 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 .pena-settings-section summary{padding:5px 0;cursor:pointer;transition:color .16s ease}
 .pena-settings-section summary:hover{color:#2854d7}
 .pena-settings-section>summary{font-weight:600}
-.pena-settings-section .pena-settings-transfer{display:block;width:100%;min-height:34px;margin:2px 0 0;padding:7px 14px;border:0;border-radius:4px;background:transparent;color:#526174;text-align:left;font:500 12px/1.5 system-ui;cursor:pointer;transition:background .16s ease,color .16s ease,transform .16s ease}
+.pena-settings-section .pena-settings-transfer{display:block;width:100%;min-height:34px;margin:2px 0 0;padding:7px 14px;border:0;border-radius:4px;background:transparent;color:#526174;text-align:left;font:500 12px/1.5 system-ui;cursor:pointer;transition:background .16s ease,color .16s ease}
 .pena-settings-section .pena-settings-transfer:hover{background:#f1f5fd;color:#2854d7}
-.pena-settings-section .pena-settings-transfer:active{transform:translateY(1px)}
+.pena-settings-section .pena-settings-transfer:active{background:#e8eefb;color:#2854d7}
 .pena-settings-section :focus-visible{outline:2px solid #7293f3;outline-offset:2px}
 .pena-sorting-transfer.pena-automation-overlay{display:flex;align-items:center;justify-content:center;width:100%;height:100%;min-width:0;min-height:0;padding:16px;box-sizing:border-box}
 .pena-transfer-panel.pena-automation-panel{display:flex;flex:0 1 560px;flex-direction:column;width:560px;min-width:0;max-width:100%;height:auto;min-height:0;max-height:100%;background:#fff;box-sizing:border-box;animation:pena-transfer-enter .18s ease-out both}
@@ -1224,8 +1224,8 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 .pena-transfer-panel .pena-transfer-section>h3+p{margin-top:4px}
 .pena-transfer-section h3{margin:0 0 4px;font:650 14px/1.4 var(--pena-rules-ui);color:#182237}
 .pena-transfer-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
-.pena-transfer-panel button{height:36px;padding:0 12px;transition:background .16s ease,border-color .16s ease,color .16s ease,transform .16s ease}
-.pena-transfer-panel button:not(:disabled):active{transform:translateY(1px)}
+.pena-transfer-panel button{height:36px;padding:0 12px;transition:background .16s ease,border-color .16s ease,color .16s ease,opacity .16s ease}
+.pena-transfer-panel button:not(:disabled):active{border-color:#8ca9ec;background:#e8eefb}
 .pena-transfer-panel button:disabled:hover{background:#fff;color:#25334a;border-color:#d7dfeb}
 .pena-transfer-panel .pena-transfer-copy{min-width:148px;border-color:#b9c9e9;color:#2854d7;background:#f1f5fd}
 .pena-transfer-panel .pena-transfer-copy[data-state=copied]{border-color:#b4d5c2;background:#eff8f2;color:#286744}

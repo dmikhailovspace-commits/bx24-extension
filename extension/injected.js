@@ -12957,33 +12957,16 @@ if (_presetChannel) {
 		const current = () => {if(!overlay.isConnected||scope!==_getDialogTimeIdentityScopeKey())throw new Error('Пользователь изменился. Откройте перенос заново.');};
 		const showError=e=>{status.dataset.state='error';status.textContent=e instanceof SyntaxError?'Не удалось прочитать настройки. Выберите файл JSON или вставьте полный код.':e.message;};
 		const action = (label,fn,parent=footer) => {const b=node('button',label,parent);b.type='button';b.addEventListener('click',async()=>{try{current();status.dataset.state='';await fn();}catch(e){if(overlay.isConnected&&e.name!=='AbortError')showError(e);}});return b;};
-		let copyFeedbackTimer=0,exportJob=0,exportBusy=false,exportCache=null;
+		let copyFeedbackTimer=0,copyPending=false,exportJob=0,exportBusy=false,exportCache=null;
 		panel.dataset.exportState='idle';
 		const fitCode=field=>{let lines=1;for(let i=0;i<field.value.length&&lines<8;i++)if(field.value.charCodeAt(i)===10)lines++;field.style.height=Math.min(160,22+lines*18)+'px';};
 		const resetCopyFeedback=()=>{clearTimeout(copyFeedbackTimer);copyButton.textContent='Скопировать код';delete copyButton.dataset.state;};
 		const invalidateExport=()=>{exportJob++;exportCache=null;exportCode.value='';delete exportCode.dataset.preview;exportCode.title='';fitCode(exportCode);resetCopyFeedback();copyButton.disabled=true;panel.dataset.exportState='idle';exportState.hidden=true;exportCode.hidden=true;exportActions.hidden=true;};
 		const aborted=()=>new DOMException('Операция отменена','AbortError');
 		const yieldTask=()=>window.scheduler?.yield?window.scheduler.yield():new Promise(resolve=>setTimeout(resolve,0));
-		const generateExport=async reveal=>{
-			if(exportBusy||saving)return null;
-			const token=++exportJob;let progressValue=0,lastYield=performance.now();
-			const check=()=>{current();if(token!==exportJob)throw aborted();};
-			const progress=value=>{progressValue=Math.max(progressValue,Math.min(100,value));progressBar.value=progressValue;progressBar.setAttribute('aria-valuenow',String(progressValue));progressLabel.textContent=`Собираем код · ${progressValue}%`;};
-			const checkpoint=async()=>{check();if(performance.now()-lastYield>=6){await yieldTask();lastYield=performance.now();check();}};
-			exportBusy=true;syncControls();panel.dataset.exportState='building';changeTransferLayout(()=>{exportState.hidden=false;progressBar.hidden=false;progress(0);});
-			try {
-				// Paint the loader before reading catalog data. Subsequent work yields in small batches.
-				await new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0)));check();
-				if(!exportCache||!_sortingTransferStateMatches(exportCache.state)){
-					const state=_sortingTransferState();
-					const snapshot=await _sortingTransferSnapshotAsync(scope,checkpoint,progress);
-					const text=await _sortingTransferCodeAsync(snapshot,checkpoint,progress);check();
-					if(!_sortingTransferStateMatches(state))throw new Error('Настройки изменились во время сборки. Нажмите «Собрать код» ещё раз.');
-					exportCache={state,text};
-				}
-				check();
-				changeTransferLayout(()=>{
-				progress(100);progressBar.hidden=true;progressLabel.textContent='';
+		const showExport=reveal=>{
+			changeTransferLayout(()=>{
+				progressBar.value=100;progressBar.setAttribute('aria-valuenow','100');progressBar.hidden=true;progressLabel.textContent='';
 				if(reveal){
 					// Rendering megabytes in a native textarea blocks layout even when JS yields.
 					// Keep a bounded, clearly labelled preview; both copy paths use the full cache.
@@ -12995,10 +12978,39 @@ if (_presetChannel) {
 					exportCode.hidden=false;exportActions.hidden=false;fitCode(exportCode);resetCopyFeedback();panel.dataset.exportState='ready';
 				}
 				else {panel.dataset.exportState=exportCode.value?'ready':'idle';exportState.hidden=!exportCode.value||exportCode.dataset.preview!=='true';if(exportCode.value&&exportCode.dataset.preview==='true')progressLabel.textContent='Фрагмент кода · копируется полностью';}
-				},reveal);
+			},reveal);
+		};
+		const generateExport=async reveal=>{
+			if(exportBusy||saving)return null;
+			// A valid cached export needs no loader, snapshot or second reveal animation.
+			if(exportCache&&_sortingTransferStateMatches(exportCache.state)){
+				current();
+				if(reveal&&exportCode.hidden){showExport(true);syncControls();}
+				return exportCache.text;
+			}
+			const token=++exportJob;let progressValue=0,lastYield=performance.now(),loaderTimer=0,loaderShown=false;
+			const check=()=>{current();if(token!==exportJob)throw aborted();};
+			const progress=value=>{progressValue=Math.max(progressValue,Math.min(100,value));progressBar.value=progressValue;progressBar.setAttribute('aria-valuenow',String(progressValue));progressLabel.textContent=`Собираем код · ${progressValue}%`;};
+			const checkpoint=async()=>{check();if(performance.now()-lastYield>=6){await yieldTask();lastYield=performance.now();check();}};
+			exportBusy=true;syncControls();panel.dataset.exportState='building';
+			const showLoader=()=>{if(!overlay.isConnected||token!==exportJob)return;loaderShown=true;changeTransferLayout(()=>{exportState.hidden=false;progressBar.hidden=false;progress(progressValue);});};
+			if(reveal)showLoader();else loaderTimer=setTimeout(showLoader,120);
+			try {
+				// Paint the loader before reading catalog data. Subsequent work yields in small batches.
+				await new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0)));check();
+				if(!exportCache||!_sortingTransferStateMatches(exportCache.state)){
+					const state=_sortingTransferState();
+					const snapshot=await _sortingTransferSnapshotAsync(scope,checkpoint,progress);
+					const text=await _sortingTransferCodeAsync(snapshot,checkpoint,progress);check();
+					if(!_sortingTransferStateMatches(state))throw new Error('Настройки изменились во время сборки. Нажмите «Собрать код» ещё раз.');
+					exportCache={state,text};
+				}
+				check();
+				clearTimeout(loaderTimer);
+				if(reveal||loaderShown)showExport(reveal);else panel.dataset.exportState=exportCode.value?'ready':'idle';
 				return exportCache.text;
 			}catch(error){if(token===exportJob)changeTransferLayout(()=>{exportCache=null;exportCode.value='';delete exportCode.dataset.preview;exportCode.title='';fitCode(exportCode);panel.dataset.exportState='error';exportState.hidden=true;exportCode.hidden=true;exportActions.hidden=true;});throw error;}
-			finally{exportBusy=false;if(overlay.isConnected)syncControls();}
+			finally{clearTimeout(loaderTimer);exportBusy=false;if(overlay.isConnected)syncControls();}
 		};
 		const downloadButton=action('Скачать файл',async()=>{
 			const text=await generateExport(false);if(text===null)return;
@@ -13007,17 +13019,17 @@ if (_presetChannel) {
 		},downloadActions);downloadButton.className='pena-transfer-download';
 		const buildButton=action('Собрать код',()=>generateExport(true),buildActions);buildButton.className='pena-transfer-build';
 		const copyButton=action('Скопировать код',async()=>{
-			if(!exportCode.value||exportBusy||saving)return;
-			const text=exportCache.text,token=exportJob;resetCopyFeedback();copyButton.disabled=true;
+			if(!exportCode.value||exportBusy||saving||copyPending)return;
+			const text=exportCache.text,token=exportJob;clearTimeout(copyFeedbackTimer);copyPending=true;copyButton.setAttribute('aria-busy','true');
 			try {
 				if(!navigator.clipboard?.writeText)throw Error();
 				await navigator.clipboard.writeText(text);current();if(token!==exportJob)return;copyButton.textContent='Скопировано';copyButton.dataset.state='copied';
 				if(status.textContent==='Код выделен. Нажмите Ctrl+C (на Mac — ⌘C), чтобы скопировать.')status.textContent='';
 				copyFeedbackTimer=setTimeout(resetCopyFeedback,2400);
 			} catch {
-				current();if(token!==exportJob)return;exportCode.focus({preventScroll:true});exportCode.select();
+				current();if(token!==exportJob)return;resetCopyFeedback();exportCode.focus({preventScroll:true});exportCode.select();
 				status.textContent='Код выделен. Нажмите Ctrl+C (на Mac — ⌘C), чтобы скопировать.';
-			} finally {syncControls();}
+			} finally {copyPending=false;copyButton.removeAttribute('aria-busy');syncControls();}
 		},exportActions);copyButton.className='pena-transfer-copy';copyButton.setAttribute('aria-live','polite');copyButton.disabled=true;fitCode(exportCode);
 		exportCode.addEventListener('copy',event=>{
 			if(exportCache&&exportCode.value&&event.clipboardData){event.clipboardData.setData('text/plain',exportCache.text);event.preventDefault();}

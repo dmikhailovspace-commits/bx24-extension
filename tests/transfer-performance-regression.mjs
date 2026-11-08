@@ -4,6 +4,7 @@ import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {startHarnessServer} from './lib/harness-server.mjs';
+import {checkQuietCachedAction} from './lib/settings-transfer-ui.mjs';
 const {chromium}=createRequire(import.meta.url)('playwright');
 const baseline=process.argv.includes('--baseline'),textareaProbe=process.argv.includes('--textarea-probe'),fullTextareaProbe=process.argv.includes('--full-textarea-probe'),ref='47103a0';
 const read=path=>baseline?execFileSync('git',['show',`${ref}:${path}`],{encoding:'utf8',maxBuffer:20*1024*1024}):readFileSync(path,'utf8');
@@ -91,7 +92,9 @@ try {
   if(!baseline&&!textareaProbe&&!fullTextareaProbe){
    const calls=await page.evaluate(()=>window.__transferPerf.asyncCalls);
    if(process.argv.includes('--cache-delay'))await page.waitForTimeout(1200);
-   const download=page.waitForEvent('download');await panel.getByRole('button',{name:'Скачать файл',exact:true}).click();await download;
+   await checkQuietCachedAction(panel,'.pena-transfer-build');
+   assert.equal(await page.evaluate(()=>window.__transferPerf.asyncCalls),calls,'Rebuilding ready code uses the existing snapshot');
+   const download=page.waitForEvent('download');await checkQuietCachedAction(panel,'.pena-transfer-download');await download;
    assert.equal(await panel.getByText('Фрагмент кода · копируется полностью',{exact:true}).isVisible(),true,'Download retains the visible partial-code disclosure');
    assert.equal(await panel.getByLabel('Код экспорта').isVisible(),true,'Downloading an already built code leaves its preview visible');
    assert.equal(await page.evaluate(()=>window.__transferPerf.asyncCalls),calls,'Downloading a ready code reuses its complete cached payload: '+JSON.stringify(await page.evaluate(()=>window.__transferCacheMisses||[])));

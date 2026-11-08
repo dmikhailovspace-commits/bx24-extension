@@ -62,6 +62,71 @@ export async function buildAndCheckExport(panel) {
 async function stableRects(panel){return panel.evaluate(el=>[el,el.querySelector('.pena-transfer-header'),el.querySelector('.pena-transfer-footer'),el.querySelector('.pena-transfer-primary')].map(x=>{const r=x.getBoundingClientRect();return [r.x,r.width];}));}
 function assertStable(before,after,label){before.forEach((r,i)=>r.forEach((v,j)=>assert.ok(Math.abs(v-after[i][j])<=1,`${label}: horizontal alignment and widths remain stable while height follows content`)));}
 
+
+async function checkPressedButtonGeometry(page,panel) {
+ // Suppress the release click only: pointer hover/down/up remain real browser
+ // input, while Confirm/Undo/Close cannot mutate or dismiss this fixture.
+ await panel.evaluate(el=>{window.__transferPressBlock=event=>{if(el.contains(event.target)) {event.preventDefault();event.stopImmediatePropagation();}};document.addEventListener('click',window.__transferPressBlock,true);});
+ try {
+  const buttons=panel.locator('button');
+  for(let i=0;i<await buttons.count();i++){
+   const button=buttons.nth(i);if(!await button.isVisible())continue;
+   await button.scrollIntoViewIfNeeded();await button.hover();await settleTransferMotion(panel);
+   const before={button:await button.boundingBox(),panel:await panel.boundingBox()};
+   await page.mouse.down();await page.waitForTimeout(120);
+   const held={button:await button.boundingBox(),panel:await panel.boundingBox()};
+   await page.mouse.up();await settleTransferMotion(panel);
+   const after={button:await button.boundingBox(),panel:await panel.boundingBox()};
+   for(const [phase,positions] of [['held',held],['released',after]])for(const key of ['button','panel'])for(const axis of ['x','y','width','height']){
+    assert.ok(Math.abs(before[key][axis]-positions[key][axis])<0.5,`${await button.textContent()}: ${key}.${axis} does not jump while ${phase}`);
+   }
+  }
+ } finally {
+  await page.mouse.up();await page.evaluate(()=>{document.removeEventListener('click',window.__transferPressBlock,true);delete window.__transferPressBlock;});
+ }
+}
+
+export async function checkQuietCachedAction(panel,selector) {
+ await settleTransferMotion(panel);
+ const result=await panel.evaluate(async(el,selector)=>{
+  const rect=()=>{const r=el.getBoundingClientRect();return [r.x,r.y,r.width,r.height];};
+  const before=rect(),frames=[];let busy=false,progress=false,animated=false;
+  const sample=()=>{
+   frames.push(rect());busy ||= el.dataset.exportState==='building';
+   const bar=el.querySelector('.pena-transfer-progress progress');progress ||= !!bar&&getComputedStyle(bar).display!=='none'&&bar.getBoundingClientRect().height>0;
+   animated ||= el.getAnimations({subtree:true}).some(a=>(a.playState==='running'||a.pending)&&a.effect.getKeyframes().some(frame=>'height' in frame||'opacity' in frame));
+  };
+  const observer=new MutationObserver(sample);observer.observe(el,{subtree:true,attributes:true,childList:true});
+  try {
+   el.querySelector(selector).click();sample();
+   await new Promise(resolve=>{const started=performance.now();const next=()=>{sample();if(performance.now()-started>=260)resolve();else requestAnimationFrame(next);};requestAnimationFrame(next);});
+  } finally {observer.disconnect();}
+  return {before,frames,busy,progress,animated};
+ },selector);
+ assert.equal(result.busy,false,'Cached action never re-enters building state');
+ assert.equal(result.progress,false,'Cached action never flashes progress');
+ assert.equal(result.animated,false,'Cached action never replays height/fade animations');
+ result.frames.forEach(rect=>rect.forEach((value,index)=>assert.ok(Math.abs(value-result.before[index])<0.5,'Cached action preserves panel geometry throughout')));
+}
+
+async function checkPendingCopy(page,panel) {
+ await page.evaluate(()=>{window.__pendingCopyCalls=0;Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:()=>{window.__pendingCopyCalls++;return new Promise(resolve=>window.__finishPendingCopy=resolve);}}});});
+ const result=await panel.evaluate(async el=>{
+  const button=el.querySelector('.pena-transfer-copy'),opacity=getComputedStyle(button).opacity;
+  let disabled=false,flashed=false;const sample=()=>{disabled ||= button.disabled;flashed ||= getComputedStyle(button).opacity!==opacity;};
+  const observer=new MutationObserver(sample);observer.observe(button,{attributes:true});
+  try {
+   button.click();button.click();sample();
+   await new Promise(resolve=>{const started=performance.now();const next=()=>{sample();if(performance.now()-started>=150)resolve();else requestAnimationFrame(next);};requestAnimationFrame(next);});
+   window.__finishPendingCopy();await new Promise(resolve=>requestAnimationFrame(resolve));sample();
+  } finally {observer.disconnect();}
+  return {disabled,flashed,calls:window.__pendingCopyCalls};
+ });
+ assert.deepEqual(result,{disabled:false,flashed:false,calls:1},'Pending copy guards repeated clicks without disabled/opacity flashing');
+ await panel.getByRole('button',{name:'Скопировано',exact:true}).waitFor();
+ await panel.getByRole('button',{name:'Скопировать код',exact:true}).waitFor();
+}
+
 async function checkPanelMotion(page,panel,reduced){
  await settleTransferMotion(panel);
  const result=await panel.evaluate(async el=>{
@@ -149,6 +214,7 @@ export async function checkTransferCode(page, platform) {
  assert.equal(await confirm.isEnabled(),true,'Late failed file read cannot replace a newer validated code');
  assert.match(await status.innerText(),/Папок:/);
  const validatedStatus=await status.innerText();
+ await checkPressedButtonGeometry(page,panel);
  await page.evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{}}}));
  await panel.getByRole('button',{name:'Скопировать код',exact:true}).click();await panel.getByRole('button',{name:'Скопировано',exact:true}).waitFor();
  assert.equal(await status.innerText(),validatedStatus,'Copy success preserves the validated import summary');
@@ -217,5 +283,9 @@ export async function checkTransferCode(page, platform) {
  assert.deepEqual(cleanup,{connected:false,animations:0},'Closing during rebuild cancels animations and removes the dialog');
  await openTransferSettings(page);await buildAndCheckExport(panel);await settleTransferMotion(panel);
  assert.ok(['','auto'].includes(await panel.evaluate(el=>el.style.height)),'Rapid reopen/build does not retain a frozen height');
+ await checkPressedButtonGeometry(page,panel);
+ await checkQuietCachedAction(panel,'.pena-transfer-build');
+ const cachedDownload=page.waitForEvent('download');await checkQuietCachedAction(panel,'.pena-transfer-download');await cachedDownload;
+ await checkPendingCopy(page,panel);
  await page.keyboard.press('Escape');
 }

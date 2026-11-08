@@ -23,11 +23,11 @@
   const _releaseVersion = _runtimeManifest.version;
   // Keep these installed-version notes in sync with update.json.release_notes.
   const _releaseNotes = [
-    'Исправлены раскрытие и прокрутка настроек. Привычный вид фильтров сохранён.',
-    'Исправлен экспорт папок, правил и распределения диалогов.',
-    'Настройки можно перенести файлом или кодом и отменить импорт.',
-    'Убраны показатели пересечений в правилах сортировки.'
-  ];
+    "Исправлены перенос настроек и отмена импорта при заполненном хранилище.",
+    "Код собирается по кнопке с прогрессом; готовый код копируется и скачивается без повторной сборки.",
+    "Убраны пустые области, лишние сообщения и рывки кнопок.",
+    "Привычный вид фильтров сохранён."
+];
   const _makeReleaseNotes = value => {
     const section=document.createElement('section');section.className='release-notes';
     const heading=document.createElement('strong');heading.textContent='Что нового';section.append(heading);
