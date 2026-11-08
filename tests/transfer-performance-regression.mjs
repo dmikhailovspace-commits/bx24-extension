@@ -9,11 +9,13 @@ const baseline=process.argv.includes('--baseline'),textareaProbe=process.argv.in
 const read=path=>baseline?execFileSync('git',['show',`${ref}:${path}`],{encoding:'utf8',maxBuffer:20*1024*1024}):readFileSync(path,'utf8');
 const sourceHashes=Object.fromEntries(['extension/injected.js','extension/injected.css','extension/native-catalog.js'].map(path=>[path,createHash('sha256').update(read(path)).digest('hex')]));
 let runtime=read('extension/injected.js');
+runtime=runtime.replace('function _openSortingTransfer() {',`window.__transferReadState=()=>({revision:_dialogControlDataRevision,raw:localStorage.getItem('pena.dialogControl.v1.chats')});\n function _openSortingTransfer() {`);
 // Diagnostic flags change only the served fixture, never the packaged runtime.
 if(textareaProbe||fullTextareaProbe)runtime=runtime.replace('const preview=exportCache.text.length>12000;','const preview=false;');
 runtime=runtime.replace('function _sortingTransferSnapshot() {',`function _sortingTransferSnapshot() { const started=performance.now();window.__transferPerf.calls++;try{return _sortingTransferSnapshotMeasured();}finally{window.__transferPerf.snapshotMs+=performance.now()-started;}}\n function _sortingTransferSnapshotMeasured() {`);
 if(!baseline)runtime=runtime.replace('async function _sortingTransferSnapshotAsync(scope, checkpoint, progress) {',`async function _sortingTransferSnapshotAsync(...args) {const start=performance.now(),beat=window.__transferBeat,frames=beat?.frames||0,ticks=beat?.ticks||0;window.__transferPerf.asyncCalls++;const report=args[2];args[2]=value=>{report(value);if(value>=5&&window.__transferMutation){const mutate=window.__transferMutation;window.__transferMutation=null;mutate();}};try{return await _sortingTransferSnapshotAsyncMeasured(...args);}finally{window.__transferPerf.buildSpan={elapsedMs:performance.now()-start,frames:(beat?.frames||0)-frames,ticks:(beat?.ticks||0)-ticks};}}\n async function _sortingTransferSnapshotAsyncMeasured(scope, checkpoint, progress) {`);
 if(!baseline)runtime=runtime.replace('async function _sortingTransferCodeAsync(snapshot, checkpoint, progress) {',`async function _sortingTransferCodeAsync(...args) {const start=performance.now(),beat=window.__transferBeat,frames=beat?.frames||0,ticks=beat?.ticks||0;try{return await _sortingTransferCodeAsyncMeasured(...args);}finally{window.__transferPerf.codeSpan={start,elapsedMs:performance.now()-start,frames:(beat?.frames||0)-frames,ticks:(beat?.ticks||0)-ticks};}}\n async function _sortingTransferCodeAsyncMeasured(snapshot, checkpoint, progress) {`);
+if(!baseline)runtime=runtime.replace('function _sortingTransferStateMatches(state) {',`function _sortingTransferStateMatches(state) {const result=_sortingTransferStateMatchesMeasured(state);if(!result){const now=_sortingTransferState();(window.__transferCacheMisses||=[]).push({at:performance.now(),oldRevision:state.revision,newRevision:now.revision,changedKeys:state.values.filter(([key,value])=>localStorage.getItem(key)!==value).map(([key,value])=>({key,oldLength:value?.length,newLength:localStorage.getItem(key)?.length}))});}return result;}\n function _sortingTransferStateMatchesMeasured(state) {`);
 const server=await startHarnessServer(),browser=await chromium.launch({headless:true});
 const results=[];
 try {
@@ -39,6 +41,15 @@ try {
   const settings=page.locator('.pena-settings-section');await settings.locator(':scope>summary').click();
   if(baseline)await settings.locator('details>summary').click();
   await settings.getByRole('button',{name:'Перенос настроек',exact:true}).waitFor();
+  // The cold-start fixture deliberately continues materialization after the
+  // switcher appears. Wait for actual source quiescence, not merely a visible
+  // panel: otherwise late native title hydration correctly invalidates cache.
+  await page.waitForFunction(()=>{
+   const state=window.__transferReadState(),now=performance.now(),previous=window.__transferQuiet;
+   if(!previous||previous.revision!==state.revision||previous.raw!==state.raw)window.__transferQuiet={...state,since:now};
+   return window.__coldStartHarness.phase==='settled'&&now-window.__transferQuiet.since>=1200;
+  },null,{polling:100,timeout:15000});
+  const fixtureSettled=await page.evaluate(()=>({phase:window.__coldStartHarness.phase,quietMs:performance.now()-window.__transferQuiet.since,revision:window.__transferQuiet.revision}));
   const open=await page.evaluate(()=>{window.__transferPerf={calls:0,snapshotMs:0,asyncCalls:0};const start=performance.now();document.querySelector('.pena-settings-transfer').click();return {elapsedMs:performance.now()-start,...window.__transferPerf};});
   const panel=page.getByRole('dialog',{name:'Перенос настроек',exact:true});await panel.waitFor();
   if(!baseline){
@@ -79,10 +90,11 @@ try {
   const diagnostics=await page.evaluate(()=>({valueSets:window.__transferValueSets,longTasks:window.__transferLongTasks}));
   if(!baseline&&!textareaProbe&&!fullTextareaProbe){
    const calls=await page.evaluate(()=>window.__transferPerf.asyncCalls);
+   if(process.argv.includes('--cache-delay'))await page.waitForTimeout(1200);
    const download=page.waitForEvent('download');await panel.getByRole('button',{name:'Скачать файл',exact:true}).click();await download;
    assert.equal(await panel.getByText('Фрагмент кода · копируется полностью',{exact:true}).isVisible(),true,'Download retains the visible partial-code disclosure');
    assert.equal(await panel.getByLabel('Код экспорта').isVisible(),true,'Downloading an already built code leaves its preview visible');
-   assert.equal(await page.evaluate(()=>window.__transferPerf.asyncCalls),calls,'Downloading a ready code reuses its complete cached payload');
+   assert.equal(await page.evaluate(()=>window.__transferPerf.asyncCalls),calls,'Downloading a ready code reuses its complete cached payload: '+JSON.stringify(await page.evaluate(()=>window.__transferCacheMisses||[])));
   }
   let cancellation=null,staleBuild=null;
   if(!baseline){
@@ -113,7 +125,7 @@ try {
    assert.equal(staleBuild.codeLength,0,'Concurrent settings changes do not leave an apparently ready stale export');
    assert.notEqual(staleBuild.state,'ready');
   }
-  results.push({items:count,open,build,copy,beat,diagnostics,cancellation,staleBuild,exportBytes:Buffer.byteLength(JSON.stringify(exportData))});
+  results.push({items:count,fixtureSettled,open,build,copy,beat,diagnostics,cancellation,staleBuild,exportBytes:Buffer.byteLength(JSON.stringify(exportData))});
   await page.close();
  }
  mkdirSync('tests/artifacts',{recursive:true});writeFileSync(`tests/artifacts/transfer-performance-${baseline?'before':textareaProbe?'textarea-probe':fullTextareaProbe?'full-textarea-probe':'after'}.json`,JSON.stringify({source:baseline?ref:'working tree',sourceHashes,fixture:true,realPortal:false,textareaProbe,fullTextareaProbe,results},null,2));
