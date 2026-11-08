@@ -1218,7 +1218,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 .pena-transfer-body>p:first-child{margin-top:0}
 .pena-transfer-panel .pena-transfer-intro,.pena-transfer-panel .pena-transfer-section>p{color:#68778d;font-size:12px;line-height:1.6;overflow-wrap:anywhere}
 .pena-transfer-section{min-width:0;max-width:100%;padding:0;border:0;background:transparent}
-.pena-transfer-section+.pena-transfer-section{padding-top:20px;border-top:1px solid #e5eaf1}
+.pena-transfer-section+.pena-transfer-section{padding-top:0;border-top:0}
 .pena-transfer-section>*{margin:0}
 .pena-transfer-panel .pena-transfer-section>*+*{margin-top:12px}
 .pena-transfer-panel .pena-transfer-section>h3+p{margin-top:4px}

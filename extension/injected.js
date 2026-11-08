@@ -12940,9 +12940,20 @@ if (_presetChannel) {
 		const exportCode=node('textarea','',exportSection);exportCode.className='pena-transfer-export-code';exportCode.readOnly=true;exportCode.setAttribute('aria-label','Код экспорта');exportCode.hidden=true;exportCode.spellcheck=false;exportCode.wrap='off';exportCode.rows=1;
 		const exportActions=node('div','',exportSection);exportActions.className='pena-transfer-actions';exportActions.hidden=true;
 		const importSection=node('section','',body);importSection.className='pena-transfer-section';node('h3','Загрузить настройки',importSection);
-		node('p','Выберите файл или вставьте код. Сначала проверим данные — до подтверждения ничего не изменится.',importSection);
 		const footer=node('div','');footer.className='pena-transfer-footer';
 		const status=node('p','',footer);status.setAttribute('role','status');status.setAttribute('aria-live','polite');
+		let layoutMotion=null,revealMotions=[];
+		const stopTransferMotion=()=>{layoutMotion?.cancel();layoutMotion=null;revealMotions.forEach(m=>m.cancel());revealMotions=[];};
+		const changeTransferLayout=(change,reveal=false)=>{
+			const before=panel.getBoundingClientRect().height;stopTransferMotion();change();
+			if(!overlay.isConnected||!panel.animate||window.matchMedia('(prefers-reduced-motion: reduce)').matches)return;
+			const after=panel.getBoundingClientRect().height;
+			if(Math.abs(after-before)>1){
+				const motion=panel.animate([{height:before+'px'},{height:after+'px'}],{duration:200,easing:'cubic-bezier(.2,.7,.2,1)'});
+				layoutMotion=motion;motion.onfinish=()=>{if(layoutMotion===motion)layoutMotion=null;};
+			}
+			if(reveal)revealMotions=[exportCode,exportActions].map(el=>el.animate([{opacity:0,transform:'translateY(4px)'},{opacity:1,transform:'translateY(0)'}],{duration:180,easing:'ease-out'}));
+		};
 		const current = () => {if(!overlay.isConnected||scope!==_getDialogTimeIdentityScopeKey())throw new Error('Пользователь изменился. Откройте перенос заново.');};
 		const showError=e=>{status.dataset.state='error';status.textContent=e instanceof SyntaxError?'Не удалось прочитать настройки. Выберите файл JSON или вставьте полный код.':e.message;};
 		const action = (label,fn,parent=footer) => {const b=node('button',label,parent);b.type='button';b.addEventListener('click',async()=>{try{current();status.dataset.state='';await fn();}catch(e){if(overlay.isConnected&&e.name!=='AbortError')showError(e);}});return b;};
@@ -12959,7 +12970,7 @@ if (_presetChannel) {
 			const check=()=>{current();if(token!==exportJob)throw aborted();};
 			const progress=value=>{progressValue=Math.max(progressValue,Math.min(100,value));progressBar.value=progressValue;progressBar.setAttribute('aria-valuenow',String(progressValue));progressLabel.textContent=`Собираем код · ${progressValue}%`;};
 			const checkpoint=async()=>{check();if(performance.now()-lastYield>=6){await yieldTask();lastYield=performance.now();check();}};
-			exportBusy=true;syncControls();panel.dataset.exportState='building';exportState.hidden=false;progressBar.hidden=false;progress(0);
+			exportBusy=true;syncControls();panel.dataset.exportState='building';changeTransferLayout(()=>{exportState.hidden=false;progressBar.hidden=false;progress(0);});
 			try {
 				// Paint the loader before reading catalog data. Subsequent work yields in small batches.
 				await new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0)));check();
@@ -12970,27 +12981,29 @@ if (_presetChannel) {
 					if(!_sortingTransferStateMatches(state))throw new Error('Настройки изменились во время сборки. Нажмите «Собрать код» ещё раз.');
 					exportCache={state,text};
 				}
-				check();progress(100);progressBar.hidden=true;progressLabel.textContent='Код готов';
+				check();
+				changeTransferLayout(()=>{
+				progress(100);progressBar.hidden=true;progressLabel.textContent='';
 				if(reveal){
 					// Rendering megabytes in a native textarea blocks layout even when JS yields.
 					// Keep a bounded, clearly labelled preview; both copy paths use the full cache.
-					const preview=exportCache.text.length>12000;
+					const preview=exportCache.text.length>12000;exportState.hidden=!preview;
 					exportCode.value=preview?exportCache.text.slice(0,8000):exportCache.text;
 					exportCode.dataset.preview=String(preview);
 					exportCode.title=preview?'Показан фрагмент. Кнопка и Ctrl+C копируют весь код.':'';
 					if(preview)progressLabel.textContent='Фрагмент кода · копируется полностью';
 					exportCode.hidden=false;exportActions.hidden=false;fitCode(exportCode);resetCopyFeedback();panel.dataset.exportState='ready';
 				}
-				else {panel.dataset.exportState=exportCode.value?'ready':'idle';exportState.hidden=!exportCode.value;if(exportCode.value&&exportCode.dataset.preview==='true')progressLabel.textContent='Фрагмент кода · копируется полностью';}
+				else {panel.dataset.exportState=exportCode.value?'ready':'idle';exportState.hidden=!exportCode.value||exportCode.dataset.preview!=='true';if(exportCode.value&&exportCode.dataset.preview==='true')progressLabel.textContent='Фрагмент кода · копируется полностью';}
+				},reveal);
 				return exportCache.text;
-			}catch(error){if(token===exportJob){exportCache=null;exportCode.value='';delete exportCode.dataset.preview;exportCode.title='';fitCode(exportCode);panel.dataset.exportState='error';exportState.hidden=true;exportCode.hidden=true;exportActions.hidden=true;}throw error;}
+			}catch(error){if(token===exportJob)changeTransferLayout(()=>{exportCache=null;exportCode.value='';delete exportCode.dataset.preview;exportCode.title='';fitCode(exportCode);panel.dataset.exportState='error';exportState.hidden=true;exportCode.hidden=true;exportActions.hidden=true;});throw error;}
 			finally{exportBusy=false;if(overlay.isConnected)syncControls();}
 		};
 		const downloadButton=action('Скачать файл',async()=>{
 			const text=await generateExport(false);if(text===null)return;
 			const url=URL.createObjectURL(new Blob([text],{type:'application/json'}));
 			const link=document.createElement('a');link.href=url;link.download='bx24-sorting.json';panel.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
-			status.textContent='Файл подготовлен. Если скачивание недоступно, соберите и скопируйте код.';
 		},downloadActions);downloadButton.className='pena-transfer-download';
 		const buildButton=action('Собрать код',()=>generateExport(true),buildActions);buildButton.className='pena-transfer-build';
 		const copyButton=action('Скопировать код',async()=>{
@@ -12999,13 +13012,13 @@ if (_presetChannel) {
 			try {
 				if(!navigator.clipboard?.writeText)throw Error();
 				await navigator.clipboard.writeText(text);current();if(token!==exportJob)return;copyButton.textContent='Скопировано';copyButton.dataset.state='copied';
-				status.textContent='Код скопирован.';
+				if(status.textContent==='Код выделен. Нажмите Ctrl+C (на Mac — ⌘C), чтобы скопировать.')status.textContent='';
 				copyFeedbackTimer=setTimeout(resetCopyFeedback,2400);
 			} catch {
 				current();if(token!==exportJob)return;exportCode.focus({preventScroll:true});exportCode.select();
 				status.textContent='Код выделен. Нажмите Ctrl+C (на Mac — ⌘C), чтобы скопировать.';
 			} finally {syncControls();}
-		},exportActions);copyButton.className='pena-transfer-copy';copyButton.disabled=true;fitCode(exportCode);
+		},exportActions);copyButton.className='pena-transfer-copy';copyButton.setAttribute('aria-live','polite');copyButton.disabled=true;fitCode(exportCode);
 		exportCode.addEventListener('copy',event=>{
 			if(exportCache&&exportCode.value&&event.clipboardData){event.clipboardData.setData('text/plain',exportCache.text);event.preventDefault();}
 		});
@@ -13068,7 +13081,7 @@ if (_presetChannel) {
 		});restore.disabled=true;
 		const backupLoadToken=++backupLoad;
 		_hasSortingTransferBackup(scope).then(backup=>{if(overlay.isConnected&&scope===_getDialogTimeIdentityScopeKey()&&backupLoadToken===backupLoad){backupAvailable=!!backup;syncControls();}}).catch(error=>{if(overlay.isConnected&&backupLoadToken===backupLoad)showError(error);});
-		const close=()=>{reading++;exportJob++;exportCache=null;clearTimeout(copyFeedbackTimer);overlay.remove();document.removeEventListener('keydown',trap,true);const target=previousFocus?.isConnected?previousFocus:document.querySelector('[data-pena-workspace-tab="filters"]');target?.focus?.({preventScroll:true});};
+		const close=()=>{reading++;exportJob++;exportCache=null;clearTimeout(copyFeedbackTimer);stopTransferMotion();window.removeEventListener('resize',stopTransferMotion);overlay.remove();document.removeEventListener('keydown',trap,true);const target=previousFocus?.isConnected?previousFocus:document.querySelector('[data-pena-workspace-tab="filters"]');target?.focus?.({preventScroll:true});};
 		const closeButton=node('button','Закрыть',header);closeButton.type='button';closeButton.className='pena-transfer-close';closeButton.addEventListener('click',close);
 		const trap=e=>{
 			if(document.querySelector('.pena-native-confirm-overlay'))return;
@@ -13076,7 +13089,7 @@ if (_presetChannel) {
 			if(e.key==='Tab'){const all=[...panel.querySelectorAll('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),summary')].filter(el=>el.getClientRects().length);const first=all[0],last=all.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}
 		};
 		overlay.addEventListener('click',event=>{if(event.target===overlay)close();});
-		document.addEventListener('keydown',trap,true);document.body.append(overlay);
+		document.addEventListener('keydown',trap,true);window.addEventListener('resize',stopTransferMotion);document.body.append(overlay);
 		overlay.showPopover?.();closeButton.focus({preventScroll:true});
 	}
 	function _dialogAutomationKey(mode = _pMode()) {

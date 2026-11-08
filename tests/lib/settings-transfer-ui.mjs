@@ -32,6 +32,8 @@ export async function checkDeferredExport(panel) {
  assert.ok(download.y<build.y||download.x<build.x,'Download precedes Build code');
  const buttonStyles=await panel.evaluate(el=>['.pena-transfer-download','.pena-transfer-build'].map(selector=>{const style=getComputedStyle(el.querySelector(selector));return Object.fromEntries(['backgroundColor','color','borderColor','borderWidth','borderRadius','padding','height','minWidth','fontWeight'].map(key=>[key,style[key]]));}));
  assert.deepEqual(buttonStyles[0],buttonStyles[1],'Download and Build have the same visual treatment');
+ assert.equal(await panel.locator('.pena-transfer-section').nth(1).locator(':scope > p').count(),0,'Import has no explanatory paragraph');
+ assert.equal(await panel.locator('.pena-transfer-section').nth(1).evaluate(el=>parseFloat(getComputedStyle(el).borderTopWidth)),0,'Save and load sections have no middle divider');
 }
 
 export async function buildAndCheckExport(panel) {
@@ -51,6 +53,7 @@ export async function buildAndCheckExport(panel) {
  assert.equal(snapshot.format,'bx24-chat-sorter');
  assert.ok(snapshot.modes.chats.items.length>0,'The first displayed export contains current ordinary chats');
  const copy=panel.getByRole('button',{name:'Скопировать код',exact:true});
+ await settleTransferMotion(panel);
  const fieldBox=await field.boundingBox(),copyBox=await copy.boundingBox();
  assert.ok(copyBox.y>=fieldBox.y+fieldBox.height,'Copy action is below the code');
  return {code,snapshot};
@@ -58,6 +61,39 @@ export async function buildAndCheckExport(panel) {
 
 async function stableRects(panel){return panel.evaluate(el=>[el,el.querySelector('.pena-transfer-header'),el.querySelector('.pena-transfer-footer'),el.querySelector('.pena-transfer-primary')].map(x=>{const r=x.getBoundingClientRect();return [r.x,r.width];}));}
 function assertStable(before,after,label){before.forEach((r,i)=>r.forEach((v,j)=>assert.ok(Math.abs(v-after[i][j])<=1,`${label}: horizontal alignment and widths remain stable while height follows content`)));}
+
+async function checkPanelMotion(page,panel,reduced){
+ await settleTransferMotion(panel);
+ const result=await panel.evaluate(async el=>{
+  const heights=[el.getBoundingClientRect().height];let sawHeight=false,sawFade=false,settled=0;
+  el.querySelector('.pena-transfer-build').click();
+  const started=performance.now();
+  await new Promise((resolve,reject)=>{
+   const sample=()=>{
+    heights.push(el.getBoundingClientRect().height);
+    const animations=el.getAnimations({subtree:true}).filter(a=>a.playState==='running'||a.pending);
+    sawHeight ||= animations.some(a=>a.effect.getKeyframes().some(frame=>'height' in frame));
+    sawFade ||= animations.some(a=>a.effect.target?.matches?.('.pena-transfer-export-code')&&a.effect.getKeyframes().some(frame=>'opacity' in frame));
+    settled=el.dataset.exportState==='ready'&&!animations.length?settled+1:0;
+    if(settled>=2)return resolve();
+    if(performance.now()-started>5000)return reject(Error('Transfer animation or export never settled'));
+    requestAnimationFrame(sample);
+   };requestAnimationFrame(sample);
+  });
+  return {heights,sawHeight,sawFade,inlineHeight:el.style.height,activeAnimations:el.getAnimations({subtree:true}).filter(a=>a.playState==='running'||a.pending).length};
+ });
+ assert.equal(result.activeAnimations,0,'Panel does not retain running animations after completion');
+ assert.ok(['','auto'].includes(result.inlineHeight),'Completed height animation restores natural layout');
+ if(reduced){assert.equal(result.sawHeight,false,'Reduced motion skips height animation');assert.equal(result.sawFade,false,'Reduced motion skips code fade');}
+ else{
+  assert.equal(result.sawHeight,true,'Build animates the actual panel height');
+  assert.equal(result.sawFade,true,'Built code fades into view');
+  const first=result.heights[0],last=result.heights.at(-1);
+  assert.ok(last>first+20,'Building expands the compact panel');
+  assert.ok(result.heights.some(height=>height>first+2&&height<last-2),'Animation renders intermediate heights, not just the endpoints');
+ }
+ return result;
+}
 
 export async function checkTransferCode(page, platform) {
  const panel=page.getByRole('dialog',{name:'Перенос настроек',exact:true});
@@ -74,10 +110,13 @@ export async function checkTransferCode(page, platform) {
  const anchors=await stableRects(panel);
  await page.screenshot({path:`tests/artifacts/settings-${platform}-initial.png`});
  await page.evaluate(()=>{window.transferCopied=[];Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.transferCopied.push(text);}}});});
+ const previousStatus=await panel.locator('[role=status]').textContent();
  await panel.getByRole('button',{name:'Скопировать код',exact:true}).click();
  await panel.getByRole('button',{name:'Скопировано',exact:true}).waitFor();
  await settleTransferMotion(panel);
  assertStable(anchors,await stableRects(panel),'Copy confirmation');
+ assert.equal(await panel.locator('[role=status]').textContent(),previousStatus,'Copy success uses button feedback and preserves the existing footer');
+ assert.equal(await panel.getByText('Код скопирован.',{exact:true}).count(),0,'No duplicate copy-success message');
  await page.screenshot({path:`tests/artifacts/settings-${platform}-copied.png`});
  assert.equal(await page.evaluate(()=>window.transferCopied.at(-1)),code,'Copy writes the displayed code, not a newly generated surprise');
  await panel.getByRole('button',{name:'Скопировать код',exact:true}).waitFor();
@@ -109,6 +148,13 @@ export async function checkTransferCode(page, platform) {
  await page.evaluate(async()=>{File.prototype.text=originalFileText;finishFileRead();await new Promise(resolve=>requestAnimationFrame(resolve));});
  assert.equal(await confirm.isEnabled(),true,'Late failed file read cannot replace a newer validated code');
  assert.match(await status.innerText(),/Папок:/);
+ const validatedStatus=await status.innerText();
+ await page.evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{}}}));
+ await panel.getByRole('button',{name:'Скопировать код',exact:true}).click();await panel.getByRole('button',{name:'Скопировано',exact:true}).waitFor();
+ assert.equal(await status.innerText(),validatedStatus,'Copy success preserves the validated import summary');
+ assert.equal(await confirm.isEnabled(),true,'Copy does not discard a staged import');
+ await panel.getByRole('button',{name:'Скопировать код',exact:true}).waitFor();
+ await page.evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw Error('Denied');}}}));
  await input.fill('{broken');await check.click();await status.filter({hasText:'Не удалось прочитать'}).waitFor();assert.equal(await confirm.isDisabled(),true);
  await input.fill(JSON.stringify({...snapshot,scope:'foreign.test~999'}));await check.click();await status.filter({hasText:'другого портала'}).waitFor();assert.equal(await confirm.isDisabled(),true);
  await input.fill('\uFEFF'+code);await check.click();await status.filter({hasText:'Папок:'}).waitFor();assert.equal(await confirm.isEnabled(),true,'BOM-prefixed portable code is accepted');
@@ -155,4 +201,21 @@ export async function checkTransferCode(page, platform) {
  assert.equal(await panel.getByLabel('Код экспорта').inputValue(),'','Undo leaves export idle until explicitly rebuilt');
  await buildAndCheckExport(panel);
  await page.keyboard.press('Escape');assert.equal(await panel.count(),0);
+ // Check real intermediate geometry independently of Playwright's action
+ // stability waits, which would otherwise skip the animation under test.
+ await openTransferSettings(page);await checkPanelMotion(page,panel,false);
+ await page.keyboard.press('Escape');
+ await page.emulateMedia({reducedMotion:'reduce'});
+ await openTransferSettings(page);await checkPanelMotion(page,panel,true);
+ await page.keyboard.press('Escape');await page.emulateMedia({reducedMotion:'no-preference'});
+ await openTransferSettings(page);
+ const cleanup=await panel.evaluate(async el=>{
+  el.querySelector('.pena-transfer-build').click();el.querySelector('.pena-transfer-close').click();
+  await new Promise(resolve=>setTimeout(resolve,300));
+  return {connected:el.isConnected,animations:el.getAnimations({subtree:true}).filter(a=>a.playState==='running'||a.pending).length};
+ });
+ assert.deepEqual(cleanup,{connected:false,animations:0},'Closing during rebuild cancels animations and removes the dialog');
+ await openTransferSettings(page);await buildAndCheckExport(panel);await settleTransferMotion(panel);
+ assert.ok(['','auto'].includes(await panel.evaluate(el=>el.style.height)),'Rapid reopen/build does not retain a frozen height');
+ await page.keyboard.press('Escape');
 }
