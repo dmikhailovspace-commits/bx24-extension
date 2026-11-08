@@ -12781,15 +12781,93 @@ if (_presetChannel) {
 		}
 		return entries;
 	}
-	function _commitSortingTransfer(entries) {
+	function _commitSortingTransfer(entries, deferred = false) {
 		const before = entries.map(([key])=>[key,localStorage.getItem(key)]);
 		const write = ([key,value]) => value === null ? localStorage.removeItem(key) : localStorage.setItem(key,value);
-		try { entries.forEach(write); }
-		catch (error) { before.forEach(write); throw error; }
+		// Clear only the touched keys first: intermediate growth must not consume
+		// the space needed to restore the original values after a quota failure.
+		const replace = values => { values.forEach(([key])=>localStorage.removeItem(key));values.forEach(write); };
+		try { replace(entries); }
+		catch (error) {
+			try{replace(before);}catch{throw new Error('Запись настроек прервана. Резервная копия сохранена: отмените последний импорт, чтобы восстановить данные.');}
+			throw error;
+		}
+		const notify = () => {
 		_dialogControlItems = {}; _dialogControlStorageRaw = {}; _dialogControlDataRevision++;
 		_dialogControlLastSig = ''; _dialogControlNativeViewSig = ''; _dialogControlNativeSwitcherSig = '';
 		_clearDialogControlMultiSelection();
 		_notifyDialogRecentDataChanged(); _scheduleDialogAutomation();
+		};
+		if (!deferred) notify();
+		return {before,notify};
+	}
+	function _openSortingTransferBackupDatabase() {
+		return new Promise((resolve,reject)=>{
+			if (!window.indexedDB) {reject(new Error('Хранилище резервной копии недоступно. Настройки не изменены.'));return;}
+			const request=indexedDB.open('pena-sorting-transfer',1);
+			let settled=false;
+			request.onupgradeneeded=()=>request.result.createObjectStore('backups');
+			request.onsuccess=()=>{if(settled){request.result.close();return;}settled=true;request.result.onversionchange=()=>request.result.close();resolve(request.result);};
+			request.onerror=request.onblocked=()=>{if(!settled){settled=true;reject(new Error('Не удалось открыть резервную копию. Закройте другие окна переноса и попробуйте снова.'));}};
+		});
+	}
+	async function _sortingTransferBackupRecord(scope, update) {
+		const db=await _openSortingTransferBackupDatabase();
+		return new Promise((resolve,reject)=>{
+			const tx=db.transaction('backups',update?'readwrite':'readonly'),store=tx.objectStore('backups'),request=store.get(scope);
+			let result=null,failure=null;
+			request.onsuccess=()=>{try{result=request.result||null;if(update){result=update(result);if(result===null)store.delete(scope);else store.put(result,scope);}}catch(error){failure=error;tx.abort();}};
+			tx.oncomplete=()=>{db.close();resolve(result);};
+			tx.onabort=()=>{db.close();reject(failure||new Error('Не удалось сохранить резервную копию. Повторите попытку.'));};
+		});
+	}
+	function _sortingTransferEntriesMatch(entries) {return entries.every(([key,value])=>localStorage.getItem(key)===value);}
+	function _sortingTransferRecordBackup(record, scope) {
+		if(record?.pending){
+			if(_sortingTransferEntriesMatch(record.pending.after))return record.pending.nextBackup;
+			if(!_sortingTransferEntriesMatch(record.pending.before))return {scope,entries:record.pending.before.filter(([key])=>key!==`pena.sortingTransfer.backup.v1.${scope}`)};
+		}
+		return record?.backup||record?.entries&&record||JSON.parse(localStorage.getItem(`pena.sortingTransfer.backup.v1.${scope}`)||'null');
+	}
+	async function _readSortingTransferBackup(scope) {return _sortingTransferRecordBackup(await _sortingTransferBackupRecord(scope),scope);}
+	function _validateSortingTransferBackup(backup, scope, entries) {
+		const allowed=new Set(entries.map(([key])=>key));
+		if(backup?.scope!==scope||!Array.isArray(backup.entries)||backup.entries.length!==allowed.size||backup.entries.some(entry=>!Array.isArray(entry)||entry.length!==2||!allowed.delete(entry[0])||(entry[1]!==null&&typeof entry[1]!=='string')))throw new Error('Резервная копия недоступна. Настройки не изменены.');
+		return backup;
+	}
+	async function _persistSortingTransfer(scope, entries, guard, restore = false, isScopeCurrent = () => true) {
+		const run=async()=>{
+			const legacyKey=`pena.sortingTransfer.backup.v1.${scope}`;
+			let journal;
+			// A completed IDB transaction is required BEFORE touching localStorage.
+			// The durable journal retains both the previous undo and interrupted work.
+			await _sortingTransferBackupRecord(scope,record=>{
+				guard();
+				if(record?.pending&&!navigator.locks?.request&&!restore)throw new Error('Предыдущий перенос ещё не завершён. Закройте другие окна переноса или отмените последний импорт.');
+				if(record?.pending&&!restore&&!_sortingTransferEntriesMatch(record.pending.before)&&!_sortingTransferEntriesMatch(record.pending.after))throw new Error('Предыдущий перенос был прерван. Сначала отмените последний импорт.');
+				const previous=_sortingTransferRecordBackup(record,scope);
+				const target=restore?_validateSortingTransferBackup(previous,scope,entries).entries:entries;
+				const before=[...entries.map(([key])=>[key,localStorage.getItem(key)]),[legacyKey,localStorage.getItem(legacyKey)]];
+				journal={backup:previous,pending:{before,after:[...target,[legacyKey,null]],nextBackup:restore?null:{scope,entries:before.slice(0,-1)}}};
+				return journal;
+			});
+			let applied;
+			try{
+				guard();
+				if(!_sortingTransferEntriesMatch(journal.pending.before))throw new Error('Настройки изменились. Проверьте код или выберите файл заново.');
+				applied=_commitSortingTransfer(journal.pending.after,true);
+			}catch(error){
+				// Do not discard a recovery journal if even the rollback was interrupted.
+				if(_sortingTransferEntriesMatch(journal.pending.before))await _sortingTransferBackupRecord(scope,record=>JSON.stringify(record)===JSON.stringify(journal)?{backup:journal.backup}:record).catch(()=>{});
+				if(error?.name==='QuotaExceededError')throw new Error('Недостаточно места для новых настроек. Импорт отменён, прежние настройки и резервная копия сохранены.');
+				throw error;
+			}
+			// If finalization is interrupted, the durable after/before pair resolves
+			// the undo on reopening; no successful import can lose its backup.
+			await _sortingTransferBackupRecord(scope,record=>JSON.stringify(record)===JSON.stringify(journal)?{backup:journal.pending.nextBackup}:record).catch(()=>{});
+			if(isScopeCurrent())applied.notify();
+		};
+		return navigator.locks?.request?navigator.locks.request(`pena-sorting-transfer:${scope}`,run):run();
 	}
 	function _openSortingTransfer() {
 		if (document.querySelector('.pena-sorting-transfer')) return;
@@ -12806,9 +12884,8 @@ if (_presetChannel) {
 		node('p','Папки, правила и распределение диалогов между приложением и Chrome. Только для того же портала и пользователя Bitrix24.',body).className='pena-transfer-intro';
 		const exportSection=node('section','',body);exportSection.className='pena-transfer-section';node('h3','Сохранить настройки',exportSection);
 		node('p','Скачайте файл или скопируйте код для переноса на другое устройство.',exportSection);
+		const exportCode=node('textarea','',exportSection);exportCode.className='pena-transfer-export-code';exportCode.readOnly=true;exportCode.setAttribute('aria-label','Код экспорта');exportCode.spellcheck=false;
 		const exportActions=node('div','',exportSection);exportActions.className='pena-transfer-actions';
-		const exportDetails=node('details','',exportSection);node('summary','Код для переноса',exportDetails);
-		const exportCode=node('textarea','',exportDetails);exportCode.readOnly=true;exportCode.setAttribute('aria-label','Код экспорта');exportCode.spellcheck=false;
 		const importSection=node('section','',body);importSection.className='pena-transfer-section';node('h3','Загрузить настройки',importSection);
 		node('p','Выберите файл или вставьте код. Сначала проверим данные — до подтверждения ничего не изменится.',importSection);
 		const footer=node('div','');footer.className='pena-transfer-footer';
@@ -12816,23 +12893,32 @@ if (_presetChannel) {
 		const current = () => {if(!overlay.isConnected||scope!==_getDialogTimeIdentityScopeKey())throw new Error('Пользователь изменился. Откройте перенос заново.');};
 		const showError=e=>{status.dataset.state='error';status.textContent=e instanceof SyntaxError?'Не удалось прочитать настройки. Выберите файл JSON или вставьте полный код.':e.message;};
 		const action = (label,fn,parent=footer) => {const b=node('button',label,parent);b.type='button';b.addEventListener('click',async()=>{try{current();status.dataset.state='';await fn();}catch(e){if(overlay.isConnected)showError(e);}});return b;};
-		const prepareExport=()=>{const text=JSON.stringify(_sortingTransferSnapshot(),null,2);exportCode.value=text;return text;};
+		let copyFeedbackTimer=0;
+		const resetCopyFeedback=()=>{clearTimeout(copyFeedbackTimer);copyButton.textContent='Скопировать код';delete copyButton.dataset.state;};
+		const prepareExport=()=>{const text=JSON.stringify(_sortingTransferSnapshot(),null,2);if(exportCode.value!==text){exportCode.value=text;resetCopyFeedback();}return text;};
+		const copyButton=action('Скопировать код',async()=>{
+			const text=prepareExport();resetCopyFeedback();copyButton.disabled=true;
+			try {
+				if(!navigator.clipboard?.writeText)throw Error();
+				await navigator.clipboard.writeText(text);current();copyButton.textContent='Скопировано';copyButton.dataset.state='copied';
+				status.textContent='Код скопирован. Вставьте его в настройках другой версии сортировщика.';
+				copyFeedbackTimer=setTimeout(resetCopyFeedback,2400);
+			} catch {
+				current();exportCode.focus({preventScroll:true});exportCode.select();
+				status.textContent='Код выделен. Нажмите Ctrl+C (на Mac — ⌘C), чтобы скопировать.';
+			} finally {copyButton.disabled=false;}
+		},exportActions);copyButton.className='pena-transfer-copy';
 		action('Скачать файл',()=>{
-			const text=prepareExport();exportDetails.open=true;
+			const text=prepareExport();
 			const url=URL.createObjectURL(new Blob([text],{type:'application/json'}));
 			const link=document.createElement('a');link.href=url;link.download='bx24-sorting.json';panel.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
 			status.textContent='Файл подготовлен. Если приложение не начало скачивание, используйте код для переноса.';
-		},exportActions);
-		action('Скопировать код',async()=>{
-			const text=prepareExport();exportDetails.open=true;exportCode.focus();exportCode.select();
-			try {if(!navigator.clipboard?.writeText)throw Error();await navigator.clipboard.writeText(text);current();status.textContent='Код скопирован. Вставьте его в настройках другой версии сортировщика.';}
-			catch {if(overlay.isConnected){exportCode.focus();exportCode.select();status.textContent='Код выделен. Нажмите Ctrl+C (на Mac — ⌘C), чтобы скопировать.';}}
-		},exportActions);
-		exportDetails.addEventListener('toggle',()=>{if(exportDetails.open&&!exportCode.value){try{current();prepareExport();}catch(e){showError(e);}}});
+		},exportActions).className='pena-transfer-download';
 		const input=node('input','',importSection);input.type='file';input.accept='.json,application/json';input.setAttribute('aria-label','Файл настроек');
 		const importDetails=node('details','',importSection);node('summary','Вставить код вместо файла',importDetails);
 		const importCode=node('textarea','',importDetails);importCode.setAttribute('aria-label','Код импорта');importCode.placeholder='Вставьте скопированный код';importCode.spellcheck=false;
-		let staged=null, baseline=null, reading=0;
+		let staged=null, baseline=null, reading=0, saving=false, backupAvailable=false, backupLoad=0;
+		const setSaving=value=>{if(value)backupLoad++;saving=value;input.disabled=value;importCode.disabled=value;checkCode.disabled=value;confirm.disabled=value||!staged;restore.disabled=value||!backupAvailable;panel.setAttribute('aria-busy',String(value));};
 		const resetImport=()=>{reading++;staged=null;baseline=null;confirm.disabled=true;status.textContent='';status.dataset.state='';};
 		const stage=text=>{
 			current();if(new Blob([text]).size>10*1024*1024)throw new Error('Слишком много данных: максимум 10 МБ.');
@@ -12843,23 +12929,24 @@ if (_presetChannel) {
 			confirm.disabled=false;
 		};
 		importCode.addEventListener('input',()=>{resetImport();input.value='';});
-		action('Проверить код',()=>{resetImport();stage(importCode.value);},importDetails);
-		const backupKey=`pena.sortingTransfer.backup.v1.${scope}`;
-		const confirm=action('Подтвердить импорт',()=>{
-			if(!staged)return;
+		const checkCode=action('Проверить код',()=>{if(saving)return;resetImport();stage(importCode.value);},importDetails);
+		const confirm=action('Подтвердить импорт',async()=>{
+			if(!staged||saving)return;
 			const now=_sortingTransferSnapshot();
-			if(JSON.stringify(now)!==baseline){resetImport();input.value='';throw new Error('Настройки изменились. Проверьте код или выберите файл заново.');}
+			const expected=baseline;
+			const guard=()=>{current();if(JSON.stringify(_sortingTransferSnapshot())!==expected){resetImport();input.value='';throw new Error('Настройки изменились. Проверьте код или выберите файл заново.');}};
+			guard();
 			const merged={...staged,modes:{}};
 			for(const mode of ['chats','tasks']) merged.modes[mode]=model.mergeSortingTransfer({
 				items:_getDialogControlItemsForMode(mode),segments:now.modes[mode].segments,locks:now.modes[mode].locks
 			},staged.modes[mode]);
 			const entries=_sortingTransferEntries(merged);
-			const backup={scope,entries:entries.map(([key])=>[key,localStorage.getItem(key)])};
-			const previousBackup=localStorage.getItem(backupKey);
-			localStorage.setItem(backupKey,JSON.stringify(backup));
-			try {_commitSortingTransfer(entries);}catch(error){if(previousBackup===null)localStorage.removeItem(backupKey);else localStorage.setItem(backupKey,previousBackup);throw error;}
-			resetImport();input.value='';restore.disabled=false;exportCode.value='';
-			status.textContent='Настройки перенесены. Прежние папки сохранены. Спорные переносы появятся в «Пересортировке».';
+			setSaving(true);status.textContent='Сохраняем резервную копию и переносим настройки…';
+			try{
+				await _persistSortingTransfer(scope,entries,guard,false,()=>scope===_getDialogTimeIdentityScopeKey());
+				backupAvailable=true;
+				if(overlay.isConnected&&scope===_getDialogTimeIdentityScopeKey()){resetImport();input.value='';prepareExport();status.textContent='Настройки перенесены. Прежние папки сохранены. Спорные переносы появятся в «Пересортировке».';}
+			}finally{if(overlay.isConnected)setSaving(false);}
 		});confirm.disabled=true;confirm.className='pena-transfer-primary';
 		input.addEventListener('change',async()=>{
 			resetImport();importCode.value='';const token=reading;
@@ -12870,24 +12957,30 @@ if (_presetChannel) {
 			} catch(e){if(token===reading&&overlay.isConnected){staged=null;input.value='';showError(e);}}
 		});
 		const restore=action('Отменить последний импорт',()=>{
-			_showDialogControlNativeActionConfirm('Отменить импорт?','Настройки сортировки вернутся к состоянию перед последним импортом. Изменения после него будут отменены.','Восстановить','Отмена',()=>{
+			if(saving)return;
+			_showDialogControlNativeActionConfirm('Отменить импорт?','Настройки сортировки вернутся к состоянию перед последним импортом. Изменения после него будут отменены.','Восстановить','Отмена',async()=>{
 				try {
-					current();const backup=JSON.parse(localStorage.getItem(backupKey)||'null');
-					const allowed=new Set(_sortingTransferEntries(_sortingTransferSnapshot()).map(([key])=>key));
-					if(backup?.scope!==scope||!Array.isArray(backup.entries)||backup.entries.length!==allowed.size||backup.entries.some(([key,value])=>!allowed.delete(key)||(value!==null&&typeof value!=='string')))throw new Error('Резервная копия недоступна.');
-					_commitSortingTransfer(backup.entries);localStorage.removeItem(backupKey);restore.disabled=true;resetImport();exportCode.value='';status.textContent='Настройки восстановлены.';
-				}catch(e){showError(e);}
+					current();if(saving)return;const snapshot=_sortingTransferSnapshot(),expected=JSON.stringify(snapshot);
+					setSaving(true);status.textContent='Восстанавливаем настройки…';
+					await _persistSortingTransfer(scope,_sortingTransferEntries(snapshot),()=>{current();if(JSON.stringify(_sortingTransferSnapshot())!==expected)throw new Error('Настройки изменились. Повторите отмену импорта.');},true,()=>scope===_getDialogTimeIdentityScopeKey());
+					backupAvailable=false;
+					if(overlay.isConnected&&scope===_getDialogTimeIdentityScopeKey()){resetImport();prepareExport();status.textContent='Настройки восстановлены.';}
+				}catch(e){if(overlay.isConnected)showError(e);}finally{if(overlay.isConnected)setSaving(false);}
 			},{parent:overlay});
-		});restore.disabled=!localStorage.getItem(backupKey);
-		const close=()=>{reading++;overlay.remove();document.removeEventListener('keydown',trap,true);const target=previousFocus?.isConnected?previousFocus:document.querySelector('[data-pena-workspace-tab="filters"]');target?.focus?.({preventScroll:true});};
+		});restore.disabled=true;
+		const backupLoadToken=++backupLoad;
+		_readSortingTransferBackup(scope).then(backup=>{if(overlay.isConnected&&scope===_getDialogTimeIdentityScopeKey()&&backupLoadToken===backupLoad){backupAvailable=!!backup;restore.disabled=!backupAvailable;}}).catch(error=>{if(overlay.isConnected&&backupLoadToken===backupLoad)showError(error);});
+		const close=()=>{reading++;clearTimeout(copyFeedbackTimer);overlay.remove();document.removeEventListener('keydown',trap,true);const target=previousFocus?.isConnected?previousFocus:document.querySelector('[data-pena-workspace-tab="filters"]');target?.focus?.({preventScroll:true});};
 		const closeButton=node('button','Закрыть',header);closeButton.type='button';closeButton.className='pena-transfer-close';closeButton.addEventListener('click',close);
 		const trap=e=>{
 			if(document.querySelector('.pena-native-confirm-overlay'))return;
 			if(e.key==='Escape'){e.preventDefault();e.stopImmediatePropagation();close();}
-			if(e.key==='Tab'){const all=[...panel.querySelectorAll('button:not(:disabled),input,textarea,summary')].filter(el=>el.getClientRects().length);const first=all[0],last=all.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}
+			if(e.key==='Tab'){const all=[...panel.querySelectorAll('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),summary')].filter(el=>el.getClientRects().length);const first=all[0],last=all.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}
 		};
 		overlay.addEventListener('click',event=>{if(event.target===overlay)close();});
-		document.addEventListener('keydown',trap,true);document.body.append(overlay);overlay.showPopover?.();closeButton.focus();
+		document.addEventListener('keydown',trap,true);document.body.append(overlay);
+		try {prepareExport();}catch(e){showError(e);copyButton.disabled=true;}
+		overlay.showPopover?.();closeButton.focus({preventScroll:true});
 	}
 	function _dialogAutomationKey(mode = _pMode()) {
 		const scope = _getDialogTimeIdentityScopeKey();

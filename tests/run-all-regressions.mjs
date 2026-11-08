@@ -38,6 +38,7 @@ if (Number.parseInt(process.versions.node.split('.')[0], 10) < minimumNodeMajor 
 
 const suites = [
   'settings-transfer-regression.mjs',
+  'transfer-storage-regression.mjs',
   'todo-repository-regression.mjs',
   'todo-panel-regression.mjs',
   'update-delivery-regression.mjs',

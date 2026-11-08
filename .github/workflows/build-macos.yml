@@ -49,6 +49,14 @@ jobs:
         shell: pwsh
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/update-project-context.ps1 -Check
 
+      - name: Verify settings transfer and storage quota recovery
+        shell: pwsh
+        run: |
+          node tests/transfer-storage-regression.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tests/settings-transfer-regression.mjs
+          exit $LASTEXITCODE
+
       - name: Build and verify Chrome release
         shell: pwsh
         run: |

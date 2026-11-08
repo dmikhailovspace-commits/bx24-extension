@@ -4,7 +4,7 @@ import { resolve, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { buildChrome } from '../tools/build-chrome.mjs';
-import {checkTransferCode,openTransferSettings} from './lib/settings-transfer-ui.mjs';
+import {checkTransferCode,checkImmediateExport,openTransferSettings} from './lib/settings-transfer-ui.mjs';
 const require = createRequire(import.meta.url), { chromium } = require('playwright');
 mkdirSync(resolve('tests/artifacts'), { recursive:true });
 const packageDir = mkdtempSync(resolve('tests/artifacts/chrome-browser-package-'));
@@ -56,6 +56,7 @@ try {
   assert.deepEqual(registered[0].matches, [`${origin}/*`]);
   assert.equal(registered[0].persistAcrossSessions, true);
   let fixture = readFileSync('tests/native-cold-start-layout-harness.html', 'utf8');
+  fixture = fixture.replace('* { box-sizing: border-box; }', '* { box-sizing: content-box; }');
   fixture = fixture.replace(/<link[^>]+injected\.css[^>]*>/g, '').replace(/<script src="\.\.\/extension\/[^>]+><\/script>/g, '').replace('<script>window.__coldStartHarness.markExtensionLoaded();</script>', '');
   fixture = fixture.replaceAll('<script>', '<script nonce="fixture">');
   await context.route('https://**/*', route => {
@@ -104,6 +105,7 @@ try {
   await openTransferSettings(page);
   const transfer=page.getByRole('dialog',{name:'Перенос настроек',exact:true});
   await transfer.waitFor();
+  await checkImmediateExport(transfer);
   const firstDownload=page.waitForEvent('download');
   await transfer.getByRole('button',{name:'Скачать файл'}).click();
   const firstExport=JSON.parse(readFileSync(await (await firstDownload).path(),'utf8'));
