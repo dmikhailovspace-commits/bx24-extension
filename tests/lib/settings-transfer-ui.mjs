@@ -75,7 +75,8 @@ export async function checkTransferCode(page, platform) {
  await status.filter({hasText:'Код выделен'}).waitFor();
  assertStable(anchors,await stableRects(panel),'Clipboard error');
  assert.equal(await panel.getByRole('button',{name:'Скопировано',exact:true}).count(),0,'Clipboard denial never reports copied');
- assert.equal(await panel.getByLabel('Код экспорта').evaluate(el=>el.selectionEnd-el.selectionStart),code.length,'Copy fallback selects the whole code');
+ assert.equal(await panel.getByLabel('Код экспорта').evaluate(el=>el.selectionEnd-el.selectionStart===el.value.length),true,'Copy fallback selects the displayed preview');
+ assert.equal(await panel.getByLabel('Код экспорта').evaluate(el=>{const clipboard=new DataTransfer();el.dispatchEvent(new ClipboardEvent('copy',{bubbles:true,cancelable:true,clipboardData:clipboard}));return clipboard.getData('text/plain');}),code,'Manual copy transfers the full code even when only a preview is displayed');
  await panel.getByText('Вставить код вместо файла',{exact:true}).click();
  assertStable(anchors,await stableRects(panel),'Expanded import');
  const input=panel.getByLabel('Код импорта'),check=panel.getByRole('button',{name:'Проверить код'});
@@ -102,9 +103,9 @@ export async function checkTransferCode(page, platform) {
  await confirm.click();await status.filter({hasText:'Настройки изменились'}).waitFor();assert.equal(await confirm.isDisabled(),true);
  await check.click();await confirm.click();await status.filter({hasText:'Настройки перенесены'}).waitFor();
  assert.equal(await panel.getByLabel('Код экспорта').inputValue(),'','Import invalidates the previous export instead of rebuilding automatically');
- await buildAndCheckExport(panel);
+ const rebuilt=await buildAndCheckExport(panel);
  await panel.getByRole('button',{name:'Скопировать код'}).click();await status.filter({hasText:'Код выделен'}).waitFor();
- assert.deepEqual(JSON.parse(await panel.getByLabel('Код экспорта').inputValue()).modes.chats.automation.rules,snapshot.modes.chats.automation.rules);
+ assert.deepEqual(rebuilt.snapshot.modes.chats.automation.rules,snapshot.modes.chats.automation.rules);
  // The UI must remain usable without downloads or clipboard in the desktop host.
  for (const viewport of [{width:1100,height:800},{width:360,height:640},{width:640,height:400},{width:360,height:320}]) {
   await page.setViewportSize(viewport);
