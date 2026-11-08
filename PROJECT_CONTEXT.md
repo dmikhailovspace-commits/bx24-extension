@@ -9,8 +9,8 @@
 - Release date: **2026-11-08**
 - Runtime files: **19**
 - Regression suites: **100**
-- Windows artifact: _not built_
-- macOS artifact: _not built_
+- Windows artifact: `dist/BX24_Chat_Sorter_Windows_v8.0.67.exe` - SHA-256: `2C7C3092894F2B2E672CD8DAC22145EF853D7DD90454D98D5B621C66C75BB273`
+- macOS artifact: `dist/BX24_Chat_Sorter_macOS_Universal_v8.0.67.dmg` - SHA-256: `DC01607D5234C126D5FA297719987CED25666B3C6F8C179DEF0267CD53221677`
 <!-- AUTO:END -->
 
 ## Текущая правка: плавное раскрытие и краткая обратная связь — 08.11.2026, предпросмотр 8.0.67
@@ -19,6 +19,9 @@
 - Поясняющий абзац загрузки удалён. Разделители только у header/footer; секции сохранения и загрузки разделены обычным отступом24px (20px на узких окнах).
 - Прогресс и результат появляются с WAAPI-анимацией фактической высоты200ms, содержимое — fade/translate180ms. Постоянной фиксированной высоты/пустых резервов/наблюдателей нет. Повторная операция начинается с текущей высоты; resize/закрытие отменяют анимацию, reduced-motion отключает её.
 - Версия **8.0.67**, только предпросмотр; публикацию не выполнять до утверждения.
+
+- Сборка из `db7488aad429b8e099364e0d25d4be038812be39`: [CI 42489387862](https://github.com/dmikhailovspace-commits/bx24-extension/actions/runs/42489387862) **16/16 за 429.4 s**, storage/UI/model/performance и Chrome/EXE/Universal DMG PASS; Publish skipped. Проверены реальные промежуточные высоты, отсутствие зависших анимаций, reduced motion, быстрое закрытие/повторное открытие и сохранение import status при Copy.
+- Общий footer после Download также убран. Предпросмотр `E:\Codex\Previews\BX24-settings-8.0.67-review5`; README/checks/verification.json. Сверены 19 runtime и 24 unpacked файла, Chrome ZIP воспроизводится побайтово. Release-integrity с обязательными обоими установщиками PASS. SHA-256: BX24_Chat_Sorter_Chrome_v8.0.67.zip `a15030c5b25ae60accb02fe75026e1f0bcec8cb76966c508efe616c2083b05bd`; BX24_Chat_Sorter_Windows_v8.0.67.exe `2c7c3092894f2b2e672cd8dac22145ef853d7dd90454d98d5b621c66c75bb273`; BX24_Chat_Sorter_macOS_Universal_v8.0.67.dmg `dc01607d5234c126d5fa297719987ced25666b3c6f8c179def0267cd53221677`. Подробности: `docs/qa/settings-transfer-motion-8.0.67.md`. Публичного обновления и установки не было.
 
 ## Предыдущая правка: компактный перенос — 08.11.2026, предпросмотр 8.0.67
 
