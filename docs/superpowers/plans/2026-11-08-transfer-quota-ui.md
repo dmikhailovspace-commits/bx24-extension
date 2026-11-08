@@ -21,5 +21,5 @@ Import must create a usable undo record without duplicating a large snapshot int
 - [x] Exercise failed commit and failed backup, stale scope/confirmation and reopen.
 - [x] Verify code is populated before interaction; copy button follows code and reports real success.
 - [x] Inspect screenshots at regular/narrow/short widths; test real scrolling and host content-box styles.
-- [ ] Run affected tests and exact 16-suite release profile; keep tests tied to the packaged source.
-- [ ] Deliver preview 8.0.67 with evidence and known live-host limits. Await user release approval.
+- [x] Run affected tests and exact 16-suite release profile; keep tests tied to the packaged source.
+- [x] Deliver preview 8.0.67 with evidence and known live-host limits. Await user release approval.
