@@ -17,8 +17,8 @@
 - Release date: **2026-11-08**
 - Runtime files: **19**
 - Regression suites: **100**
-- Windows artifact: _not built_
-- macOS artifact: _not built_
+- Windows artifact: `dist/BX24_Chat_Sorter_Windows_v8.0.67.exe` - SHA-256: `B1D2185E64716C32EFEA56FA247C9D83AE038CF5F7B6FF8C09EDB54A2BB52467`
+- macOS artifact: `dist/BX24_Chat_Sorter_macOS_Universal_v8.0.67.dmg` - SHA-256: `F626E3972B24FDF7E4156BABEE906D51A8CF37D84EEC9C1936BFE10BCF0CCEC9`
 <!-- AUTO:END -->
 
 ## Текущая правка: плавное раскрытие и краткая обратная связь — 08.11.2026, предпросмотр 8.0.67
