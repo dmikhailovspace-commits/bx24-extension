@@ -55,6 +55,10 @@ jobs:
           node tests/transfer-storage-regression.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node tests/settings-transfer-regression.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tests/transfer-model-async.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tests/transfer-performance-regression.mjs
           exit $LASTEXITCODE
 
       - name: Build and verify Chrome release

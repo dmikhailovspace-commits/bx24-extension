@@ -12770,6 +12770,50 @@ if (_presetChannel) {
         }
 		return window.__PENA_NATIVE_CATALOG__.sortingTransfer({format:'bx24-chat-sorter',version:1,scope,modes},scope);
 	}
+	function _sortingTransferState() {
+		const keys=[];
+		for(const mode of ['chats','tasks']) {
+			const key=_dialogAutomationKey(mode);
+			keys.push(`${_LS_DIALOG_CONTROL}.${mode}`,_dialogControlSegmentsKey(mode),key,key+'.locks');
+		}
+		return {revision:_dialogControlDataRevision,values:keys.map(key=>[key,localStorage.getItem(key)])};
+	}
+	function _sortingTransferStateMatches(state) {
+		return state.revision===_dialogControlDataRevision&&state.values.every(([key,value])=>localStorage.getItem(key)===value);
+	}
+	async function _sortingTransferSnapshotAsync(scope, checkpoint, progress) {
+		const modes={},model=window.__PENA_NATIVE_CATALOG__;
+		for(const [modeIndex,mode] of ['chats','tasks'].entries()) {
+			await checkpoint();
+			const segments=_getDialogControlSegments(mode),source=_getDialogControlItemsForMode(mode);
+			const placement=model.createPlacementIndex(source,segments),folders=new Set(),items=[];
+			for(let i=0;i<source.length;i++) {
+				const item=source[i],folder=_isDialogControlFolder(item);
+				if(folder)folders.add(item.id);
+				// Copy only portable fields; message/catalog metadata never enters this job.
+				items.push({id:item.id,type:item.type,title:item.title,folderId:folder?'':placement.folderOf(item),segmentId:placement.segmentOf(item),color:item.color,colorMode:item.colorMode,icon:item.icon,taskId:item.taskId});
+				if(i%128===0){progress(5+modeIndex*15+Math.round(i/Math.max(1,source.length)*15));await checkpoint();}
+			}
+			const automation=_readDialogAutomationConfig(mode);
+			modes[mode]={segments,items,automation:{...automation,rules:automation.rules.map(rule=>({...rule,enabled:!!rule.enabled&&folders.has(rule.folderId)}))},locks:[..._dialogAutomationLocks(mode)]};
+		}
+		return model.sortingTransferAsync({format:'bx24-chat-sorter',version:1,scope,modes},scope,{yieldControl:checkpoint,onProgress:value=>progress(35+(value.mode==='tasks'?15:0)+Math.round(value.processed/Math.max(1,value.total)*15))});
+	}
+	async function _sortingTransferCodeAsync(snapshot, checkpoint, progress) {
+		function* parts(value) {
+			if(Array.isArray(value)) {
+				yield '[\n';for(let i=0;i<value.length;i++){if(i)yield ',\n';yield JSON.stringify(value[i]);}yield '\n]';
+			}else if(value&&typeof value==='object') {
+				yield '{';let first=true;for(const [key,item] of Object.entries(value)){if(!first)yield ',';first=false;yield JSON.stringify(key)+':';yield* parts(item);}yield '}';
+			}else yield JSON.stringify(value);
+		}
+		const size=value=>Array.isArray(value)?2+value.length+Math.max(0,value.length-1):value&&typeof value==='object'?2+Object.keys(value).length+Math.max(0,Object.keys(value).length-1)+Object.values(value).reduce((n,item)=>n+size(item),0):1;
+		const output=[],total=size(snapshot);let count=0;
+		for(const part of parts(snapshot)) {output.push(part);if(++count%128===0){progress(70+Math.round(count/total*25));await checkpoint();}}
+		await checkpoint();const code=output.join('');
+		if(new Blob([code]).size>10*1024*1024)throw new Error('Слишком много данных для переноса: максимум 10 МБ.');
+		progress(95);await checkpoint();return code;
+	}
 	function _sortingTransferEntries(snapshot) {
 		const entries = [];
 		for (const mode of ['chats','tasks']) {
@@ -12816,7 +12860,7 @@ if (_presetChannel) {
 		return new Promise((resolve,reject)=>{
 			const tx=db.transaction('backups',update?'readwrite':'readonly'),store=tx.objectStore('backups'),request=store.get(scope);
 			let result=null,failure=null;
-			request.onsuccess=()=>{try{result=request.result||null;if(update){result=update(result);if(result===null)store.delete(scope);else store.put(result,scope);}}catch(error){failure=error;tx.abort();}};
+			request.onsuccess=()=>{try{result=request.result||null;if(update){result=update(result);if(result?.backup===null&&!result.pending)result=null;if(result===null)store.delete(scope);else store.put(result,scope);}}catch(error){failure=error;tx.abort();}};
 			tx.oncomplete=()=>{db.close();resolve(result);};
 			tx.onabort=()=>{db.close();reject(failure||new Error('Не удалось сохранить резервную копию. Повторите попытку.'));};
 		});
@@ -12830,6 +12874,12 @@ if (_presetChannel) {
 		return record?.backup||record?.entries&&record||JSON.parse(localStorage.getItem(`pena.sortingTransfer.backup.v1.${scope}`)||'null');
 	}
 	async function _readSortingTransferBackup(scope) {return _sortingTransferRecordBackup(await _sortingTransferBackupRecord(scope),scope);}
+	async function _hasSortingTransferBackup(scope) {
+		// Opening settings only checks existence; cloning the full backup waits for Undo.
+		if(localStorage.getItem(`pena.sortingTransfer.backup.v1.${scope}`))return true;
+		const db=await _openSortingTransferBackupDatabase();
+		return new Promise((resolve,reject)=>{const tx=db.transaction('backups','readonly'),request=tx.objectStore('backups').getKey(scope);let exists=false;request.onsuccess=()=>{exists=request.result!==undefined;};tx.oncomplete=()=>{db.close();resolve(exists);};tx.onabort=()=>{db.close();reject(new Error('Не удалось проверить резервную копию.'));};});
+	}
 	function _validateSortingTransferBackup(backup, scope, entries) {
 		const allowed=new Set(entries.map(([key])=>key));
 		if(backup?.scope!==scope||!Array.isArray(backup.entries)||backup.entries.length!==allowed.size||backup.entries.some(entry=>!Array.isArray(entry)||entry.length!==2||!allowed.delete(entry[0])||(entry[1]!==null&&typeof entry[1]!=='string')))throw new Error('Резервная копия недоступна. Настройки не изменены.');
@@ -12881,10 +12931,13 @@ if (_presetChannel) {
 		const node = (tag,text,parent=panel) => {const el=document.createElement(tag);el.textContent=text;parent.append(el);return el;};
 		const header=node('header','');header.className='pena-transfer-header';node('h2','Перенос настроек',header);
 		const body=node('div','');body.className='pena-transfer-body';
-		node('p','Папки, правила и распределение диалогов между приложением и Chrome. Только для того же портала и пользователя Bitrix24.',body).className='pena-transfer-intro';
 		const exportSection=node('section','',body);exportSection.className='pena-transfer-section';node('h3','Сохранить настройки',exportSection);
-		node('p','Скачайте файл или скопируйте код для переноса на другое устройство.',exportSection);
-		const exportCode=node('textarea','',exportSection);exportCode.className='pena-transfer-export-code';exportCode.readOnly=true;exportCode.setAttribute('aria-label','Код экспорта');exportCode.spellcheck=false;
+		const downloadActions=node('div','',exportSection);downloadActions.className='pena-transfer-actions';
+		const buildActions=downloadActions;
+		const exportState=node('div','',exportSection);exportState.className='pena-transfer-export-state pena-transfer-progress';exportState.style.visibility='hidden';
+		const progressLabel=node('span','',exportState);progressLabel.className='pena-transfer-progress-label';
+		const progressBar=node('progress','',exportState);progressBar.max=100;progressBar.value=0;progressBar.setAttribute('aria-label','Сборка кода');
+		const exportCode=node('textarea','',exportSection);exportCode.className='pena-transfer-export-code';exportCode.readOnly=true;exportCode.setAttribute('aria-label','Код экспорта');exportCode.placeholder='Нажмите «Собрать код»';exportCode.spellcheck=false;exportCode.wrap='off';exportCode.rows=1;
 		const exportActions=node('div','',exportSection);exportActions.className='pena-transfer-actions';
 		const importSection=node('section','',body);importSection.className='pena-transfer-section';node('h3','Загрузить настройки',importSection);
 		node('p','Выберите файл или вставьте код. Сначала проверим данные — до подтверждения ничего не изменится.',importSection);
@@ -12892,85 +12945,130 @@ if (_presetChannel) {
 		const status=node('p','',footer);status.setAttribute('role','status');status.setAttribute('aria-live','polite');
 		const current = () => {if(!overlay.isConnected||scope!==_getDialogTimeIdentityScopeKey())throw new Error('Пользователь изменился. Откройте перенос заново.');};
 		const showError=e=>{status.dataset.state='error';status.textContent=e instanceof SyntaxError?'Не удалось прочитать настройки. Выберите файл JSON или вставьте полный код.':e.message;};
-		const action = (label,fn,parent=footer) => {const b=node('button',label,parent);b.type='button';b.addEventListener('click',async()=>{try{current();status.dataset.state='';await fn();}catch(e){if(overlay.isConnected)showError(e);}});return b;};
-		let copyFeedbackTimer=0;
+		const action = (label,fn,parent=footer) => {const b=node('button',label,parent);b.type='button';b.addEventListener('click',async()=>{try{current();status.dataset.state='';await fn();}catch(e){if(overlay.isConnected&&e.name!=='AbortError')showError(e);}});return b;};
+		let copyFeedbackTimer=0,exportJob=0,exportBusy=false,exportCache=null;
+		panel.dataset.exportState='idle';
+		const fitCode=field=>{let lines=1;for(let i=0;i<field.value.length&&lines<8;i++)if(field.value.charCodeAt(i)===10)lines++;field.style.height=Math.min(160,22+lines*18)+'px';};
 		const resetCopyFeedback=()=>{clearTimeout(copyFeedbackTimer);copyButton.textContent='Скопировать код';delete copyButton.dataset.state;};
-		const prepareExport=()=>{const text=JSON.stringify(_sortingTransferSnapshot(),null,2);if(exportCode.value!==text){exportCode.value=text;resetCopyFeedback();}return text;};
-		const copyButton=action('Скопировать код',async()=>{
-			const text=prepareExport();resetCopyFeedback();copyButton.disabled=true;
+		const invalidateExport=()=>{exportJob++;exportCache=null;exportCode.value='';delete exportCode.dataset.preview;exportCode.title='';fitCode(exportCode);resetCopyFeedback();copyButton.disabled=true;panel.dataset.exportState='idle';exportState.style.visibility='hidden';};
+		const aborted=()=>new DOMException('Операция отменена','AbortError');
+		const yieldTask=()=>window.scheduler?.yield?window.scheduler.yield():new Promise(resolve=>setTimeout(resolve,0));
+		const generateExport=async reveal=>{
+			if(exportBusy||saving)return null;
+			const token=++exportJob;let progressValue=0,lastYield=performance.now();
+			const check=()=>{current();if(token!==exportJob)throw aborted();};
+			const progress=value=>{progressValue=Math.max(progressValue,Math.min(100,value));progressBar.value=progressValue;progressBar.setAttribute('aria-valuenow',String(progressValue));progressLabel.textContent=`Собираем код · ${progressValue}%`;};
+			const checkpoint=async()=>{check();if(performance.now()-lastYield>=6){await yieldTask();lastYield=performance.now();check();}};
+			exportBusy=true;syncControls();panel.dataset.exportState='building';exportState.style.visibility='visible';progress(0);
 			try {
-				if(!navigator.clipboard?.writeText)throw Error();
-				await navigator.clipboard.writeText(text);current();copyButton.textContent='Скопировано';copyButton.dataset.state='copied';
-				status.textContent='Код скопирован. Вставьте его в настройках другой версии сортировщика.';
-				copyFeedbackTimer=setTimeout(resetCopyFeedback,2400);
-			} catch {
-				current();exportCode.focus({preventScroll:true});exportCode.select();
-				status.textContent='Код выделен. Нажмите Ctrl+C (на Mac — ⌘C), чтобы скопировать.';
-			} finally {copyButton.disabled=false;}
-		},exportActions);copyButton.className='pena-transfer-copy';
-		action('Скачать файл',()=>{
-			const text=prepareExport();
+				// Paint the loader before reading catalog data. Subsequent work yields in small batches.
+				await new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0)));check();
+				if(!exportCache||!_sortingTransferStateMatches(exportCache.state)){
+					const state=_sortingTransferState();
+					const snapshot=await _sortingTransferSnapshotAsync(scope,checkpoint,progress);
+					const text=await _sortingTransferCodeAsync(snapshot,checkpoint,progress);check();
+					if(!_sortingTransferStateMatches(state))throw new Error('Настройки изменились во время сборки. Нажмите «Собрать код» ещё раз.');
+					exportCache={state,text};
+				}
+				check();progress(100);progressLabel.textContent='Код готов';
+				if(reveal){
+					// Rendering megabytes in a native textarea blocks layout even when JS yields.
+					// Keep a bounded, clearly labelled preview; both copy paths use the full cache.
+					const preview=exportCache.text.length>12000;
+					exportCode.value=preview?exportCache.text.slice(0,8000):exportCache.text;
+					exportCode.dataset.preview=String(preview);
+					exportCode.title=preview?'Показан фрагмент. Кнопка и Ctrl+C копируют весь код.':'';
+					if(preview)progressLabel.textContent='Фрагмент кода · копируется полностью';
+					fitCode(exportCode);resetCopyFeedback();panel.dataset.exportState='ready';
+				}
+				else panel.dataset.exportState=exportCode.value?'ready':'idle';
+				return exportCache.text;
+			}catch(error){if(token===exportJob){exportCache=null;exportCode.value='';delete exportCode.dataset.preview;exportCode.title='';fitCode(exportCode);panel.dataset.exportState='error';progressLabel.textContent='Не удалось собрать код';}throw error;}
+			finally{exportBusy=false;if(overlay.isConnected)syncControls();}
+		};
+		const downloadButton=action('Скачать файл',async()=>{
+			const text=await generateExport(false);if(text===null)return;
 			const url=URL.createObjectURL(new Blob([text],{type:'application/json'}));
 			const link=document.createElement('a');link.href=url;link.download='bx24-sorting.json';panel.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
-			status.textContent='Файл подготовлен. Если приложение не начало скачивание, используйте код для переноса.';
-		},exportActions).className='pena-transfer-download';
+			status.textContent='Файл подготовлен. Если скачивание недоступно, соберите и скопируйте код.';
+		},downloadActions);downloadButton.className='pena-transfer-download';
+		const buildButton=action('Собрать код',()=>generateExport(true),buildActions);buildButton.className='pena-transfer-build';
+		const copyButton=action('Скопировать код',async()=>{
+			if(!exportCode.value||exportBusy||saving)return;
+			const text=exportCache.text,token=exportJob;resetCopyFeedback();copyButton.disabled=true;
+			try {
+				if(!navigator.clipboard?.writeText)throw Error();
+				await navigator.clipboard.writeText(text);current();if(token!==exportJob)return;copyButton.textContent='Скопировано';copyButton.dataset.state='copied';
+				status.textContent='Код скопирован.';
+				copyFeedbackTimer=setTimeout(resetCopyFeedback,2400);
+			} catch {
+				current();if(token!==exportJob)return;exportCode.focus({preventScroll:true});exportCode.select();
+				status.textContent='Код выделен. Нажмите Ctrl+C (на Mac — ⌘C), чтобы скопировать.';
+			} finally {syncControls();}
+		},exportActions);copyButton.className='pena-transfer-copy';copyButton.disabled=true;fitCode(exportCode);
+		exportCode.addEventListener('copy',event=>{
+			if(exportCache&&exportCode.value&&event.clipboardData){event.clipboardData.setData('text/plain',exportCache.text);event.preventDefault();}
+		});
 		const input=node('input','',importSection);input.type='file';input.accept='.json,application/json';input.setAttribute('aria-label','Файл настроек');
 		const importDetails=node('details','',importSection);node('summary','Вставить код вместо файла',importDetails);
-		const importCode=node('textarea','',importDetails);importCode.setAttribute('aria-label','Код импорта');importCode.placeholder='Вставьте скопированный код';importCode.spellcheck=false;
+		const importCode=node('textarea','',importDetails);importCode.setAttribute('aria-label','Код импорта');importCode.placeholder='Вставьте скопированный код';importCode.spellcheck=false;importCode.wrap='off';importCode.rows=1;fitCode(importCode);
 		let staged=null, baseline=null, reading=0, saving=false, backupAvailable=false, backupLoad=0;
-		const setSaving=value=>{if(value)backupLoad++;saving=value;input.disabled=value;importCode.disabled=value;checkCode.disabled=value;confirm.disabled=value||!staged;restore.disabled=value||!backupAvailable;panel.setAttribute('aria-busy',String(value));};
+		const syncControls=()=>{const busy=saving||exportBusy;buildButton.disabled=busy;downloadButton.disabled=busy;copyButton.disabled=busy||!exportCode.value;input.disabled=busy;importCode.disabled=busy;checkCode.disabled=busy;confirm.disabled=busy||!staged;restore.disabled=busy||!backupAvailable;panel.setAttribute('aria-busy',String(busy));};
+		const setSaving=value=>{if(value){backupLoad++;invalidateExport();}saving=value;syncControls();};
 		const resetImport=()=>{reading++;staged=null;baseline=null;confirm.disabled=true;status.textContent='';status.dataset.state='';};
-		const stage=text=>{
+		const stage=async text=>{
+			const token=reading;let lastYield=performance.now();
+			const checkpoint=async()=>{current();if(token!==reading)throw aborted();if(performance.now()-lastYield>=6){await yieldTask();lastYield=performance.now();current();if(token!==reading)throw aborted();}};
+			status.textContent='Проверяем настройки…';await yieldTask();await checkpoint();
 			current();if(new Blob([text]).size>10*1024*1024)throw new Error('Слишком много данных: максимум 10 МБ.');
-			const parsed=model.sortingTransfer(JSON.parse(text.replace(/^\uFEFF/,'')),scope);
-			baseline=JSON.stringify(_sortingTransferSnapshot());staged=parsed;
+			const parsed=await model.sortingTransferAsync(JSON.parse(text.replace(/^\uFEFF/,'')),scope,{yieldControl:checkpoint});await checkpoint();
+			baseline=_sortingTransferState();staged=parsed;
 			const modes=Object.values(staged.modes);
 			status.textContent=`Папок: ${modes.reduce((n,x)=>n+x.items.filter(i=>i.type==='folder').length,0)} · Диалогов: ${modes.reduce((n,x)=>n+x.items.filter(i=>i.type!=='folder').length,0)} · Правил: ${modes.reduce((n,x)=>n+x.automation.rules.length,0)}\nПравила и назначения совпавших диалогов заменятся. Остальные папки и диалоги сохранятся. Импорт можно отменить.`;
 			confirm.disabled=false;
 		};
-		importCode.addEventListener('input',()=>{resetImport();input.value='';});
-		const checkCode=action('Проверить код',()=>{if(saving)return;resetImport();stage(importCode.value);},importDetails);
+		importCode.addEventListener('input',()=>{resetImport();input.value='';fitCode(importCode);});
+		const checkCode=action('Проверить код',async()=>{if(saving||exportBusy)return;resetImport();await stage(importCode.value);},importDetails);
 		const confirm=action('Подтвердить импорт',async()=>{
-			if(!staged||saving)return;
-			const now=_sortingTransferSnapshot();
+			if(!staged||saving||exportBusy)return;
 			const expected=baseline;
-			const guard=()=>{current();if(JSON.stringify(_sortingTransferSnapshot())!==expected){resetImport();input.value='';throw new Error('Настройки изменились. Проверьте код или выберите файл заново.');}};
+			const guard=()=>{current();if(!_sortingTransferStateMatches(expected)){resetImport();input.value='';throw new Error('Настройки изменились. Проверьте код или выберите файл заново.');}};
 			guard();
 			const merged={...staged,modes:{}};
 			for(const mode of ['chats','tasks']) merged.modes[mode]=model.mergeSortingTransfer({
-				items:_getDialogControlItemsForMode(mode),segments:now.modes[mode].segments,locks:now.modes[mode].locks
+				items:_getDialogControlItemsForMode(mode),segments:_getDialogControlSegments(mode),locks:[..._dialogAutomationLocks(mode)]
 			},staged.modes[mode]);
 			const entries=_sortingTransferEntries(merged);
 			setSaving(true);status.textContent='Сохраняем резервную копию и переносим настройки…';
 			try{
 				await _persistSortingTransfer(scope,entries,guard,false,()=>scope===_getDialogTimeIdentityScopeKey());
 				backupAvailable=true;
-				if(overlay.isConnected&&scope===_getDialogTimeIdentityScopeKey()){resetImport();input.value='';prepareExport();status.textContent='Настройки перенесены. Прежние папки сохранены. Спорные переносы появятся в «Пересортировке».';}
+				if(overlay.isConnected&&scope===_getDialogTimeIdentityScopeKey()){resetImport();input.value='';invalidateExport();status.textContent='Настройки перенесены. Прежние папки сохранены. Спорные переносы появятся в «Пересортировке».';}
 			}finally{if(overlay.isConnected)setSaving(false);}
 		});confirm.disabled=true;confirm.className='pena-transfer-primary';
 		input.addEventListener('change',async()=>{
-			resetImport();importCode.value='';const token=reading;
+			resetImport();importCode.value='';fitCode(importCode);const token=reading;
 			try {
 				current();const file=input.files?.[0];if(!file)return;
 				if(file.size>10*1024*1024)throw new Error('Файл слишком большой: максимум 10 МБ.');
-				status.textContent='Читаем файл…';const text=await file.text();if(token!==reading||!overlay.isConnected)return;stage(text);
-			} catch(e){if(token===reading&&overlay.isConnected){staged=null;input.value='';showError(e);}}
+				status.textContent='Читаем файл…';const text=await file.text();if(token!==reading||!overlay.isConnected)return;await stage(text);
+			} catch(e){if(token===reading&&overlay.isConnected&&e.name!=='AbortError'){staged=null;input.value='';showError(e);}}
 		});
 		const restore=action('Отменить последний импорт',()=>{
 			if(saving)return;
 			_showDialogControlNativeActionConfirm('Отменить импорт?','Настройки сортировки вернутся к состоянию перед последним импортом. Изменения после него будут отменены.','Восстановить','Отмена',async()=>{
 				try {
-					current();if(saving)return;const snapshot=_sortingTransferSnapshot(),expected=JSON.stringify(snapshot);
+					current();if(saving||exportBusy)return;const expected=_sortingTransferState(),snapshot={modes:Object.fromEntries(['chats','tasks'].map(mode=>[mode,{items:[],segments:[],automation:{},locks:[]}]))};
 					setSaving(true);status.textContent='Восстанавливаем настройки…';
-					await _persistSortingTransfer(scope,_sortingTransferEntries(snapshot),()=>{current();if(JSON.stringify(_sortingTransferSnapshot())!==expected)throw new Error('Настройки изменились. Повторите отмену импорта.');},true,()=>scope===_getDialogTimeIdentityScopeKey());
+					await _persistSortingTransfer(scope,_sortingTransferEntries(snapshot),()=>{current();if(!_sortingTransferStateMatches(expected))throw new Error('Настройки изменились. Повторите отмену импорта.');},true,()=>scope===_getDialogTimeIdentityScopeKey());
 					backupAvailable=false;
-					if(overlay.isConnected&&scope===_getDialogTimeIdentityScopeKey()){resetImport();prepareExport();status.textContent='Настройки восстановлены.';}
+					if(overlay.isConnected&&scope===_getDialogTimeIdentityScopeKey()){resetImport();invalidateExport();status.textContent='Настройки восстановлены.';}
 				}catch(e){if(overlay.isConnected)showError(e);}finally{if(overlay.isConnected)setSaving(false);}
 			},{parent:overlay});
 		});restore.disabled=true;
 		const backupLoadToken=++backupLoad;
-		_readSortingTransferBackup(scope).then(backup=>{if(overlay.isConnected&&scope===_getDialogTimeIdentityScopeKey()&&backupLoadToken===backupLoad){backupAvailable=!!backup;restore.disabled=!backupAvailable;}}).catch(error=>{if(overlay.isConnected&&backupLoadToken===backupLoad)showError(error);});
-		const close=()=>{reading++;clearTimeout(copyFeedbackTimer);overlay.remove();document.removeEventListener('keydown',trap,true);const target=previousFocus?.isConnected?previousFocus:document.querySelector('[data-pena-workspace-tab="filters"]');target?.focus?.({preventScroll:true});};
+		_hasSortingTransferBackup(scope).then(backup=>{if(overlay.isConnected&&scope===_getDialogTimeIdentityScopeKey()&&backupLoadToken===backupLoad){backupAvailable=!!backup;syncControls();}}).catch(error=>{if(overlay.isConnected&&backupLoadToken===backupLoad)showError(error);});
+		const close=()=>{reading++;exportJob++;exportCache=null;clearTimeout(copyFeedbackTimer);overlay.remove();document.removeEventListener('keydown',trap,true);const target=previousFocus?.isConnected?previousFocus:document.querySelector('[data-pena-workspace-tab="filters"]');target?.focus?.({preventScroll:true});};
 		const closeButton=node('button','Закрыть',header);closeButton.type='button';closeButton.className='pena-transfer-close';closeButton.addEventListener('click',close);
 		const trap=e=>{
 			if(document.querySelector('.pena-native-confirm-overlay'))return;
@@ -12979,7 +13077,6 @@ if (_presetChannel) {
 		};
 		overlay.addEventListener('click',event=>{if(event.target===overlay)close();});
 		document.addEventListener('keydown',trap,true);document.body.append(overlay);
-		try {prepareExport();}catch(e){showError(e);copyButton.disabled=true;}
 		overlay.showPopover?.();closeButton.focus({preventScroll:true});
 	}
 	function _dialogAutomationKey(mode = _pMode()) {
@@ -20781,10 +20878,8 @@ if (_presetChannel) {
 				if(settings.open)filterPanel.style.maxHeight=`min(360px, max(64px, calc(100dvh - ${Math.ceil(workspaceTabs.getBoundingClientRect().top)+43}px)))`;
 				else filterPanel.style.removeProperty('max-height');
 			});
-			const advanced=document.createElement('details');advanced.className='pena-settings-advanced';settings.append(advanced);
-			const advancedLabel=document.createElement('summary');advancedLabel.textContent='Дополнительно';advanced.append(advancedLabel);
 			const transfer=document.createElement('button');transfer.type='button';transfer.className='pena-settings-transfer';transfer.textContent='Перенос настроек';transfer.setAttribute('aria-haspopup','dialog');transfer.addEventListener('click',()=>_openSortingTransfer());
-			const transferHint=document.createElement('p');transferHint.textContent='Папки, правила и распределение диалогов — файлом или кодом.';advanced.append(transferHint,transfer);filterPanel.append(settings);
+			settings.append(transfer);filterPanel.append(settings);
 			workspaceTabs.appendChild(filterPanel);
 		}
 		const uniqueLabel = document.createElement('label');

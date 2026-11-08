@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {startHarnessServer} from './lib/harness-server.mjs';
-import {checkTransferCode,checkImmediateExport,openTransferSettings,settleTransferMotion} from './lib/settings-transfer-ui.mjs';
+import {checkTransferCode,buildAndCheckExport,openTransferSettings,settleTransferMotion} from './lib/settings-transfer-ui.mjs';
 const {chromium}=createRequire(import.meta.url)('playwright');
 const server=await startHarnessServer(),browser=await chromium.launch({headless:true});
 const errors=[];mkdirSync('tests/artifacts',{recursive:true});
@@ -46,7 +46,7 @@ try {
  await frame.evaluate(()=>{BX.message=key=>key==='USER_ID'?'7':'';});
  await openTransferSettings(frame);
  const embeddedPanel=frame.getByRole('dialog',{name:'Перенос настроек',exact:true});
- await checkImmediateExport(embeddedPanel);
+ await buildAndCheckExport(embeddedPanel);
  for(const size of [{width:360,height:540},{width:320,height:320}]){
   await embedded.locator('iframe').evaluate((el,size)=>Object.assign(el.style,{width:size.width+'px',height:size.height+'px'}),size);
   await embeddedPanel.getByText('Вставить код вместо файла',{exact:true}).evaluate(el=>el.parentElement.open=true);
@@ -64,6 +64,7 @@ try {
  const large=await browser.newPage({viewport:{width:1280,height:800}});await prepare(large);await large.goto(fixtureUrl);
  await large.locator('.pena-native-folder-switcher').waitFor();await large.evaluate(()=>{BX.message=key=>key==='USER_ID'?'7':'';});await openTransferSettings(large);
  const largePanel=large.getByRole('dialog',{name:'Перенос настроек',exact:true});
+ await buildAndCheckExport(largePanel);
  const original=JSON.parse(await largePanel.getByLabel('Код экспорта').inputValue());
  const importSizes=[];
  for(const target of [512*1024,2*1024*1024]){
@@ -76,12 +77,12 @@ try {
   await largePanel.getByRole('status').filter({hasText:'Папок:'}).waitFor();
   await largePanel.getByRole('button',{name:'Подтвердить импорт'}).click();
   await largePanel.getByRole('status').filter({hasText:'Настройки перенесены'}).waitFor();
-  const output=JSON.parse(await largePanel.getByLabel('Код экспорта').inputValue());
+  const {snapshot:output}=await buildAndCheckExport(largePanel);
   assert.equal(output.modes.chats.items.filter(x=>Number(x.id.replace('chat',''))>=100000).length,count,'Full-size transfer preserves every imported assignment');
   importSizes.push({bytes:bytes.length,dialogs:count});
  }
  await large.close();
  assert.deepEqual(errors,[]);
- writeFileSync('tests/artifacts/settings-transfer.json',JSON.stringify({passed:true,platform:'shared desktop runtime in Chromium',liveBitrix:false,immediateExport:true,copyFeedbackAndRepeat:true,codeFallback:true,hostBoxSizing:'content-box',iframe:['360x540','320x320'],largeGeneratedImports:importSizes,invalidImport:true,staleConfirmation:true,undoAfterReopen:true,filtersPreserved:true,expandedSettingsReachable:true,wheelScrollBothEnds:true,responsive:['1100x800','360x640','640x400','360x320']},null,2));
+ writeFileSync('tests/artifacts/settings-transfer.json',JSON.stringify({passed:true,platform:'shared desktop runtime in Chromium',liveBitrix:false,deferredExport:true,stablePanelGeometry:true,copyFeedbackAndRepeat:true,codeFallback:true,hostBoxSizing:'content-box',iframe:['360x540','320x320'],largeGeneratedImports:importSizes,invalidImport:true,staleConfirmation:true,undoAfterReopen:true,filtersPreserved:true,expandedSettingsReachable:true,wheelScrollBothEnds:true,responsive:['1100x800','360x640','640x400','360x320']},null,2));
  console.log('PASS desktop shared settings: export fallback, code validation, stale confirmation, import/undo, responsive layout');
 } finally {await browser.close();await server.close();}

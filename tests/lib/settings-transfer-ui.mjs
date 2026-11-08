@@ -11,16 +11,34 @@ export async function openTransferSettings(page) {
  if(!await page.locator('.pena-native-filter-panel').isVisible())await page.getByRole('button',{name:'Фильтры',exact:true}).click();
  const settings=page.locator('.pena-settings-section');
  if(!await settings.evaluate(el=>el.open))await settings.locator(':scope > summary').click();
- const advanced=settings.locator('details');
- if(!await advanced.evaluate(el=>el.open))await advanced.locator('summary').click();
+ assert.equal(await settings.locator('details').count(),0,'Transfer is directly inside Settings, without another accordion');
  await settings.getByRole('button',{name:'Перенос настроек',exact:true}).click();
 }
 
-export async function checkImmediateExport(panel) {
+export async function checkDeferredExport(panel) {
  const field=panel.getByLabel('Код экспорта');
- assert.equal(await field.isVisible(),true,'Export code is visible immediately, without opening an accordion or clicking an action');
+ assert.equal(await field.inputValue(),'','Opening settings does not generate a code');
+ assert.equal(await field.isVisible(),true);
+ assert.equal(await panel.getByRole('button',{name:'Скопировать код',exact:true}).isDisabled(),true);
+ assert.ok((await field.boundingBox()).height<=48,'Empty export begins with a compact single line');
+ const download=await panel.getByRole('button',{name:'Скачать файл',exact:true}).boundingBox(),build=await panel.getByRole('button',{name:'Собрать код',exact:true}).boundingBox();
+ assert.ok(download.y<build.y||download.x<build.x,'Download precedes Build code');
+}
+
+export async function buildAndCheckExport(panel) {
+ const field=panel.getByLabel('Код экспорта');
+ if(!await field.inputValue())await panel.getByRole('button',{name:'Собрать код',exact:true}).click();
+ await panel.getByRole('button',{name:'Скопировать код',exact:true,disabled:false}).waitFor();
+ assert.equal(await field.isVisible(),true,'Built export code is visible');
  assert.equal(await field.evaluate(el=>!!el.closest('details')),false,'Export code is not hidden inside an accordion');
- const code=await field.inputValue(),snapshot=JSON.parse(code);
+ const preview=await field.inputValue();let code=preview;
+ if(await field.getAttribute('data-preview')==='true'){
+  assert.ok(preview.length<=8000,'Large codes are bounded previews rather than megabytes of DOM text');
+  assert.equal(await panel.getByText('Фрагмент кода · копируется полностью',{exact:true}).isVisible(),true,'Truncation is explicitly explained');
+  code=await field.evaluate(el=>{const clipboard=new DataTransfer();el.dispatchEvent(new ClipboardEvent('copy',{bubbles:true,cancelable:true,clipboardData:clipboard}));return clipboard.getData('text/plain');});
+  assert.ok(code.length>preview.length,'Manual Ctrl+C fallback exports the whole code, not the displayed prefix');
+ }
+ const snapshot=JSON.parse(code);
  assert.equal(snapshot.format,'bx24-chat-sorter');
  assert.ok(snapshot.modes.chats.items.length>0,'The first displayed export contains current ordinary chats');
  const copy=panel.getByRole('button',{name:'Скопировать код',exact:true});
@@ -29,16 +47,22 @@ export async function checkImmediateExport(panel) {
  return {code,snapshot};
 }
 
+async function stableRects(panel){return panel.evaluate(el=>[el,el.querySelector('.pena-transfer-header'),el.querySelector('.pena-transfer-footer'),el.querySelector('.pena-transfer-primary')].map(x=>{const r=x.getBoundingClientRect();return [r.x,r.y,r.width,r.height];}));}
+function assertStable(before,after,label){before.forEach((r,i)=>r.forEach((v,j)=>assert.ok(Math.abs(v-after[i][j])<=1,`${label}: panel/header/footer/actions do not jump`)));}
+
 export async function checkTransferCode(page, platform) {
  const panel=page.getByRole('dialog',{name:'Перенос настроек',exact:true});
  const status=panel.getByRole('status'),confirm=panel.getByRole('button',{name:'Подтвердить импорт'});
- const {code,snapshot}=await checkImmediateExport(panel);
+ await checkDeferredExport(panel);
+ const {code,snapshot}=await buildAndCheckExport(panel);
  await settleTransferMotion(panel);
+ const anchors=await stableRects(panel);
  await page.screenshot({path:`tests/artifacts/settings-${platform}-initial.png`});
  await page.evaluate(()=>{window.transferCopied=[];Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.transferCopied.push(text);}}});});
  await panel.getByRole('button',{name:'Скопировать код',exact:true}).click();
  await panel.getByRole('button',{name:'Скопировано',exact:true}).waitFor();
  await settleTransferMotion(panel);
+ assertStable(anchors,await stableRects(panel),'Copy confirmation');
  await page.screenshot({path:`tests/artifacts/settings-${platform}-copied.png`});
  assert.equal(await page.evaluate(()=>window.transferCopied.at(-1)),code,'Copy writes the displayed code, not a newly generated surprise');
  await panel.getByRole('button',{name:'Скопировать код',exact:true}).waitFor();
@@ -49,10 +73,15 @@ export async function checkTransferCode(page, platform) {
  await page.evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw Error('Denied');}}}));
  await panel.getByRole('button',{name:'Скопировать код'}).click();
  await status.filter({hasText:'Код выделен'}).waitFor();
+ assertStable(anchors,await stableRects(panel),'Clipboard error');
  assert.equal(await panel.getByRole('button',{name:'Скопировано',exact:true}).count(),0,'Clipboard denial never reports copied');
  assert.equal(await panel.getByLabel('Код экспорта').evaluate(el=>el.selectionEnd-el.selectionStart),code.length,'Copy fallback selects the whole code');
  await panel.getByText('Вставить код вместо файла',{exact:true}).click();
+ assertStable(anchors,await stableRects(panel),'Expanded import');
  const input=panel.getByLabel('Код импорта'),check=panel.getByRole('button',{name:'Проверить код'});
+ await input.fill('one line');const oneLine=(await input.boundingBox()).height;
+ await input.fill(Array.from({length:30},(_,i)=>`line ${i}`).join('\n'));
+ assert.ok((await input.boundingBox()).height>oneLine&&(await input.boundingBox()).height<=160,'Import textarea grows with lines and stops at 160px');
  const file=panel.getByLabel('Файл настроек');
  await file.setInputFiles({name:'large.json',mimeType:'application/json',buffer:Buffer.alloc(10*1024*1024+1,32)});
  await status.filter({hasText:'Файл слишком большой'}).waitFor();assert.equal(await confirm.isDisabled(),true);
@@ -68,10 +97,12 @@ export async function checkTransferCode(page, platform) {
  await input.fill(JSON.stringify({...snapshot,scope:'foreign.test~999'}));await check.click();await status.filter({hasText:'другого портала'}).waitFor();assert.equal(await confirm.isDisabled(),true);
  await input.fill('\uFEFF'+code);await check.click();await status.filter({hasText:'Папок:'}).waitFor();assert.equal(await confirm.isEnabled(),true,'BOM-prefixed portable code is accepted');
  await input.fill(code+' ');assert.equal(await confirm.isDisabled(),true,'Editing invalidates the pending confirmation');
- await check.click();
- await page.evaluate(()=>{const key='pena.dialogControl.v1.chats',items=JSON.parse(localStorage.getItem(key));items[0].title+=' changed';localStorage.setItem(key,JSON.stringify(items));window.dispatchEvent(new StorageEvent('storage',{key}));});
+ await check.click();await status.filter({hasText:'Папок:'}).waitFor();
+ await page.evaluate(()=>{const key='pena.dialogControl.v1.chats',items=JSON.parse(localStorage.getItem(key));items[0].title+=' changed';const raw=JSON.stringify(items);localStorage.setItem(key,raw);window.dispatchEvent(new StorageEvent('storage',{key,newValue:raw}));});
  await confirm.click();await status.filter({hasText:'Настройки изменились'}).waitFor();assert.equal(await confirm.isDisabled(),true);
  await check.click();await confirm.click();await status.filter({hasText:'Настройки перенесены'}).waitFor();
+ assert.equal(await panel.getByLabel('Код экспорта').inputValue(),'','Import invalidates the previous export instead of rebuilding automatically');
+ await buildAndCheckExport(panel);
  await panel.getByRole('button',{name:'Скопировать код'}).click();await status.filter({hasText:'Код выделен'}).waitFor();
  assert.deepEqual(JSON.parse(await panel.getByLabel('Код экспорта').inputValue()).modes.chats.automation.rules,snapshot.modes.chats.automation.rules);
  // The UI must remain usable without downloads or clipboard in the desktop host.
@@ -85,7 +116,7 @@ export async function checkTransferCode(page, platform) {
   // Reach both ends using the wheel, rather than letting Playwright hide clipping by scrolling ancestors.
   await body.hover({position:{x:5,y:20}});await page.mouse.wheel(0,-3000);
   await page.waitForFunction(()=>document.querySelector('.pena-transfer-body').scrollTop===0);
-  assert.equal(await panel.getByText('Папки, правила и распределение диалогов между приложением и Chrome. Только для того же портала и пользователя Bitrix24.',{exact:true}).evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+10,r.y+8));}),true,'First content is reachable');
+  assert.equal(await panel.getByRole('heading',{name:'Сохранить настройки',exact:true}).evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+10,r.y+8));}),true,'First content is reachable');
   await page.mouse.wheel(0,3000);
   await page.waitForFunction(()=>{const el=document.querySelector('.pena-transfer-body');return el.scrollTop+el.clientHeight>=el.scrollHeight-2;});
   assert.equal(await check.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}),true,'Last import control is reachable by scrolling');
@@ -97,9 +128,10 @@ export async function checkTransferCode(page, platform) {
  await page.setViewportSize({width:1280,height:800});
  await panel.getByRole('button',{name:'Закрыть',exact:true}).click();
  await openTransferSettings(page);
- await checkImmediateExport(panel);
+ await checkDeferredExport(panel);
  await panel.getByRole('button',{name:'Отменить последний импорт'}).click();
  await page.getByRole('button',{name:'Восстановить',exact:true}).click();await status.filter({hasText:'Настройки восстановлены'}).waitFor();
- assert.ok(JSON.parse(await panel.getByLabel('Код экспорта').inputValue()).modes.chats.items.length>0,'Undo refreshes the visible export immediately');
+ assert.equal(await panel.getByLabel('Код экспорта').inputValue(),'','Undo leaves export idle until explicitly rebuilt');
+ await buildAndCheckExport(panel);
  await page.keyboard.press('Escape');assert.equal(await panel.count(),0);
 }
