@@ -45,6 +45,8 @@ try {
    assert.equal(open.calls,0,'Opening settings must not snapshot the catalog');
    assert.equal(open.asyncCalls,0,'Opening settings must not start a background export');
    assert.equal(await panel.getByLabel('Код экспорта').inputValue(),'','Opening settings does not generate export');
+   assert.equal(await panel.getByLabel('Код экспорта').isVisible(),false,'Opening settings leaves code hidden');
+   assert.equal(await panel.locator('.pena-transfer-copy').isVisible(),false,'Opening settings leaves Copy hidden');
   }
   await page.evaluate(()=>{
    window.__transferBeat={frames:0,ticks:0,inputEvents:0,maxGap:0,gaps:[],last:performance.now(),active:true};
@@ -75,6 +77,13 @@ try {
   if(!baseline){assert.equal(copy.snapshotCalls,0,'Copy never regenerates the snapshot');assert.equal(copy.asyncCalls,0,'Copy never starts an async snapshot');}
   const beat=await page.evaluate(()=>{const p=window.__transferBeat;p.active=false;clearInterval(p.timer);return {frames:p.frames,ticks:p.ticks,inputEvents:p.inputEvents,maxGapMs:p.maxGap,gaps:p.gaps};});
   const diagnostics=await page.evaluate(()=>({valueSets:window.__transferValueSets,longTasks:window.__transferLongTasks}));
+  if(!baseline&&!textareaProbe&&!fullTextareaProbe){
+   const calls=await page.evaluate(()=>window.__transferPerf.asyncCalls);
+   const download=page.waitForEvent('download');await panel.getByRole('button',{name:'Скачать файл',exact:true}).click();await download;
+   assert.equal(await panel.getByText('Фрагмент кода · копируется полностью',{exact:true}).isVisible(),true,'Download retains the visible partial-code disclosure');
+   assert.equal(await panel.getByLabel('Код экспорта').isVisible(),true,'Downloading an already built code leaves its preview visible');
+   assert.equal(await page.evaluate(()=>window.__transferPerf.asyncCalls),calls,'Downloading a ready code reuses its complete cached payload');
+  }
   let cancellation=null,staleBuild=null;
   if(!baseline){
    await panel.getByRole('button',{name:'Закрыть',exact:true}).click();

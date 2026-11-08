@@ -83,6 +83,6 @@ try {
  }
  await large.close();
  assert.deepEqual(errors,[]);
- writeFileSync('tests/artifacts/settings-transfer.json',JSON.stringify({passed:true,platform:'shared desktop runtime in Chromium',liveBitrix:false,deferredExport:true,stablePanelGeometry:true,copyFeedbackAndRepeat:true,codeFallback:true,hostBoxSizing:'content-box',iframe:['360x540','320x320'],largeGeneratedImports:importSizes,invalidImport:true,staleConfirmation:true,undoAfterReopen:true,filtersPreserved:true,expandedSettingsReachable:true,wheelScrollBothEnds:true,responsive:['1100x800','360x640','640x400','360x320']},null,2));
+ writeFileSync('tests/artifacts/settings-transfer.json',JSON.stringify({passed:true,platform:'shared desktop runtime in Chromium',liveBitrix:false,deferredExport:true,stableHorizontalGeometry:true,compactIdlePanel:true,copyFeedbackAndRepeat:true,codeFallback:true,hostBoxSizing:'content-box',iframe:['360x540','320x320'],largeGeneratedImports:importSizes,invalidImport:true,staleConfirmation:true,undoAfterReopen:true,filtersPreserved:true,expandedSettingsReachable:true,wheelScrollBothEnds:true,responsive:['1100x800','360x640','640x400','360x320']},null,2));
  console.log('PASS desktop shared settings: export fallback, code validation, stale confirmation, import/undo, responsive layout');
 } finally {await browser.close();await server.close();}

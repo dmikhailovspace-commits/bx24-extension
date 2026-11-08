@@ -18,11 +18,20 @@ export async function openTransferSettings(page) {
 export async function checkDeferredExport(panel) {
  const field=panel.getByLabel('Код экспорта');
  assert.equal(await field.inputValue(),'','Opening settings does not generate a code');
- assert.equal(await field.isVisible(),true);
- assert.equal(await panel.getByRole('button',{name:'Скопировать код',exact:true}).isDisabled(),true);
- assert.ok((await field.boundingBox()).height<=48,'Empty export begins with a compact single line');
+ assert.equal(await field.isVisible(),false,'An unbuilt code field does not reserve space');
+ const copy=panel.locator('.pena-transfer-copy');
+ assert.equal(await copy.isVisible(),false,'Copy appears only after a code is ready');
+ assert.equal(await copy.isDisabled(),true);
+ assert.equal(await panel.locator('.pena-transfer-progress').isVisible(),false,'Idle progress does not reserve space');
+ assert.equal(await panel.locator('[role=status]').isVisible(),false,'Empty status does not reserve space');
+ await settleTransferMotion(panel);
+ const layout=await panel.evaluate(el=>{const sections=el.querySelectorAll('.pena-transfer-section'),row=sections[0].querySelector('.pena-transfer-actions'),r=el.getBoundingClientRect();return {height:r.height,desktop:innerWidth>=700&&innerHeight>=600,betweenSections:sections[1].getBoundingClientRect().top-row.getBoundingClientRect().bottom};});
+ if(layout.desktop)assert.ok(layout.height<=480,'Idle dialog is compact rather than a mostly empty fixed-height panel');
+ assert.ok(layout.betweenSections<=40,'No reserved code/progress gap between save and load sections');
  const download=await panel.getByRole('button',{name:'Скачать файл',exact:true}).boundingBox(),build=await panel.getByRole('button',{name:'Собрать код',exact:true}).boundingBox();
  assert.ok(download.y<build.y||download.x<build.x,'Download precedes Build code');
+ const buttonStyles=await panel.evaluate(el=>['.pena-transfer-download','.pena-transfer-build'].map(selector=>{const style=getComputedStyle(el.querySelector(selector));return Object.fromEntries(['backgroundColor','color','borderColor','borderWidth','borderRadius','padding','height','minWidth','fontWeight'].map(key=>[key,style[key]]));}));
+ assert.deepEqual(buttonStyles[0],buttonStyles[1],'Download and Build have the same visual treatment');
 }
 
 export async function buildAndCheckExport(panel) {
@@ -47,13 +56,19 @@ export async function buildAndCheckExport(panel) {
  return {code,snapshot};
 }
 
-async function stableRects(panel){return panel.evaluate(el=>[el,el.querySelector('.pena-transfer-header'),el.querySelector('.pena-transfer-footer'),el.querySelector('.pena-transfer-primary')].map(x=>{const r=x.getBoundingClientRect();return [r.x,r.y,r.width,r.height];}));}
-function assertStable(before,after,label){before.forEach((r,i)=>r.forEach((v,j)=>assert.ok(Math.abs(v-after[i][j])<=1,`${label}: panel/header/footer/actions do not jump`)));}
+async function stableRects(panel){return panel.evaluate(el=>[el,el.querySelector('.pena-transfer-header'),el.querySelector('.pena-transfer-footer'),el.querySelector('.pena-transfer-primary')].map(x=>{const r=x.getBoundingClientRect();return [r.x,r.width];}));}
+function assertStable(before,after,label){before.forEach((r,i)=>r.forEach((v,j)=>assert.ok(Math.abs(v-after[i][j])<=1,`${label}: horizontal alignment and widths remain stable while height follows content`)));}
 
 export async function checkTransferCode(page, platform) {
  const panel=page.getByRole('dialog',{name:'Перенос настроек',exact:true});
  const status=panel.getByRole('status'),confirm=panel.getByRole('button',{name:'Подтвердить импорт'});
  await checkDeferredExport(panel);
+ await page.screenshot({path:`tests/artifacts/settings-${platform}-idle.png`});
+ const downloaded=page.waitForEvent('download');
+ await panel.getByRole('button',{name:'Скачать файл',exact:true}).click();await downloaded;
+ assert.equal(await panel.getByLabel('Код экспорта').isVisible(),false,'Download leaves the code field hidden');
+ assert.equal(await panel.locator('.pena-transfer-copy').isVisible(),false,'Download does not reveal Copy');
+ assert.equal(await panel.locator('.pena-transfer-progress').isVisible(),false,'Finished download removes its progress area');
  const {code,snapshot}=await buildAndCheckExport(panel);
  await settleTransferMotion(panel);
  const anchors=await stableRects(panel);
@@ -130,6 +145,11 @@ export async function checkTransferCode(page, platform) {
  await panel.getByRole('button',{name:'Закрыть',exact:true}).click();
  await openTransferSettings(page);
  await checkDeferredExport(panel);
+ await page.setViewportSize({width:360,height:640});await settleTransferMotion(panel);
+ await page.screenshot({path:`tests/artifacts/settings-${platform}-idle-360.png`});
+ await buildAndCheckExport(panel);await settleTransferMotion(panel);
+ await page.screenshot({path:`tests/artifacts/settings-${platform}-ready-360.png`});
+ await page.setViewportSize({width:1280,height:800});
  await panel.getByRole('button',{name:'Отменить последний импорт'}).click();
  await page.getByRole('button',{name:'Восстановить',exact:true}).click();await status.filter({hasText:'Настройки восстановлены'}).waitFor();
  assert.equal(await panel.getByLabel('Код экспорта').inputValue(),'','Undo leaves export idle until explicitly rebuilt');

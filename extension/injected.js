@@ -12934,11 +12934,11 @@ if (_presetChannel) {
 		const exportSection=node('section','',body);exportSection.className='pena-transfer-section';node('h3','Сохранить настройки',exportSection);
 		const downloadActions=node('div','',exportSection);downloadActions.className='pena-transfer-actions';
 		const buildActions=downloadActions;
-		const exportState=node('div','',exportSection);exportState.className='pena-transfer-export-state pena-transfer-progress';exportState.style.visibility='hidden';
+		const exportState=node('div','',exportSection);exportState.className='pena-transfer-export-state pena-transfer-progress';exportState.hidden=true;
 		const progressLabel=node('span','',exportState);progressLabel.className='pena-transfer-progress-label';
 		const progressBar=node('progress','',exportState);progressBar.max=100;progressBar.value=0;progressBar.setAttribute('aria-label','Сборка кода');
-		const exportCode=node('textarea','',exportSection);exportCode.className='pena-transfer-export-code';exportCode.readOnly=true;exportCode.setAttribute('aria-label','Код экспорта');exportCode.placeholder='Нажмите «Собрать код»';exportCode.spellcheck=false;exportCode.wrap='off';exportCode.rows=1;
-		const exportActions=node('div','',exportSection);exportActions.className='pena-transfer-actions';
+		const exportCode=node('textarea','',exportSection);exportCode.className='pena-transfer-export-code';exportCode.readOnly=true;exportCode.setAttribute('aria-label','Код экспорта');exportCode.hidden=true;exportCode.spellcheck=false;exportCode.wrap='off';exportCode.rows=1;
+		const exportActions=node('div','',exportSection);exportActions.className='pena-transfer-actions';exportActions.hidden=true;
 		const importSection=node('section','',body);importSection.className='pena-transfer-section';node('h3','Загрузить настройки',importSection);
 		node('p','Выберите файл или вставьте код. Сначала проверим данные — до подтверждения ничего не изменится.',importSection);
 		const footer=node('div','');footer.className='pena-transfer-footer';
@@ -12950,7 +12950,7 @@ if (_presetChannel) {
 		panel.dataset.exportState='idle';
 		const fitCode=field=>{let lines=1;for(let i=0;i<field.value.length&&lines<8;i++)if(field.value.charCodeAt(i)===10)lines++;field.style.height=Math.min(160,22+lines*18)+'px';};
 		const resetCopyFeedback=()=>{clearTimeout(copyFeedbackTimer);copyButton.textContent='Скопировать код';delete copyButton.dataset.state;};
-		const invalidateExport=()=>{exportJob++;exportCache=null;exportCode.value='';delete exportCode.dataset.preview;exportCode.title='';fitCode(exportCode);resetCopyFeedback();copyButton.disabled=true;panel.dataset.exportState='idle';exportState.style.visibility='hidden';};
+		const invalidateExport=()=>{exportJob++;exportCache=null;exportCode.value='';delete exportCode.dataset.preview;exportCode.title='';fitCode(exportCode);resetCopyFeedback();copyButton.disabled=true;panel.dataset.exportState='idle';exportState.hidden=true;exportCode.hidden=true;exportActions.hidden=true;};
 		const aborted=()=>new DOMException('Операция отменена','AbortError');
 		const yieldTask=()=>window.scheduler?.yield?window.scheduler.yield():new Promise(resolve=>setTimeout(resolve,0));
 		const generateExport=async reveal=>{
@@ -12959,7 +12959,7 @@ if (_presetChannel) {
 			const check=()=>{current();if(token!==exportJob)throw aborted();};
 			const progress=value=>{progressValue=Math.max(progressValue,Math.min(100,value));progressBar.value=progressValue;progressBar.setAttribute('aria-valuenow',String(progressValue));progressLabel.textContent=`Собираем код · ${progressValue}%`;};
 			const checkpoint=async()=>{check();if(performance.now()-lastYield>=6){await yieldTask();lastYield=performance.now();check();}};
-			exportBusy=true;syncControls();panel.dataset.exportState='building';exportState.style.visibility='visible';progress(0);
+			exportBusy=true;syncControls();panel.dataset.exportState='building';exportState.hidden=false;progressBar.hidden=false;progress(0);
 			try {
 				// Paint the loader before reading catalog data. Subsequent work yields in small batches.
 				await new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0)));check();
@@ -12970,7 +12970,7 @@ if (_presetChannel) {
 					if(!_sortingTransferStateMatches(state))throw new Error('Настройки изменились во время сборки. Нажмите «Собрать код» ещё раз.');
 					exportCache={state,text};
 				}
-				check();progress(100);progressLabel.textContent='Код готов';
+				check();progress(100);progressBar.hidden=true;progressLabel.textContent='Код готов';
 				if(reveal){
 					// Rendering megabytes in a native textarea blocks layout even when JS yields.
 					// Keep a bounded, clearly labelled preview; both copy paths use the full cache.
@@ -12979,11 +12979,11 @@ if (_presetChannel) {
 					exportCode.dataset.preview=String(preview);
 					exportCode.title=preview?'Показан фрагмент. Кнопка и Ctrl+C копируют весь код.':'';
 					if(preview)progressLabel.textContent='Фрагмент кода · копируется полностью';
-					fitCode(exportCode);resetCopyFeedback();panel.dataset.exportState='ready';
+					exportCode.hidden=false;exportActions.hidden=false;fitCode(exportCode);resetCopyFeedback();panel.dataset.exportState='ready';
 				}
-				else panel.dataset.exportState=exportCode.value?'ready':'idle';
+				else {panel.dataset.exportState=exportCode.value?'ready':'idle';exportState.hidden=!exportCode.value;if(exportCode.value&&exportCode.dataset.preview==='true')progressLabel.textContent='Фрагмент кода · копируется полностью';}
 				return exportCache.text;
-			}catch(error){if(token===exportJob){exportCache=null;exportCode.value='';delete exportCode.dataset.preview;exportCode.title='';fitCode(exportCode);panel.dataset.exportState='error';progressLabel.textContent='Не удалось собрать код';}throw error;}
+			}catch(error){if(token===exportJob){exportCache=null;exportCode.value='';delete exportCode.dataset.preview;exportCode.title='';fitCode(exportCode);panel.dataset.exportState='error';exportState.hidden=true;exportCode.hidden=true;exportActions.hidden=true;}throw error;}
 			finally{exportBusy=false;if(overlay.isConnected)syncControls();}
 		};
 		const downloadButton=action('Скачать файл',async()=>{
