@@ -26,15 +26,15 @@
 
 ## Task 1: Correct and verify shared automation
 
-- [ ] Extend rules-resorting-regression.mjs for both modes and prove failures before editing runtime.
-- [ ] Update _applyDialogAutomation and _dialogAutomationTickets in extension/injected.js; validate current placement at confirmation.
-- [ ] Update rules-preview-races-regression.mjs for unassigned dialogs and duplicate folder labels; retain the assigned-dialog dismissal scenario.
-- [ ] Run affected regressions, seven rules suites and exact search-focused; update release notes and project context.
+- [x] Extend rules-resorting-regression.mjs for both modes and prove failures before editing runtime.
+- [x] Update _applyDialogAutomation and _dialogAutomationTickets in extension/injected.js; validate current placement at confirmation.
+- [x] Update rules-preview-races-regression.mjs for unassigned dialogs and duplicate folder labels; retain the assigned-dialog dismissal scenario.
+- [x] Run affected regressions, seven rules suites and exact search-focused; update release notes and project context.
 
 ## Task 2: Replace the release
 
-- [ ] Freeze and push source; build Windows, macOS and Chrome through the existing gated workflow.
-- [ ] Verify artifact hashes and source identity; publish v8.0.69 assets and publish main/update.json with public readback.
-- [ ] Replace the Store submission and the six files in the existing Yandex folder, verify results, document actual platform status.
+- [x] Freeze and push source; build Windows, macOS and Chrome through the existing gated workflow.
+- [x] Verify artifact hashes and source identity; publish v8.0.69 assets and publish main/update.json with public readback.
+- [x] Replace the Store submission and the six files in the existing Yandex folder, verify results, document actual platform status.
 
-Self-review: every requested behavior and each failure mode above has a target regression. Same-version desktop installations may require reinstalling; Store replacement depends on the actual review state.
+Self-review: every requested behavior and each failure mode above has a target regression. Google rejected the already-published number; the user authorized 8.0.69 everywhere. Release, update channel and Yandex verified; Store submission accepted for automatic publication after review.
