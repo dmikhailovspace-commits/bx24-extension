@@ -15,9 +15,7 @@ const browser = await chromium.launch({ headless: true });
 try {
   for (const { name, width, height, className } of [
     { name: 'promo-wide.png', width: 1400, height: 560, className: 'wide' },
-    { name: 'promo.png', width: 440, height: 280, className: 'small' },
-    { name: 'screenshot-promo-wide.png', width: 1280, height: 800, className: 'wide gallery' },
-    { name: 'screenshot-promo.png', width: 1280, height: 800, className: 'small gallery' }
+    { name: 'promo.png', width: 440, height: 280, className: 'small' }
   ]) {
     const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
     await page.route('**/*', route => route.abort());

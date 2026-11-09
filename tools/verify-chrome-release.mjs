@@ -69,6 +69,22 @@ const result = {
   limitations: { liveBitrixTested: false, nativeChromePermissionDialogTested: false, storeSubmitted: false },
   publishingNeeds: ['Developer account and contact', 'Public HTTPS privacy policy URL', 'Reviewer test portal credentials and live acceptance']
 };
+const carousel = json('chrome/marketing/carousel/manifest.json');
+assert.equal(carousel.slides.length, 5, 'Store carousel has five distinct feature slides');
+const carouselHashes = new Set();
+for (const slide of carousel.slides) {
+  const bytes = read(`chrome/assets/${slide.file}`);
+  assert.equal(bytes.readUInt32BE(16), 1280);
+  assert.equal(bytes.readUInt32BE(20), 800);
+  assert.equal(hash(bytes), slide.sha256);
+  assert.deepEqual(read(`chrome-release/publishing/assets/${slide.file}`), bytes);
+  carouselHashes.add(hash(bytes));
+}
+assert.equal(carouselHashes.size, 5, 'Duplicate carousel images are not allowed');
+for (const obsolete of ['screenshot-promo-wide.png', 'screenshot-promo.png']) {
+  assert(!list('chrome-release/publishing/assets').includes(obsolete), 'Obsolete duplicate promo: ' + obsolete);
+}
+result.carousel = carousel.slides;
 writeFileSync(join(root, 'chrome-release/verification.json'), JSON.stringify(result, null, 2) + '\n');
 writeFileSync(join(root, 'tests/artifacts/chrome-release-results.json'), JSON.stringify(result, null, 2) + '\n');
 console.log(`PASS Chrome release ${manifest.version}: ${full.suites.length} suites, ${files.size} files, ${hash(zip)}`);

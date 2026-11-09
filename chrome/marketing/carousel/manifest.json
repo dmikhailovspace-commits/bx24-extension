@@ -1,0 +1,36 @@
+{
+  "generatedWith": "built-in image_gen",
+  "slides": [
+    {
+      "masterWidth": 1586,
+      "masterHeight": 992,
+      "file": "carousel-01-folders.png",
+      "sha256": "abb3c95a9d74885136c74e7d17638f78632520e3c3e4a593d636f594d80d218e"
+    },
+    {
+      "masterWidth": 1586,
+      "masterHeight": 992,
+      "file": "carousel-02-rules.png",
+      "sha256": "8e5f80b6a7d1edad3f27b3c3b21e6c78c0a17ab5696ed5f60ab8937552f7640f"
+    },
+    {
+      "masterWidth": 1586,
+      "masterHeight": 992,
+      "file": "carousel-03-bulk.png",
+      "sha256": "48922b9772f3fce5c77dacdf6e9a9b8d4c41bbb0e4be00542f983b5f8242aa93"
+    },
+    {
+      "masterWidth": 1586,
+      "masterHeight": 992,
+      "file": "carousel-04-focus.png",
+      "sha256": "5353141e8bcdceb9661c52273beb9750021c35ef863549423740db1beb8d04fb"
+    },
+    {
+      "masterWidth": 1586,
+      "masterHeight": 992,
+      "file": "carousel-05-time.png",
+      "sha256": "de6c910c949de47bb3fb9451c02aeea19b2ec92117b87861fb123130ed2dda1f"
+    }
+  ],
+  "format": "1280x800 RGB PNG"
+}

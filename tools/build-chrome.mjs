@@ -119,9 +119,13 @@ export function buildChrome(output = join(root, 'chrome-release')) {
   writeFileSync(join(output, `${zipName}.sha256`), `${hash(zip)}  ${zipName}\n`);
   cpSync(join(root, 'docs/chrome'), join(output, 'publishing'), { recursive: true });
   cpSync(join(root, 'chrome/assets'), join(output, 'publishing/assets'), { recursive: true });
+  for (const obsolete of ['screenshot-promo-wide.png', 'screenshot-promo.png']) {
+    const path = join(output, 'publishing/assets', obsolete);
+    if (existsSync(path)) rmSync(path);
+  }
   writeFileSync(join(output, 'publishing/privacy.html'), files.get('privacy.html'));
   const materials = new Map([['privacy.html', files.get('privacy.html')]]);
-  for (const name of ['README.md', 'STORE-LISTING.ru.md', 'PRIVACY.md', 'REVIEWER-NOTES.md']) materials.set(name, readFileSync(join(root, 'docs/chrome', name)));
+  for (const name of ['README.md', 'STORE-LISTING.ru.md', 'PRIVACY.md', 'REVIEWER-NOTES.md', 'CAROUSEL.md']) materials.set(name, readFileSync(join(root, 'docs/chrome', name)));
   for (const name of readdirSync(join(root, 'chrome/assets')).filter(name => /\.(?:png|svg)$/.test(name))) materials.set(`assets/${name}`, readFileSync(join(root, 'chrome/assets', name)));
   const materialsZip = zipFiles(materials);
   writeFileSync(join(output, materialsName), materialsZip);
