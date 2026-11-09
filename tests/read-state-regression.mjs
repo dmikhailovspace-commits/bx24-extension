@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import { chromium } from 'playwright';
 import { startHarnessServer, collectPageErrors } from './lib/harness-server.mjs';
 import { checkNativeMultiselect } from './lib/native-multiselect.mjs';
-import { checkVisibleReadRecovery } from './lib/visible-read-recovery.mjs';
+import { checkVisibleReadRecovery, checkReadFrameVisibility } from './lib/visible-read-recovery.mjs';
 
 const source = readFileSync(process.env.PENA_READ_STATE_SOURCE || new URL('../extension/injected.js', import.meta.url), 'utf8');
 const extract = name => {
@@ -280,6 +280,7 @@ try {
     assert.deepEqual(errors, []);
     await page.close();
   });
+  await phase('Hidden native iframe cannot read messages despite retained browser focus', () => checkReadFrameVisibility(browser, source));
   await phase('Pinned read tasks: one selection per physical gesture', () => checkNativeMultiselect(browser, server.baseUrl, source));
   console.log(`PASS read state: ${report.phases.length} functional phases`);
 } finally {

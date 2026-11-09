@@ -11,7 +11,7 @@ export async function checkVisibleReadRecovery(source) {
   function fixture() {
     let time = 100000, sequence = 0;
     const timers = new Map(), listeners = new Map(), events = new Map(), calls = [];
-    const flags = { focus: true, hidden: false, enabled: true, readable: true, visible: true, user: '7' };
+    const flags = { focus: true, hidden: false, enabled: true, readable: true, visible: true, frameVisible: true, user: '7' };
     const anchors = [{ chatId: 1, messageId: 10, type: 'mention', fromUserId: 2 },
       { chatId: 1, messageId: 90, type: 'mention', fromUserId: 2 },
       { chatId: 2, messageId: 8, type: 'mention', fromUserId: 2 }];
@@ -49,6 +49,7 @@ export async function checkVisibleReadRecovery(source) {
       document: doc, window: doc, location: { host: 'portal' },
       setTimeout: fn => { timers.set(++sequence, fn); return sequence; }, clearTimeout: id => timers.delete(id),
       _isPenaExtensionEnabled: () => flags.enabled, isInternalChatsDOM: () => true,
+      _isDialogReadFrameVisible: () => flags.frameVisible, isVisibleElement: () => flags.visible,
       _findDialogNativeVueInstance: (_root, accept) => accept(instance),
       _assertDialogControlRestSuccess: value => { if (value === false) throw Error('Rejected'); },
       _scheduleBxRest: (_method, _payload, run, options) => { assert(options.isCurrent()); return run(); },
@@ -74,7 +75,7 @@ export async function checkVisibleReadRecovery(source) {
     assert.equal(f.timers.size, 0, 'No polling loop'); f.recovery.dispose();
     assert.equal(f.events.size + f.listeners.size, 0);
   });
-  for (const flag of ['hidden', 'focus', 'enabled', 'readable', 'visible', 'user']) await phase(`No read when ${flag} invalidates the viewport`, async () => {
+  for (const flag of ['hidden', 'focus', 'enabled', 'readable', 'visible', 'frameVisible', 'user']) await phase(`No read when ${flag} invalidates the viewport`, async () => {
     const f = fixture(); f.flags[flag] = flag === 'hidden' ? true : flag === 'user' ? '8' : false;
     await f.tick(); assert.equal(f.calls.length, 0); f.recovery.dispose();
   });
@@ -142,4 +143,30 @@ export async function checkVisibleReadRecovery(source) {
     f.calls.length = 0; f.events.get('visible')(); await f.tick(); assert.equal(f.calls.length, 0); f.recovery.dispose();
   });
   return { scenarios: phases.length, phases };
+}
+
+export async function checkReadFrameVisibility(browser, source) {
+  const extract = name => {
+    const start = source.indexOf('\n\tfunction ' + name + '(');
+    const end = source.indexOf('\n\tfunction ', start + 2);
+    assert(start >= 0 && end > start); return source.slice(start, end);
+  };
+  const page = await browser.newPage();
+  try {
+    await page.setContent('<div id="host"><iframe srcdoc="<input autofocus><div>chat</div>"></iframe></div>');
+    const frame = page.frames()[1];
+    await frame.addScriptTag({ content: extract('isVisibleElement') + extract('_isDialogReadFrameVisible') });
+    await frame.locator('input').focus();
+    assert.equal(await frame.evaluate(() => _isDialogReadFrameVisible()), true);
+    await page.locator('#host').evaluate(el => el.style.display = 'none');
+    assert.equal(await frame.evaluate(() => document.hasFocus()), true, 'Reproduce Chromium focus surviving a hidden iframe');
+    assert.equal(await frame.evaluate(() => _isDialogReadFrameVisible()), false);
+    await page.locator('#host').evaluate(el => { el.style.display = ''; el.style.opacity = '0'; });
+    assert.equal(await frame.evaluate(() => _isDialogReadFrameVisible()), false);
+    await page.locator('#host').evaluate(el => { el.style.opacity = ''; el.style.position = 'absolute'; el.style.top = '2000px'; });
+    assert.equal(await frame.evaluate(() => _isDialogReadFrameVisible()), false);
+    await page.locator('#host').evaluate(el => el.removeAttribute('style'));
+    assert.equal(await frame.evaluate(() => _isDialogReadFrameVisible()), true);
+    return { focusedHiddenIframeReproduced: true, hiddenTransparentOffscreenBlocked: true };
+  } finally { await page.close(); }
 }

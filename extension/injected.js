@@ -3284,6 +3284,19 @@
 		return context;
 	}
 
+	function _isDialogReadFrameVisible() {
+		try {
+			for (let view = window; view !== view.top; view = view.parent) {
+				const frame = view.frameElement;
+				if (!frame || !isVisibleElement(frame) ||
+					frame.checkVisibility?.({ checkOpacity: true, checkVisibilityCSS: true }) === false) return false;
+				const rect = frame.getBoundingClientRect(), parent = view.parent;
+				if (rect.bottom <= 0 || rect.right <= 0 || rect.top >= parent.innerHeight || rect.left >= parent.innerWidth) return false;
+			}
+			return true;
+		} catch { return false; }
+	}
+
 	function _bindDialogVisibleReadRecovery(context) {
 		// Recover only at the native viewport's confirmed boundary. A selected
 		// recent row, cached lastMessageId or a background tab is not read proof.
@@ -3291,7 +3304,7 @@
 		const attempts = new Map();
 		const events = context.BXNS?.Messenger?.v2?.Const?.EventType?.dialog;
 		const current = () => !disposed && _isPenaExtensionEnabled() && !document.hidden &&
-			document.hasFocus() && isInternalChatsDOM() &&
+			document.hasFocus() && _isDialogReadFrameVisible() && isInternalChatsDOM() &&
 			context.host === location.host && String(context.core.getUserId()) === context.userId &&
 			context.core.getStore() === context.store;
 		const detach = () => {
@@ -3301,13 +3314,13 @@
 		const resolve = () => {
 			const id = context.store.getters['application/getLayout']?.entityId;
 			if (instance?.isUnmounted || instance?.proxy?.dialogId !== id || !instance?.proxy?.$el?.isConnected ||
-				(instance && !instance.proxy.$el.getClientRects().length)) detach();
+				(instance && !isVisibleElement(instance.proxy.$el))) detach();
 			if (!instance) {
 				const root = document.querySelector('.bx-im-dialog-chat__scroll-container');
 				if (!root) return null;
 				instance = _findDialogNativeVueInstance(root, candidate => {
 					const proxy = candidate?.proxy;
-					return !candidate?.isUnmounted && proxy?.dialogId === id && proxy?.$el?.isConnected && proxy.$el.getClientRects().length &&
+					return !candidate?.isUnmounted && proxy?.dialogId === id && proxy?.$el?.isConnected && isVisibleElement(proxy.$el) &&
 						typeof proxy.messagesCanBeRead === 'function' && typeof proxy.getVisibleMessagesManager === 'function'
 						? candidate : null;
 				});
@@ -3322,7 +3335,7 @@
 			timer = null;
 			if (flight || !current()) return;
 			const proxy = resolve();
-			if (!proxy || !proxy.messagesCanBeRead() || !proxy.$el.getClientRects().length) return;
+			if (!proxy || !proxy.messagesCanBeRead() || !isVisibleElement(proxy.$el)) return;
 			const chatId = Number(proxy.dialog?.chatId), dialogId = proxy.dialogId;
 			if (!(chatId > 0)) return;
 			const visible = proxy.getVisibleMessagesManager().getVisibleMessages();
