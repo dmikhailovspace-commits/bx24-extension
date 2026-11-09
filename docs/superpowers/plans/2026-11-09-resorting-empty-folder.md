@@ -12,9 +12,9 @@
 
 ## Global Constraints
 
-- Replace version 8.0.68, without a version bump, on GitHub, the public update channel, Chrome Web Store and the existing Yandex folder.
+- Latest user decision: release version 8.0.69, on GitHub, the public update channel, Chrome Web Store and the existing Yandex folder.
 - Run the exact search-focused 16 suites and seven rules suites; no full registry.
-- Build all packages from one frozen source commit; preserve the original source before retagging.
+- Build all packages from one frozen source commit; preserve the existing 8.0.68 release.
 
 ## Review Focus
 
@@ -34,7 +34,7 @@
 ## Task 2: Replace the release
 
 - [ ] Freeze and push source; build Windows, macOS and Chrome through the existing gated workflow.
-- [ ] Verify artifact hashes and source identity; replace v8.0.68 assets and publish main/update.json with public readback.
+- [ ] Verify artifact hashes and source identity; publish v8.0.69 assets and publish main/update.json with public readback.
 - [ ] Replace the Store submission and the six files in the existing Yandex folder, verify results, document actual platform status.
 
 Self-review: every requested behavior and each failure mode above has a target regression. Same-version desktop installations may require reinstalling; Store replacement depends on the actual review state.
