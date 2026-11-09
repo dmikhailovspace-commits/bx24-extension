@@ -26830,7 +26830,7 @@ if (_presetChannel) {
 			try { if(_excludeDialogAutomationTransfers(contextMode,targetIds))_showDialogDockToast(targetIds.length>1?'Диалоги добавлены в исключения переноса':'Диалог добавлен в исключения переноса','ok'); }
 			catch { _showDialogDockToast('Не удалось сохранить исключение. Повторите попытку.','danger'); }
 		});
-		menu.append(laterBtn, readBtn, excludeTransferBtn, ...(canControlColor ? [colorDivider, colorBtn] : []), segmentDivider, segmentTitle, ...segmentButtons, folderDivider, folderTitle, ...folderButtons, createFolderDivider, createFolderAndMoveBtn, ...groupClearButtons, ...originalMenuActions);
+		menu.append(laterBtn, readBtn, ...(canControlColor ? [colorDivider, colorBtn] : []), excludeTransferBtn, segmentDivider, segmentTitle, ...segmentButtons, folderDivider, folderTitle, ...folderButtons, createFolderDivider, createFolderAndMoveBtn, ...groupClearButtons, ...originalMenuActions);
 		if (!IS_OL_FRAME && targetItems.length === 1) _appendDialogControlBitrixActions(event, item, menu, () => close(), originalMenuActions[0]);
 		document.body.appendChild(menu);
 		['pointerdown', 'mousedown', 'mouseup', 'click', 'auxclick', 'contextmenu'].forEach(type => {
