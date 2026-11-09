@@ -16,8 +16,9 @@
 
 ## Tasks
 
-- [ ] Update `extension/injected.js`: confirmation with draft preservation; local proposal selection; bulk resolver using existing freshness checks.
-- [ ] Update `extension/injected.css`: selection toolbar/card state and fixed 20px SVG chevron with centered transform origin.
-- [ ] Extend `tests/rules-settings-ui-regression.mjs`: cancellation/confirmation/keyboard focus and real chevron bounds. Add bulk UI cases through the same CI suite: both modes, matching IDs, partial/all selection, exceptions, stale proposals and scope changes.
-- [ ] Update manual/generated context; freeze source after focused checks. Verify exact CI profile and platform artifacts before delivery.
-- [ ] Replace authorized release assets, publish and read back updater metadata, upload verified Disk files; handle Store according to the user's answer. Record limits and delivery proof.
+- [x] Update `extension/injected.js`: confirmation with draft preservation; local proposal selection; bulk resolver using existing freshness checks.
+- [x] Update `extension/injected.css`: selection toolbar/card state and fixed 20px SVG chevron with centered transform origin.
+- [x] Extend `tests/rules-settings-ui-regression.mjs`: cancellation/confirmation/keyboard focus and real chevron bounds. Add bulk UI cases through the same CI suite: both modes, matching IDs, partial/all selection, exceptions, stale proposals and scope changes.
+- [x] Update manual/generated context; freeze source after focused checks. Verify exact CI profile and platform artifacts before delivery.
+- [x] Replace authorized 8.0.69 release assets, publish and read back updater metadata, upload verified Disk files. Record limits and delivery proof in `docs/qa/release-8.0.69-bulk-review.md`.
+- [ ] Store replacement requires a greater version. Current explicit request keeps 8.0.69; the question about an alternative has no answer. The already published Store package is unchanged.
