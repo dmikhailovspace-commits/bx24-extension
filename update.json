@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "8.0.67",
-  "release_date": "2026-11-08",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v8.0.67",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v8.0.67",
+  "version": "8.0.68",
+  "release_date": "2026-11-09",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v8.0.68",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v8.0.68",
   "extension_files": [
-    "worker-v8_0_67.js",
+    "worker-v8_0_68.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,13 +33,13 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v8.0.67/extension/injected.js",
-  "changelog": "Исправлен перенос настроек и резервное копирование. Панель быстрее открывается, код собирается по кнопке, копирование и скачивание работают без рывков.",
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v8.0.68/extension/injected.js",
+  "changelog": "Перенос правил сохраняет имена сотрудников. Исправлены обязательные условия; добавлены автоподтверждение пересортировки и управление исключениями.",
   "release_notes": [
-    "Исправлены перенос настроек и отмена импорта при заполненном хранилище.",
-    "Код собирается по кнопке с прогрессом; готовый код копируется и скачивается без повторной сборки.",
-    "Убраны пустые области, лишние сообщения и рывки кнопок.",
-    "Привычный вид фильтров сохранён."
+    "Перенос правил сохраняет имя сотрудника вместе с ID; старые файлы остаются совместимыми.",
+    "Обязательные условия выполняются независимо от режима «любое / все».",
+    "Автоподтверждение пересортировки включается отдельно для чатов и задач; после импорта выключено.",
+    "Постоянные исключения доступны через контекстное меню и раздел «Исключения»."
   ],
   "verification_profile": "search-focused",
   "distribution": "github",
