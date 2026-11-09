@@ -61,6 +61,24 @@ jobs:
           node tests/transfer-performance-regression.mjs
           exit $LASTEXITCODE
 
+      - name: Verify released rules and resorting
+        shell: pwsh
+        run: |
+          node tests/rules-required-transfer-model.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tests/rules-priority-regression.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tests/rules-resorting-regression.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tests/rules-people-picker-regression.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tests/rules-settings-ui-regression.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tests/rules-context-exclusions-regression.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tests/rules-preview-races-regression.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Build and verify Chrome release
         shell: pwsh
         run: |
