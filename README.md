@@ -14,7 +14,7 @@
 
 - Windows: запустите актуальный `BX24_Chat_Sorter_Windows_v*.exe` из `dist/`.
 - macOS Intel / Apple Silicon: откройте актуальный `BX24_Chat_Sorter_macOS_Universal_v*.dmg` из `dist/`, затем запустите `BX24 Chat Sorter Installer.app`. Terminal не открывается.
-- Chrome: выполните `pnpm build:chrome` и загрузите папку `chrome-release/unpacked/` через «Загрузить распакованное расширение». Для публикации используйте `chrome-release/BX24_Chat_Sorter_Chrome_v8.0.20.zip`. Браузерная версия называется «Сортировщик чатов Bitrix24», подключает только выбранные HTTPS-порталы. [Установка и материалы Chrome Web Store](docs/chrome/README.md).
+- Chrome: выполните `pnpm build:chrome` и загрузите папку `chrome-release/unpacked/` через «Загрузить распакованное расширение». Для публикации используйте `chrome-release/BX24_Chat_Sorter_Chrome_v9.0.0.zip`. Браузерная версия называется «Сортировщик чатов Bitrix24», подключает только выбранные HTTPS-порталы. [Установка и материалы Chrome Web Store](docs/chrome/README.md).
 
 Подробная пользовательская инструкция находится в `guide.html`.
 
