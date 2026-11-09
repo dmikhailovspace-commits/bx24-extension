@@ -13567,7 +13567,7 @@ if (_presetChannel) {
 			values.forEach(([id,title]) => { const option = node('option',title,el); option.value=id; }); el.value=value;
 			el.addEventListener('change',() => change(el.value)); return el;
 		};
-		const close = () => { finishRuleDrag(false);clearLookups();overlay.remove(); document.removeEventListener('pena-automation-review-changed',refreshTickets);document.removeEventListener('pena-automation-facts-changed',refreshTickets);window.removeEventListener('storage',refreshTickets);document.removeEventListener('keydown',trap,true); previousFocus?.focus?.({preventScroll:true}); };
+		const close = () => { finishRuleDrag(false);clearLookups();overlay.querySelector('.pena-native-confirm-overlay')?._penaClose?.();overlay.remove(); document.removeEventListener('pena-automation-review-changed',refreshTickets);document.removeEventListener('pena-automation-facts-changed',refreshTickets);window.removeEventListener('storage',refreshTickets);document.removeEventListener('keydown',trap,true); previousFocus?.focus?.({preventScroll:true}); };
 		const trap = event => {
 			if (document.querySelector('.pena-native-confirm-overlay')) return;
 			if (event.key === 'Escape') {
@@ -13661,8 +13661,11 @@ if (_presetChannel) {
 		const tickets=node('div',null,scroll);tickets.className='pena-automation-tickets';tickets.hidden=true;
 		const bottom=node('div',null,panel);bottom.className='pena-automation-bottom';
 		const lockDrafts=new Map();
+		const selectedTickets=new Map();
+		let bulkBusy=false;
 		let exceptionsExpanded=false;
 		const drawTickets=()=>{
+			if(bulkBusy)return;
 			const focused=tickets.contains(document.activeElement)?document.activeElement:null;
 			const restoreFocus=focused?.matches('.pena-automation-auto-accept input')?'.pena-automation-auto-accept input':focused?.matches('.pena-automation-exclusions-toggle')?'.pena-automation-exclusions-toggle':null;
 			tickets.replaceChildren();
@@ -13676,14 +13679,59 @@ if (_presetChannel) {
 				if(key!==_dialogAutomationKey(mode))return close();
 				if(saving){autoAccept.checked=_readDialogAutomationConfig(mode).autoAcceptTransfers===true;return;}
 				if(localStorage.getItem(key)!==base){autoAccept.checked=_readDialogAutomationConfig(mode).autoAcceptTransfers===true;autoStatus.textContent='Правила изменились в другом окне. Закройте и откройте настройки заново.';return;}
+				const enabled=autoAccept.checked;
+				autoAccept.checked=_readDialogAutomationConfig(mode).autoAcceptTransfers===true;
+				const commit=()=>{
+				if(!overlay.isConnected||key!==_dialogAutomationKey(mode))return;
+				if(saving||bulkBusy)return;
+				if(localStorage.getItem(key)!==base){drawTickets();tickets.querySelector('.pena-automation-auto-status').textContent='Правила изменились в другом окне. Закройте и откройте настройки заново.';return;}
 				try {
-					const config=_readDialogAutomationConfig(mode),next=JSON.stringify({...config,autoAcceptTransfers:autoAccept.checked});
+					const config=_readDialogAutomationConfig(mode),next=JSON.stringify({...config,autoAcceptTransfers:enabled});
 					localStorage.setItem(key,next);base=next;
 					_scheduleDialogAutomation();drawTickets();
 					if(!tickets.hidden)tickets.querySelector('.pena-automation-auto-accept input')?.focus({preventScroll:true});
 				}catch{autoAccept.checked=_readDialogAutomationConfig(mode).autoAcceptTransfers===true;autoStatus.textContent='Не удалось сохранить настройку. Повторите попытку.';}
+				};
+				if(!enabled)return commit();
+				_showDialogControlNativeActionConfirm('Включить автоматические переносы?',`Все диалоги, ожидающие подтверждения в режиме «${mode==='tasks'?'Задачи':'Чаты'}», будут перенесены в папки по действующим правилам. Новые переносы тоже будут подтверждаться автоматически. Диалоги из исключений останутся на месте.`, 'Включить и перенести', 'Отмена', commit, {danger:false,parent:overlay,returnFocus:autoAccept});
 			});
 			node('p','Без автоматического подтверждения переносы выполняются вручную. «Пропустить» закрывает текущее предложение до изменения условий.',tickets).className='pena-automation-hint';
+			const toolbar=node('section',null,tickets);toolbar.className='pena-automation-bulk';toolbar.setAttribute('aria-label','Действия с выбранными переносами');
+			const allLabel=node('label',null,toolbar);allLabel.className='pena-automation-existing';
+			const selectAll=node('input',null,allLabel);selectAll.type='checkbox';allLabel.append(document.createTextNode('Выбрать всё'));
+			const selectionStatus=node('span','',toolbar);selectionStatus.setAttribute('role','status');
+			const entries=[];
+			const updateSelection=()=>{
+				const selected=entries.filter(entry=>selectedTickets.get(entry.key)===entry.identity);
+				selectAll.checked=!!entries.length&&selected.length===entries.length;selectAll.indeterminate=!!selected.length&&!selectAll.checked;selectAll.disabled=!entries.length;
+				selectionStatus.textContent=`Выбрано: ${selected.length} из ${entries.length}`;
+				confirmSelected.querySelector('span').textContent=selectAll.checked?'Подтвердить всё':'Подтвердить выбранные';
+				confirmSelected.disabled=!selected.length;excludeSelected.disabled=!selected.length;
+				for(const entry of entries){entry.checkbox.checked=selectedTickets.get(entry.key)===entry.identity;entry.card.classList.toggle('--selected',entry.checkbox.checked);}
+			};
+			const resolveSelected=async accept=>{
+				if(bulkBusy||saving||key!==_dialogAutomationKey(mode))return;
+				const chosen=entries.filter(entry=>selectedTickets.get(entry.key)===entry.identity);
+				if(!chosen.length)return;
+				bulkBusy=true;tickets.setAttribute('aria-busy','true');
+				for(const control of tickets.querySelectorAll('button,input'))control.disabled=true;
+				let completed=0;
+				try{
+					for(let index=0;index<chosen.length;index++){
+						if(index%8===0){selectionStatus.textContent=`Обрабатываем: ${index} из ${chosen.length}`;await new Promise(resolve=>setTimeout(resolve,0));}
+						if(!overlay.isConnected||key!==_dialogAutomationKey(mode)||!_isPenaExtensionEnabled())break;
+						if(chosen[index].resolve(accept,true,!accept))completed++;
+					}
+				}catch{_showDialogDockToast('Не удалось сохранить все изменения. Проверьте оставшиеся предложения.','danger');}
+				finally{
+					bulkBusy=false;tickets.removeAttribute('aria-busy');
+					if(overlay.isConnected&&key===_dialogAutomationKey(mode)){drawTickets();_syncDialogAutomationBadge();_dialogControlNativeViewSig='';_notifyDialogRecentDataChanged();}
+					if(completed)_showDialogDockToast(`${accept?'Перенесено':'Добавлено в исключения'}: ${completed}`);
+				}
+			};
+			const confirmSelected=button('Подтвердить выбранные',toolbar,()=>resolveSelected(true));
+			const excludeSelected=button('Добавить в исключения',toolbar,()=>resolveSelected(false));
+			selectAll.addEventListener('change',()=>{for(const entry of entries){if(selectAll.checked)selectedTickets.set(entry.key,entry.identity);else selectedTickets.delete(entry.key);}updateSelection();});
 			let ticketCount=0;
 			for(const ticketMode of ['chats','tasks']){
 				const items=_getDialogControlItemsForMode(ticketMode);
@@ -13694,7 +13742,13 @@ if (_presetChannel) {
 				for(const [id,record] of _dialogAutomationTickets(ticketMode)){
 					ticketCount++;
 					const ticket=record.ticket,card=node('article',null,tickets);card.className='pena-automation-ticket';
-					node('strong',ticket.title||id,card);
+					const proposalIdentity=shownRulesSig+':'+ticket.signature;
+					const selectionKey=ticketMode+':'+id;
+					const titleLabel=node('label',null,card);titleLabel.className='pena-automation-ticket-heading';
+					const checkbox=node('input',null,titleLabel);checkbox.type='checkbox';checkbox.setAttribute('aria-label',`Выбрать диалог «${ticket.title||id}»`);
+					node('strong',ticket.title||id,titleLabel);
+					const entry={key:selectionKey,identity:proposalIdentity,mode:ticketMode,to:ticket.to,checkbox,card};entries.push(entry);
+					checkbox.addEventListener('change',()=>{if(checkbox.checked)selectedTickets.set(selectionKey,proposalIdentity);else selectedTickets.delete(selectionKey);updateSelection();});
 					const folderName=id=>items.find(item=>_isDialogControlFolder(item)&&item.id===id)?.title||'Без папки';
 					const sameName=folderName(ticket.from)===folderName(ticket.to);
 					const folderLabel=id=>{
@@ -13709,11 +13763,11 @@ if (_presetChannel) {
 					const rule=_readDialogAutomation(ticketMode).find(rule=>rule.id===ticket.ruleId);
 					if(rule)node('p',`Правило: ${rule.name||'Без названия'}`,card);
 					const lockLabel=node('label',null,card);lockLabel.className='pena-automation-existing';
-					const proposalIdentity=shownRulesSig+':'+ticket.signature;
 					const lock=node('input',null,lockLabel);lock.type='checkbox';lock.checked=lockDrafts.get(ticketMode+':'+id)===proposalIdentity;
 					lockLabel.append(document.createTextNode('Больше не предлагать переносы для этого диалога'));
 					const actions=node('div',null,card);actions.className='pena-automation-ticket-actions';
-					const resolve=accept=>{
+					const resolve=(accept,deferDraw=false,forceLock=false)=>{
+						const redraw=()=>{if(!deferDraw)drawTickets();return false;};
 						if(key!==_dialogAutomationKey(mode))return close();
 						if(!_isPenaExtensionEnabled() || (accept&&lock.checked))return;
 						const currentItems=_getDialogControlItemsForMode(ticketMode);
@@ -13722,36 +13776,56 @@ if (_presetChannel) {
 						const state=JSON.parse(localStorage.getItem(reviewKey)||'{}');
 						const item=currentItems.find(item=>item.id===id);
 						if(_dialogAutomationDirtyTasks.has(_getDialogTimeIdentityScopeKey()+':'+item?.taskId)) { _showDialogDockToast('Проверяем актуальные данные задачи. Повторите после проверки.');return; }
-						if(!item||!item.folderId||item.folderId!==ticket.from||item.folderId===ticket.to||state.rulesSig!==shownRulesSig||JSON.stringify(state.records?.[id]?.ticket)!==JSON.stringify(ticket))return drawTickets();
+						if(!item||_isDialogControlItemUnavailable(item)||_dialogAutomationLocks(ticketMode).has(id)||!item.folderId||item.folderId!==ticket.from||item.folderId===ticket.to||state.rulesSig!==shownRulesSig||JSON.stringify(state.records?.[id]?.ticket)!==JSON.stringify(ticket))return redraw();
 						const decision=window.__PENA_NATIVE_CATALOG__.automationDecision(_readDialogAutomation(ticketMode),_dialogAutomationFacts(item),ticketMode,new Set(currentItems.filter(_isDialogControlFolder).map(folder=>folder.id)));
-						if(decision?.pending || (decision?.folderId||'')!==ticket.to) { _scheduleDialogAutomation();return drawTickets(); }
+						if(decision?.pending || (decision?.folderId||'')!==ticket.to) { _scheduleDialogAutomation();return redraw(); }
+						try{
 						if(accept){
 							const folder=currentItems.find(item=>_isDialogControlFolder(item)&&item.id===ticket.to);
-							if(ticket.to&&!folder)return drawTickets();
+							if(ticket.to&&!folder)return redraw();
+							const before={...item},reviewBefore=JSON.stringify(state);
+							state.records[id].ticket=null;state.records[id].placement=ticket.to;
+							// A failed journal write must not move even the first selected dialog.
+							localStorage.setItem(reviewKey,JSON.stringify(state));
 							item.folderId=ticket.to;if(folder)item.segmentId=folder.segmentId||'';
 							item.automationHandled=true;item.automationRuleId=ticket.ruleId;
 							delete item.column;delete item.columnIndex;
 							_saveDialogControlItemsForMode(ticketMode,currentItems);
+							const persisted=JSON.parse(localStorage.getItem(`${_LS_DIALOG_CONTROL}.${ticketMode}`)||'[]').find(value=>value.id===id);
+							if(persisted?.folderId!==ticket.to){
+								for(const field of Object.keys(item))delete item[field];Object.assign(item,before);
+								localStorage.setItem(reviewKey,reviewBefore);
+								throw new Error('Transfer placement was not saved');
+							}
 						}
 						if(!accept){
 							state.records[id].dismissedSig=ticket.signature;
-							if(lock.checked){const ids=_dialogAutomationLocks(ticketMode);ids.add(id);localStorage.setItem(_dialogAutomationKey(ticketMode)+'.locks',JSON.stringify([...ids]));}
+							if(lock.checked||forceLock){const ids=_dialogAutomationLocks(ticketMode);ids.add(id);localStorage.setItem(_dialogAutomationKey(ticketMode)+'.locks',JSON.stringify([...ids]));}
 						}
 						lockDrafts.delete(ticketMode+':'+id);
 						state.records[id].ticket=null;state.records[id].placement=item.folderId||'';
-						localStorage.setItem(reviewKey,JSON.stringify(state));
-						_syncDialogAutomationBadge();_dialogControlNativeViewSig='';_notifyDialogRecentDataChanged();drawTickets();
+						if(!accept)localStorage.setItem(reviewKey,JSON.stringify(state));
+						selectedTickets.delete(selectionKey);
+						if(!deferDraw){_syncDialogAutomationBadge();_dialogControlNativeViewSig='';_notifyDialogRecentDataChanged();drawTickets();}
+						return true;
+						}catch(error){if(deferDraw)throw error;_showDialogDockToast('Не удалось сохранить изменение. Повторите попытку.','danger');return redraw();}
 					};
+					entry.resolve=resolve;
 					const acceptButton=button('Подтвердить перенос',actions,()=>resolve(true));acceptButton.disabled=lock.checked;
 					const skipButton=button(lock.checked?'Оставить и больше не предлагать':'Пропустить',actions,()=>resolve(false));
+					button('Выбрать похожие',actions,()=>{for(const candidate of entries)if(candidate.mode===ticketMode&&candidate.to===ticket.to)selectedTickets.set(candidate.key,candidate.identity);updateSelection();}).title='Выбрать переносы в ту же папку';
 					lock.addEventListener('change',()=>{lockDrafts.set(ticketMode+':'+id,lock.checked?proposalIdentity:'');acceptButton.disabled=lock.checked;skipButton.querySelector('span').textContent=lock.checked?'Оставить и больше не предлагать':'Пропустить';});
 				}
 			}
 			if(!ticketCount)node('p','Нет переносов для подтверждения',tickets);
+			const validSelection=new Map(entries.map(entry=>[entry.key,entry.identity]));
+			for(const [id,identity] of selectedTickets)if(validSelection.get(id)!==identity)selectedTickets.delete(id);
+			toolbar.hidden=!ticketCount;updateSelection();
 			const exceptions=node('section',null,tickets);exceptions.className='pena-automation-exclusions';
 			const exceptionsToggle=button('Исключения',exceptions,()=>{
 				exceptionsExpanded=!exceptionsExpanded;paintExceptions();
 			});exceptionsToggle.className='pena-automation-exclusions-toggle';
+			exceptionsToggle.insertAdjacentHTML('beforeend','<svg class="pena-automation-exclusions-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>');
 			const exceptionsContent=node('div',null,exceptions);exceptionsContent.className='pena-automation-exclusions-content';exceptionsContent.id='pena-automation-exclusions-content';exceptionsToggle.setAttribute('aria-controls',exceptionsContent.id);
 			const exceptionsList=node('div',null,exceptionsContent);exceptionsList.className='pena-automation-exclusions-list';
 			const paintExceptions=()=>{exceptions.classList.toggle('--open',exceptionsExpanded);exceptionsToggle.setAttribute('aria-expanded',String(exceptionsExpanded));exceptionsContent.inert=!exceptionsExpanded;exceptionsContent.setAttribute('aria-hidden',String(!exceptionsExpanded));};
@@ -26418,12 +26492,19 @@ if (_presetChannel) {
 		const close = () => {
 			document.removeEventListener('keydown', onKeyDown, true);
 			overlay.remove();
+			if(options.returnFocus?.isConnected)options.returnFocus.focus({preventScroll:true});
 		};
 		const onKeyDown = (e) => {
+			if(options.parent&&e.key==='Tab'){
+				if(e.shiftKey&&document.activeElement===cancel){e.preventDefault();remove.focus();}
+				else if(!e.shiftKey&&document.activeElement===remove){e.preventDefault();cancel.focus();}
+				return;
+			}
 			if (e.key !== 'Escape') return;
 			e.preventDefault();
 			close();
 		};
+		overlay._penaClose=close;
 		cancel.addEventListener('click', close);
 		remove.addEventListener('click', () => {
 			close();

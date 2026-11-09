@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {startHarnessServer} from './lib/harness-server.mjs';
+import {verifyBulkReview} from './lib/bulk-review-ui.mjs';
 const {chromium}=createRequire(import.meta.url)('playwright');
 const source=readFileSync('extension/injected.js','utf8');
 const injected=source.replace('\tasync function boot() {',`\tasync function boot() {
@@ -51,7 +52,13 @@ try {
  await panel.getByLabel('Название правила',{exact:true}).fill('Несохранённый черновик');
  await review();
  const auto=panel.getByRole('checkbox',{name:'Автоматически подтверждать переносы',exact:true});
- assert.equal(await auto.isChecked(),false);await auto.check();
+ assert.equal(await auto.isChecked(),false);await auto.click();
+ const confirm=page.getByRole('alertdialog');await confirm.waitFor();
+ assert.equal(await auto.isChecked(),false,'Opening confirmation does not enable automation');
+ await confirm.getByRole('button',{name:'Отмена',exact:true}).click();assert.equal(await auto.isChecked(),false);
+ await auto.click();await page.keyboard.press('Escape');assert.equal(await auto.isChecked(),false);
+ assert.equal(await auto.evaluate(el=>document.activeElement===el),true,'Cancel returns keyboard focus');
+ await auto.click();await confirm.getByRole('button',{name:'Включить и перенести',exact:true}).click();
  assert.equal(await auto.evaluate(el=>document.activeElement===el),true,'Immediate toggle keeps keyboard focus after redraw');
  assert.deepEqual(await page.evaluate(()=>{const c=JSON.parse(localStorage.getItem(rulesUI.key('tasks')));return {auto:c.autoAcceptTransfers,name:c.rules[0].name,required:c.rules[0].conditions[0].required===true,chats:JSON.parse(localStorage.getItem(rulesUI.key('chats'))).autoAcceptTransfers};}),{auto:true,name:'Исходное правило',required:false,chats:false});
  await editor();assert.equal(await panel.getByLabel('Название правила',{exact:true}).inputValue(),'Несохранённый черновик');assert.equal(await required.isChecked(),true);
@@ -106,6 +113,7 @@ try {
  await required.scrollIntoViewIfNeeded();await page.screenshot({path:'tests/artifacts/rules-settings-required-mobile.png'});
  phases.push('External changes block immediate toggle; reduced motion and narrow condition row stay usable');
  assert.deepEqual(errors,[]);
+ await verifyBulkReview({browser,server,source});
  writeFileSync('tests/artifacts/rules-settings-ui.json',JSON.stringify({passed:true,phases,accordionMotion,navigation:'UI calls the existing navigation helper; helper is stubbed in this isolated test'},null,2));
  console.log('PASS rules settings UI: '+phases.length+' phases');
 }finally{await browser.close();await server.close();}
