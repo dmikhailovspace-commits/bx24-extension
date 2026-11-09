@@ -91,7 +91,7 @@ try {
  await page.getByLabel('Значение условия').fill('Чат 5');
  assert.equal(await page.getByLabel('Распределить уже существующие диалоги').isChecked(),false);
  await page.getByRole('button',{name:'Проверить',exact:true}).click();
- assert.match(await page.locator('.pena-automation-panel [role=status]').innerText(),/останутся на месте/);
+ assert.match(await page.locator('.pena-automation-panel .pena-automation-status').innerText(),/останутся на месте/);
  await page.getByRole('button',{name:'Сохранить',exact:true}).click();
  await page.locator('.pena-automation-panel').waitFor({state:'detached',timeout:15000});
  await page.waitForTimeout(500);
@@ -114,7 +114,7 @@ try {
  await page.getByRole('button',{name:'Развернуть правило',exact:true}).click();
  await page.getByLabel('Распределить уже существующие диалоги').check();
  await page.getByRole('button',{name:'Проверить',exact:true}).click();
- assert.match(await page.locator('.pena-automation-panel [role=status]').innerText(),/распределены: 1/);
+ assert.match(await page.locator('.pena-automation-panel .pena-automation-status').innerText(),/распределены: 1/);
  assert.ok(!(await items()).find(item=>item.id==='chat5')?.folderId,'Preview must not mutate');
  mkdirSync('tests/artifacts',{recursive:true});
  await page.screenshot({path:'tests/artifacts/folder-automation-desktop.png'});
@@ -148,7 +148,7 @@ try {
  // A stale editor cannot overwrite another tab's saved rules.
  await page.evaluate(()=>{const key=Object.keys(localStorage).find(key=>key.startsWith('pena.automation.v1.')&&key.endsWith('.chats'));localStorage.setItem(key,JSON.stringify({version:1,rules:[]}));});
  await page.getByRole('button',{name:'Сохранить',exact:true}).click();
- assert.match(await page.locator('.pena-automation-panel [role=status]').innerText(),/другом окне/);
+ assert.match(await page.locator('.pena-automation-panel .pena-automation-status').innerText(),/другом окне/);
  await page.keyboard.press('Escape');
  await page.goto(`${server.baseUrl}/tests/native-consistency-harness.html?mode=tasks&nativeCatalog=1&passThrough=1`);
  await page.locator('.task-host .pena-native-folder-switcher').waitFor();

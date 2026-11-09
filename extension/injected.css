@@ -1119,6 +1119,18 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 .pena-automation-tickets{display:grid;gap:16px}
 .pena-automation-ticket{display:grid;gap:8px;padding:16px;border:1px solid #d7dfeb;border-radius:8px;background:#fff;overflow-wrap:anywhere}
 .pena-automation-ticket-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+.pena-automation-auto-accept{display:grid;gap:8px;padding:12px 16px;border:1px solid #d7dfeb;border-radius:8px;background:#fff}
+.pena-automation-auto-status:empty{display:none}
+.pena-automation-auto-status{color:#ae3434}
+.pena-automation-exclusions{border-top:1px solid #d7dfeb;padding-top:8px}
+.pena-automation-panel .pena-automation-exclusions-toggle{width:100%;justify-content:space-between;padding:0 8px;border-color:transparent;background:transparent;color:#526480}
+.pena-automation-exclusions-toggle::after{content:'';width:7px;height:7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);transition:transform .18s ease;margin-right:3px}
+.pena-automation-exclusions.--open .pena-automation-exclusions-toggle::after{transform:rotate(225deg)}
+.pena-automation-exclusions-content{display:grid;grid-template-rows:0fr;opacity:0;pointer-events:none;transition:grid-template-rows .2s ease,opacity .18s ease}
+.pena-automation-exclusions.--open .pena-automation-exclusions-content{grid-template-rows:1fr;opacity:1;pointer-events:auto}
+.pena-automation-exclusions-list{display:grid;gap:12px;min-height:0;overflow:hidden}
+.pena-automation-exclusions-list>:first-child{margin-top:12px}
+.pena-automation-exclusions-list>.pena-automation-hint{padding:0 8px 8px}
 .pena-native-rules-button.--pending{box-shadow:0 0 0 2px #eab308 inset!important}
 .pena-automation-panel,.pena-automation-panel *{box-sizing:border-box}
 .pena-automation-panel [hidden]{display:none!important}
@@ -1167,8 +1179,9 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 .pena-automation-panel .pena-automation-icon-button{width:32px;min-width:32px;padding:0;font-size:18px;line-height:1;background:transparent;border-color:transparent;color:#68778d}
 .pena-automation-rule-body{padding:16px}
 .pena-automation-match{display:flex;align-items:center;gap:8px;margin-bottom:12px;color:#68778d}
-.pena-automation-condition{display:grid;grid-template-columns:minmax(125px,1fr) minmax(130px,1fr) minmax(150px,1.5fr) 32px;align-items:start;gap:8px;margin-top:8px}
+.pena-automation-condition{display:grid;grid-template-columns:minmax(110px,1fr) minmax(115px,1fr) minmax(140px,1.5fr) auto 32px;align-items:start;gap:8px;margin-top:8px}
 .pena-automation-condition>input,.pena-automation-condition>select{width:100%}
+.pena-automation-panel .pena-automation-required{display:flex;align-items:center;gap:6px;min-height:32px;white-space:nowrap;font-size:11px;line-height:16px;color:#526480;cursor:pointer}
 .pena-automation-panel .pena-automation-add-condition{margin-top:12px;padding:0 12px;border-color:#d7dfeb;background:#f7f9fc;color:#315fe8}
 .pena-automation-destination{display:flex;align-items:center;gap:12px;margin-top:12px;padding-top:16px;border-top:1px solid #edf0f5;color:#68778d}
 .pena-automation-destination>select{flex:1;max-width:360px}
@@ -1195,6 +1208,9 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 .pena-automation-folder-editor input{flex:1}
 @media(max-width:680px){.pena-automation-overlay{padding:8px}.pena-automation-panel{height:calc(100dvh - 16px)}.pena-automation-scroll{padding:16px}.pena-automation-rule-body{padding:12px}.pena-automation-condition{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 32px}.pena-automation-condition>:nth-child(3){grid-column:1/3;grid-row:2}.pena-automation-condition>button:last-child{grid-column:3;grid-row:1/3}.pena-automation-rule-head{grid-template-columns:32px 32px minmax(0,1fr) 32px;padding:12px}.pena-automation-rule-head>.pena-automation-rule-toggle{grid-column:1;grid-row:1}.pena-automation-rule-number{display:none}.pena-automation-rule-head>input{grid-column:3/-1;grid-row:1;width:100%}.pena-automation-rule-head>label{grid-column:1/3;grid-row:2}.pena-automation-rule-head>.pena-automation-icon-button{grid-row:2}.pena-automation-bottom{padding:16px}.pena-automation-panel footer{flex-wrap:wrap}.pena-automation-panel footer>button{flex:1 1 42%;margin:0!important}.pena-automation-heading h2{font-size:14px}.pena-automation-mode{font-size:10px}.pena-automation-header{padding:8px 16px}.pena-automation-destination{display:grid;gap:8px}.pena-automation-destination>select{max-width:none;width:100%}.pena-automation-folder-editor{display:grid;grid-template-columns:1fr 1fr}.pena-automation-folder-editor>input{grid-column:1/-1;width:100%}}
 @media(max-width:420px){.pena-automation-match{flex-wrap:wrap}.pena-automation-match>span{white-space:nowrap}.pena-automation-condition{grid-template-columns:minmax(0,1fr) 32px}.pena-automation-condition>:first-child{grid-column:1;grid-row:1}.pena-automation-condition>:nth-child(2){grid-column:1;grid-row:2}.pena-automation-condition>:nth-child(3){grid-column:1;grid-row:3}.pena-automation-condition>button:last-child{grid-column:2;grid-row:1}.pena-automation-condition>.pena-automation-no-value{display:none}}
+@media(max-width:680px){.pena-automation-condition>.pena-automation-required{grid-column:1/3;grid-row:3}.pena-automation-condition>button:last-child{grid-row:1/4}.pena-automation-ticket-actions button{height:auto;min-height:32px;white-space:normal;padding:6px 8px}}
+@media(max-width:420px){.pena-automation-condition>.pena-automation-required{grid-column:1;grid-row:4}.pena-automation-condition>button:last-child{grid-row:1}}
+@media(prefers-reduced-motion:reduce){.pena-automation-exclusions-content,.pena-automation-exclusions-toggle::after{transition:none}}
 @media(prefers-reduced-motion:reduce){.pena-automation-rule-toggle svg{transition:none}}
 
 /* Settings are scoped to their own disclosure; filter controls retain their original layout. */

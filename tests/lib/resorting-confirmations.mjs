@@ -60,6 +60,7 @@ export async function verifyResorting(browser, server, source) {
   await page.screenshot({path:'tests/artifacts/resorting-confirmations-mobile.png'});
   await page.getByRole('button',{name:'Оставить и больше не предлагать',exact:true}).click();
   assert.equal(await pending(),0);assert.equal(await placement(),'folder:manual');
+  if(await page.locator('.pena-automation-exclusions-toggle').getAttribute('aria-expanded')==='false')await page.locator('.pena-automation-exclusions-toggle').click();
   await page.getByRole('button',{name:'Снова предлагать переносы',exact:true}).waitFor();
   await page.getByRole('tab',{name:'Правила',exact:true}).click();
   await page.getByLabel('Название правила').fill('Изменённое правило после исключения');
@@ -72,6 +73,7 @@ export async function verifyResorting(browser, server, source) {
   await page.evaluate(()=>{resortAudit.apply('chats',resortAudit.items('chats'));resortAudit.open();});
   await page.getByRole('tab',{name:'Пересортировка',exact:true}).click();
   assert.equal(await pending(),0,'Permanent exception survives saving rules and reload');assert.equal(await placement(),'folder:manual');
+  if(await page.locator('.pena-automation-exclusions-toggle').getAttribute('aria-expanded')==='false')await page.locator('.pena-automation-exclusions-toggle').click();
   await page.getByRole('button',{name:'Снова предлагать переносы',exact:true}).click();
   assert.equal(await pending(),1);assert.equal(await placement(),'folder:manual','Unlocking only proposes; it cannot move');
   await page.evaluate(()=>{

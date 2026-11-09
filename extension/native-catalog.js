@@ -497,6 +497,32 @@
 		}
 		return facts;
 	}
+	function normalizeAutomationId(value, allowZero = false) {
+		if(value&&typeof value==='object'&&!Array.isArray(value))value=value.id??value.ID;
+		if(typeof value==='number'&&!Number.isSafeInteger(value))return '';
+		if(typeof value!=='string'&&typeof value!=='number')return '';
+		const raw=String(value).trim();if(!/^\d+$/.test(raw))return '';
+		const id=raw.replace(/^0+(?=\d)/,'');
+		return id==='0'&&!allowZero?'':id;
+	}
+	function automationFactsSignature(facts) {
+		const entries=Object.entries(facts).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([field,value])=>{
+			if(value==null)return [field,value];
+			if(automationFields[field]?.[1]==='ids'){
+				const ids=new Set();let unknown=false;
+				for(const entry of Array.isArray(value)?value:[value]){
+					const id=normalizeAutomationId(entry,field==='groupId');
+					if(id)ids.add(id);else unknown=true;
+				}
+				value=[...ids].sort();
+				// An undecoded participant is not proof of a known empty list.
+				// A null member remains null on every journal migration.
+				if(unknown)value.unshift(null);
+			}else if(['kind','status','priority'].includes(field)||(field==='title'&&typeof value==='string'))value=normalizeText(value);
+			return [field,value];
+		});
+		return JSON.stringify(Object.fromEntries(entries));
+	}
 	function automationCondition(condition, facts, mode, now = Date.now()) {
 		const { field, op, value } = condition || {};
 		const spec = automationFields[field];
@@ -504,7 +530,7 @@
 		const operators = spec[1] === 'text' ? ['eq','neq','contains','notContains','starts','ends'] : spec[1] === 'date' ? ['empty','present','overdue','before','after'] : ['eq','neq'];
 		if (!operators.includes(op)) return false;
 		if (!hasOwn(facts, field) || facts[field] == null) return null;
-		const actual = facts[field], expected = normalizeText(value);
+		const actual = facts[field], expected = spec[1]==='ids'?normalizeAutomationId(value):normalizeText(value);
 		if (spec[1] === 'date') {
 			if (op === 'empty') return actual === '';
 			if (op === 'present') return !!actual;
@@ -520,11 +546,10 @@
 		}
 		if (!expected) return false;
 		if (spec[1] === 'ids') {
-			if (!/^[1-9]\d*$/.test(expected)) return false;
 			let unknown = false;
 			const ids = (Array.isArray(actual) ? actual : [actual]).map(entry => {
-				const id = normalizeText(entry && typeof entry === 'object' ? entry.id ?? entry.ID : entry);
-				if (!/^\d+$/.test(id) || (id === '0' && field !== 'groupId')) unknown = true;
+				const id = normalizeAutomationId(entry,field==='groupId');
+				if (!id) unknown = true;
 				return id;
 			});
 			const contains = ids.includes(expected);
@@ -548,12 +573,13 @@
 		return false;
 	}
 	function automationDecision(rules, facts, mode, folderIds, now = Date.now()) {
+		const all=checks=>checks.includes(false)?false:checks.includes(null)?null:true;
+		const any=checks=>checks.includes(true)?true:checks.includes(null)?null:false;
 		for (const rule of Array.isArray(rules) ? rules : []) {
 			if (!rule.enabled || !folderIds.has(rule.folderId) || !rule.conditions?.length) continue;
-			const checks = rule.conditions.map(condition => automationCondition(condition, facts, mode, now));
-			const match = rule.match === 'any'
-				? (checks.includes(true) ? true : checks.includes(null) ? null : false)
-				: (checks.includes(false) ? false : checks.includes(null) ? null : true);
+			const required=[],optional=[];
+			for(const condition of rule.conditions)(condition.required===true?required:optional).push(automationCondition(condition,facts,mode,now));
+			const match=all([all(required),optional.length?(rule.match==='any'?any(optional):all(optional)):true]);
 			// Preserve priority until metadata for an earlier possible rule arrives.
 			if (match === null) return { pending: true };
 			if (match) return { ruleId: rule.id, folderId: rule.folderId };
@@ -605,6 +631,7 @@
 			}
 			yield {mode,phase:'references',processed:items.length,total:items.length};
 			const config = data.automation; if (config?.version !== 1) fail();
+			if(config.autoAcceptTransfers!==undefined&&typeof config.autoAcceptTransfers!=='boolean')fail();
 			const rules = unique(yield* mapSteps(array(config.rules,50),x => {
 				if (typeof x.enabled !== 'boolean' || !['all','any'].includes(x.match) || (x.enabled && !folders.has(x.folderId))) fail();
 				const conditions = array(x.conditions,50).map(c => {
@@ -612,14 +639,22 @@
 					if (!spec || (mode === 'chats' && !['title','kind'].includes(c.field))) fail();
 					const ops = spec[1] === 'text' ? ['eq','neq','contains','notContains','starts','ends'] : spec[1] === 'date' ? ['empty','present','overdue','before','after'] : ['eq','neq'];
 					if (!ops.includes(c.op)) fail();
-					return {field:c.field,op:c.op,value:text(String(c.value ?? ''),1000)};
+					const condition={field:c.field,op:c.op,value:text(String(c.value ?? ''),1000)};
+					if(spec[1]==='ids'){
+						const canonical=normalizeAutomationId(c.value);
+						if(canonical)condition.value=canonical;
+						else if(x.enabled)fail();
+						if(c.label!==undefined){const label=text(c.label,300).replace(/\s+/g,' ').trim();if(canonical&&label)condition.label=label;}
+					}
+					if(c.required!==undefined){if(typeof c.required!=='boolean')fail();condition.required=c.required;}
+					return condition;
 				});
 				if (!conditions.length) fail();
 				return {id:id(x.id),name:text(x.name,200),enabled:x.enabled,folderId:text(x.folderId || '',160),match:x.match,conditions};
 			},mode,'rules'));
 			const excludedIds=[...new Set(yield* mapSteps(array(config.excludedIds||[],50000),id,mode,'excludedIds'))];
 			const locks=[...new Set(yield* mapSteps(array(data.locks||[],50000),id,mode,'locks'))];
-			result.modes[mode] = {segments,items,automation:{version:1,rules,excludedIds},locks};
+			result.modes[mode] = {segments,items,automation:{version:1,rules,excludedIds,autoAcceptTransfers:config.autoAcceptTransfers===true},locks};
 		}
 		return result;
 	}
@@ -640,13 +675,13 @@
 		const merge = (a,b) => { const map=new Map(a.map(x=>[x.id,{...x}])); for(const x of b)map.set(x.id,{...map.get(x.id),...x});return [...map.values()]; };
 		const items = merge(local.items,incoming.items).map(x=>x.type==='folder'?x:{...x,automationHandled:true});
 		return {items,segments:merge(local.segments,incoming.segments),
-			automation:{...incoming.automation,excludedIds:[...new Set([...incoming.automation.excludedIds,...items.filter(x=>x.type!=='folder').map(x=>x.id)])]},
+			automation:{...incoming.automation,autoAcceptTransfers:false,excludedIds:[...new Set([...incoming.automation.excludedIds,...items.filter(x=>x.type!=='folder').map(x=>x.id)])]},
 			locks:[...new Set([...local.locks,...incoming.locks])]};
 	}
 
 	return Object.freeze({
 		sortingTransfer, sortingTransferAsync, mergeSortingTransfer,
-		automationFields, taskAutomationFacts, automationCondition, automationDecision,
+		automationFields, taskAutomationFacts, normalizeAutomationId, automationFactsSignature, automationCondition, automationDecision,
 		createPlacementIndex,
 		buildIndex,
 		mergeRecentItems,
