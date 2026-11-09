@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { chromium } from 'playwright';
 import { startHarnessServer, collectPageErrors } from './lib/harness-server.mjs';
 import { checkNativeMultiselect } from './lib/native-multiselect.mjs';
+import { checkVisibleReadRecovery } from './lib/visible-read-recovery.mjs';
 
 const source = readFileSync(process.env.PENA_READ_STATE_SOURCE || new URL('../extension/injected.js', import.meta.url), 'utf8');
 const extract = name => {
@@ -56,6 +57,7 @@ for (const name of ['_assertDialogControlRestSuccess', '_setDialogControlLaterFl
 if (source.includes('function _clearDialogControlLaterFlag(')) vm.runInContext(extract('_clearDialogControlLaterFlag'), context);
 let browser, server;
 try {
+  await phase('Native viewport read recovery', () => checkVisibleReadRecovery(source));
   await phase('Read all 80 messages including messages outside the native DOM', async () => {
     const start = performance.now();
     await context._setDialogControlReadFlag('chat1', 1, 'chat1');

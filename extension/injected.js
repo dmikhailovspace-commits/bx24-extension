@@ -3223,14 +3223,18 @@
 		const previous = _dialogNativeCounterContext;
 		if (previous && (!found || previous.store !== found.store || previous.userId !== userId || previous.host !== location.host)) {
 			previous.unsubscribe?.();
+			previous.readRecovery?.dispose();
 			clearTimeout(previous.timer);
 			_dialogNativeCounterContext = null;
 		}
 		if (!found) return null;
 		if (!_dialogNativeCounterContext) {
 			const context = _dialogNativeCounterContext = { ...found, states: new Map(), dirty: true, cleared: false };
+			context.readRecovery = _bindDialogVisibleReadRecovery(context);
 			context.unsubscribe = context.store.subscribe(mutation => {
 				if (!/^(?:counters\/|messages\/anchors\/)/.test(mutation?.type || '')) return;
+				context.readRevision = (context.readRevision || 0) + 1;
+				context.readRecovery?.schedule();
 				// Vuex emits mutations: clearById/clearByRecentType actions commit
 				// counters/delete. Remember those removals instead of reviving cache.
 				if (/^counters\/(?:clear|delete$)/.test(mutation.type)) context.cleared = true;
@@ -3278,6 +3282,129 @@
 			context.states = states; context.collection = collection; context.dirty = false;
 		}
 		return context;
+	}
+
+	function _bindDialogVisibleReadRecovery(context) {
+		// Recover only at the native viewport's confirmed boundary. A selected
+		// recent row, cached lastMessageId or a background tab is not read proof.
+		let timer = null, disposed = false, instance = null, emitter = null, flight = false;
+		const attempts = new Map();
+		const events = context.BXNS?.Messenger?.v2?.Const?.EventType?.dialog;
+		const current = () => !disposed && _isPenaExtensionEnabled() && !document.hidden &&
+			document.hasFocus() && isInternalChatsDOM() &&
+			context.host === location.host && String(context.core.getUserId()) === context.userId &&
+			context.core.getStore() === context.store;
+		const detach = () => {
+			if (emitter && events?.onMessageIsVisible) emitter.unsubscribe(events.onMessageIsVisible, schedule);
+			emitter = null; instance = null;
+		};
+		const resolve = () => {
+			const id = context.store.getters['application/getLayout']?.entityId;
+			if (instance?.isUnmounted || instance?.proxy?.dialogId !== id || !instance?.proxy?.$el?.isConnected ||
+				(instance && !instance.proxy.$el.getClientRects().length)) detach();
+			if (!instance) {
+				const root = document.querySelector('.bx-im-dialog-chat__scroll-container');
+				if (!root) return null;
+				instance = _findDialogNativeVueInstance(root, candidate => {
+					const proxy = candidate?.proxy;
+					return !candidate?.isUnmounted && proxy?.dialogId === id && proxy?.$el?.isConnected && proxy.$el.getClientRects().length &&
+						typeof proxy.messagesCanBeRead === 'function' && typeof proxy.getVisibleMessagesManager === 'function'
+						? candidate : null;
+				});
+				if (instance) {
+					emitter = instance.proxy.getEmitter?.();
+					if (events?.onMessageIsVisible) emitter?.subscribe(events.onMessageIsVisible, schedule);
+				}
+			}
+			return instance?.proxy || null;
+		};
+		const run = async () => {
+			timer = null;
+			if (flight || !current()) return;
+			const proxy = resolve();
+			if (!proxy || !proxy.messagesCanBeRead() || !proxy.$el.getClientRects().length) return;
+			const chatId = Number(proxy.dialog?.chatId), dialogId = proxy.dialogId;
+			if (!(chatId > 0)) return;
+			const visible = proxy.getVisibleMessagesManager().getVisibleMessages();
+			const boundary = visible.reduce((max, id) => {
+				const message = context.store.getters['messages/getById']?.(id);
+				return Number.isSafeInteger(id) && id > 0 && Number(message?.chatId) === chatId ? Math.max(max, id) : max;
+			}, 0);
+			if (!boundary) return;
+			const anchors = (context.store.state.messages?.anchors?.anchors || [])
+				.filter(anchor => Number(anchor.chatId) === chatId && Number(anchor.messageId) > 0 && Number(anchor.messageId) <= boundary);
+			const counter = context.store.getters['counters/getCounterByChatId']?.(chatId);
+			const unreadBefore = context.store.getters['messages/getChatUnreadMessages']?.(chatId)
+				?.some(message => Number(message.id) > 0 && Number(message.id) <= boundary);
+			const readNeeded = counter > 0 && (boundary > Number(proxy.dialog.lastReadId || 0) || unreadBefore ||
+				(Number(proxy.dialog.lastMessageId) > 0 && boundary >= Number(proxy.dialog.lastMessageId)));
+			// New messages below an already-read viewport do not need another read.
+			if (!readNeeded && !anchors.length) return;
+			const key = JSON.stringify([dialogId, boundary, counter, anchors]);
+			if (Date.now() - (attempts.get(key) || 0) < 30000) return;
+			attempts.set(key, Date.now());
+			if (attempts.size > 50) attempts.delete(attempts.keys().next().value);
+			const owner = instance, revision = context.readRevision || 0;
+			const valid = () => current() && !owner.isUnmounted && owner.proxy === proxy && proxy.$el.isConnected &&
+				context.store.getters['application/getLayout']?.entityId === dialogId && proxy.messagesCanBeRead();
+			flight = true;
+			try {
+				if (readNeeded) {
+					const result = await _callBxRestMethod('im.dialog.read', { DIALOG_ID: dialogId, MESSAGE_ID: boundary }, { isCurrent: valid });
+					_assertDialogControlRestSuccess(result);
+					if (!valid()) return;
+					// A newer native event wins over an in-flight acknowledgement.
+					if ((context.readRevision || 0) === revision && Number.isFinite(result?.counter) && result.counter >= 0 &&
+						Number(result.lastId) >= boundary && String(result.dialogId) === dialogId) {
+						await context.store.dispatch('messages/readMessages', { chatId, messageIds: [boundary] });
+						if (!valid() || (context.readRevision || 0) !== revision) return;
+						if (Number(proxy.dialog.lastReadId) < boundary) {
+							await context.store.dispatch('chats/update', { dialogId, fields: { lastId: boundary } });
+						}
+						if (!valid() || (context.readRevision || 0) !== revision) return;
+						await context.store.dispatch('counters/setCounter', { chatId, counter: result.counter });
+					}
+				}
+				if (!valid() || !anchors.length) return;
+				const api = context.BXNS?.Messenger?.v2;
+				const method = api?.Const?.RestMethod?.imV2AnchorRead;
+				if (!method || typeof api?.Lib?.runAction !== 'function') return;
+				const messageIds = [...new Set(anchors.map(anchor => Number(anchor.messageId)))];
+				const anchorResult = await _scheduleBxRest(method, { messageIds },
+					() => api.Lib.runAction(method, { data: { messageIds } }), { isCurrent: valid });
+				_assertDialogControlRestSuccess(anchorResult);
+				if (!valid()) return;
+				// Only remove the acknowledged anchors, never a new anchor or those
+				// below the viewport. Keep native manual-unread/reminder state intact.
+				for (const anchor of anchors) {
+					if (!valid()) return;
+					if (!context.store.state.messages?.anchors?.anchors?.includes(anchor)) continue;
+					await context.store.dispatch('messages/anchors/removeAnchor', { anchor });
+				}
+			} catch {
+				// Keep the badge on failure; a later viewport/focus event can retry.
+			} finally { flight = false; }
+		};
+		function schedule() {
+			if (disposed || timer || flight) return;
+			// Native reading gets the first chance; no perpetual polling.
+			timer = setTimeout(() => { run().catch(() => {}); }, 750);
+		}
+		const scroll = event => {
+			if (event.target?.matches?.('.bx-im-dialog-chat__scroll-container')) schedule();
+		};
+		document.addEventListener('click', schedule, true);
+		document.addEventListener('scroll', scroll, true);
+		document.addEventListener('visibilitychange', schedule);
+		window.addEventListener('focus', schedule);
+		schedule();
+		return { schedule, dispose() {
+			disposed = true; clearTimeout(timer); detach();
+			document.removeEventListener('click', schedule, true);
+			document.removeEventListener('scroll', scroll, true);
+			document.removeEventListener('visibilitychange', schedule);
+			window.removeEventListener('focus', schedule);
+		} };
 	}
 
 	function _getDialogNativeCounterMeta(dialogId, context = _getDialogNativeCounterContext()) {
