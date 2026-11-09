@@ -34,7 +34,7 @@ function backend(rows=rows321()) {
 function fixture(count=4149) {
  const api=backend(),ids=Array.from({length:count},(_,i)=>String(i+1));
  const state={scope:'portal~7:projects:*:1:g1',identity:'portal~7',user:'7',pointCalls:[],catalogCalls:0,catalogHold:null};
- const c=vm.createContext({ Date, Map, Set, Promise, document:{visibilityState:'visible'}, navigator:{onLine:true}, _PENA_TIME_CONTROL:model,
+ const c=vm.createContext({ Date, Map, Set, Promise, setTimeout:()=>0, clearTimeout:()=>{}, _PENA_TIME_CACHE_TTL_MS:120000, document:{visibilityState:'visible'}, navigator:{onLine:true}, _PENA_TIME_CONTROL:model,
   _dialogTimeRange:range,_dialogTimeView:'day',_dialogControlNativeWorkspaceTab:'time',_dialogTimePortalDateKey:range.from,
   _dialogTimeCache:new Map(),_dialogTimeInFlight:new Map(),_dialogTimeRangeRevisions:new Map(),_dialogTimeTaskRevisions:new Map(),_dialogTimeTaskLogEvidence:new Map(),
   _dialogTimeTaskChangedAt:new Map(),_dialogTimeTaskTitles:new Map(),_dialogTimeTaskEligibility:new Map(),_parseDialogRecentDate:Date.parse,
@@ -184,6 +184,11 @@ await phase('unknown-empty backend falls back once per identity; known cache is 
  const held=fixture(3);held.api.state.rows=Array.from({length:3},(_,i)=>raw(i+1));await held.load();held.api.state.mode='silent-empty';const gate=deferred();
  held.api.state.hook=async params=>{if(params[0]!==0)await gate.promise;};const refresh=held.load({force:true});await until(()=>held.state.pointCalls.length===3);
  assert.equal(held.record().data.totalSeconds,180,'Unverified global empty erased the previous value before corroboration');gate.resolve();await refresh;assert.equal(held.record().data.totalSeconds,180);
+});
+await phase('warm global timeout recovery retains the global strategy without per-task fanout',async()=>{
+ const f=fixture();await f.load();f.api.state.mode='timeout';await assert.rejects(f.load({force:true}));
+ f.api.state.mode='normal';f.record().failedAt=0;const before=f.api.state.calls.length;
+ await f.load();assert.equal(f.api.state.calls.length-before,7);assert.equal(f.state.pointCalls.length,0);assert.equal(f.record().error,'');
 });
 await phase('late pre-ACK global reply and identity switch cannot overwrite current totals',async()=>{
  const f=fixture();await f.load();const hold=deferred();f.api.state.hook=async()=>{f.api.state.hook=null;await hold.promise;};const reading=f.load({force:true});await until(()=>f.api.state.calls.length===8);

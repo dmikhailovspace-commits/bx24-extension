@@ -299,12 +299,12 @@ try {
  // Exercise the current system-menu contract with native handlers, dynamic
  // permission filtering and nested folders, inside the unchanged PENA menu.
  await page.evaluate(()=>{
-  window.menuLog=[];
+  window.menuLog=[];window.menuPinned=new Set();
   window.menuFactory=()=>new class {
    context=null;menuInstance=null;
    getMenuItems(){
-    const action=title=>({title,onClick:()=>{if(!this.menuInstance)throw Error('Missing native menu lifecycle');menuLog.push({title,id:this.context.dialogId});}});
-    return ['Прочитано Bitrix','Закрепить','Выключить звук','Открыть профиль','Общие чаты','Скрыть чат','Выйти из чата',window.extraNativeAction].filter(Boolean).map(action).concat([null,{title:'Недоступное действие',disabled:true,onClick:()=>{throw Error('Disabled action executed');}},{title:'Папки Bitrix',subMenu:{items:[{...action('Нативная папка'),isSelected:true}]}}]);
+    const action=title=>({title,onClick:()=>{if(!this.menuInstance)throw Error('Missing native menu lifecycle');menuLog.push({title,id:this.context.dialogId});if(title==='Закрепить')menuPinned.add(this.context.dialogId);if(title==='Открепить')menuPinned.delete(this.context.dialogId);}});
+    return ['Прочитано Bitrix','Посмотреть позже','Отметить как прочитанное',menuPinned.has(this.context?.dialogId)?'Открепить':'Закрепить','Выключить звук','Открыть профиль','Общие чаты','Скрыть чат','Выйти из чата',window.extraNativeAction].filter(Boolean).map(action).concat([null,{title:'Недоступное действие',disabled:true,onClick:()=>{throw Error('Disabled action executed');}},{title:'Папки Bitrix',subMenu:{items:[{...action('Нативная папка'),isSelected:true}]}}]);
    }
    getMenuOptions(){return {items:this.getMenuItems().filter(Boolean),events:{onDestroy:()=>this.close()}};}
    openMenu(context){
@@ -322,7 +322,7 @@ try {
  assert.equal(await page.locator('.test-system-menu').count(),0,'The native popup must not replace the original PENA menu');
  assert.deepEqual(await menu.evaluate(el=>{const s=getComputedStyle(el);return [s.backgroundColor,s.color,s.borderRadius,s.padding];}),originalMenuStyle,'Keep the existing menu appearance');
  assert.deepEqual((await menu.locator(':scope > button').allTextContents()).slice(0,3),['Прочитать позже','Прочитано','Цветовой маркер'],'Existing actions stay directly available in their original order');
- assert.deepEqual(await menu.locator(':scope > .dialog-control-context-native').allTextContents(),['Прочитано Bitrix','Закрепить','Выключить звук','Открыть профиль','Общие чаты','Скрыть чат','Выйти из чата','Недоступное действие','Папки Bitrix']);
+ assert.deepEqual(await menu.locator(':scope > .dialog-control-context-native').allTextContents(),['Закрепить','Выключить звук','Открыть профиль','Общие чаты','Скрыть чат','Выйти из чата','Недоступное действие','Папки Bitrix']);
  assert.equal(await menu.getByRole('menuitem',{name:'Недоступное действие',exact:true}).isEnabled(),false);
  await nativeMenu.getByRole('menuitem',{name:'Папки Bitrix',exact:true}).click();
  assert.equal(await menu.getByRole('menuitemcheckbox',{name:'Нативная папка',exact:true}).getAttribute('aria-checked'),'true');
@@ -344,6 +344,25 @@ try {
  await nativeMenu.getByRole('menuitem',{name:'Новый пункт Bitrix',exact:true}).click();
  assert.equal(await page.evaluate(()=>menuLog.length),actionCount,'An action removed by Bitrix permissions must not execute from an old menu');
  assert.equal(await page.locator('.test-system-menu').count(),0,'No hidden native menu remains after an action');
+ await page.keyboard.press('Escape');
+ await page.getByText('Native chat225',{exact:true}).click({modifiers:['Control']});
+ if(!(await page.evaluate(()=>stability.selected())).includes('user707'))await ordinary.click({modifiers:['Control']});
+ assert.deepEqual(new Set(await page.evaluate(()=>stability.selected())),new Set(['chat225','user707']));
+ await page.evaluate(()=>menuPinned.add('chat225'));
+ for(const title of ['Закрепить','Открепить','Скрыть чат']){
+  await ordinary.click({button:'right'});await menu.waitFor();
+  const labels=await menu.locator(':scope > .dialog-control-context-native').allTextContents();
+  assert.ok(labels.includes(title));assert.ok(labels.every(label=>['Закрепить','Открепить','Скрыть чат'].includes(label)));
+  assert.equal(await menu.getByRole('menuitem',{name:'Оригинальное меню Bitrix24',exact:true}).count(),0);
+  const count=await page.evaluate(()=>menuLog.length);
+  await menu.getByRole('menuitem',{name:title,exact:true}).click();
+  await page.waitForFunction(({count,expected})=>menuLog.length===count+expected,{count,expected:title==='Закрепить'?1:2});
+  const calls=await page.evaluate(count=>menuLog.slice(count),count);
+  assert.deepEqual(new Set(calls.map(call=>call.id)),new Set(title==='Закрепить'?['707']:['chat225','707']));assert.ok(calls.every(call=>call.title===title));
+  if(title==='Закрепить')assert.deepEqual(new Set(await page.evaluate(()=>[...menuPinned])),new Set(['chat225','707']));
+  if(title==='Открепить')assert.equal(await page.evaluate(()=>menuPinned.size),0);
+ }
+ await page.keyboard.press('Escape');
  await page.evaluate(()=>{window.menuFactory=null;window.legacySearchLayout=true;});
  await input.fill('');await input.fill('legacy');await page.waitForTimeout(80);
  await page.getByText('Native 707',{exact:true}).click({modifiers:['Control']});

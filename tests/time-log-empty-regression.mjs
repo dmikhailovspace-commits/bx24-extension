@@ -62,7 +62,7 @@ await phase('age boundary and backwards clocks cannot turn stale null evidence i
 await phase('a fresh null conflicting with known rows requires journal verification before clearing cached time',async()=>{
  const f=fixture();await f.load();assert.equal(f.record().data.totalSeconds,60);f.c._dialogTimeTaskRevisions.set('1',1);f.state.rows=[];f.publish({TIME_SPENT_IN_LOGS:null});
  await f.load();assert.equal(f.state.calls.length,2);assert.equal(f.record().data.totalSeconds,0);assert.equal(f.record().data.entryCount,0);assert.equal(f.record().data.coverage.complete,true);
- f.state.now+=120000;await f.load();assert.equal(f.state.calls.length,2);assert.equal(f.record().data.totalSeconds,0);
+ f.state.now+=1000;await f.load();assert.equal(f.state.calls.length,2);assert.equal(f.record().data.totalSeconds,0);
  return{initialElapsedRequests:1,reconciliationElapsedRequests:1,warmElapsedRequests:0};
 });
 await phase('a real journal total revokes an earlier null proof while an omitted field cannot contradict it',async()=>{

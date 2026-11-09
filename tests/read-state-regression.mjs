@@ -207,7 +207,7 @@ try {
     await row.click({ button: 'right' });
     const menu = page.locator('.dialog-control-context-menu');
     await menu.waitFor({ state: 'visible' });
-    assert.equal(await menu.getByRole('menuitem', { name: 'Оригинальное меню Bitrix24', exact: true }).count(), 1);
+    assert.equal(await menu.getByRole('menuitem', { name: 'Оригинальное меню Bitrix24', exact: true }).count(), 0);
     assert.equal(await menu.getByRole('menuitem', { name: 'Снять отметку «прочитать позже»', exact: true }).count(), 1);
     assert.equal(await menu.getByRole('menuitem', { name: 'Прочитать позже', exact: true }).count(), 0);
     assert.equal(await menu.getByRole('menuitem', { name: 'Прочитано', exact: true }).count(), 1);

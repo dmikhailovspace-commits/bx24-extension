@@ -929,7 +929,7 @@
 
 	// A completed task read is reusable across days, including days with no entries.
 	// Proofs are scoped to the project selection/timezone and revoked by task revisions.
-	function createElapsedWindowCache(limit = 6) {
+	function createElapsedWindowCache(limit = 6, clock = () => Date.now()) {
 		const windows = new Map();
 		const rangeFor = range => {
 			const normalized = normalizeRange(range.from, range.to);
@@ -949,11 +949,12 @@
 				const proofs = { ...previous?.freshness };
 				for (const id of taskIds) if (freshness[id] && !freshness[id].unavailable) proofs[id] = { ...freshness[id] };
 				windows.delete(key);
-				windows.set(key, { scope, range:{...range}, data:replaceElapsedTasks(previous?.data, data, taskIds), freshness:proofs });
+				windows.set(key, { scope, at:previous?.at ?? clock(), range:{...range}, data:replaceElapsedTasks(previous?.data, data, taskIds), freshness:proofs });
 				while (windows.size > limit) windows.delete(windows.keys().next().value);
 			},
 			get(scope, range, taskIds, revisions) {
 				for (const [key, record] of [...windows].reverse()) {
+					if (clock() < record.at || clock() - record.at >= 120000) { windows.delete(key); continue; }
 					if (record.scope !== scope || record.range.from > range.from || record.range.to < range.to) continue;
 					const accepted = new Set(taskIds.filter(id => record.freshness[id] && record.freshness[id].revision === (revisions.get(id) || 0)));
 					if (!accepted.size && taskIds.length) continue;

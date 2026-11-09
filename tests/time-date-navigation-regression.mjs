@@ -208,7 +208,7 @@ try {
   const day=await page.evaluate(()=>{
    dateProbe.clear();const day=__PENA_TIME_CONTROL__.addDays(dateBackend.today,-13);dateBackend.failDay=day;dateProbe.select({from:day,to:day});return day;
   });
-  await page.waitForFunction(()=>document.querySelector('.pena-native-time-loading-retry')?.hidden===false&&dateProbe.record()?.status==='error');
+  await page.waitForFunction(()=>document.querySelector('.pena-native-time-loading-retry')?.hidden===false&&dateProbe.record()?.status==='error',undefined,{timeout:45000});
   const error=await page.evaluate(()=>{
    const panel=document.querySelector('.pena-native-time-panel'),overlay=panel.querySelector('.pena-native-time-loading-overlay');
    return{busy:panel.getAttribute('aria-busy'),barHidden:overlay.querySelector('.pena-native-time-loading-bar').hidden,label:overlay.querySelector('.pena-native-time-loading-label').textContent};
@@ -217,7 +217,7 @@ try {
   await page.evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.copiedTimeDiagnostics=text;}}}));
   await page.locator('.pena-native-time-loading-diagnostics').click();
   const diagnostics=JSON.parse(await page.evaluate(()=>window.copiedTimeDiagnostics));
-  assert.equal(diagnostics.time.errorCode,'TIMEOUT');assert.match(diagnostics.version,/^8\./);
+  assert.equal(diagnostics.time.errorCode,'TIMEOUT');assert.equal(diagnostics.version,JSON.parse(readFileSync('extension/manifest.json','utf8')).version);
   assert.deepEqual(Object.keys(diagnostics).sort(),['panel','rest','time','version']);
   assert.ok(!JSON.stringify(diagnostics).includes('portal.test'));
   await page.locator('.pena-native-time-loading-continue').click();
@@ -254,13 +254,27 @@ try {
   const after=await page.evaluate(async()=>{await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));dateWarmObserver.disconnect();return{blocked:dateWarmBlocked,calls:dateBackend.calls.length};});
   assert.equal(after.blocked,false);assert.equal(after.calls,before);return{warmAdditionalCalls:after.calls-before,warmOverlayShown:after.blocked};
  });
+ await phase('temporary journal failure recovers without clicking Retry or Refresh',async()=>{
+  await page.evaluate(()=>{
+   dateProbe.clear();dateProbe.legacy();dateBackend.legacy=true;dateBackend.failTask='101';
+   dateProbe.select({from:dateBackend.today,to:dateBackend.today});
+  });
+  await page.waitForFunction(()=>dateProbe.record()?.recoveryPending===true,undefined,{timeout:30000});
+  assert.equal(await page.locator('.pena-native-time-partial-warning').isVisible(),false);
+  const before=await page.evaluate(()=>{dateBackend.failTask='';return dateBackend.calls.length;});
+  await ready(30000);
+  const retried=await page.evaluate(before=>dateBackend.calls.slice(before).map(call=>call.taskId),before);
+  assert.deepEqual([...new Set(retried)],['101']);assert.equal(await seconds(),600);
+  assert.equal(await page.locator('.pena-native-time-partial-warning').isVisible(),false);
+  return{automatic:true,retriedTasks:['101'],seconds:600};
+ });
  await phase('one inaccessible legacy task keeps the panel usable; retry reads only it and clears the warning',async()=>{
   await page.evaluate(()=>{
    dateProbe.clear();dateProbe.legacy();dateBackend.legacy=true;dateBackend.failTask='101';
    dateBackend.rows.push({ID:'9900',TASK_ID:'102',USER_ID:'7',SECONDS:'900',CREATED_DATE:dateBackend.today+'T12:00:00+03:00'});
    dateProbe.select({from:dateBackend.today,to:dateBackend.today});
   });
-  await page.waitForFunction(()=>dateProbe.record()?.errorCode==='TIME_TASKS_UNAVAILABLE'&&dateProbe.idle());
+  await page.waitForFunction(()=>dateProbe.record()?.errorCode==='TIME_TASKS_UNAVAILABLE'&&!dateProbe.record()?.recoveryPending&&dateProbe.idle(),undefined,{timeout:45000});
   await page.waitForFunction(()=>!document.querySelector('.pena-native-time-panel').classList.contains('--read-blocked'));
   assert.equal(await page.locator('.pena-native-time-total-value').innerText(),'≥ 15 мин');
   assert.equal(await seconds(),900);assert.equal(await page.locator('.pena-native-time-partial-warning').isVisible(),true);
@@ -297,7 +311,7 @@ try {
    dateProbe.clear();dateBackend.failTask='101';dateBackend.failTasks=['102'];dateBackend.failDescription='Access denied';
   },{capture:true,once:true}));
   await page.locator('.pena-native-time-view-tab[data-view="stats30"]').click();
-  await page.waitForFunction(()=>dateProbe.record()?.errorCode==='TIME_TASKS_UNAVAILABLE'&&dateProbe.idle());
+  await page.waitForFunction(()=>dateProbe.record()?.errorCode==='TIME_TASKS_UNAVAILABLE'&&!dateProbe.record()?.recoveryPending&&dateProbe.idle(),undefined,{timeout:45000});
   await page.waitForFunction(()=>!document.querySelector('.pena-native-time-panel').classList.contains('--read-blocked'));
   assert.equal(await page.locator('.pena-native-time-total-value').innerText(),'≥ 30 мин');
   const numbers=await page.locator('.pena-native-time-stats-duration').allTextContents();

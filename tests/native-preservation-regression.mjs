@@ -243,7 +243,7 @@ try {
       const labels = await menu.locator('button').allTextContents();
       assert.ok(labels.some(label => /Прочитать позже/.test(label)));
       assert.ok(labels.some(label => /Добавить в новую папку/.test(label)));
-	  assert.ok(labels.some(label => /Оригинальное меню Bitrix24/.test(label)));
+	  assert.ok(!labels.some(label => /Оригинальное меню Bitrix24/.test(label)));
       const events = (await page.evaluate(() => window.__nativeContract.snapshot())).events;
       assert.deepEqual(events.apiOpens, []);
       assert.equal(events.nativeClicks, 0);

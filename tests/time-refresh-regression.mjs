@@ -87,6 +87,50 @@ const entry=(id,task,seconds,date='2026-09-07')=>({ID:String(id),TASK_ID:String(
 const phases=[];
 async function phase(name,fn) { const at=performance.now(); try { const metrics=await fn(); phases.push({name,status:'PASS',ms:performance.now()-at,...metrics}); } catch(e) { phases.push({name,status:'FAIL',ms:performance.now()-at,error:e.stack}); throw e; } }
 try {
+ await phase('completed journal ages out without a native event and refreshes 6h30 to 7h30',async()=>{
+  const {state,api}=fixture(2);state.entries=[entry(1,1,23400)];await api._loadDialogTimeRange(range);
+  assert.equal(state.record().data.totalSeconds,23400);
+  state.entries.push(entry(2,2,3600));state.clock+=120001;
+  await api._loadDialogTimeRange(range);
+  assert.equal(state.record().data.totalSeconds,27000);assert.equal(state.record().data.coverage.complete,true);
+  const before=state.calls.length;await api._loadDialogTimeRange(range);assert.equal(state.calls.length,before);
+ });
+ await phase('transient unavailable tail recovers automatically without rereading accepted tasks',async()=>{
+  const {state,api}=fixture(17),timers=[];api.setTimeout=(fn,delay)=>{timers.push({fn,delay});return timers.length;};
+  state.entries=[entry(1,1,23400),entry(2,17,3600)];state.denied=new Set(['17']);
+  await assert.rejects(api._loadDialogTimeRange(range));assert.equal(state.record().recoveryPending,true);
+  assert.equal(timers.length,1);assert.equal(timers[0].delay,1500);state.denied.clear();state.clock+=1500;
+  // Publishing another overlapping window may replace the record object while
+  // retaining the read owner; it must not silently cancel this recovery.
+  api._dialogTimeCache.set(api._getDialogTimeCacheKey(range),{...state.record()});
+  const before=state.calls.flat().length;timers.shift().fn();for(let i=0;i<60;i++)await Promise.resolve();
+  assert.deepEqual(state.calls.flat().slice(before),['17']);assert.equal(state.record().data.totalSeconds,27000);
+  assert.equal(state.record().data.coverage.complete,true);assert.equal(state.record().recoveryPending,false);
+ });
+ await phase('automatic recovery is bounded and fenced against navigation',async()=>{
+  for(const navigate of [false,true]){
+   const {state,api}=fixture(1),timers=[];api.setTimeout=(fn)=>{timers.push(fn);return timers.length;};state.denied=new Set(['1']);
+   await assert.rejects(api._loadDialogTimeRange(range));if(navigate)api._dialogTimeView='stats30';
+   for(let n=0;n<3&&timers.length;n++){state.clock+=3000;timers.shift()();for(let i=0;i<60;i++)await Promise.resolve();}
+   assert.equal(state.calls.length,navigate?1:3);assert.equal(timers.length,0);assert.equal(state.record().data.coverage.complete,false);
+  }
+ });
+ await phase('targeted updates do not extend the full audit lifetime',async()=>{
+  const {state,api}=fixture(2);state.entries=[entry(1,1,600)];await api._loadDialogTimeRange(range);
+  const audit=state.record().auditedAt;state.clock+=90000;api._dialogTimeTaskRevisions.set('1',1);
+  await api._loadDialogTimeRange(range);assert.equal(state.record().auditedAt,audit);
+  state.entries.push(entry(2,2,3600));state.clock+=30001;await api._loadDialogTimeRange(range);
+  assert.equal(state.record().data.totalSeconds,4200);
+ });
+ await phase('expired warm audit retries a failed first wave instead of accepting old proofs',async()=>{
+  const {state,api}=fixture(2),timers=[];api.setTimeout=fn=>{timers.push(fn);return timers.length;};
+  state.entries=[entry(1,1,23400)];await api._loadDialogTimeRange(range);
+  state.entries.push(entry(2,2,3600));state.clock+=120001;
+  const gate=deferred();state.hold=gate;const failed=api._loadDialogTimeRange(range);
+  await Promise.resolve();gate.reject(Object.assign(new Error('Timeout'),{code:'TIMEOUT'}));await assert.rejects(failed);
+  state.clock+=1500;timers.shift()();for(let i=0;i<60;i++)await Promise.resolve();
+  assert.equal(state.record().data.totalSeconds,27000);assert.equal(state.record().error,'');assert.equal(state.record().recoveryPending,false);
+ });
  await phase('eligibility owner replaces one stale revision for all forced waiters; revocation and caller fences remain strict',async()=>{
   const setup=()=>{
    const state={scope:'portal~7',project:'portal~7:projects:1:g1',calls:[],commits:[],current:true};
@@ -152,7 +196,7 @@ try {
   const {state,api}=fixture(117);state.entries=[entry(1,117,1800)];await api._loadDialogTimeRange(range);
   assert.equal(state.record().data.totalSeconds,1800);assert.equal(state.record().data.coverage.checkedTasks,117);
   assert.deepEqual(state.calls.map(x=>x.length),[16,50,50,1]);
-  const cold=state.calls.length;state.clock+=86400000;await api._loadDialogTimeRange(range);assert.equal(state.calls.length,cold);
+  const cold=state.calls.length;state.clock+=1000;await api._loadDialogTimeRange(range);assert.equal(state.calls.length,cold);
   api._dialogTimeTaskRevisions.set('117',1);await api._loadDialogTimeRange(range);assert.deepEqual(state.calls.slice(cold).flat(),['117']);
   return {coldTasks:117,coldBatches:cold,unchangedAfterDayReads:0,dirtyTaskReads:1};
  });
@@ -326,12 +370,12 @@ try {
    if(mode==='event')api._dialogTimeTaskRevisions.set('1',1);
    await api._addDialogTimeManualEntry({taskId:'1'},0,10,range.from);await api._loadDialogTimeRange(range);
    assert.equal(state.record().data.totalSeconds,6000);
-   if(mode==='fresh'||mode==='old'){
+   if(mode==='fresh'){
     assert.equal(state.calls.length,0);assert.equal(state.record().taskFreshness['1'].at,at);
     state.clock+=10001;await api._loadDialogTimeRange(range);assert.deepEqual(state.calls.flat(),[]);
    }else assert.ok(state.calls.flat().includes('1'),mode+' must reconcile');
   }
-  return {freshAckReads:0,missingOrInvalidated:'reconciled',ageAloneCausesReads:false};
+  return {freshAckReads:0,missingOrInvalidated:'reconciled',expiredAuditRevalidated:true};
  });
  await phase('warm validation reports this wave progress independently of existing full coverage',async()=>{
   const {state,api}=fixture(17);state.seed([entry(1,1,600)]);state.record().data.coverage={complete:true,checkedTasks:17,totalTasks:17};
@@ -474,7 +518,7 @@ try {
  await phase('unconfirmed journal denial keeps last data and retries after backoff or new evidence',async()=>{
   const {state,api}=fixture(2);state.seed([entry(1,1,600),entry(2,2,900)]);state.denied=new Set(['1']);
   await assert.rejects(api._loadDialogTimeRange(range,{force:true}));assert.equal(state.record().data.totalSeconds,1500);
-  const before=state.calls.flat().length;state.clock+=86400000;await assert.rejects(api._loadDialogTimeRange(range));assert.equal(state.calls.flat().length,before+1);
+  const before=state.calls.flat().length;state.clock+=16000;await assert.rejects(api._loadDialogTimeRange(range));assert.equal(state.calls.flat().length,before+1);
   assert.equal(state.record().status,'error');assert.equal(state.record().data.coverage.complete,false);
   state.denied.clear();await api._loadDialogTimeRange(range,{force:true});assert.equal(state.record().data.coverage.complete,true);
   state.denied.add('1');await assert.rejects(api._loadDialogTimeRange(range,{force:true}));state.denied.clear();state.clock+=15001;
@@ -498,8 +542,8 @@ try {
   const failing=api._loadDialogTimeRange(range,{force:true});await Promise.resolve();api._dialogTimeTaskRevisions.set('1',1);state.entries[0].SECONDS=1200;
   gate.reject(Object.assign(new Error('TIMEOUT'),{code:'TIMEOUT'}));await assert.rejects(failing);
   assert.equal(state.record().failedTaskRevisions['1'],0);const before=state.calls.flat().length;await api._loadDialogTimeRange(range);
-  assert.deepEqual(state.calls.flat().slice(before),['1']);assert.equal(state.record().data.totalSeconds,2100);
-  return {failureCapturedRevision:0,newRevision:1,immediateTaskReads:1,globalTransportPolicy:'unchanged'};
+  assert.deepEqual(state.calls.flat().slice(before),['1','2']);assert.equal(state.record().data.totalSeconds,2100);
+  return {failureCapturedRevision:0,newRevision:1,immediateTaskReads:2,reason:'Both tasks in the forced audit failed before any response was accepted'};
  });
  await phase('catalog expansion during first read cannot promote incomplete range through a fast path',async()=>{
   const {state,api}=fixture(16),gate=deferred();state.hold=gate;const pending=api._loadDialogTimeRange(range);await Promise.resolve();

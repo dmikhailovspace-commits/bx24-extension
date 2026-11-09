@@ -13,6 +13,11 @@ assert.equal(cache.get('user7/projectsA/zone3',day,['1'],revisions).complete,tru
 assert.equal(cache.get('user8/projectsA/zone3',day,['1'],revisions),null);
 assert.equal(cache.get('user7/projectsB/zone3',day,['1'],revisions),null);
 revisions.set('1',3);assert.equal(cache.get('user7/projectsA/zone3',day,['1'],revisions),null);
+let cacheClock=1000;const aging=model.createElapsedWindowCache(2,()=>cacheClock);
+aging.put('scope',aging.rangeFor(day),empty,['1'],proof);
+assert.equal(aging.get('scope',day,['1'],new Map([['1',2]])).complete,true);
+cacheClock+=120001;
+assert.equal(aging.get('scope',day,['1'],new Map([['1',2]])),null,'Changing period cannot revive an expired shared journal');
 const server=await startHarnessServer(),browser=await chromium.launch({headless:true}),page=await browser.newPage({viewport:{width:1200,height:900}});
 const errors=collectPageErrors(page),phases=[];
 const raw=readFileSync(new URL('../extension/injected.js',import.meta.url),'utf8');

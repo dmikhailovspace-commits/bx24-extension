@@ -79,6 +79,14 @@ jobs:
           node tests/rules-preview-races-regression.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Verify elapsed freshness and automatic recovery
+        shell: pwsh
+        run: |
+          foreach ($suite in @('time-refresh-regression','time-live-cache-regression','time-log-empty-regression','time-global-elapsed-regression','time-startup-cycle-regression','time-snapshot-performance-regression','time-date-navigation-regression')) {
+            node "tests/$suite.mjs"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
       - name: Build and verify Chrome release
         shell: pwsh
         run: |

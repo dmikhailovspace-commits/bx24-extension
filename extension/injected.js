@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '9.0.0';
+	window.__ANITREC_RUNNING__ = '9.0.1';
 
-	const VER = '9.0.0';
+	const VER = '9.0.1';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -16262,6 +16262,10 @@ if (_presetChannel) {
 	}
 
 	function _setDialogTimeCacheRecord(key, record) {
+		if (record.auditedAt == null && record.hasCompleteSnapshot) {
+			const previous = _dialogTimeCache.get(key);
+			record.auditedAt = previous?.auditedAt ?? previous?.updatedAt ?? record.updatedAt ?? 0;
+		}
 		_dialogTimeCache.delete(key);
 		_dialogTimeCache.set(key, record);
 		if (_dialogTimeCache.size <= 8) return;
@@ -19018,7 +19022,7 @@ if (_presetChannel) {
 		const incomplete = !!data && (catalogIncomplete || record?.hasCompleteSnapshot !== true || data.coverage?.complete === false);
 		const partialWarning = panel.querySelector('.pena-native-time-partial-warning');
 		if (partialWarning) {
-			partialWarning.hidden = !incomplete;
+			partialWarning.hidden = !incomplete || record?.recoveryPending === true || record?.status === 'loading';
 			partialWarning.querySelector('span').textContent = record?.errorCode === 'TIME_TASKS_UNAVAILABLE' ? record.error : `Итог неполный. Проверено ${data?.coverage?.checkedTasks || 0} из ${data?.coverage?.totalTasks || 0} задач.`;
 			partialWarning.querySelector('button').disabled = record?.status === 'loading';
 			_renderDialogTimeFailures(partialWarning.querySelector('.pena-native-time-failures'),record);
@@ -19626,6 +19630,9 @@ if (_presetChannel) {
 		// elapsed read. A periodic wake between those stages must not read twice.
 		if (_dialogTimePanelRefreshes.has(_getDialogTimeCacheKey(range))) return;
 		const snapshot = _getDialogTimeRecord(range);
+		// The bounded recovery owns transient failures. A periodic wake must not
+		// immediately reopen the blocking overlay after those attempts finish.
+		if (snapshot?.error && (snapshot.recoveryAttempts || 0) >= 2 && Date.now() - snapshot.failedAt < 60000) return;
 		// Opening a freshly bootstrapped panel shares that read. Native mutations
 		// have their own immediate invalidation/refresh path; polling can wait.
 		if (!_dialogTimeProjectCatalogDirty && snapshot?.status === 'ready' && snapshot.hasCompleteSnapshot && !snapshot.error &&
@@ -19707,12 +19714,13 @@ if (_presetChannel) {
 			const from = (_dialogTimeView === 'stats' || _dialogTimeView === 'stats30') ? _PENA_TIME_CONTROL.addDays(selected.to, _dialogTimeView === 'stats30' ? -29 : -6) : selected.from;
 			return _dialogControlNativeWorkspaceTab === 'time' && normalized.from === from && normalized.to === selected.to;
 		};
-		const current = () => key === _getDialogTimeCacheKey(normalized) && scope === _getDialogTimeProjectScopeKey() &&
-			(visibleCurrent() || bootstrapCurrent()) && document.visibilityState !== 'hidden' && navigator.onLine !== false &&
+		const readable = () => key === _getDialogTimeCacheKey(normalized) && scope === _getDialogTimeProjectScopeKey() &&
+			(visibleCurrent() || bootstrapCurrent()) && document.visibilityState !== 'hidden' && navigator.onLine !== false;
+		const current = () => readable() &&
 			revision === (_dialogTimeRangeRevisions.get(key) || 0);
 		if (!current()) return cached?.data || null;
 		const taskIds = _getDialogTimeWorkingTaskIds(normalized);
-		const windows = _loadDialogTimeRange.windows ||= _PENA_TIME_CONTROL.createElapsedWindowCache();
+		const windows = _loadDialogTimeRange.windows ||= _PENA_TIME_CONTROL.createElapsedWindowCache(6, () => Date.now());
 		// Use a valid fixed date so key normalization cannot change the namespace at midnight.
 		const windowScope = _getDialogTimeCacheKey({from:'2000-01-01',to:'2000-01-01'});
 		let readRange = windows.rangeFor(normalized);
@@ -19747,6 +19755,11 @@ if (_presetChannel) {
 		const workingTaskIdSet = new Set(taskIds);
 		const taskIdsKey = taskIds.slice().sort((a, b) => Number(a) - Number(b)).join(',');
 		const now = Date.now();
+		// Point updates must not renew the age of the entire journal. Apply expiry
+		// only between completed audits, never to the head of an ongoing cold sweep.
+		const auditedAt = cached?.auditedAt ?? cached?.updatedAt ?? 0;
+		const staleAudit = cached?.hasCompleteSnapshot && cached.status !== 'loading' &&
+			(now < auditedAt || now - auditedAt >= _PENA_TIME_CACHE_TTL_MS);
 		const freshness = { ...(cached?.taskFreshness || {}) };
 		const emptyLogs = new Set();
 		const knownLoggedTaskIds = new Set((cached?.data?.items || []).map(item => String(item.taskId)));
@@ -19754,7 +19767,7 @@ if (_presetChannel) {
 		const globalTransport = typeof _callDialogTimeGlobalElapsedPage === 'function' && typeof _PENA_TIME_CONTROL.loadGlobalElapsedItems === 'function' ? _callDialogTimeGlobalElapsedPage : null;
 		if (globalTransport) globalTransport.capabilities ||= new Map();
 		const globalCapability = globalTransport?.capabilities.get(identity);
-		const tryGlobal = !!globalTransport && taskIds.length > 0 && (force || (!cached?.hasCompleteSnapshot && !cached?.globalSnapshotRead)) && globalCapability?.supported !== false;
+		const tryGlobal = !!globalTransport && taskIds.length > 0 && (force || staleAudit || (cached?.error && cached.diagnostics?.strategy === 'global') || (!cached?.hasCompleteSnapshot && !cached?.globalSnapshotRead)) && globalCapability?.supported !== false;
 		// A cheap global day read must not turn into a blocking full-month scan.
 		// Legacy per-task batches still amortize their cost across adjacent days.
 		if (tryGlobal) readRange = normalized;
@@ -19778,9 +19791,9 @@ if (_presetChannel) {
 			const entry = freshness[id];
 			// A portal-wide pass can itself exceed any short TTL. Expiring its first
 			// pages while reading its tail causes endless full sweeps on large portals.
-			// Pull/CHANGED_DATE revisions, new tasks, local writes and manual refresh
-			// are the authoritative reasons to revisit an already checked task.
-			return !emptyLogs.has(id) && (force || !entry || (entry.unavailable && Date.now() - entry.at >= 15000) || entry.revision !== (_dialogTimeTaskRevisions.get(id) || 0));
+			// Revisions trigger point reads; the separate completed-audit clock also
+			// catches changes whose native event or CHANGED_DATE update was missed.
+			return !emptyLogs.has(id) && (force || staleAudit || !entry || (entry.unavailable && Date.now() - entry.at >= 15000) || entry.revision !== (_dialogTimeTaskRevisions.get(id) || 0));
 		};
 		let pendingIds = taskIds.filter(needsRead);
 		const hasCompleteCoverage = () => _dialogTimeCatalogCursor > 0 && _dialogTimeCatalogScope === scope &&
@@ -19827,12 +19840,14 @@ if (_presetChannel) {
 		const attemptTaskRevisions = Object.fromEntries(pendingIds.map(id => [id, _dialogTimeTaskRevisions.get(id) || 0]));
 		const base = { ...cached, range: normalized, status: 'loading', data: cached?.data || null, hasVerifiedData:_hasDialogTimeVerifiedData(cached) || verifiedEmptyCatalog,
 			hasCompleteSnapshot:cached?.hasCompleteSnapshot === true || hasCompleteCoverage(), error: '', errorCode:'', failedAt:0, taskIdsKey, taskFreshness: freshness,
-			readRevision: revision, readScope:scope, readForce:force, readProgress: { completedTasks:0, totalTasks:pendingIds.length } };
+			auditedAt:staleAudit ? now : auditedAt, recoveryPending:false,
+			readToken:{}, readRevision: revision, readScope:scope, readForce:force, readProgress: { completedTasks:0, totalTasks:pendingIds.length } };
 		_setDialogTimeCacheRecord(key, base);
 		_queueDialogTimeUiSync();
 		const diagnostics = { strategy:tryGlobal ? 'global' : (cached?.hasCompleteSnapshot && !force ? 'point' : 'legacy'), tasks:taskIds.length, pendingTasks:pendingIds.length, pages:0, attemptedGlobalPages:0, fallbackReason:globalCapability?.reason || '', from:normalized.from, to:normalized.to, startedAt:Date.now(), state:'loading', errorCode:'' };
 		base.diagnostics = diagnostics;
 		if (globalTransport) globalTransport.diagnostics = diagnostics;
+		const acceptedThisRead = new Set();
 		const request = (async () => {
 			let data = cached?.data || { ..._PENA_TIME_CONTROL.aggregateElapsedItems([]), range: normalized, pages: 0, totalAvailable: 0,
 				coverage: { checkedTasks:0, totalTasks:taskIds.length, complete:verifiedEmptyCatalog } };
@@ -19863,6 +19878,7 @@ if (_presetChannel) {
 				if (globalData.supported) {
 					const working = new Set(_getDialogTimeWorkingTaskIds(normalized));
 					const accepted = new Set(taskIds.filter(id => working.has(id) && taskRevisions.get(id) === (_dialogTimeTaskRevisions.get(id) || 0)));
+					accepted.forEach(id => acceptedThisRead.add(id));
 					accepted.forEach(id => { freshness[id] = { at:dispatchedAt, revision:taskRevisions.get(id) }; });
 					publishWindow(globalData, accepted, freshness);
 					const selected = windows.select({items:globalData.items.filter(item => accepted.has(String(item.taskId)))}, normalized);
@@ -19941,6 +19957,7 @@ if (_presetChannel) {
 				});
 				if (!current()) return _dialogTimeCache.get(key)?.data || null;
 				const accepted = new Set(wave.filter(id => workingTaskIdSet.has(id) && !unavailable.has(id) && taskRevisions.get(id) === (_dialogTimeTaskRevisions.get(id) || 0)));
+				accepted.forEach(id => acceptedThisRead.add(id));
 				if (accepted.size || !taskIds.length) base.hasVerifiedData = true;
 				accepted.forEach(id => { freshness[id] = { at: dispatchedAt.get(id) || waveStartedAt, revision: taskRevisions.get(id) }; });
 				publishWindow(batch, accepted, freshness);
@@ -19973,6 +19990,12 @@ if (_presetChannel) {
 			diagnostics.errorCode = String(error?.code || 'TIME_READ_FAILED');
 			diagnostics.detailCode = String(error?.message || '').match(/0x[0-9a-f]+|ACTION_NOT_ALLOWED/i)?.[0] || '';
 			const latest = _dialogTimeCache.get(key) || base;
+			// A failed warm audit must retry its unresolved tasks rather than reuse
+			// pre-audit proofs. Superseded/ACK reads return above and keep their proofs.
+			if (force || staleAudit) {
+				latest.taskFreshness = {...latest.taskFreshness};
+				for (const id of pendingIds) if (!acceptedThisRead.has(id) && !latest.taskFreshness[id]?.unavailable && latest.taskFreshness[id]?.revision === attemptTaskRevisions[id]) delete latest.taskFreshness[id];
+			}
 			_setDialogTimeCacheRecord(key, { ...latest, status: 'error', error: _getDialogTimeFriendlyError(error), errorCode:diagnostics.errorCode, failedAt: Date.now(), failedTaskRevisions:attemptTaskRevisions });
 			throw error;
 		}).finally(() => {
@@ -19981,6 +20004,27 @@ if (_presetChannel) {
 			_dialogTimeInFlight.delete(key);
 			const latest = _dialogTimeCache.get(key);
 			if (!current() && latest?.status === 'loading' && latest.readRevision === revision) _setDialogTimeCacheRecord(key, { ...latest, status: 'ready' });
+			if (latest && readable()) {
+				const complete = !latest.error && hasCompleteCoverage();
+				if (complete) {
+					latest.recoveryAttempts = 0; latest.recoveryPending = false;
+					if (tryGlobal || force || staleAudit || !cached?.hasCompleteSnapshot) latest.auditedAt = Date.now();
+				} else if (!latest.recoveryPending && (latest.recoveryAttempts || 0) < 2) {
+					// Retry only unresolved work. Scope/range and record identity fence a
+					// delayed retry against navigation, manual refresh and newer requests.
+					latest.recoveryAttempts = (latest.recoveryAttempts || 0) + 1;
+					latest.recoveryPending = true;
+					setTimeout(() => {
+						const owner = _dialogTimeCache.get(key);
+						if (!owner || owner.readToken !== latest.readToken) return;
+						owner.recoveryPending = false;
+						if (!readable()) return;
+						owner.failedAt = 0;
+						for (const proof of Object.values(owner.taskFreshness || {})) if (proof.unavailable) proof.at = 0;
+						_loadDialogTimeRange(normalized, { bootstrap }).catch(() => {});
+					}, latest.recoveryAttempts * 1500);
+				}
+			}
 			_queueDialogTimeUiSync();
 		});
 		_dialogTimeInFlight.set(key, request);
@@ -20081,7 +20125,7 @@ if (_presetChannel) {
 		const rangeOwner = token?.scope === _getDialogTimeProjectScopeKey() && token.key === `${range.from}:${range.to}` ? token : null;
 		// The completed read supersedes a migrated preview's selection marker.
 		const complete = _hasDialogTimeVerifiedData(record) && record.hasCompleteSnapshot === true && record.data?.coverage?.complete !== false;
-		const loading = !panel._penaTimeProjectSettings && (manualRefreshing || (!complete && (initializing || catalogBusy || rangeOwner?.pending || record?.status === 'loading')));
+		const loading = !panel._penaTimeProjectSettings && (manualRefreshing || (!complete && (initializing || catalogBusy || rangeOwner?.pending || record?.recoveryPending || record?.status === 'loading')));
 		const allowIncomplete = panel._penaTimeIncompleteViewKey === `${_getDialogTimeProjectScopeKey()}:${range.from}:${range.to}`;
 		const usablePartial = _hasDialogTimeVerifiedData(record) && record.data?.coverage?.checkedTasks > 0 && !initializing && !catalogBusy;
 		const blocked = !panel._penaTimeProjectSettings && (loading || (!complete && !allowIncomplete && !usablePartial));
@@ -22995,7 +23039,7 @@ if (_presetChannel) {
 
 	// Keep the established PENA menu. Read the available actions from Bitrix,
 	// then reopen its exact context only while invoking its original callback.
-	function _appendDialogControlBitrixActions(event, item, menu, close, before) {
+	function _appendDialogControlBitrixActions(event, item, menu, close, before, targets = [item]) {
 		const row = getChatItemElement(event.target);
 		if (!row?.isConnected) return null;
 		const owner = _findDialogNativeVueInstance(row, instance => {
@@ -23006,19 +23050,38 @@ if (_presetChannel) {
 		});
 		if (!owner) return null;
 		let manager;
-		const withNativeMenu = callback => {
+		const scope = _getDialogTimeIdentityScopeKey(), mode = _pMode();
+		const bulk = targets.length > 1;
+		const duplicate = title => /^(?:посмотреть позже|прочитать|прочесть|(?:не\s*)?прочитан[а-яё]*|(?:пометить|отметить|сделать)\s+(?:как\s+)?(?:не\s*)?прочитан[а-яё]*|mark as (?:un)?read|read|unread|watch later)(?:\s|$)/i.test(title.trim());
+		const bulkKind = title => String(title).trim().toLowerCase().match(/^(закрепить|открепить|скрыть|pin|unpin|hide)(?:\s|$)/)?.[1] || '';
+		const withNativeMenu = (callback, target = item) => {
 			try {
-				if (!_openDialogControlBitrixContextMenu(item, event, row)) return null;
-				manager = owner.contextMenuManager;
+				if (scope !== _getDialogTimeIdentityScopeKey() || mode !== _pMode()) return null;
+				const targetRow = normId(target.id) === normId(item.id) ? row :
+					_getDialogControlNativeRows(findContainer(), {includeSearch:true}).find(candidate => isVisibleElement(candidate) && _getDialogControlNativeRowIdentityKeys(candidate).includes(normId(target.id))) || findChatElementById(normId(target.id));
+				const targetOwner = targetRow && _findDialogNativeVueInstance(targetRow, instance => {
+					const proxy = instance?.proxy;
+					return !instance?.isUnmounted && proxy?.$el?.contains?.(targetRow) && 'contextMenuManager' in proxy ? proxy : null;
+				});
+				if (!targetOwner || !_openDialogControlBitrixContextMenu(target, event, targetRow)) return null;
+				manager = targetOwner.contextMenuManager;
 				if (!manager?.menuInstance || typeof manager.getMenuOptions !== 'function' ||
-					normId(manager.context?.dialogId) !== normId(item.id)) return null;
+					normId(manager.context?.dialogId) !== normId(target.id)) return null;
 				const popup = manager.menuInstance.getPopupContainer?.();
 				if (popup) popup.style.visibility = 'hidden';
 				return callback(manager.getMenuOptions());
 			} finally { manager?.close?.(); }
 		};
 		try {
-			const options = withNativeMenu(value => value);
+			let options = withNativeMenu(value => value);
+			if (bulk) {
+				const actions = new Map();
+				for (const target of targets) for (const action of withNativeMenu(value => value, target)?.items || []) {
+					const kind = bulkKind(action?.title);
+					if (kind && typeof action.onClick === 'function' && action.disabled !== true && action.design !== 'disabled') actions.set(kind, action);
+				}
+				options = {items:[...actions.values()]};
+			}
 			if (!Array.isArray(options?.items)) return null;
 			const fragment = document.createDocumentFragment();
 			const divider = document.createElement('div'); divider.className = 'dialog-control-context-divider';
@@ -23029,7 +23092,7 @@ if (_presetChannel) {
 			const key = action => action.id != null ? 'id:' + action.id : 'title:' + action.title;
 			const render = (actions, parent, path = []) => {
 				for (const action of actions.filter(Boolean)) {
-					if (typeof action.title !== 'string' || (!path.length && existing.has(action.title.trim()))) continue;
+					if (typeof action.title !== 'string' || duplicate(action.title) || (!path.length && existing.has(action.title.trim()))) continue;
 					const children = action.subMenu?.items;
 					if (!Array.isArray(children) && typeof action.onClick !== 'function') continue;
 					const actionPath = [...path, key(action)];
@@ -23046,10 +23109,34 @@ if (_presetChannel) {
 						const sub = document.createElement('div'); sub.hidden = true; sub.setAttribute('role', 'menu');
 						sub.setAttribute('aria-label', action.title); button.setAttribute('aria-haspopup', 'menu'); button.setAttribute('aria-expanded', 'false');
 						parent.append(sub); render(children, sub, actionPath);
-						button.addEventListener('click', () => { sub.hidden = !sub.hidden; button.setAttribute('aria-expanded', String(!sub.hidden)); });
-					} else {
 						button.addEventListener('click', () => {
+							sub.hidden = !sub.hidden; button.setAttribute('aria-expanded', String(!sub.hidden));
+							const bounds = menu.getBoundingClientRect();
+							menu.style.top = `${Math.max(8, Math.min(bounds.top, window.innerHeight - bounds.height - 8))}px`;
+						});
+					} else {
+						button.addEventListener('click', async () => {
 							close();
+							if (bulk) {
+								let invoked = 0, unchanged = 0, skipped = 0;
+								for (const target of targets) {
+									if (scope !== _getDialogTimeIdentityScopeKey() || mode !== _pMode()) break;
+									try {
+										const result = withNativeMenu(current => {
+											const matches = current.items.filter(candidate => candidate && bulkKind(candidate.title) === bulkKind(action.title) && !disabled(candidate));
+											const opposite = {закрепить:'открепить',открепить:'закрепить',pin:'unpin',unpin:'pin'}[bulkKind(action.title)];
+											if (!matches.length && opposite && current.items.some(candidate => candidate && bulkKind(candidate.title) === opposite && !disabled(candidate))) return {unchanged:true};
+											if (matches.length !== 1 || typeof matches[0].onClick !== 'function') return null;
+											return {pending:matches[0].onClick()};
+										}, target);
+										if (result?.unchanged) unchanged++;
+										else if (result) { await result.pending; invoked++; } else skipped++;
+									} catch { skipped++; }
+									await _sleepDialogControl(0);
+								}
+								if (scope === _getDialogTimeIdentityScopeKey() && mode === _pMode()) _showDialogDockToast(`Обработано: ${invoked + unchanged} из ${targets.length}${skipped ? '. Для остальных действие недоступно или не выполнено' : ''}`, skipped ? 'danger' : 'ok');
+								return;
+							}
 							try {
 								// Recheck permissions and labels at invocation; never execute a
 								// stale callback for another row or a now unavailable action.
@@ -27041,24 +27128,6 @@ if (_presetChannel) {
 			});
 			groupClearButtons.push(clearGroupDivider, clearGroupBtn);
 		}
-		const originalMenuActions = [];
-		if (!IS_OL_FRAME && targetItems.length === 1) {
-			const originalDivider = document.createElement('div');
-			originalDivider.className = 'dialog-control-context-divider';
-			const originalMenuBtn = _makeDialogControlContextButton(
-				'dialog-control-context-original',
-				'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/></svg>',
-				'Оригинальное меню Bitrix24'
-			);
-			originalMenuBtn.addEventListener('click', (e) => {
-				e.preventDefault();
-				e.stopPropagation();
-				e.stopImmediatePropagation?.();
-				close();
-				setTimeout(() => _openDialogControlBitrixContextMenu(item), 0);
-			});
-			originalMenuActions.push(originalDivider, originalMenuBtn);
-		}
 		const excludeTransferBtn=_makeDialogControlContextButton(
 			'dialog-control-context-exclude-transfer',
 			'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 10V7a6 6 0 0 1 12 0v3M5 10h14v11H5zM12 14v3"/></svg>',
@@ -27073,8 +27142,8 @@ if (_presetChannel) {
 			try { if(_excludeDialogAutomationTransfers(contextMode,targetIds))_showDialogDockToast(targetIds.length>1?'Диалоги добавлены в исключения переноса':'Диалог добавлен в исключения переноса','ok'); }
 			catch { _showDialogDockToast('Не удалось сохранить исключение. Повторите попытку.','danger'); }
 		});
-		menu.append(laterBtn, readBtn, ...(canControlColor ? [colorDivider, colorBtn] : []), excludeTransferBtn, segmentDivider, segmentTitle, ...segmentButtons, folderDivider, folderTitle, ...folderButtons, createFolderDivider, createFolderAndMoveBtn, ...groupClearButtons, ...originalMenuActions);
-		if (!IS_OL_FRAME && targetItems.length === 1) _appendDialogControlBitrixActions(event, item, menu, () => close(), originalMenuActions[0]);
+		menu.append(laterBtn, readBtn, ...(canControlColor ? [colorDivider, colorBtn] : []), excludeTransferBtn, segmentDivider, segmentTitle, ...segmentButtons, folderDivider, folderTitle, ...folderButtons, createFolderDivider, createFolderAndMoveBtn, ...groupClearButtons);
+		if (!IS_OL_FRAME) _appendDialogControlBitrixActions(event, item, menu, () => close(), null, targetItems);
 		document.body.appendChild(menu);
 		['pointerdown', 'mousedown', 'mouseup', 'click', 'auxclick', 'contextmenu'].forEach(type => {
 			menu.addEventListener(type, (e) => {
