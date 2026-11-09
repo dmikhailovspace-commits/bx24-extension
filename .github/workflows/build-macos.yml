@@ -1,181 +1,58 @@
-name: Build and publish installers
+name: Recover verified 9.0.1 macOS build
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - 'v*'
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  verify-source:
-    name: Verify frozen release source
-    runs-on: windows-2025
-    # Includes the combined 4149-task startup/input and closed-panel preload test.
-    timeout-minutes: 30
-
-    steps:
-      - name: Checkout release source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24.19.0
-
-      - name: Install test runtime
-        shell: pwsh
-        run: |
-          npm install --global pnpm@10.17.0
-          pnpm install --frozen-lockfile
-          pnpm exec playwright install chromium
-
-      - name: Run release regression checks
-        shell: pwsh
-        env:
-          PENA_TEST_FAIL_FAST: '1'
-        run: |
-          $profile = (Get-Content update.json -Raw | ConvertFrom-Json).verification_profile
-          if ($profile -in @('time-focused','marker-focused','sort-focused','search-focused')) {
-            $env:PENA_TEST_PROFILE = $profile
-            $env:PENA_TEST_SUITES = (Get-Content "tests/$profile-suites.json" -Raw | ConvertFrom-Json) -join ','
-          } elseif ($profile -and $profile -ne 'full') { throw "Unknown verification profile: $profile" }
-          pnpm test
-          exit $LASTEXITCODE
-
-      - name: Verify project context
-        shell: pwsh
-        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/update-project-context.ps1 -Check
-
-      - name: Verify settings transfer and storage quota recovery
-        shell: pwsh
-        run: |
-          node tests/transfer-storage-regression.mjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node tests/settings-transfer-regression.mjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node tests/transfer-model-async.mjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node tests/transfer-performance-regression.mjs
-          exit $LASTEXITCODE
-
-      - name: Verify released rules and resorting
-        shell: pwsh
-        run: |
-          node tests/rules-required-transfer-model.mjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node tests/rules-priority-regression.mjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node tests/rules-resorting-regression.mjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node tests/rules-people-picker-regression.mjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node tests/rules-settings-ui-regression.mjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node tests/rules-context-exclusions-regression.mjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node tests/rules-preview-races-regression.mjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Verify elapsed freshness and automatic recovery
-        shell: pwsh
-        run: |
-          foreach ($suite in @('time-refresh-regression','time-live-cache-regression','time-log-empty-regression','time-global-elapsed-regression','time-startup-cycle-regression','time-snapshot-performance-regression','time-date-navigation-regression')) {
-            node "tests/$suite.mjs"
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-
-      - name: Build and verify Chrome release
-        shell: pwsh
-        run: |
-          node tools/render-chrome-promo.mjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node tools/render-chrome-screenshots.mjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node tools/build-chrome.mjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node tools/verify-chrome-release.mjs
-          exit $LASTEXITCODE
-
-      - name: Upload verified Chrome package
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: Chrome-${{ github.sha }}
-          path: chrome-release/
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload regression diagnostics
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: regression-diagnostics-${{ github.sha }}
-          path: |
-            tests/artifacts/*.json
-            tests/artifacts/*.png
-          if-no-files-found: warn
-          retention-days: 14
-
-  build-windows:
-    name: Build and verify Windows EXE
-    runs-on: windows-2025
-    timeout-minutes: 20
-    needs: verify-source
-
-    steps:
-      - name: Checkout release source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Read and verify version
-        id: version
-        shell: pwsh
-        run: |
-          $version = (Get-Content -LiteralPath 'extension/manifest.json' -Raw | ConvertFrom-Json).version
-          if (-not $version) { throw 'Manifest version is empty' }
-          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$version") {
-            throw "Tag $env:GITHUB_REF_NAME does not match manifest v$version"
-          }
-          "version=$version" >> $env:GITHUB_OUTPUT
-
-      - name: Install Inno Setup
-        shell: pwsh
-        run: choco install innosetup --no-progress -y
-
-      - name: Build and hash installer
-        shell: pwsh
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
-          if (-not (Test-Path -LiteralPath $compiler)) { throw "Inno Setup compiler not found: $compiler" }
-          & $compiler 'installers\windows\setup.iss'
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $exe = Join-Path $env:GITHUB_WORKSPACE "dist\BX24_Chat_Sorter_Windows_v$env:VERSION.exe"
-          if (-not (Test-Path -LiteralPath $exe)) { throw "Installer was not built: $exe" }
-          $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  $([IO.Path]::GetFileName($exe))" | Set-Content -LiteralPath "$exe.sha256" -Encoding ascii
-
-      - name: Upload verified Windows installer
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: BX24_Chat_Sorter_Windows_v${{ steps.version.outputs.version }}
-          path: |
-            dist/BX24_Chat_Sorter_Windows_v${{ steps.version.outputs.version }}.exe
-            dist/BX24_Chat_Sorter_Windows_v${{ steps.version.outputs.version }}.exe.sha256
-          if-no-files-found: error
-          retention-days: 14
-
   build-macos:
     name: Build and verify Universal DMG
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 20
-    needs: verify-source
+
 
     steps:
       - name: Checkout release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: fe202f0fedf3e168f813873df1f648f0b8dae38f
+
+      - name: Verify prior successful frozen source and Windows gates
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "fe202f0fedf3e168f813873df1f648f0b8dae38f"
+          test "$(gh api repos/${GITHUB_REPOSITORY}/actions/runs/42672456319 --jq .head_sha)" = "fe202f0fedf3e168f813873df1f648f0b8dae38f"
+          gh api repos/${GITHUB_REPOSITORY}/actions/runs/42672456319/jobs > "$RUNNER_TEMP/source-jobs.json"
+          node -e 'const j=require(process.env.RUNNER_TEMP+"/source-jobs.json").jobs;for(const n of ["Verify frozen release source","Build and verify Windows EXE"]){if(j.find(x=>x.name===n)?.conclusion!=="success")throw Error(n)}'
+          test "$(gh api repos/${GITHUB_REPOSITORY}/git/ref/tags/v9.0.1 --jq .object.sha)" = "$(git rev-parse HEAD)"
+
+      - name: Download exact source verification evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: Chrome-fe202f0fedf3e168f813873df1f648f0b8dae38f
+          path: tests/artifacts/recovery-source-proof
+          run-id: 42672456319
+          github-token: ${{ github.token }}
+
+      - name: Match all runtime hashes against successful search-focused 16
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          import crypto from 'node:crypto';
+          const v=JSON.parse(fs.readFileSync('tests/artifacts/recovery-source-proof/verification.json','utf8'));
+          assert.equal(v.status,'PASS');assert.equal(v.version,'9.0.1');assert.equal(v.verificationScope,'search-focused');assert.equal(v.gate.suites,16);
+          assert.equal(Object.keys(v.gate.sourceSha256).length,19);
+          for(const [p,h] of Object.entries(v.gate.sourceSha256))assert.equal(crypto.createHash('sha256').update(fs.readFileSync('extension/'+p)).digest('hex'),h,p);
+          console.log('PASS exact frozen source; completed configured gate and Windows build');
+          JS
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -270,92 +147,3 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  publish-release:
-    name: Publish GitHub release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-windows, build-macos]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-
-    steps:
-      - name: Checkout verified release source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Download verified installers
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: BX24_Chat_Sorter_*
-          path: dist
-          merge-multiple: true
-
-      - name: Verify release payload
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          windows="dist/BX24_Chat_Sorter_Windows_v${version}.exe"
-          macos="dist/BX24_Chat_Sorter_macOS_Universal_v${version}.dmg"
-          test "$(find dist -maxdepth 1 -type f | wc -l | tr -d ' ')" = "4"
-          for artifact in "$windows" "$macos"; do
-            test -s "$artifact"
-            test -s "$artifact.sha256"
-            expected="$(awk '{print $1}' "$artifact.sha256")"
-            actual="$(sha256sum "$artifact" | awk '{print $1}')"
-            test "$expected" = "$actual"
-          done
-
-      - name: Download verified Chrome package
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: Chrome-${{ github.sha }}
-          path: chrome-release
-
-      - name: Verify Chrome archives
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd chrome-release
-          version="${GITHUB_REF_NAME#v}"
-          sha256sum -c "BX24_Chat_Sorter_Chrome_v${version}.zip.sha256"
-          sha256sum -c "Chrome_Web_Store_Materials_v${version}.zip.sha256"
-
-      - name: Publish installers
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          changelog="$(node -p "require('./update.json').changelog")"
-          printf '%s\n' \
-            "$changelog" \
-            'The panel follows the native Bitrix chat list and keeps the previous list layout compatible.' \
-            'The configured verification profile passed before packaging; the Chrome package is checked against the exact tested source.' \
-            'The macOS installer is built and verified on a macOS runner; physical Mac GUI testing is not claimed.' \
-            'Includes Windows EXE, Universal macOS DMG for Intel and Apple Silicon, Chrome ZIP and Chrome Web Store submission materials. Store publication is separate.' \
-            > release-notes.md
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber \
-              "dist/BX24_Chat_Sorter_Windows_v${GITHUB_REF_NAME#v}.exe" \
-              "dist/BX24_Chat_Sorter_Windows_v${GITHUB_REF_NAME#v}.exe.sha256" \
-              "dist/BX24_Chat_Sorter_macOS_Universal_v${GITHUB_REF_NAME#v}.dmg" \
-              "dist/BX24_Chat_Sorter_macOS_Universal_v${GITHUB_REF_NAME#v}.dmg.sha256"
-          else
-            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
-              --title "Сортировщик чатов Bitrix24 ${GITHUB_REF_NAME}" --notes-file release-notes.md \
-              "dist/BX24_Chat_Sorter_Windows_v${GITHUB_REF_NAME#v}.exe" \
-              "dist/BX24_Chat_Sorter_Windows_v${GITHUB_REF_NAME#v}.exe.sha256" \
-              "dist/BX24_Chat_Sorter_macOS_Universal_v${GITHUB_REF_NAME#v}.dmg" \
-              "dist/BX24_Chat_Sorter_macOS_Universal_v${GITHUB_REF_NAME#v}.dmg.sha256"
-          fi
-          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber \
-            "chrome-release/BX24_Chat_Sorter_Chrome_v${GITHUB_REF_NAME#v}.zip" \
-            "chrome-release/BX24_Chat_Sorter_Chrome_v${GITHUB_REF_NAME#v}.zip.sha256" \
-            "chrome-release/Chrome_Web_Store_Materials_v${GITHUB_REF_NAME#v}.zip" \
-            "chrome-release/Chrome_Web_Store_Materials_v${GITHUB_REF_NAME#v}.zip.sha256"
-
-      - name: Advance desktop update channel
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node tools/publish-update-channel.mjs
