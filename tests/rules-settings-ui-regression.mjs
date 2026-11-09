@@ -8,9 +8,29 @@ const injected=source.replace('\tasync function boot() {',`\tasync function boot
  window.rulesUI={items:_getDialogControlItemsForMode,save:_saveDialogControlItemsForMode,key:_dialogAutomationKey,open:_openDialogAutomation,navigation:[]};
  _openDialogControlRemoteRow=async(item,mode)=>{rulesUI.navigation.push({id:item.id,mode});return true;};`);
 const server=await startHarnessServer(),browser=await chromium.launch({headless:true});
-const errors=[],phases=[];mkdirSync('tests/artifacts',{recursive:true});
+const errors=[],phases=[];let accordionMotion;mkdirSync('tests/artifacts',{recursive:true});
+async function sampleExceptionsMotion(page, clicks=[0]) {
+ return page.evaluate(async clicks=>{
+  const frame=()=>new Promise(resolve=>requestAnimationFrame(resolve));
+  await frame();await frame();
+  const content=()=>document.querySelector('.pena-automation-exclusions-content');
+  const toggle=()=>document.querySelector('.pena-automation-exclusions-toggle');
+  const samples=[{ms:0,height:content().getBoundingClientRect().height}];
+  const started=performance.now();let action=0,completed=false;
+  while(performance.now()-started<1500){
+   const elapsed=performance.now()-started;
+   while(action<clicks.length&&elapsed>=clicks[action]){toggle().click();action++;}
+   await frame();
+   const elapsedAfter=performance.now()-started;
+   samples.push({ms:elapsedAfter,height:content().getBoundingClientRect().height});
+   const running=content().getAnimations().some(a=>a.playState==='running'||a.pending);
+   if(action===clicks.length&&elapsedAfter>=clicks.at(-1)+300&&!running){completed=true;break;}
+  }
+  return {samples,completed,expanded:toggle().getAttribute('aria-expanded'),inert:content().inert};
+ },clicks);
+}
 try {
- const page=await browser.newPage({viewport:{width:1100,height:850}});page.on('pageerror',e=>errors.push(e.message));
+ const page=await browser.newPage({viewport:{width:1100,height:850},reducedMotion:'no-preference'});page.on('pageerror',e=>errors.push(e.message));
  await page.route('**/extension/injected.js',r=>r.fulfill({contentType:'application/javascript',body:injected}));
  await page.goto(server.baseUrl+'/tests/native-consistency-harness.html?mode=tasks&nativeCatalog=1&passThrough=1');
  await page.waitForFunction(()=>window.rulesUI?.items('tasks').filter(i=>i.taskId).length>=12);
@@ -43,7 +63,20 @@ try {
  const exceptions=panel.getByRole('button',{name:'Исключения',exact:true});
  assert.equal(await exceptions.getAttribute('aria-expanded'),'false');
  assert.equal(await panel.locator('.pena-automation-exclusions-content').evaluate(el=>el.inert),true);
- await exceptions.click();await page.waitForFunction(()=>document.querySelector('.pena-automation-exclusions-content').getBoundingClientRect().height>100);
+ const opening=await sampleExceptionsMotion(page),closing=await sampleExceptionsMotion(page),rapid=await sampleExceptionsMotion(page,[0,50,100]);
+ for(const [name,motion] of Object.entries({opening,closing,rapid})){
+  assert.equal(motion.completed,true,`${name} transition finishes within a bounded interval`);
+  assert.ok(motion.samples.every(s=>Number.isFinite(s.height)),`${name} heights remain finite`);
+ }
+ const expandedHeight=opening.samples.at(-1).height;
+ assert.ok(opening.samples[0].height<=1&&expandedHeight>100);
+ assert.ok(opening.samples.some(s=>s.height>1&&s.height<expandedHeight-1),'Opening has real intermediate layout heights sampled by requestAnimationFrame');
+ assert.ok(closing.samples[0].height>100&&closing.samples.at(-1).height<=1);
+ assert.ok(closing.samples.some(s=>s.height>1&&s.height<expandedHeight-1),'Closing has real intermediate layout heights sampled by requestAnimationFrame');
+ assert.equal(closing.inert,true);assert.equal(closing.expanded,'false');
+ assert.equal(rapid.expanded,'true');assert.equal(rapid.inert,false);
+ assert.ok(Math.abs(rapid.samples.at(-1).height-expandedHeight)<=1,'Rapid reversal finishes at the requested expanded height');
+ accordionMotion={opening,closing,rapid};
  await page.evaluate(()=>document.dispatchEvent(new Event('pena-automation-review-changed')));
  await page.waitForFunction(()=>document.querySelector('.pena-automation-exclusions-toggle').getAttribute('aria-expanded')==='true');
  assert.equal(await panel.locator('.pena-automation-locked').count(),2);
@@ -73,6 +106,6 @@ try {
  await required.scrollIntoViewIfNeeded();await page.screenshot({path:'tests/artifacts/rules-settings-required-mobile.png'});
  phases.push('External changes block immediate toggle; reduced motion and narrow condition row stay usable');
  assert.deepEqual(errors,[]);
- writeFileSync('tests/artifacts/rules-settings-ui.json',JSON.stringify({passed:true,phases,navigation:'UI calls the existing navigation helper; helper is stubbed in this isolated test'},null,2));
+ writeFileSync('tests/artifacts/rules-settings-ui.json',JSON.stringify({passed:true,phases,accordionMotion,navigation:'UI calls the existing navigation helper; helper is stubbed in this isolated test'},null,2));
  console.log('PASS rules settings UI: '+phases.length+' phases');
 }finally{await browser.close();await server.close();}
