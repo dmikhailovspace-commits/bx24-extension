@@ -13227,7 +13227,9 @@ if (_presetChannel) {
 				if(target || record.placement!==placement)record.proposeRemoval=false;
 				else if(previous && record.target && placement)record.proposeRemoval=true;
 				if(record.dismissedSig && record.dismissedSig!==signature)delete record.dismissedSig;
-				record.reviewRequired=!!(record.reviewRequired || placement || item.automationHandled || (previous && record.target!==target));
+				// Resorting starts in a folder. A prior scan or automationHandled
+				// alone is not evidence of a current placement (including old journals).
+				record.reviewRequired=!!placement;
 				if(record.reviewRequired && (target || record.proposeRemoval) && target!==placement && record.dismissedSig!==signature){
 					if(record.ticket?.signature!==signature)record.ticket={from:placement,to:target,ruleId:decision?.ruleId||'',title:facts.title,reason:target?'Правило предлагает другую папку':'Диалог больше не подходит под правила',signature,updatedAt:Date.now()};
 				}else record.ticket=null;
@@ -13241,7 +13243,9 @@ if (_presetChannel) {
 					record.placement=target;record.ticket=null;record.proposeRemoval=false;
 					changed++;continue;
 				}
-				if (previous || item.folderId || item.automationHandled || excluded.has(item.id)) continue;
+				// A first match may arrive after earlier scans or a REST refresh.
+				// Only a real assignment/manual action or activation snapshot blocks it.
+				if (item.folderId || item.automationHandled || excluded.has(item.id) || record.dismissedSig) continue;
 			}
 			if (item.folderId || item.automationHandled || excluded.has(item.id)) continue;
 			if (!decision?.folderId) continue;
@@ -13273,7 +13277,15 @@ if (_presetChannel) {
 		return changed;
 	}
 	function _dialogAutomationTickets(mode = _pMode()) {
-		try { const locks=_dialogAutomationLocks(mode);return Object.entries(JSON.parse(localStorage.getItem(_dialogAutomationKey(mode)+'.review') || '{}').records || {}).filter(([id,record])=>record.ticket&&!locks.has(id)); } catch { return []; }
+		try {
+			const locks=_dialogAutomationLocks(mode),items=new Map(_getDialogControlItemsForMode(mode).map(item=>[item.id,item]));
+			return Object.entries(JSON.parse(localStorage.getItem(_dialogAutomationKey(mode)+'.review') || '{}').records || {}).filter(([id,record])=>{
+				const ticket=record.ticket,item=items.get(id),placement=item?.folderId||'';
+				// Read-time fencing also hides obsolete proposals when quota errors
+				// prevent repairing their journal after a manual move.
+				return ticket&&item&&!_isDialogControlItemUnavailable(item)&&!locks.has(id)&&placement&&ticket.from===placement&&ticket.to!==placement;
+			});
+		} catch { return []; }
 	}
 	function _syncDialogAutomationBadge() {
 		const count = ['chats','tasks'].reduce((sum,mode)=>sum+_dialogAutomationTickets(mode).length,0);
@@ -13543,8 +13555,16 @@ if (_presetChannel) {
 					ticketCount++;
 					const ticket=record.ticket,card=node('article',null,tickets);card.className='pena-automation-ticket';
 					node('strong',ticket.title||id,card);
-					const folderName=id=>items.find(item=>item.id===id)?.title||'Без папки';
-					node('p',`${folderName(ticket.from)} → ${folderName(ticket.to)}`,card);
+					const folderName=id=>items.find(item=>_isDialogControlFolder(item)&&item.id===id)?.title||'Без папки';
+					const sameName=folderName(ticket.from)===folderName(ticket.to);
+					const folderLabel=id=>{
+						const name=folderName(id);if(!sameName||!id)return name;
+						const folder=items.find(item=>_isDialogControlFolder(item)&&item.id===id);
+						const group=_getDialogControlSegments(ticketMode).find(group=>group.id===folder?.segmentId)?.title||'Без группы';
+						const peers=items.filter(item=>_isDialogControlFolder(item)&&item.title===name&&(_getDialogControlSegments(ticketMode).find(segment=>segment.id===item.segmentId)?.title||'Без группы')===group);
+						return `${name} (${group}${peers.length>1?`, папка ${peers.findIndex(item=>item.id===id)+1}`:''})`;
+					};
+					node('p',`${folderLabel(ticket.from)} → ${folderLabel(ticket.to)}`,card);
 					node('p',ticket.reason,card);
 					const rule=_readDialogAutomation(ticketMode).find(rule=>rule.id===ticket.ruleId);
 					if(rule)node('p',`Правило: ${rule.name||'Без названия'}`,card);
@@ -13562,7 +13582,7 @@ if (_presetChannel) {
 						const state=JSON.parse(localStorage.getItem(reviewKey)||'{}');
 						const item=currentItems.find(item=>item.id===id);
 						if(_dialogAutomationDirtyTasks.has(_getDialogTimeIdentityScopeKey()+':'+item?.taskId)) { _showDialogDockToast('Проверяем актуальные данные задачи. Повторите после проверки.');return; }
-						if(!item||state.rulesSig!==shownRulesSig||JSON.stringify(state.records?.[id]?.ticket)!==JSON.stringify(ticket))return drawTickets();
+						if(!item||!item.folderId||item.folderId!==ticket.from||item.folderId===ticket.to||state.rulesSig!==shownRulesSig||JSON.stringify(state.records?.[id]?.ticket)!==JSON.stringify(ticket))return drawTickets();
 						const decision=window.__PENA_NATIVE_CATALOG__.automationDecision(_readDialogAutomation(ticketMode),_dialogAutomationFacts(item),ticketMode,new Set(currentItems.filter(_isDialogControlFolder).map(folder=>folder.id)));
 						if(decision?.pending || (decision?.folderId||'')!==ticket.to) { _scheduleDialogAutomation();return drawTickets(); }
 						if(accept){
@@ -13833,7 +13853,7 @@ if (_presetChannel) {
 				}
 			}
 			if(!current())return;
-			const matches=[];let pending=0,distribute=0,confirm=0,unchanged=0,protectedCount=0,skipped=0;
+			const matches=[];let pending=0,distribute=0,confirm=0,unchanged=0,protectedCount=0,skipped=0,keptUnassigned=0;
 			const locked=_dialogAutomationLocks(mode);
 			let review={};try{review=JSON.parse(localStorage.getItem(key+'.review')||'{}');}catch{}
 			for(const item of items){
@@ -13845,7 +13865,8 @@ if (_presetChannel) {
 				matches.push({item,decision});
 				if(locked.has(item.id))protectedCount++;
 				else if(item.folderId===decision.folderId)unchanged++;
-				else if(item.folderId||item.automationHandled)confirm++;
+				else if(item.folderId)confirm++;
+				else if(item.automationHandled)keptUnassigned++;
 				else if(review.records?.[item.id]?.dismissedSig)skipped++;
 				else distribute++;
 			}
@@ -13855,6 +13876,7 @@ if (_presetChannel) {
 			if(confirm)node('span',`Требуют подтверждения переноса: ${confirm}. Предложения обновятся после сохранения правил.`,status);
 			if(protectedCount)node('span',`Переносы отключены для ${protectedCount} диалогов.`,status);
 			if(skipped)node('span',`Ранее пропущены: ${skipped}. Автоматический перенос не выполняется.`,status);
+			if(keptUnassigned)node('span',`Останутся без папки: ${keptUnassigned}. Ручное размещение сохранится.`,status);
 			if(pending)node('span',`Ещё ${pending} — ожидают данных Bitrix. Пока не проверено верхнее правило, нижние не применяются. Нажмите «Проверить» ещё раз, чтобы продолжить.`,status);
 			for(const {item,decision} of matches.slice(0,3)){
 				const index=rules.findIndex(rule=>rule.id===decision.ruleId),winner=rules[index];
@@ -26508,7 +26530,7 @@ if (_presetChannel) {
 		let close = () => {};
 		const createGroupBtn = _makeDialogControlContextButton(
 			'dialog-control-context-segment',
-			'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M4 12h10"/><path d="M4 17h16"/><path d="M17 10v8"/><path d="M13 14h8"/></svg>',
+			'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M4 12h7M4 18h10M18 9v6M15 12h6"/></svg>',
 			'Создать группу'
 		);
 		createGroupBtn.addEventListener('click', (e) => {

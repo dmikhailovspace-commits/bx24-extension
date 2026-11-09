@@ -6,20 +6,20 @@ const model=createRequire(import.meta.url)('../extension/native-catalog.js');
 const source=readFileSync('extension/injected.js','utf8');
 const results=[];
 const titleRule={id:'title',name:'Alpha',enabled:true,folderId:'folder:b',match:'all',conditions:[{field:'title',op:'contains',value:'Alpha'}]};
-function fixture(){
- const storage=new Map(),metas=new Map(),scope='resort.invalid~7',key=`pena.automation.v1.${scope}.tasks`;
+function fixture(mode='tasks'){
+ const storage=new Map(),metas=new Map(),scope='resort.invalid~7',key=`pena.automation.v1.${scope}.${mode}`;
  const items=[{id:'folder:a',type:'folder',segmentId:'group:a'},{id:'folder:b',type:'folder',segmentId:'group:b'},{id:'chat1',taskId:'1',title:'Alpha',folderId:'folder:a'}];
  metas.set('chat1',{id:'chat1',taskId:'1',displayTitle:'Alpha',automationFacts:{title:'Alpha',responsibleId:'7'}});
  let enabled=true,quota=false;
  const context={window:{__PENA_NATIVE_CATALOG__:model},localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>{if(quota&&k.endsWith('.review'))throw new Error('QuotaExceededError');storage.set(k,v);},removeItem:k=>storage.delete(k)},
   document:{hidden:false,dispatchEvent(){},querySelectorAll:()=>[]},navigator:{onLine:true},Event:class{},setTimeout:()=>1,clearTimeout(){},
-  _getDialogTimeIdentityScopeKey:()=>scope,_pMode:()=> 'tasks',_getDialogRecentMeta:id=>metas.get(id),_isPenaExtensionEnabled:()=>enabled,
+  _getDialogTimeIdentityScopeKey:()=>scope,_pMode:()=>mode,_getDialogRecentMeta:id=>metas.get(id),_isPenaExtensionEnabled:()=>enabled,
   _getDialogRecentUniqueMeta:()=>[...metas.values()],_dialogRecentMeta:metas,_setDialogRecentMeta:(target,meta)=>target.set(meta.id,meta),_scheduleDialogRecentCacheWrite(){},
   _isDialogControlFolder:item=>item.type==='folder',_isDialogControlItemUnavailable:item=>!!item.unavailable,_getDialogControlItemsForMode:()=>items};
  const at=source.indexOf('\tlet _dialogAutomationTimer = null;'),end=source.indexOf('\tfunction _openDialogAutomation(',at);
  runInNewContext(source.slice(at,end)+'\nthis.api={apply:_applyDialogAutomation,tickets:_dialogAutomationTickets,exclude:_excludeDialogAutomationTransfers,dirty:_dialogAutomationDirtyTasks};',context);
  const config=(auto=false,rules=[titleRule])=>storage.set(key,JSON.stringify({version:1,rules,excludedIds:[],autoAcceptTransfers:auto}));config();
- return {items,item:items[2],metas,storage,key,scope,config,quota:value=>quota=value,enabled:value=>enabled=value,api:context.api,apply:()=>context.api.apply('tasks',items),tickets:()=>context.api.tickets('tasks')};
+ return {items,item:items[2],metas,storage,key,scope,config,quota:value=>quota=value,enabled:value=>enabled=value,api:context.api,apply:()=>context.api.apply(mode,items),tickets:()=>context.api.tickets(mode)};
 }
 function check(name,run){try{run();results.push({name,passed:true});console.log('PASS '+name);}catch(error){results.push({name,passed:false,error:error.stack});console.error('FAIL '+name+'\n'+error.stack);}}
 check('Manual mode creates a proposal; enabling auto accepts it once and updates group',()=>{
@@ -86,5 +86,37 @@ check('Persisted exclusion hides a stale ticket even if journal quota prevents c
  const f=fixture();f.apply();f.quota(true);f.enabled(false);assert.equal(f.api.exclude('tasks',['chat1']),true);assert.equal(f.tickets().length,0);
  assert.ok(JSON.parse(f.storage.get(f.key+'.review')).records.chat1.ticket,'The test actually retained a stale journal');
 });
+for(const mode of ['chats','tasks']){
+ check(`${mode}: late first match assigns a new root dialog without review`,()=>{
+  const f=fixture(mode);f.item.folderId='';f.metas.get('chat1').automationFacts.title='Beta';
+  assert.equal(f.apply(),0);f.apply();f.metas.get('chat1').automationFacts.title='Alpha';
+  assert.equal(f.apply(),1);assert.equal(f.item.folderId,'folder:b');assert.equal(f.tickets().length,0);assert.equal(f.apply(),0);
+ });
+ check(`${mode}: snapshot and manually unassigned dialogs never enter resorting`,()=>{
+  for(const handled of [false,true]){
+   const f=fixture(mode);f.item.folderId='';f.item.automationHandled=handled;
+   const config=JSON.parse(f.storage.get(f.key));if(!handled)config.excludedIds=['chat1'];f.storage.set(f.key,JSON.stringify(config));
+   f.metas.get('chat1').automationFacts.title='Beta';f.apply();f.metas.get('chat1').automationFacts.title='Alpha';f.apply();
+   assert.equal(f.tickets().length,0);assert.equal(f.item.folderId,'');
+  }
+ });
+ check(`${mode}: stale tickets disappear on reads even if storage cannot be repaired`,()=>{
+  for(const placement of ['','folder:b','folder:other']){
+   const f=fixture(mode);f.apply();assert.equal(f.tickets().length,1);f.item.folderId=placement;f.quota(true);
+   assert.equal(f.tickets().length,0,'Read must compare the ticket with current placement');
+   f.apply();assert.equal(f.tickets().length,0);
+  }
+ });
+ check(`${mode}: malformed same-folder ticket is hidden and normal same-target rules stay quiet`,()=>{
+  const f=fixture(mode);f.config(false,[{...titleRule,folderId:'folder:a'}]);f.apply();assert.equal(f.tickets().length,0);
+  const state=JSON.parse(f.storage.get(f.key+'.review'));state.records.chat1.ticket={from:'folder:a',to:'folder:a'};f.storage.set(f.key+'.review',JSON.stringify(state));
+  assert.equal(f.tickets().length,0);
+ });
+ check(`${mode}: legacy empty-folder review flags do not block first assignment`,()=>{
+  const f=fixture(mode);f.item.folderId='';f.metas.get('chat1').automationFacts.title='Beta';f.apply();
+  const state=JSON.parse(f.storage.get(f.key+'.review'));state.records.chat1.reviewRequired=true;state.records.chat1.ticket={from:'',to:'folder:b'};f.storage.set(f.key+'.review',JSON.stringify(state));
+  f.metas.get('chat1').automationFacts.title='Alpha';assert.equal(f.apply(),1);assert.equal(f.item.folderId,'folder:b');assert.equal(f.tickets().length,0);
+ });
+}
 mkdirSync('tests/artifacts',{recursive:true});writeFileSync('tests/artifacts/rules-resorting.json',JSON.stringify(results,null,2));
 if(results.some(result=>!result.passed))process.exitCode=1;

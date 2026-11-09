@@ -127,7 +127,7 @@ try{
   await page.evaluate(()=>raceReleaseSave());await page.locator('.pena-automation-panel').waitFor({state:'detached',timeout:20000});
   assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem(previewRace.key('tasks'))).rules[0].conditions[0].value),'7');
  });
- await phase('A skipped unassigned proposal is not promised as an automatic move',async page=>{
+ await phase('Existing unassigned dialogs have no review step and explicit inclusion assigns them',async page=>{
   await page.evaluate(()=>{
    const api=previewRace,items=api.items('tasks'),item=items.find(x=>x.taskId);window.skippedId=item.id;
    item.folderId='';delete item.automationHandled;api.save('tasks',items);
@@ -135,10 +135,42 @@ try{
    localStorage.setItem(api.key('tasks'),JSON.stringify({version:1,rules,excludedIds:[item.id]}));
    api.apply('tasks',items);api.receive(String(item.taskId),{RESPONSIBLE_ID:'7'});api.apply('tasks',items);api.open();
   });
-  await page.getByRole('button',{name:'Пропустить',exact:true}).click();await page.getByRole('tab',{name:'Правила',exact:true}).click();
-  await page.getByLabel('Распределить уже существующие диалоги').check();
-  const text=await check(page);assert.match(text,/Сейчас будут распределены: 0/);assert.match(text,/Ранее пропущены: 1/);
+  await page.getByRole('tab',{name:'Пересортировка',exact:true}).click();
+  assert.equal(await page.locator('.pena-automation-ticket:not(.pena-automation-locked)').count(),0);
   assert.equal(await page.evaluate(()=>previewRace.items('tasks').find(x=>x.id===skippedId).folderId),'');
+  await page.getByRole('tab',{name:'Правила',exact:true}).click();
+  await page.getByLabel('Распределить уже существующие диалоги').check();
+  const text=await check(page);assert.match(text,/Сейчас будут распределены: 1/);assert.doesNotMatch(text,/Требуют подтверждения переноса/);
+  await page.getByRole('button',{name:'Сохранить',exact:true}).click();
+  await page.waitForFunction(()=>previewRace.items('tasks').find(x=>x.id===skippedId).folderId==='folder:test');
+ });
+ await phase('Same-name folders are distinguished and an obsolete same-destination card disappears',async page=>{
+  await page.evaluate(()=>{
+   const api=previewRace,items=api.items('tasks'),item=items.find(x=>x.taskId);window.duplicateId=item.id;
+   items.find(x=>x.id==='folder:test').title='Маша Б.';
+   items.push({id:'folder:duplicate',type:'folder',title:'Маша Б.'});item.folderId='folder:duplicate';api.save('tasks',items);
+   localStorage.setItem(api.key('tasks'),JSON.stringify({version:1,rules:[{id:'duplicate',enabled:true,name:'Маша',folderId:'folder:test',match:'all',conditions:[{field:'responsibleId',op:'eq',value:'7'}]}],excludedIds:[]}));
+   api.receive(String(item.taskId),{RESPONSIBLE_ID:'7'});api.open();
+  });
+  await page.getByRole('tab',{name:'Пересортировка',exact:true}).click();
+  const card=page.locator('.pena-automation-ticket:not(.pena-automation-locked)');
+  assert.equal(await card.count(),1);
+  const labels=(await card.locator('p').first().innerText()).split(' → ');
+  assert.equal(labels.length,2);assert.notEqual(labels[0],labels[1]);assert.ok(labels.every(label=>label.includes('Маша Б.')));
+  await page.evaluate(()=>{const items=previewRace.items('tasks');items.find(x=>x.id===duplicateId).folderId='folder:test';previewRace.save('tasks',items);document.dispatchEvent(new Event('pena-automation-review-changed'));});
+  await page.waitForFunction(()=>!document.querySelector('.pena-automation-ticket:not(.pena-automation-locked)'));
+ });
+ await phase('A manually unassigned handled dialog is neither moved nor advertised for review',async page=>{
+  await page.evaluate(()=>{
+   const api=previewRace,items=api.items('tasks'),item=items.find(x=>x.taskId);window.rootHandledId=item.id;
+   item.folderId='';item.automationHandled=true;api.save('tasks',items);
+   localStorage.setItem(api.key('tasks'),JSON.stringify({version:1,rules:[{id:'root',enabled:true,name:'Корень',folderId:'folder:test',match:'all',conditions:[{field:'responsibleId',op:'eq',value:'7'}]}],excludedIds:[]}));
+   api.receive(String(item.taskId),{RESPONSIBLE_ID:'7'});api.open();
+  });
+  await page.getByRole('tab',{name:'Пересортировка',exact:true}).click();assert.equal(await page.locator('.pena-automation-ticket:not(.pena-automation-locked)').count(),0);
+  await page.getByRole('tab',{name:'Правила',exact:true}).click();await page.getByLabel('Распределить уже существующие диалоги').check();
+  const text=await check(page);assert.match(text,/Сейчас будут распределены: 0/);assert.match(text,/Останутся без папки: 1/);assert.doesNotMatch(text,/Требуют подтверждения переноса/);
+  assert.equal(await page.evaluate(()=>previewRace.items('tasks').find(x=>x.id===rootHandledId).folderId),'');
  });
  assert.deepEqual(errors,[]);
 }finally{

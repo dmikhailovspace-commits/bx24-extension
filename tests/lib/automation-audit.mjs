@@ -120,7 +120,7 @@ export async function verifyAutomationAudit(model,injectedSource) {
  api.receive('2',{});const scopedRun=timers.shift()();assert.equal(pendingResponses.length,1);
  scope='other.test~9';pendingResponses.shift()({task:{id:'2',responsibleId:'99'}});await scopedRun;
  assert.equal(metas.get('chat2').automationFacts.responsibleId,'2');
- // Time itself is a rule input: a quiet portal must create the confirmation as
+ // Time itself is a rule input: a quiet portal must assign an untouched dialog as
  // soon as the deadline passes, without an unrelated incoming message.
  timers.length=0;scope='deadline.test~1';let clock=now;
  context.Date=class extends Date {static now(){return clock;}};
@@ -132,8 +132,8 @@ export async function verifyAutomationAudit(model,injectedSource) {
  assert.equal(api.tickets('tasks').length,0);
  assert.equal(timers.length,1,'Only one deadline wake-up is required');assert.equal(timers[0].delay,1001);
  clock+=1001;timers.shift()();await timers.shift()();
- assert.equal(api.tickets('tasks')[0][1].ticket.to,'folder:a','Passing the deadline must propose a move');
- assert.equal(items.tasks[2].folderId,undefined,'Existing timed tasks still require confirmation');
+ assert.equal(api.tickets('tasks').length,0,'A first folder assignment needs no resorting');
+ assert.equal(items.tasks[2].folderId,'folder:a','Passing the deadline directly assigns an untouched dialog');
  assert.equal(timers.length,0,'Expired deadlines do not create a polling loop');
  metas.get('deadline-task').automationFacts.deadline=new Date(clock+3e9).toISOString();api.schedule();await timers.shift()();
  assert.equal(timers[0].delay,2147483647,'Long deadlines respect the browser timer limit');
