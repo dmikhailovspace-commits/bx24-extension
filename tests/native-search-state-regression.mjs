@@ -317,6 +317,35 @@ try {
  });
  await input.fill('native menu');await page.waitForTimeout(80);
  const nativeMenu=menu;
+ const viewport=page.viewportSize();
+ await page.setViewportSize({width:295,height:235});
+ await page.getByText('Native chat225',{exact:true}).dispatchEvent('contextmenu',{button:2,clientX:293,clientY:233});
+ await menu.waitFor();
+ const menuGeometry=()=>menu.evaluate(el=>{
+  const {left,top,right,bottom}=el.getBoundingClientRect(), viewport=document.documentElement;
+  return {left,top,right,bottom,width:viewport.clientWidth,height:viewport.clientHeight,
+   scrollWidth:el.scrollWidth,clientWidth:el.clientWidth,scrollHeight:el.scrollHeight,clientHeight:el.clientHeight,scrollTop:el.scrollTop};
+ });
+ const assertBounded=({left,top,right,bottom,width,height,scrollWidth,clientWidth})=>{
+  assert.ok(left>=7 && top>=7 && right<=width-7 && bottom<=height-7,'Menu stays inside the viewport on all sides');
+  assert.equal(scrollWidth,clientWidth,'Long menu labels cannot introduce horizontal scrolling');
+ };
+ const beforeWheel=await menuGeometry();
+ assertBounded(beforeWheel);
+ assert.ok(beforeWheel.scrollHeight>beforeWheel.clientHeight,'The small viewport has a scrollable menu');
+ await page.mouse.move(beforeWheel.left+30,beforeWheel.top+35);
+ await page.mouse.wheel(0,3000);
+ await page.waitForFunction(()=>{const el=document.querySelector('[data-dialog-control-context-menu="1"]');return el && el.scrollTop>0 && el.scrollHeight-el.clientHeight-el.scrollTop<=1;});
+ assert.equal((await menuGeometry()).right,beforeWheel.right,'Scrolling does not shift the menu');
+ await menu.getByRole('menuitem',{name:'Папки Bitrix',exact:true}).click();
+ assertBounded(await menuGeometry());
+ assert.equal(await menu.getByRole('menuitemcheckbox',{name:'Нативная папка',exact:true}).getAttribute('aria-checked'),'true');
+ await page.setViewportSize({width:260,height:195});
+ await page.waitForFunction(()=>{const el=document.querySelector('[data-dialog-control-context-menu="1"]');return el && el.getBoundingClientRect().right<=document.documentElement.clientWidth-7;});
+ assertBounded(await menuGeometry());
+ await page.keyboard.press('Escape');
+ await menu.waitFor({state:'detached'});
+ await page.setViewportSize(viewport);
  await page.getByText('Native chat225',{exact:true}).click({button:'right'});
  await nativeMenu.waitFor();
  assert.equal(await page.locator('.test-system-menu').count(),0,'The native popup must not replace the original PENA menu');

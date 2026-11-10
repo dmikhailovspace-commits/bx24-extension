@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "9.0.1",
-  "release_date": "2026-11-09",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v9.0.1",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.1",
+  "version": "9.0.2",
+  "release_date": "2026-11-10",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v9.0.2",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.2",
   "extension_files": [
-    "worker-v9_0_1.js",
+    "worker-v9_0_2.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,15 +33,12 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.1/extension/injected.js",
-  "changelog": "Массовое подтверждение переносов и добавление в исключения, выбор похожих по папке назначения, подтверждение включения автопереносов и ровная ось стрелки исключений. Сохранены исправления непрочитанных сообщений и пересортировки.",
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.2/extension/injected.js",
+  "changelog": "Контекстное меню помещается в окно и прокручивается внутри. Кнопки обновления используют одинарную круговую стрелку в стиле Chrome.",
   "release_notes": [
-    "Зависшие непрочитанные сообщения и старые якоря снимаются до видимой позиции в открытом чате.",
-    "Переносы можно выбирать по одному, все сразу или по общей папке назначения.",
-    "Выбранные диалоги можно подтвердить или сразу добавить в исключения без перемещения.",
-    "Включение автоматических переносов требует подтверждения; стрелка исключений вращается на месте.",
-    "Первое назначение папки не попадает в пересортировку; устаревшие предложения переноса скрываются.",
-    "Одноимённые папки различаются в карточке переноса; исправлена иконка «Создать группу»."
+    "Длинное меню ПКМ прокручивается колесом и полосой прокрутки.",
+    "Меню остаётся в пределах окна при открытии у края и при изменении размера окна.",
+    "Кнопки обновления списка и учёта времени используют один и тот же значок во всех поставках."
   ],
   "verification_profile": "search-focused",
   "distribution": "github",

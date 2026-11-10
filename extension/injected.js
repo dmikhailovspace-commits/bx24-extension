@@ -8,9 +8,11 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '9.0.1';
+	window.__ANITREC_RUNNING__ = '9.0.2';
 
-	const VER = '9.0.1';
+	const VER = '9.0.2';
+	// Google Material Icons / Refresh (Apache-2.0).
+	const _PENA_RELOAD_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>';
 	const _PENA_NATIVE_ONLY = true;
 	const _PENA_EXTENSION_ENABLED_KEY = 'pena.extension.enabled';
 	const _PENA_TIME_CONTROL = window.__PENA_TIME_CONTROL__ || null;
@@ -20338,7 +20340,7 @@ if (_presetChannel) {
 		refresh.title = 'Обновить данные за сегодня';
 		refresh.setAttribute('aria-label', 'Обновить данные за сегодня');
 		// Two identical half-turn paths, drawn here without an external icon asset.
-		refresh.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8a8 8 0 0 1 14-1l1 2m0-5v5h-5"/><path d="M5 8a8 8 0 0 1 14-1l1 2m0-5v5h-5" transform="rotate(180 12 12)"/></svg>';
+		refresh.innerHTML = _PENA_RELOAD_ICON;
 		refresh.addEventListener('click', event => {
 			event.preventDefault();
 			event.stopPropagation();
@@ -21263,7 +21265,7 @@ if (_presetChannel) {
 			syncButton.className = 'pena-native-sync-refresh';
 			syncButton.title = 'Обновить список чатов';
 			syncButton.setAttribute('aria-label', 'Обновить список чатов');
-			syncButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M6.1 9a7 7 0 0 1 11.7-2.6L20 9M4 15l2.2 2.6A7 7 0 0 0 17.9 15"/></svg>';
+			syncButton.innerHTML = _PENA_RELOAD_ICON;
 			syncButton.addEventListener('click', async event => {
 				event.preventDefault();
 				event.stopPropagation();
@@ -23111,8 +23113,7 @@ if (_presetChannel) {
 						parent.append(sub); render(children, sub, actionPath);
 						button.addEventListener('click', () => {
 							sub.hidden = !sub.hidden; button.setAttribute('aria-expanded', String(!sub.hidden));
-							const bounds = menu.getBoundingClientRect();
-							menu.style.top = `${Math.max(8, Math.min(bounds.top, window.innerHeight - bounds.height - 8))}px`;
+							if (_dialogControlContextMenu?.menu === menu) _dialogControlContextMenu.reposition();
 						});
 					} else {
 						button.addEventListener('click', async () => {
@@ -26404,37 +26405,7 @@ if (_presetChannel) {
 			makeSegmentBtn('', 'Без группы'),
 			..._getDialogControlSegments().map(segment => makeSegmentBtn(segment.id, segment.title))
 		);
-		document.body.appendChild(menu);
-		['pointerdown', 'mousedown', 'mouseup', 'click', 'auxclick', 'contextmenu'].forEach(type => {
-			menu.addEventListener(type, (e) => {
-				if (type === 'contextmenu') e.preventDefault();
-				e.stopPropagation();
-			});
-		});
-		const margin = 8;
-		const rect = menu.getBoundingClientRect();
-		menu.style.left = Math.max(margin, Math.min(event.clientX, window.innerWidth - rect.width - margin)) + 'px';
-		menu.style.top = Math.max(margin, Math.min(event.clientY, window.innerHeight - rect.height - margin)) + 'px';
-		const close = () => {
-			document.removeEventListener('pointerdown', onPointerDown, true);
-			document.removeEventListener('keydown', onKeyDown, true);
-			window.removeEventListener('scroll', close, true);
-			menu.remove();
-			if (_dialogControlContextMenu?.menu === menu) _dialogControlContextMenu = null;
-		};
-		const onPointerDown = (e) => {
-			if (menu.contains(e.target)) return;
-			close();
-		};
-		const onKeyDown = (e) => {
-			if (e.key === 'Escape') close();
-		};
-		setTimeout(() => {
-			document.addEventListener('pointerdown', onPointerDown, true);
-			document.addEventListener('keydown', onKeyDown, true);
-			window.addEventListener('scroll', close, true);
-		}, 0);
-		_dialogControlContextMenu = { menu, close };
+		_mountDialogControlContextMenu(menu, event);
 	}
 
 	function _showDialogControlNativeGroupContextMenuLegacy(event, group, h = filtersHost) {
@@ -26476,71 +26447,52 @@ if (_presetChannel) {
 			_scrollDialogControlNativeListTop();
 		});
 		menu.append(title, createFolderBtn);
-		document.body.appendChild(menu);
-		['pointerdown', 'mousedown', 'mouseup', 'click', 'auxclick', 'contextmenu'].forEach(type => {
-			menu.addEventListener(type, (e) => {
-				if (type === 'contextmenu') e.preventDefault();
-				e.stopPropagation();
-			});
-		});
-		const margin = 8;
-		const rect = menu.getBoundingClientRect();
-		menu.style.left = Math.max(margin, Math.min(event.clientX, window.innerWidth - rect.width - margin)) + 'px';
-		menu.style.top = Math.max(margin, Math.min(event.clientY, window.innerHeight - rect.height - margin)) + 'px';
-		const close = () => {
-			document.removeEventListener('pointerdown', onPointerDown, true);
-			document.removeEventListener('keydown', onKeyDown, true);
-			window.removeEventListener('scroll', close, true);
-			menu.remove();
-			if (_dialogControlContextMenu?.menu === menu) _dialogControlContextMenu = null;
-		};
-		const onPointerDown = (e) => {
-			if (menu.contains(e.target)) return;
-			close();
-		};
-		const onKeyDown = (e) => {
-			if (e.key === 'Escape') close();
-		};
-		setTimeout(() => {
-			document.addEventListener('pointerdown', onPointerDown, true);
-			document.addEventListener('keydown', onKeyDown, true);
-			window.addEventListener('scroll', close, true);
-		}, 0);
-		_dialogControlContextMenu = { menu, close };
+		_mountDialogControlContextMenu(menu, event);
 	}
 
-	function _mountDialogControlContextMenu(menu, event) {
+	function _mountDialogControlContextMenu(menu, event, { dismissOnLeave = false, closeOnOutsideScroll = true } = {}) {
 		document.body.appendChild(menu);
 		['pointerdown', 'mousedown', 'mouseup', 'click', 'auxclick', 'contextmenu'].forEach(type => {
-			menu.addEventListener(type, (e) => {
+			menu.addEventListener(type, e => {
 				if (type === 'contextmenu') e.preventDefault();
 				e.stopPropagation();
 			});
 		});
 		const margin = 8;
-		const rect = menu.getBoundingClientRect();
-		menu.style.left = Math.max(margin, Math.min(event.clientX, window.innerWidth - rect.width - margin)) + 'px';
-		menu.style.top = Math.max(margin, Math.min(event.clientY, window.innerHeight - rect.height - margin)) + 'px';
+		const x = Number(event.clientX) || 0;
+		const y = Number(event.clientY) || 0;
+		const reposition = () => {
+			const viewport = document.documentElement;
+			menu.style.left = Math.max(margin, Math.min(x, viewport.clientWidth - menu.offsetWidth - margin)) + 'px';
+			menu.style.top = Math.max(margin, Math.min(y, viewport.clientHeight - menu.offsetHeight - margin)) + 'px';
+		};
+		const onPointerDown = e => { if (!menu.contains(e.target)) close(); };
+		const onKeyDown = e => { if (e.key === 'Escape') close(); };
+		const onScroll = e => { if (!menu.contains(e.target)) close(); };
+		let dismissTimer;
+		const cancelDismiss = () => clearTimeout(dismissTimer);
 		const close = () => {
+			cancelDismiss();
 			document.removeEventListener('pointerdown', onPointerDown, true);
 			document.removeEventListener('keydown', onKeyDown, true);
-			window.removeEventListener('scroll', close, true);
+			window.removeEventListener('scroll', onScroll, true);
+			window.removeEventListener('resize', reposition);
 			menu.remove();
 			if (_dialogControlContextMenu?.menu === menu) _dialogControlContextMenu = null;
 		};
-		const onPointerDown = (e) => {
-			if (menu.contains(e.target)) return;
-			close();
-		};
-		const onKeyDown = (e) => {
-			if (e.key === 'Escape') close();
-		};
-		setTimeout(() => {
-			document.addEventListener('pointerdown', onPointerDown, true);
-			document.addEventListener('keydown', onKeyDown, true);
-			window.addEventListener('scroll', close, true);
-		}, 0);
-		_dialogControlContextMenu = { menu, close };
+		if (dismissOnLeave) {
+			menu.addEventListener('pointerenter', cancelDismiss);
+			menu.addEventListener('pointerleave', () => {
+				cancelDismiss();
+				dismissTimer = setTimeout(close, 2600);
+			});
+		}
+		reposition();
+		document.addEventListener('pointerdown', onPointerDown, true);
+		document.addEventListener('keydown', onKeyDown, true);
+		if (closeOnOutsideScroll) window.addEventListener('scroll', onScroll, true);
+		window.addEventListener('resize', reposition);
+		_dialogControlContextMenu = { menu, close, reposition };
 		return close;
 	}
 
@@ -27144,44 +27096,7 @@ if (_presetChannel) {
 		});
 		menu.append(laterBtn, readBtn, ...(canControlColor ? [colorDivider, colorBtn] : []), excludeTransferBtn, segmentDivider, segmentTitle, ...segmentButtons, folderDivider, folderTitle, ...folderButtons, createFolderDivider, createFolderAndMoveBtn, ...groupClearButtons);
 		if (!IS_OL_FRAME) _appendDialogControlBitrixActions(event, item, menu, () => close(), null, targetItems);
-		document.body.appendChild(menu);
-		['pointerdown', 'mousedown', 'mouseup', 'click', 'auxclick', 'contextmenu'].forEach(type => {
-			menu.addEventListener(type, (e) => {
-				if (type === 'contextmenu') e.preventDefault();
-				e.stopPropagation();
-			});
-		});
-		const margin = 8;
-		const rect = menu.getBoundingClientRect();
-		const left = Math.max(margin, Math.min(event.clientX, window.innerWidth - rect.width - margin));
-		const top = Math.max(margin, Math.min(event.clientY, window.innerHeight - rect.height - margin));
-		menu.style.left = left + 'px';
-		menu.style.top = top + 'px';
-		let dismissTimer = null;
-		const clearDismissTimer = () => {
-			if (dismissTimer) clearTimeout(dismissTimer);
-			dismissTimer = null;
-		};
-		const close = () => {
-			clearDismissTimer();
-			document.removeEventListener('pointerdown', onPointerDown, true);
-			document.removeEventListener('keydown', onKeyDown, true);
-			menu.remove();
-			if (_dialogControlContextMenu?.menu === menu) _dialogControlContextMenu = null;
-		};
-		const scheduleDismiss = () => {
-			clearDismissTimer();
-			dismissTimer = setTimeout(close, 2600);
-		};
-		const onPointerDown = (e) => {
-			if (menu.contains(e.target)) return;
-			close();
-		};
-		const onKeyDown = (e) => {
-			if (e.key === 'Escape') close();
-		};
-		menu.addEventListener('pointerenter', clearDismissTimer);
-		menu.addEventListener('pointerleave', scheduleDismiss);
+		const close = _mountDialogControlContextMenu(menu, event, { dismissOnLeave: true, closeOnOutsideScroll: false });
 		laterBtn.addEventListener('click', async (e) => {
 			e.preventDefault();
 			e.stopPropagation();
@@ -27196,11 +27111,6 @@ if (_presetChannel) {
 			close();
 			await _runDialogControlSelectedReadStateAction(targetItems, h, 'read');
 		});
-		setTimeout(() => {
-			document.addEventListener('pointerdown', onPointerDown, true);
-			document.addEventListener('keydown', onKeyDown, true);
-		}, 0);
-		_dialogControlContextMenu = { menu, close };
 	}
 
 	function _placeDialogDockNearPanel(dock, panelHost = filtersHost) {
@@ -30825,7 +30735,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 .pena-native-sync-status{display:flex;align-items:center;justify-content:space-between;gap:8px;flex:1 1 100%;min-width:0;padding-top:6px;border-top:1px solid rgba(15,23,42,.08);color:#64748b;font-size:10px;line-height:1.2}
 .pena-native-sync-status-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pena-native-sync-refresh{display:inline-flex;align-items:center;justify-content:center;flex:0 0 24px;width:24px;height:24px;padding:0;border:1px solid rgba(15,23,42,.12);border-radius:5px;background:#fff;color:#526071;cursor:pointer}
-.pena-native-sync-refresh:hover{background:#e8eef5;color:#1f2937}.pena-native-sync-refresh svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.pena-native-sync-refresh.--loading svg{animation:pena-native-sync-spin .7s linear infinite}.pena-native-sync-refresh:disabled{cursor:default;opacity:.7}@keyframes pena-native-sync-spin{to{transform:rotate(360deg)}}
+.pena-native-sync-refresh:hover{background:#e8eef5;color:#1f2937}.pena-native-sync-refresh svg{width:13px;height:13px;fill:currentColor}.pena-native-sync-refresh.--loading svg{animation:pena-native-sync-spin .7s linear infinite}.pena-native-sync-refresh:disabled{cursor:default;opacity:.7}@keyframes pena-native-sync-spin{to{transform:rotate(360deg)}}
 .pena-native-sync-chip{display:inline-flex;align-items:center;gap:5px;min-width:0;max-width:116px;height:24px;margin-left:auto;padding:0 7px;border:1px solid rgba(15,23,42,.1);border-radius:6px;background:#f8fafc;color:#64748b;font:700 10px/22px system-ui,-apple-system,Segoe UI,Roboto,Arial;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-sizing:border-box;appearance:none;cursor:default}
 .pena-native-sync-chip::before{content:"";width:7px;height:7px;flex:0 0 7px;border-radius:50%;background:#94a3b8}.pena-native-sync-chip.--loading::before{width:9px;height:9px;flex-basis:9px;border:2px solid #bfdbfe;border-top-color:#2563eb;background:transparent;box-sizing:border-box;animation:pena-native-sync-spin .7s linear infinite}.pena-native-sync-chip.--ready{color:#17633c;background:#effaf4;border-color:rgba(22,163,74,.18)}.pena-native-sync-chip.--ready::before{background:#22a660}.pena-native-sync-chip.--warning{color:#8a4b08;background:#fff8e6;border-color:rgba(217,119,6,.28);cursor:pointer}.pena-native-sync-chip.--warning:hover{background:#ffefc2}.pena-native-sync-chip.--warning::before{background:#d97706}.pena-native-sync-chip.--error{color:#9f1239;background:#fff1f2;border-color:rgba(190,24,93,.18);cursor:pointer}.pena-native-sync-chip.--error:hover{background:#ffe4e6}.pena-native-sync-chip.--error::before{background:#e11d48}
 .pena-native-filter-group{display:flex;align-items:center;gap:8px;min-width:0}
@@ -30932,16 +30842,17 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-toast.--show{opacity:1;transform:translateY(0)}
 #anit-dialog-control-dock .dialog-control-toast.--ok{border-color:rgba(93,200,126,.5);color:#5dc87e}
 #anit-dialog-control-dock .dialog-control-toast.--danger{border-color:rgba(239,68,68,.5);color:#ffb3b3}
-@keyframes pena-dialog-context-menu-in{from{opacity:0;transform:translateY(-5px) scale(.975)}to{opacity:1;transform:translateY(0) scale(1)}}
-.dialog-control-context-menu[data-dialog-control-context-menu="1"]{position:fixed;z-index:10020;min-width:164px;max-width:min(320px,calc(100vw - 16px));max-height:calc(100vh - 16px);overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.28) rgba(255,255,255,.06);padding:4px;border:1px solid rgba(255,255,255,.14);border-radius:8px;background:rgba(12,16,24,.98);box-shadow:0 14px 34px rgba(0,0,0,.42),0 1px 0 rgba(255,255,255,.05) inset;color:#e7edf6;box-sizing:border-box;opacity:0;transform-origin:top left;animation:pena-dialog-context-menu-in .14s cubic-bezier(.2,.8,.2,1) forwards}
+@keyframes pena-dialog-context-menu-in{from{opacity:0}to{opacity:1}}
+.dialog-control-context-menu[data-dialog-control-context-menu="1"]{position:fixed;z-index:10020;--pena-menu-min-width:164px;width:max-content;min-width:min(var(--pena-menu-min-width),calc(100% - 16px));max-width:min(320px,calc(100% - 16px));max-height:min(520px,calc(100% - 16px));overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.28) transparent;padding:4px;border:1px solid rgba(255,255,255,.14);border-radius:8px;background:rgba(12,16,24,.98);box-shadow:0 14px 34px rgba(0,0,0,.42),0 1px 0 rgba(255,255,255,.05) inset;color:#e7edf6;box-sizing:border-box;opacity:0;animation:pena-dialog-context-menu-in .14s cubic-bezier(.2,.8,.2,1) forwards}
 .dialog-control-context-menu[data-dialog-control-context-menu="1"]::-webkit-scrollbar{width:5px}
-.dialog-control-context-menu[data-dialog-control-context-menu="1"]::-webkit-scrollbar-track{background:rgba(255,255,255,.06);border-radius:999px}
+.dialog-control-context-menu[data-dialog-control-context-menu="1"]::-webkit-scrollbar-track{background:transparent}
 .dialog-control-context-menu[data-dialog-control-context-menu="1"]::-webkit-scrollbar-thumb{background:rgba(255,255,255,.28);border-radius:999px}
 .dialog-control-context-item{width:100%;min-height:30px;display:grid;grid-template-columns:20px minmax(0,1fr);align-items:center;gap:8px;border:0;border-radius:6px;background:transparent;color:inherit;padding:5px 8px;text-align:left;font:600 12px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial;cursor:pointer;box-sizing:border-box}
+.dialog-control-context-item>span,.dialog-control-context-title{overflow-wrap:anywhere}
 .dialog-control-context-item.--selected{background:rgba(77,157,255,.16);color:#d7eaff}
-.dialog-control-icon-menu[data-dialog-control-context-menu="1"]{min-width:196px}
-.dialog-control-icon-grid{display:grid;grid-template-columns:repeat(5,30px);gap:6px;padding:4px}
-.dialog-control-icon-option{width:30px;height:30px;min-height:30px;display:grid;place-items:center;border:1px solid rgba(255,255,255,.12);border-radius:6px;background:rgba(255,255,255,.04);color:#dbe6f4;padding:0;cursor:pointer;box-sizing:border-box}
+.dialog-control-icon-menu[data-dialog-control-context-menu="1"]{--pena-menu-min-width:204px;width:204px}
+.dialog-control-icon-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(30px,100%),1fr));gap:6px;padding:4px}
+.dialog-control-icon-option{width:min(30px,100%);height:30px;min-height:30px;display:grid;place-items:center;border:1px solid rgba(255,255,255,.12);border-radius:6px;background:rgba(255,255,255,.04);color:#dbe6f4;padding:0;cursor:pointer;box-sizing:border-box}
 .dialog-control-icon-option:hover{border-color:rgba(77,157,255,.5);background:rgba(77,157,255,.12);color:#fff;transform:none}
 .dialog-control-icon-option.--active{border-color:rgba(77,157,255,.72);background:rgba(77,157,255,.2);color:#fff;box-shadow:0 0 0 1px rgba(77,157,255,.18) inset}
 .dialog-control-icon-option .dialog-control-folder-ref-icon{width:16px;height:16px;stroke:currentColor;filter:none}
@@ -34073,3 +33984,207 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 		log('расширение выключено пользователем', { ver: VER });
 	}
 })();
+
+/*! Google Material Icons - Refresh
+Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright [yyyy] [name of copyright owner]
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
