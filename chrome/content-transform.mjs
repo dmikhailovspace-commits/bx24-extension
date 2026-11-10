@@ -23,13 +23,13 @@ export function transformChromeContent(source) {
         host.style.cssText = 'display:inline-flex;position:relative;flex:0 0 auto';
         const root = host.attachShadow({ mode: 'open' });
         const style = document.createElement('style');
-        style.textContent = ':host{all:initial;display:inline-flex}*{box-sizing:border-box}button{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:2px;border:0;border-radius:6px;background:transparent;color:#526071;cursor:pointer}button:focus-visible{outline:2px solid #2563eb;outline-offset:2px}svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.release-panel{position:relative;width:100%;max-height:calc(100vh - 16px);overflow:auto;margin:0;padding:12px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;color:#263241;box-shadow:0 8px 28px #0f172a30;font:12px/1.5 system-ui}[hidden]{display:none}.release-notes{margin-top:12px}.release-notes ul{margin:8px 0;padding-left:18px}.release-notes li+li{margin-top:6px}.update-hint{margin:12px 0 0;color:#68778d;font-size:11px}';
+        style.textContent = ':host{all:initial;display:inline-flex}*{box-sizing:border-box}button{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:2px;border:0;border-radius:6px;background:transparent;color:#526071;cursor:pointer}button:focus-visible{outline:2px solid #2563eb;outline-offset:2px}svg{width:16px;height:16px;fill:currentColor}.release-panel{position:relative;width:100%;max-height:calc(100vh - 16px);overflow:auto;margin:0;padding:12px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;color:#263241;box-shadow:0 8px 28px #0f172a30;font:12px/1.5 system-ui}[hidden]{display:none}.release-notes{margin-top:12px}.release-notes ul{margin:8px 0;padding-left:18px}.release-notes li+li{margin-top:6px}.update-hint{margin:12px 0 0;color:#68778d;font-size:11px}';
         const button = document.createElement('button');
         button.type = 'button';
         button.title = 'Обновление';
         button.setAttribute('aria-label', 'Обновление');
         button.setAttribute('aria-expanded', 'false');
-        button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.7-2.6L20 9M4 15l2.2 2.6A7 7 0 0 0 17.9 15"/></svg>';
+        button.innerHTML = _reloadIcon;
         const panel = document.createElement('div');panel.className='release-panel';
         panel.hidden = true;
         panel.setAttribute('role', 'status');

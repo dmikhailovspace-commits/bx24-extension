@@ -4,7 +4,7 @@
 
 **Goal:** Make long right-click menus usable on small Bitrix24 windows and use the same Chrome-style reload icon in all builds.
 
-**Architecture:** Share the PENA menu mount/position logic, measure unanimated layout size, and reserve an internal scrollbar gutter. Preserve original Bitrix callbacks. Reuse the Google Material refresh SVG in both icon buttons.
+**Architecture:** Share the PENA menu mount/position logic, measure unanimated layout size, and reserve an internal scrollbar gutter. Preserve original Bitrix callbacks. Reuse the Google Material refresh SVG in the list, time, and extension update buttons.
 
 **Tech Stack:** JavaScript, CSS, Chromium/Playwright, GitHub Actions.
 
@@ -22,5 +22,5 @@
 
 - [ ] Extend the existing search-state browser check with a real bottom/right context click, viewport resize and wheel scroll to the native submenu.
 - [ ] Share mounting/positioning across PENA context menus and style the bounded scrollbar in both CSS copies. Keep wheel scroll inside the menu and existing dismiss behavior.
-- [ ] Reuse the Material reload vector in the chat-list and time buttons, preserving their hover/loading states.
+- [ ] Reuse the Material reload vector in the chat-list, time, and extension update buttons, preserving their hover/loading states.
 - [ ] Verify focused checks, bump the patch release and publish all packages and channels.

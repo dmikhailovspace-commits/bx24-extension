@@ -169,7 +169,7 @@ jobs:
 
   build-macos:
     name: Build and verify Universal DMG
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 20
     needs: verify-source
 

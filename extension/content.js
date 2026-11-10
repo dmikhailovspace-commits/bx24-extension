@@ -23,13 +23,11 @@
   const _releaseVersion = _runtimeManifest.version;
   // Keep these installed-version notes in sync with update.json.release_notes.
   const _releaseNotes = [
-  "Зависшие непрочитанные сообщения и старые якоря снимаются до видимой позиции в открытом чате.",
-  "Переносы можно выбирать по одному, все сразу или по общей папке назначения.",
-  "Выбранные диалоги можно подтвердить или сразу добавить в исключения без перемещения.",
-  "Включение автоматических переносов требует подтверждения; стрелка исключений вращается на месте.",
-  "Первое назначение папки не попадает в пересортировку; устаревшие предложения переноса скрываются.",
-  "Одноимённые папки различаются в карточке переноса; исправлена иконка «Создать группу»."
-];
+    "Длинное меню ПКМ прокручивается колесом и полосой прокрутки.",
+    "Меню остаётся в пределах окна при открытии у края и при изменении размера окна.",
+    "В списке чатов, панели времени и проверке версии теперь одна и та же круговая стрелка."
+  ];
+  const _reloadIcon = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>';
   const _makeReleaseNotes = value => {
     const section=document.createElement('section');section.className='release-notes';
     const heading=document.createElement('strong');heading.textContent='Что нового';section.append(heading);
@@ -60,7 +58,7 @@
     };
     const render = () => { if (button) {
       button.hidden=false;
-      button.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.7-2.6L20 9M4 15l2.2 2.6A7 7 0 0 0 17.9 15"/></svg>';
+      button.innerHTML=_reloadIcon;
       const label=pending?'Обновляем…':info?.available?'Доступно обновление':'Обновление';
       button.setAttribute('aria-label',label);
       button.title=`${label}. Установлена версия ${_releaseVersion}`;
@@ -144,7 +142,7 @@
       if (!host) {
         host=document.createElement('span');host.style.cssText='display:inline-flex;position:relative;flex:0 0 auto';
         root=host.attachShadow({mode:'closed'});
-        const style=document.createElement('style');style.textContent=`:host{all:initial;display:inline-flex}*{box-sizing:border-box}[hidden]{display:none!important}button,a{font:600 11px/1.3 system-ui;cursor:pointer;color:#1d4ed8;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:5px 7px;text-decoration:none}button:disabled{opacity:.65;cursor:wait}button:focus-visible,a:focus-visible{outline:2px solid #2563eb;outline-offset:2px}.badge{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:2px;border:0;background:transparent;color:#526071}.badge svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.badge.available{background:#fff4c2;color:#805500}.panel{position:fixed;inset:auto;margin:0;width:min(330px,calc(100vw - 16px));padding:14px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;color:#263241;box-shadow:0 8px 28px #0f172a30;font:13px/1.4 system-ui;z-index:2147483647}.panel{max-height:calc(100vh - 16px);overflow:auto}.panel strong{font-size:14px}.release-notes{margin-top:12px}.release-notes ul{margin:8px 0 12px;padding-left:18px}.release-notes li+li{margin-top:6px}.update-hint{display:block;color:#68778d;font-size:11px}.panel p{margin:10px 0 14px}.actions{display:flex;flex-wrap:wrap;gap:8px}.primary{background:#2563eb;border-color:#2563eb;color:#fff}`;
+        const style=document.createElement('style');style.textContent=`:host{all:initial;display:inline-flex}*{box-sizing:border-box}[hidden]{display:none!important}button,a{font:600 11px/1.3 system-ui;cursor:pointer;color:#1d4ed8;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:5px 7px;text-decoration:none}button:disabled{opacity:.65;cursor:wait}button:focus-visible,a:focus-visible{outline:2px solid #2563eb;outline-offset:2px}.badge{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:2px;border:0;background:transparent;color:#526071}.badge svg{width:16px;height:16px;fill:currentColor}.badge.available{background:#fff4c2;color:#805500}.panel{position:fixed;inset:auto;margin:0;width:min(330px,calc(100vw - 16px));padding:14px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;color:#263241;box-shadow:0 8px 28px #0f172a30;font:13px/1.4 system-ui;z-index:2147483647}.panel{max-height:calc(100vh - 16px);overflow:auto}.panel strong{font-size:14px}.release-notes{margin-top:12px}.release-notes ul{margin:8px 0 12px;padding-left:18px}.release-notes li+li{margin-top:6px}.update-hint{display:block;color:#68778d;font-size:11px}.panel p{margin:10px 0 14px}.actions{display:flex;flex-wrap:wrap;gap:8px}.primary{background:#2563eb;border-color:#2563eb;color:#fff}`;
         button=document.createElement('button');button.type='button';button.className='badge';button.hidden=true;button.setAttribute('aria-haspopup','dialog');button.setAttribute('aria-expanded','false');button.addEventListener('click',open);
         panel=document.createElement('div');panel.className='panel';panel.hidden=true;panel.setAttribute('role','dialog');panel.setAttribute('aria-label','Обновление расширения');
         if (typeof panel.showPopover==='function') panel.setAttribute('popover','manual');else panel.style.cssText='position:absolute;left:0;top:32px';
