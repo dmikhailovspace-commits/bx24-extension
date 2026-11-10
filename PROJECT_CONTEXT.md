@@ -6,6 +6,8 @@
 - Длинные меню прокручиваются внутри. Узкая полупрозрачная полоса находится внутри рамки, под неё заранее выделено место. Прокрутка меню не закрывает его и не передаётся списку за ним. Длинные подписи переносятся.
 - Кнопки обновления списка, панели времени и проверки версии используют одинарную стрелку [Google Material Icons / Refresh](https://github.com/google/material-design-icons/blob/master/src/navigation/refresh/materialicons/24px.svg) в общем runtime для Windows, macOS и Chrome.
 - Проверка геометрии, реального колеса и вложенных действий добавлена в существующий native-search-state. Профиль CI сохраняет точный search-focused 16 и существующие дополнительные проверки. Для Universal DMG используется macos-15-intel: на нём прошла проверенная сборка 9.0.1 после сбоя выделения предыдущего runner. Публикация: GitHub, публичный desktop-канал, прежняя папка Яндекс Диска и отправка Chrome ZIP на модерацию с автопубликацией.
+- GitHub Release v9.0.2 опубликован из 8d53774276c9d91affbb68d9b7ce3ba16c49f130. CI 42805163707 успешен; все восемь assets, 19 файлов runtime, версия Windows EXE и публичный desktop-канал проверены. Коммит канала eae3f6e843948a43afe83cab06e6648113837e82 меняет только main/update.json.
+- На Яндекс Диск и в Chrome Web Store версия ещё не загружена: управление Chrome остановилось, потому что инструмент не смог определить URL вкладки. Предыдущая общая папка и публикация Store не менялись. Комплект для Диска подготовлен в tests/artifacts/release-9.0.2/disk-upload. Подробности — docs/qa/release-9.0.2.md.
 
 ## Выпуск 9.0.1 — точность времени, 09.11.2026
 
@@ -111,8 +113,8 @@
 - Release date: **2026-11-10**
 - Runtime files: **19**
 - Regression suites: **105**
-- Windows artifact: _not built_
-- macOS artifact: _not built_
+- Windows artifact: `dist/BX24_Chat_Sorter_Windows_v9.0.2.exe` - SHA-256: `682A3D0122D3E4B41E35D95A81A6A14337F18BAACCF0DCC94FE4C0AA941E3B22`
+- macOS artifact: `dist/BX24_Chat_Sorter_macOS_Universal_v9.0.2.dmg` - SHA-256: `6FAA64E74E0BB04D00C6A7EE34F2C69D732D580EEC8B0BE2E95AF85194A1D3CF`
 <!-- AUTO:END -->
 
 ## Текущая правка: плавное раскрытие и краткая обратная связь — 08.11.2026, предпросмотр 8.0.67
