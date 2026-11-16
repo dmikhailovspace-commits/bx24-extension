@@ -244,15 +244,21 @@ try {
   await page.keyboard.press('Escape');assert.equal(await page.locator('.pena-native-time-panel').count(),0);
   await page.evaluate(()=>dateBackend.release());await page.waitForFunction(()=>dateProbe.idle());
   await page.locator('.pena-native-time-button').click();await ready();
-  const before=await page.evaluate(()=>dateBackend.calls.length);
+  // Background month prefetch may start on reopening (notably when this
+  // relative test date is the first of the month). Count the selected day,
+  // whose already complete snapshot is the contract under test.
+  const before=await page.evaluate(()=>{
+   const range=dateProbe.range(),from=range.from,to=__PENA_TIME_CONTROL__.addDays(range.to,1);
+   return{from,to,calls:dateBackend.calls.filter(call=>call.from===from&&call.to===to).length,total:dateBackend.calls.length};
+  });
   await page.locator('.pena-native-time-panel-head .pena-native-popover-close').click();
   await page.evaluate(()=>{
    window.dateWarmBlocked=false;window.dateWarmObserver=new MutationObserver(()=>{const overlay=document.querySelector('.pena-native-time-loading-overlay');if(overlay&&!overlay.hidden)window.dateWarmBlocked=true;});
    dateWarmObserver.observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['hidden','class']});
   });
   await page.locator('.pena-native-time-button').click();await ready();
-  const after=await page.evaluate(async()=>{await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));dateWarmObserver.disconnect();return{blocked:dateWarmBlocked,calls:dateBackend.calls.length};});
-  assert.equal(after.blocked,false);assert.equal(after.calls,before);return{warmAdditionalCalls:after.calls-before,warmOverlayShown:after.blocked};
+  const after=await page.evaluate(async({from,to})=>{await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));dateWarmObserver.disconnect();return{blocked:dateWarmBlocked,calls:dateBackend.calls.filter(call=>call.from===from&&call.to===to).length,total:dateBackend.calls.length};},before);
+  assert.equal(after.blocked,false);assert.equal(after.calls,before.calls);return{warmAdditionalCalls:after.calls-before.calls,backgroundCalls:after.total-before.total,warmOverlayShown:after.blocked};
  });
  await phase('temporary journal failure recovers without clicking Retry or Refresh',async()=>{
   await page.evaluate(()=>{
