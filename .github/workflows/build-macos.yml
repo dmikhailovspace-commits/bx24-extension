@@ -64,6 +64,8 @@ jobs:
       - name: Verify released rules and resorting
         shell: pwsh
         run: |
+          node tests/rules-live-regression.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node tests/rules-required-transfer-model.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node tests/rules-priority-regression.mjs

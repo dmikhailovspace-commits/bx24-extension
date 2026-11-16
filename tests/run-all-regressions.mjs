@@ -37,6 +37,7 @@ if (Number.parseInt(process.versions.node.split('.')[0], 10) < minimumNodeMajor 
 }
 
 const suites = [
+  'rules-live-regression.mjs',
   'settings-transfer-regression.mjs',
   'transfer-storage-regression.mjs',
   'transfer-model-async.mjs',

@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "9.0.2",
-  "release_date": "2026-11-10",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v9.0.2",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.2",
+  "version": "9.0.3",
+  "release_date": "2026-11-16",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v9.0.3",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.3",
   "extension_files": [
-    "worker-v9_0_2.js",
+    "worker-v9_0_3.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,12 +33,12 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.2/extension/injected.js",
-  "changelog": "Контекстное меню помещается в окно и прокручивается внутри. Кнопки обновления используют одинарную круговую стрелку в стиле Chrome.",
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.3/extension/injected.js",
+  "changelog": "Исправлена автосортировка новых и изменённых задач по папкам в реальном времени.",
   "release_notes": [
-    "Длинное меню ПКМ прокручивается колесом и полосой прокрутки.",
-    "Меню остаётся в пределах окна при открытии у края и при изменении размера окна.",
-    "В списке чатов, панели времени и проверке версии теперь одна и та же круговая стрелка."
+    "Новые задачи попадают в папки по правилам, даже если событие приходит раньше строки в списке.",
+    "При изменении задачи условия правил перечитываются: название, участники, проект, статус, приоритет и срок.",
+    "Запоздавшие ответы не отменяют свежие изменения. Настройки автопереноса и ручного подтверждения сохраняются."
   ],
   "verification_profile": "search-focused",
   "distribution": "github",

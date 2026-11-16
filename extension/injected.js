@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '9.0.2';
+	window.__ANITREC_RUNNING__ = '9.0.3';
 
-	const VER = '9.0.2';
+	const VER = '9.0.3';
 	// Google Material Icons / Refresh (Apache-2.0).
 	const _PENA_RELOAD_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>';
 	const _PENA_NATIVE_ONLY = true;
@@ -4380,7 +4380,11 @@
 		if (!IS_OL_FRAME && _isDialogControlNativeMode()) {
 			const container = findContainer();
 			_renderDialogControlNativeSwitcher(container, _getDialogControlItems());
-			_refreshDialogControlNativeUnreadFilter(container);
+			// Metadata can also change folder membership. Reapply the complete
+			// projection even when unread-only is off, including rows leaving it.
+			if (_isDialogControlNativePassThrough()) {
+				_applyDialogControlRowFilters(_getCurrentFilterRows(container), _getDialogControlNativeFilter());
+			}
 			_scheduleDialogControlNativeView(container, { restoreDisplay: false });
 		} else if (filtersHost && document.body.contains(filtersHost)) {
 			_refreshDialogControlPanel(filtersHost);
@@ -12880,7 +12884,7 @@ if (_presetChannel) {
 	const _dialogAutomationStorageErrors = new Map();
 	const _dialogAutomationDirtyTasks = new Map();
 	const _dialogAutomationTaskRevisions = new Map();
-	function _receiveDialogAutomationTask(id, fields) {
+	function _receiveDialogAutomationTask(id, fields, { invalidate = false } = {}) {
 		if (!_isPenaExtensionEnabled()) return;
 		const scope = _getDialogTimeIdentityScopeKey();
 		if (!scope) return;
@@ -12892,7 +12896,9 @@ if (_presetChannel) {
 			_setDialogRecentMeta(_dialogRecentMeta,{...meta,automationFacts:{...meta.automationFacts,...patch}});
 		}
 		if (metas.length && Object.keys(patch).length) _scheduleDialogRecentCacheWrite();
-		if (!Object.keys(patch).length || !metas.length) {
+		// Pull payloads are partial notifications, not complete task snapshots.
+		// Even a title in the event does not prove the old owner/status is current.
+		if (invalidate || !Object.keys(patch).length || !metas.length) {
 			_dialogAutomationDirtyTasks.set(taskKey,true);
 		}
 		_dialogAutomationAttempts.delete(taskKey);
@@ -13486,8 +13492,19 @@ if (_presetChannel) {
 			const items = _getDialogControlItemsForMode('tasks');
 			const folders = new Set(items.filter(_isDialogControlFolder).map(item => item.id));
 			const unresolved = rules.some(rule=>rule.enabled) ? items.filter(item => !_isDialogControlFolder(item) && !_isDialogControlItemUnavailable(item) && !locked.has(item.id) &&
-				/^\d+$/.test(String(item.taskId)) && (_dialogAutomationDirtyTasks.has(scope+':'+item.taskId) || window.__PENA_NATIVE_CATALOG__.automationDecision(rules, _dialogAutomationFacts(item), 'tasks', folders)?.pending)) : [];
-			const retryAt = item => (_dialogAutomationAttempts.get(scope+':'+item.taskId)||0)+(_dialogAutomationRetryDelays.get(scope+':'+item.taskId)||60000)+1;
+				(_dialogAutomationDirtyTasks.has(scope+':'+item.taskId) || window.__PENA_NATIVE_CATALOG__.automationDecision(rules, _dialogAutomationFacts(item), 'tasks', folders)?.pending)) : [];
+			// A task_add may precede the native row and the catalog. Do not strand
+			// its dirty ID by restricting detail reads to already hydrated items.
+			if (rules.some(rule=>rule.enabled)) {
+				const known = new Set(items.map(item=>String(item.taskId || '')));
+				for (const key of _dialogAutomationDirtyTasks.keys()) {
+					if (!key.startsWith(scope+':')) continue;
+					const taskId = key.slice(scope.length+1);
+					if (/^\d+$/.test(taskId) && !known.has(taskId)) unresolved.push({id:'',taskId});
+				}
+			}
+			const requestKey = item => scope+':'+(item.taskId || 'dialog:'+item.id);
+			const retryAt = item => (_dialogAutomationAttempts.get(requestKey(item))||0)+(_dialogAutomationRetryDelays.get(requestKey(item))||60000)+1;
 			const pending = unresolved.filter(item=>Date.now()>=retryAt(item)).slice(0,10);
 			if (!pending.length) {
 				if (unresolved.length) {
@@ -13503,23 +13520,35 @@ if (_presetChannel) {
 			try {
 				for (const item of pending) {
 					if (!_isPenaExtensionEnabled() || scope !== _getDialogTimeIdentityScopeKey() || document.hidden || navigator.onLine === false) break;
-					_dialogAutomationAttempts.set(`${scope}:${item.taskId}`, Date.now());
+					const key = requestKey(item);
+					_dialogAutomationAttempts.set(key, Date.now());
 					try {
-						const revision = _dialogAutomationTaskRevisions.get(scope+':'+item.taskId);
-						const data = await _callBxRestMethod('tasks.task.get', {taskId:item.taskId}, {timeoutMs:12000, isCurrent:()=>_isPenaExtensionEnabled() && scope===_getDialogTimeIdentityScopeKey() && !document.hidden});
-						if (!_isPenaExtensionEnabled() || scope !== _getDialogTimeIdentityScopeKey()) break;
-						if (_dialogAutomationTaskRevisions.get(scope+':'+item.taskId) !== revision) { _dialogAutomationAttempts.delete(scope+':'+item.taskId); continue; }
-						const task = _extractTaskRecordFromData(data);
-						if (String(task?.id ?? task?.ID) !== String(item.taskId)) continue;
-						const meta = _getDialogRecentMeta(item.id);
-						if (meta) {
-							_setDialogRecentMeta(_dialogRecentMeta, {...meta, automationFacts:window.__PENA_NATIVE_CATALOG__.taskAutomationFacts(task, meta.automationFacts)});
-							_scheduleDialogRecentCacheWrite();
-							_dialogAutomationDirtyTasks.delete(scope+':'+item.taskId);
-							_dialogAutomationRetryDelays.delete(scope+':'+item.taskId);
+						const current = ()=>_isPenaExtensionEnabled() && scope===_getDialogTimeIdentityScopeKey() && !document.hidden && navigator.onLine!==false;
+						let taskId = String(item.taskId || '');
+						if (!/^\d+$/.test(taskId)) {
+							// Native task rows do not always expose data-task-id. Resolve only
+							// an unresolved rule candidate, through the bounded shared queue.
+							const dialog = await _callBxRestMethod('im.dialog.get', {DIALOG_ID:item.id}, {timeoutMs:12000,isCurrent:current});
+							if (!current()) break;
+							taskId = String(_extractTaskMetaFromDialogData(dialog)?.taskId || '');
+							if (!/^\d+$/.test(taskId)) continue;
 						}
+						const taskKey = scope+':'+taskId;
+						const revision = _dialogAutomationTaskRevisions.get(taskKey);
+						const data = await _callBxRestMethod('tasks.task.get', {taskId}, {timeoutMs:12000,isCurrent:current});
+						if (!current()) break;
+						if (_dialogAutomationTaskRevisions.get(taskKey) !== revision) { _dialogAutomationAttempts.delete(key); continue; }
+						const task = _extractTaskRecordFromData(data);
+						if (String(task?.id ?? task?.ID) !== taskId) continue;
+						const chatId = task.CHAT_ID ?? task.chatId ?? task.chat?.id ?? item.id;
+						if (!/^(?:chat)?[1-9]\d*$/.test(String(chatId))) continue;
+						if (!_mergeDialogTaskCatalogRows([{...task,CHAT_ID:chatId}])) continue;
+						_dialogAutomationDirtyTasks.delete(taskKey);
+						_dialogAutomationRetryDelays.delete(key);
+						_hydrateAllDialogControlModesFromRecent({pruneMissing:false});
+						_scheduleDialogRecentCacheWrite();
+						_notifyDialogRecentDataChanged();
 					} catch {
-						const key=scope+':'+item.taskId;
 						_dialogAutomationRetryDelays.set(key,Math.min(300000,(_dialogAutomationRetryDelays.get(key)||30000)*2));
 						break;
 					}
@@ -18711,7 +18740,7 @@ if (_presetChannel) {
 						return;
 					}
 					const changedTitle = task.TITLE ?? task.title ?? payload.FIELDS_AFTER?.TITLE ?? payload.FIELDS_AFTER?.title;
-					_receiveDialogAutomationTask(id, payload.FIELDS_AFTER || task);
+					_receiveDialogAutomationTask(id, payload.FIELDS_AFTER || task, {invalidate:true});
 					if (typeof changedTitle === 'string') _queueDialogTimeTaskTitle(id, changedTitle);
 					else if (_dialogControlNativeWorkspaceTab !== 'time') _scheduleDialogTimeVisibleTitleRead(id);
 					const changedFields = payload.FIELDS_AFTER || task;
