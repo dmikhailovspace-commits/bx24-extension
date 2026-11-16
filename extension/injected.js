@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '9.0.3';
+	window.__ANITREC_RUNNING__ = '9.0.4';
 
-	const VER = '9.0.3';
+	const VER = '9.0.4';
 	// Google Material Icons / Refresh (Apache-2.0).
 	const _PENA_RELOAD_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>';
 	const _PENA_NATIVE_ONLY = true;
@@ -11388,6 +11388,22 @@ if (_presetChannel) {
 		return rows.filter(user => user && /^[1-9]\d*$/.test(String(user.id)) &&
 			![true,'Y'].includes(user.bot) && ![true,'Y'].includes(user.connector));
 	}
+	async function _searchPenaRulePeople(query, offset, options, provider) {
+		if (provider !== 'user.search') {
+			try { return await _callBxRestReadPage('im.search.user.list', { FIND:query, OFFSET:offset, LIMIT:20 }, options); }
+			catch (error) {
+				// Some portals reject two letters in IM's full-text index. The user
+				// directory supports prefix search and has a different pagination cursor.
+				if (error.code !== 'FIND_SHORT' || Array.from(query).length !== 2 || !options.isCurrent()) throw error;
+			}
+		}
+		const page = await _callBxRestReadPage('user.search', { FILTER:{FIND:query}, start:offset,
+			select:['ID','NAME','LAST_NAME','SECOND_NAME','WORK_POSITION'] }, options);
+		const rows = page.data?.result ?? page.data;
+		if (!Array.isArray(rows)) throw new Error('Invalid user directory response');
+		return {...page, provider:'user.search', data:rows.map(user => ({id:user.ID,
+			name:[user.NAME,user.SECOND_NAME,user.LAST_NAME].filter(Boolean).join(' '), work_position:user.WORK_POSITION}))};
+	}
 	async function _loadPenaEmployeeSearch(state, offset) {
 		if (!_isPenaEmployeeSearchCurrent(state)) return;
 		state.loading = true; state.error = ''; state.openError = ''; state.retryOffset = offset;
@@ -13969,10 +13985,21 @@ if (_presetChannel) {
 						if(person)valueHost.className='pena-automation-person';
 						const input=node('input',null,valueHost); input.type=type==='date'?'date':'text'; input.value=condition.label||condition.value; input.maxLength=300;
 						input.placeholder=project?'Найти проект':person?'Найти сотрудника':'Введите текст'; input.setAttribute('aria-label','Значение условия');input.autocomplete='off';
-						let lookupTimer=null,lookupVersion=0,suppressFocus=false;
+						let lookupTimer=null,lookupVersion=0,suppressFocus=false,lookupProvider='';
 						const results=person?node('div',null,valueHost):null;
-						if(results){results.className='pena-automation-results';results.hidden=true;input.setAttribute('aria-expanded','false');input.setAttribute('aria-haspopup','true');}
-						const hideResults=()=>{if(results){results.hidden=true;input.setAttribute('aria-expanded','false');}lookupVersion++;clearTimeout(lookupTimer);};
+						if(results){results.className='pena-automation-results';results.hidden=true;if(typeof results.showPopover==='function')results.setAttribute('popover','manual');input.setAttribute('aria-expanded','false');input.setAttribute('aria-haspopup','true');}
+						const positionResults=()=>{
+							if(!results||results.hidden)return;
+							const rect=input.getBoundingClientRect(),clip=scroll.getBoundingClientRect();
+							if(rect.bottom<=clip.top||rect.top>=clip.bottom){hideResults();return;}
+							const below=Math.max(0,innerHeight-rect.bottom-12),above=Math.max(0,rect.top-12),up=below<200&&above>below;
+							results.style.width=Math.min(rect.width,innerWidth-16)+'px';results.style.maxHeight=Math.min(200,up?above:below)+'px';
+							results.style.left=Math.max(8,Math.min(rect.left,innerWidth-results.offsetWidth-8))+'px';
+							results.style.top=(up?rect.top-4-results.offsetHeight:rect.bottom+4)+'px';
+						};
+						const trackResults=event=>{if(!results.contains(event.target))positionResults();};
+						const hideResults=()=>{if(results){if(results.hasAttribute('popover')&&results.matches(':popover-open'))results.hidePopover();results.hidden=true;input.setAttribute('aria-expanded','false');}window.removeEventListener('resize',positionResults);document.removeEventListener('scroll',trackResults,true);lookupVersion++;clearTimeout(lookupTimer);};
+						const showResults=()=>{results.hidden=false;input.setAttribute('aria-expanded','true');if(results.hasAttribute('popover')&&!results.matches(':popover-open'))results.showPopover();positionResults();window.addEventListener('resize',positionResults);document.addEventListener('scroll',trackResults,true);};
 						lookupCleanups.add(hideResults);card.addEventListener('pena-collapse',hideResults);
 						if(results)results._penaDismiss=()=>{hideResults();if(results.contains(document.activeElement)){suppressFocus=true;input.focus({preventScroll:true});suppressFocus=false;}};
 						const hydrateSelected=async()=>{
@@ -13999,13 +14026,14 @@ if (_presetChannel) {
 							if(!input.isConnected||body.hidden||key!==_dialogAutomationKey(mode)||mode!==_pMode())return;
 							const query=input.value.trim().normalize('NFC'),version=++lookupVersion;
 							const current=()=>input.isConnected&&!body.hidden&&version===lookupVersion&&input.value.trim().normalize('NFC')===query&&key===_dialogAutomationKey(mode)&&mode===_pMode();
-							results.hidden=false;input.setAttribute('aria-expanded','true');
+							showResults();
 							if(!offset)results.replaceChildren();
 							const progress=node('span',project?'Загружаем проекты…':'Поиск…',results);progress.className='pena-automation-lookup-status';
 							try{
 								const response=project?{data:(await _loadDialogTimeProjects()).filter(item=>!query||item.name.toLocaleLowerCase('ru').includes(query.toLocaleLowerCase('ru'))||item.id===query)}:
-									await _callBxRestReadPage('im.search.user.list',{FIND:query,OFFSET:offset,LIMIT:20},{attempts:1,timeoutMs:12000,isCurrent:current});
+									await _searchPenaRulePeople(query,offset,{attempts:1,timeoutMs:12000,isCurrent:current},lookupProvider);
 								if(!current())return;progress.remove();
+								lookupProvider=response.provider||'';
 								const users=project?response.data:_normalizePenaDirectoryUsers(response.data);
 								for(const user of users){
 									const id=model.normalizeAutomationId?.(user.id)||String(user.id),name=String(user.name||[user.first_name,user.last_name].filter(Boolean).join(' ')||id);
@@ -14016,13 +14044,15 @@ if (_presetChannel) {
 								if(!users.length&&!offset)node('span',project?'Проекты не найдены':'Сотрудники не найдены',results).className='pena-automation-lookup-status';
 								if(Number.isInteger(response.next)&&response.next>offset){const more=button('Показать ещё',results,()=>{more.remove();lookup(response.next);});}
 							}catch{if(current()){progress.textContent='Не удалось загрузить. ';button('Повторить',progress,()=>{progress.remove();lookup(offset);});}}
+							if(current())positionResults();
 						};
 						const editValue=event=>{
-							delete condition.label;condition.value=input.value.trim().normalize('NFC');hideResults();
+							delete condition.label;condition.value=input.value.trim().normalize('NFC');hideResults();lookupProvider='';
 							if(!person||event.isComposing)return;
-							results.replaceChildren();results.hidden=false;input.setAttribute('aria-expanded','true');
-							if(!project&&Array.from(condition.value).length<2){results.textContent='Введите хотя бы 2 буквы';return;}
+							results.replaceChildren();showResults();
+							if(!project&&Array.from(condition.value).length<2){results.textContent='Введите хотя бы 2 буквы';positionResults();return;}
 							node('span',project?'Загружаем проекты…':'Поиск…',results).className='pena-automation-lookup-status';
+							positionResults();
 							lookupTimer=setTimeout(()=>lookup(),300);
 						};
 						input.addEventListener('input',editValue);

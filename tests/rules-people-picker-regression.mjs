@@ -19,12 +19,18 @@ try{
  await page.goto(server.baseUrl+'/tests/native-consistency-harness.html?mode=tasks&nativeCatalog=1&passThrough=1');
  await page.locator('.task-host .pena-native-rules-button').waitFor();
  await page.evaluate(()=>{
-  window.peopleCalls=[];window.peopleHeld={};window.holdPerson=false;window.failPerson=false;window.personCalls=[];window.personDelivered=[];
+  window.peopleCalls=[];window.directoryCalls=[];window.rejectShort=false;window.failDirectory=false;window.peopleHeld={};window.holdPerson=false;window.failPerson=false;window.personCalls=[];window.personDelivered=[];
   const original=BX.rest.callMethod;BX.rest.callMethod=function(method,params,callback){
    if(method==='im.search.user.list'){
     peopleCalls.push({...params});const query=params.FIND;
+    if(rejectShort&&Array.from(query).length===2){setTimeout(()=>callback({error:()=>({error:'FIND_SHORT'})}),20);return;}
     const respond=()=>callback({error:()=>null,data:()=>query==='Пусто'?[]:{'42':{id:42,name:query==='Старый'?'Старое имя':'Анна Тестовая'}}});
     if(query==='Старый')peopleHeld.search=respond;else setTimeout(respond,40);return;
+   }
+   if(method==='user.search'){
+    directoryCalls.push(params);const failed=failDirectory;
+    const respond=()=>callback({error:()=>failed?{error:'ACCESS_DENIED'}:null,answer:{next:params.start===0?50:null},data:()=>[{ID:params.start?'44':'42',NAME:'Анна',LAST_NAME:params.start?'Следующая':'Тестовая',WORK_POSITION:'Дизайнер'}]});
+    if(params.FILTER.FIND==='Ст')peopleHeld.directory=respond;else setTimeout(respond,40);return;
    }
    if(method==='im.user.get'&&['42','43'].includes(String(params.ID))){
     personCalls.push(String(params.ID));const failed=failPerson;const respond=()=>{personDelivered.push({id:String(params.ID),failed});callback({error:()=>failed?{error:'ACCESS_DENIED'}:null,data:()=>({id:String(params.ID),name:'Имя из портала '+params.ID})});};
@@ -62,6 +68,30 @@ try{
  await page.getByRole('button',{name:'Анна Тестовая · 42',exact:true}).click();
  await page.getByLabel('Оператор').selectOption('neq');assert.equal(await input().inputValue(),'Анна Тестовая','Selected name survives draft redraw');
  phases.push('Two-letter typing, Unicode normalization, empty and stale results, selected redraw');await close();
+ await page.evaluate(()=>{rejectShort=true;});await openStored('');
+ await page.getByRole('button',{name:'Добавить условие',exact:true}).click();
+ const firstInput=page.getByLabel('Значение условия').first();
+ const lower=page.locator('.pena-automation-condition').nth(1);
+ const lowerBefore=await lower.boundingBox();
+ await firstInput.fill('Ан');await page.getByRole('button',{name:'Анна Тестовая · 42',exact:true}).waitFor({timeout:5000});
+ assert.equal((await lower.boundingBox()).y,lowerBefore.y,'Opening the picker must not push down the next condition');
+ const stacking=await lower.evaluate(el=>{const r=el.querySelector('input').getBoundingClientRect(),list=document.querySelector('.pena-automation-results:not([hidden])'),box=list.getBoundingClientRect(),x=Math.max(r.left,box.left)+8,y=Math.max(r.top,box.top)+8;return {overlap:x<Math.min(r.right,box.right)&&y<Math.min(r.bottom,box.bottom),above:list.contains(document.elementFromPoint(x,y)),opaque:getComputedStyle(list).backgroundColor};});
+ assert.deepEqual(stacking,{overlap:true,above:true,opaque:'rgb(255, 255, 255)'},'The popup covers and intercepts clicks over the next input');
+ mkdirSync('tests/artifacts',{recursive:true});await page.screenshot({path:'tests/artifacts/rules-people-overlay.png'});
+ await page.setViewportSize({width:800,height:540});await page.waitForTimeout(80);
+ const bounds=await page.locator('.pena-automation-results:visible').boundingBox();assert.ok(bounds.y>=8&&bounds.y+bounds.height<=532,'Popup stays inside the shorter viewport');
+ await page.setViewportSize({width:1280,height:900});
+ await page.getByRole('button',{name:'Показать ещё',exact:true}).click();
+ await page.getByRole('button',{name:'Анна Следующая · 44',exact:true}).waitFor();
+ assert.deepEqual(await page.evaluate(()=>directoryCalls.slice(-2).map(p=>[p.FILTER.FIND,p.start])),[['Ан',0],['Ан',50]],'Fallback pagination uses its own next cursor');
+ await firstInput.press('Escape');assert.equal(await page.locator('.pena-automation-results:visible').count(),0);assert.equal(await page.locator('.pena-automation-panel').count(),1);
+ await page.evaluate(()=>failDirectory=true);await firstInput.fill('Ма');await page.getByRole('button',{name:'Повторить',exact:true}).waitFor();
+ await page.evaluate(()=>failDirectory=false);await page.getByRole('button',{name:'Повторить',exact:true}).click();await page.getByRole('button',{name:'Анна Тестовая · 42',exact:true}).waitFor();
+ await firstInput.fill('Ст');await page.waitForFunction(()=>!!peopleHeld.directory);await firstInput.fill('Анн');await page.getByRole('button',{name:'Анна Тестовая · 42',exact:true}).waitFor();
+ await page.evaluate(()=>peopleHeld.directory());await page.waitForTimeout(80);assert.equal(await page.getByRole('button',{name:'Показать ещё',exact:true}).count(),0,'Late fallback cannot replace the newer primary search');
+ await firstInput.fill('Ан');await page.getByRole('button',{name:'Анна Тестовая · 42',exact:true}).waitFor();await firstInput.press('ArrowDown');await page.keyboard.press('Enter');assert.equal(await firstInput.inputValue(),'Анна Тестовая');
+ await close();assert.equal(await page.locator('.pena-automation-results:visible').count(),0);await page.evaluate(()=>{rejectShort=false;localStorage.removeItem(peopleTest.key('tasks'));});
+ phases.push('FIND_SHORT fallback, uppercase user records, pagination, retry, stale fence, opaque overlay without reflow and keyboard dismissal');
  // An actual portable import must preserve the ID and presentation label.
  const imported=await page.evaluate(rule=>{const snapshot=peopleTest.snapshot();snapshot.modes.tasks.automation.rules=[rule];return JSON.stringify(snapshot);},rule({ID:'00042'},'Анна из файла'));
  await page.evaluate(()=>peopleTest.transfer());

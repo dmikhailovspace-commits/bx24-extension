@@ -1193,7 +1193,8 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 .pena-automation-destination>select{flex:1;max-width:360px}
 .pena-automation-person{position:relative;min-width:0}
 .pena-automation-person>input{width:100%}
-.pena-automation-results{position:relative;z-index:2;display:grid;gap:2px;max-height:200px;overflow:auto;margin-top:4px;padding:4px;border:1px solid #cbd6e6;border-radius:8px;background:#fff;scrollbar-width:thin}
+.pena-automation-results{position:fixed;inset:auto;z-index:2147483647;display:grid;gap:2px;max-height:200px;overflow:auto;margin:0;padding:4px;border:1px solid #cbd6e6;border-radius:8px;background:#fff;color:#182237;box-shadow:0 8px 24px #14203926;font:500 12px/18px var(--pena-rules-ui);scrollbar-width:thin}
+.pena-automation-results::backdrop{background:transparent;pointer-events:none}
 .pena-automation-panel .pena-automation-person-option{display:grid;justify-content:stretch;gap:2px;height:auto;min-height:48px;text-align:left;white-space:normal;overflow-wrap:anywhere;padding:8px;border:0;border-radius:6px}
 .pena-automation-person-option strong{font-weight:650}
 .pena-automation-person-option span{font-size:11px;color:#68778d}

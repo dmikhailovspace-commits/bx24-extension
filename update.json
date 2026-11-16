@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "9.0.3",
+  "version": "9.0.4",
   "release_date": "2026-11-16",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v9.0.3",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.3",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v9.0.4",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.4",
   "extension_files": [
-    "worker-v9_0_3.js",
+    "worker-v9_0_4.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,12 +33,12 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.3/extension/injected.js",
-  "changelog": "Исправлена автосортировка новых и изменённых задач по папкам в реальном времени.",
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.4/extension/injected.js",
+  "changelog": "Исправлены поиск сотрудников по двум символам и перекрытие полей выпадающим списком.",
   "release_notes": [
-    "Новые задачи попадают в папки по правилам, даже если событие приходит раньше строки в списке.",
-    "При изменении задачи условия правил перечитываются: название, участники, проект, статус, приоритет и срок.",
-    "Запоздавшие ответы не отменяют свежие изменения. Настройки автопереноса и ручного подтверждения сохраняются."
+    "В правилах можно искать сотрудника по двум символам, даже если поиск чатов Bitrix отклоняет короткий запрос.",
+    "Список сотрудников и проектов открывается поверх остальных полей и не сдвигает форму.",
+    "Список остаётся в пределах окна; выбор с клавиатуры и повтор после сетевой ошибки сохранены."
   ],
   "verification_profile": "search-focused",
   "distribution": "github",
