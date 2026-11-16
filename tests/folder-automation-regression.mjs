@@ -155,11 +155,14 @@ try {
  await page.evaluate(()=>{
   const call=window.BX.rest.callMethod;
   window.automationDetailCalls=0;
+  window.automationDetailReplies=0;
+  window.automationTask={ID:'101',CHAT_ID:'101',TITLE:'Задача 101',RESPONSIBLE_ID:'12',CREATED_BY:'7',STATUS:'3',DEADLINE:'2020-01-01'};
   window.BX.rest.callMethod=function(method,params,callback){
    if(method==='im.search.user.list'){callback({error:()=>null,data:()=>({'12':{id:'12',name:'Ирина Тестовая',work_position:'Продюсер'}})});return;}
    if(method==='tasks.task.get' && String(params.taskId)==='101'){
     window.automationDetailCalls++;
-    setTimeout(()=>callback({error:()=>null,data:()=>({task:{id:'101',responsibleId:'12',createdBy:'7',status:'3',deadline:'2020-01-01'}})}),900);return;
+    const task=structuredClone(window.automationTask);
+    setTimeout(()=>{callback({error:()=>null,data:()=>({task})});window.automationDetailReplies++;},900);return;
    }
    return call.call(this,method,params,callback);
   };
@@ -191,7 +194,15 @@ try {
   return {key,original};
  });
  await page.waitForTimeout(700);
- const pull=fields=>page.evaluate(fields=>(nativeCustomEventHandlers.get('onPullEvent-tasks')||[]).forEach(fn=>fn('task_update',{TASK_ID:'101',FIELDS_AFTER:{ID:'101',...fields}})),fields);
+ const pull=async fields=>{
+  const before=await page.evaluate(fields=>{
+   Object.assign(window.automationTask,fields);
+   const before=window.automationDetailReplies;
+   (nativeCustomEventHandlers.get('onPullEvent-tasks')||[]).forEach(fn=>fn('task_update',{TASK_ID:'101',FIELDS_AFTER:{ID:'101',...fields}}));
+   return before;
+  },fields);
+  await page.waitForFunction(before=>window.automationDetailReplies>before,before);
+ };
  const taskFolder=()=>page.evaluate(()=>JSON.parse(localStorage.getItem('pena.dialogControl.v1.tasks')).find(item=>item.id==='chat101').folderId||'');
  await pull({RESPONSIBLE_ID:'77'});
  await page.locator('.task-host .pena-native-rules-button.--pending').waitFor();
@@ -211,6 +222,7 @@ try {
  // applying its captured destination, even before the scheduled redraw runs.
  await page.evaluate(()=>{
   const accept=[...document.querySelectorAll('.pena-automation-ticket button')].find(button=>button.textContent==='Подтвердить перенос');
+  window.automationTask.RESPONSIBLE_ID='12';
   (nativeCustomEventHandlers.get('onPullEvent-tasks')||[]).forEach(fn=>fn('task_update',{TASK_ID:'101',FIELDS_AFTER:{ID:'101',RESPONSIBLE_ID:'12'}}));
   accept.click();
  });
