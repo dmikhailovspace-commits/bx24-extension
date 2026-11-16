@@ -197,11 +197,15 @@ export async function checkTransferCode(page, platform) {
  assert.equal(await panel.getByLabel('Код экспорта').evaluate(el=>el.selectionEnd-el.selectionStart===el.value.length),true,'Copy fallback selects the displayed preview');
  assert.equal(await panel.getByLabel('Код экспорта').evaluate(el=>{const clipboard=new DataTransfer();el.dispatchEvent(new ClipboardEvent('copy',{bubbles:true,cancelable:true,clipboardData:clipboard}));return clipboard.getData('text/plain');}),code,'Manual copy transfers the full code even when only a preview is displayed');
  await panel.getByText('Вставить код вместо файла',{exact:true}).click();
+ // Measure the final layout, not a fractional translated bounding box while
+ // the newly revealed textarea is still playing its entrance animation.
+ await settleTransferMotion(panel);
  assertStable(anchors,await stableRects(panel),'Expanded import');
  const input=panel.getByLabel('Код импорта'),check=panel.getByRole('button',{name:'Проверить код'});
  await input.fill('one line');const oneLine=(await input.boundingBox()).height;
  await input.fill(Array.from({length:30},(_,i)=>`line ${i}`).join('\n'));
- assert.ok((await input.boundingBox()).height>oneLine&&(await input.boundingBox()).height<=160,'Import textarea grows with lines and stops at 160px');
+ const manyLines=(await input.boundingBox()).height;
+ assert.ok(manyLines>oneLine&&manyLines<=160,`Import textarea grows with lines and stops at 160px: ${oneLine} -> ${manyLines}`);
  const file=panel.getByLabel('Файл настроек');
  await file.setInputFiles({name:'large.json',mimeType:'application/json',buffer:Buffer.alloc(10*1024*1024+1,32)});
  await status.filter({hasText:'Файл слишком большой'}).waitFor();assert.equal(await confirm.isDisabled(),true);
