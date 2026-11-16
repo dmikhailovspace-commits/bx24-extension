@@ -74,9 +74,14 @@ export async function verifyAutomationAudit(model,injectedSource) {
   _setDialogRecentMeta:(target,meta)=>target.set(meta.id,meta),_scheduleDialogRecentCacheWrite(){},
   _isDialogControlFolder:item=>item.type==='folder',_isDialogControlItemUnavailable:item=>!!item.unavailable,
   _getDialogControlItemsForMode:mode=>items[mode],_saveDialogControlItemsForMode(){},_notifyDialogRecentDataChanged(){},_dialogControlNativeViewSig:'',
-  _callBxRestMethod:()=>new Promise(resolve=>pendingResponses.push(resolve)),_extractTaskRecordFromData:data=>data.task
+  _callBxRestMethod:()=>new Promise(resolve=>pendingResponses.push(resolve)),_extractTaskRecordFromData:data=>data.task,
+  normId:id=>id,_readDialogTaskTimeTrackingFlag:()=>null,_parseDialogRecentDate:()=>0,
+  _buildTaskUrl:id=>'/task/'+id,_normalizeDialogControlRestDialogId:id=>id,
+  _dialogTimeTaskTitles:new Map(),_hydrateAllDialogControlModesFromRecent:()=>0
  };
- runInNewContext(source.slice(start,end)+'\nthis.api={apply:_applyDialogAutomation,receive:_receiveDialogAutomationTask,schedule:_scheduleDialogAutomation,tickets:_dialogAutomationTickets};',context);
+ const mergeStart=source.indexOf('\tfunction _mergeDialogTaskCatalogRows('),mergeEnd=source.indexOf('\tasync function _loadDialogTaskCatalogPartitionTail(',mergeStart);
+ assert.ok(mergeStart>0&&mergeEnd>mergeStart);
+ runInNewContext(source.slice(mergeStart,mergeEnd)+source.slice(start,end)+'\nthis.api={apply:_applyDialogAutomation,receive:_receiveDialogAutomationTask,schedule:_scheduleDialogAutomation,tickets:_dialogAutomationTickets};',context);
  const {api}=context;
  const key=()=>`pena.automation.v1.${scope}.tasks`;
  const ownerRule=id=>makeRule([{field:'responsibleId',op:'eq',value:id}],'all',{id,folderId:id==='2'?'folder:a':'folder:b'});
