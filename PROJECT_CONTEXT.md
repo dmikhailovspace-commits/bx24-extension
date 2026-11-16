@@ -10,6 +10,8 @@
 - Новый браузерный rules-live проверяет реальные Pull-подписки и DOM-наблюдатель общего runtime: частичное событие, task_add до строки, строка без taskId, все изменяемые поля правил, гонку ответов и ручное подтверждение. Исходная 9.0.2 не проходит четыре из первых пяти сценариев. Проверки синтетические; живой портал, CEF и физический Mac не проверены.
 - Выпуск: точный search-focused 16 плюс существующие CI gates и rules-live; обе desktop-сборки и Chrome ZIP из одного frozen commit. После GitHub обязательны проверка публичного main/update.json и замена шести файлов в существующей общей папке Диска.
 - Первая попытка CI 43918735441 остановилась до сборок: Chrome показывал прежние release notes из content.js. Тексты синхронизированы с update.json; опубликованного 9.0.3 ещё нет, тег фиксируется заново до публикации.
+- Поставка завершена из `cfd09623128ac6a9e626fcb70b3b2f5dcceaa5d9`: CI 43924128507 success, search-focused 16/16 за 418064 ms и все дополнительные gates PASS. Восемь GitHub assets сверены с CI/digest/sidecar, 19 публичных runtime-файлов совпали с frozen source. Windows ProductVersion 9.0.3, Universal DMG проверен на macOS runner. Подробности остановок на старых тестовых фикстурах и доказательства — docs/qa/release-9.0.3.md.
+- Публичный desktop-канал подтверждён штатным publish-update-channel как 9.0.3; коммит `3f8dbcee6406033c05335f22986a58710c7b3be2` меняет только main/update.json. Chrome Store принял идентичный ZIP на проверку с автопубликацией, статус «Ожидает рассмотрения». Шесть файлов Диска загружены и проверены, затем прежние убраны в корзину; та же общая папка переименована в v9.0.3, в родителе одна версия. Store/Диск выполнены через браузер без native Computer Use.
 
 
 ## Выпуск 9.0.2 — меню ПКМ и обновление, 10.11.2026
@@ -123,8 +125,8 @@
 - Release date: **2026-11-16**
 - Runtime files: **19**
 - Regression suites: **106**
-- Windows artifact: _not built_
-- macOS artifact: _not built_
+- Windows artifact: `dist/BX24_Chat_Sorter_Windows_v9.0.3.exe` - SHA-256: `DFEF70B7E8E7CFCE1A022FA05A0BA138C377EFEECF68AA05356A2EFF078CE300`
+- macOS artifact: `dist/BX24_Chat_Sorter_macOS_Universal_v9.0.3.dmg` - SHA-256: `730E5D9B85A3FA41BEC3FE6B1BA282896148D10E7D2616EAED02CB0F574535D0`
 <!-- AUTO:END -->
 
 ## Текущая правка: плавное раскрытие и краткая обратная связь — 08.11.2026, предпросмотр 8.0.67
