@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "9.0.5",
+  "version": "9.0.6",
   "release_date": "2026-11-17",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v9.0.5",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.5",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v9.0.6",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.6",
   "extension_files": [
-    "worker-v9_0_5.js",
+    "worker-v9_0_6.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,12 +33,12 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.5/extension/injected.js",
-  "changelog": "Исправлено обновление условий и очереди пересортировки после пропущенных событий Bitrix24.",
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.6/extension/injected.js",
+  "changelog": "Оптимизация фоновой сверки задач и панели папок. Справка «Инфо» в правилах сортировки.",
   "release_notes": [
-    "Сортировщик проверяет актуальные условия уже известных задач, даже если событие об изменении не пришло.",
-    "После смены исполнителя, постановщика или статуса обновляется очередь пересортировки.",
-    "Ручное подтверждение переносов и исключения сохраняются. Сверка работает в фоне небольшими пакетами."
+    "Фоновая сверка неизменившихся задач больше не запускает полный пересчёт правил и перерисовку папок.",
+    "Снижена нагрузка при построении счётчиков папок; сохранены живая пересортировка, подтверждение и исключения.",
+    "В панели правил появилась кнопка «Инфо» с объяснением сортировки и примерами."
   ],
   "verification_profile": "search-focused",
   "distribution": "github",

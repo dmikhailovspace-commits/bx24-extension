@@ -81,6 +81,10 @@ jobs:
           node tests/rules-preview-races-regression.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Verify quiet automation performance contract
+        shell: pwsh
+        run: node tests/automation-performance-regression.mjs
+
       - name: Verify elapsed freshness and automatic recovery
         shell: pwsh
         run: |

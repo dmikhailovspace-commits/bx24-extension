@@ -11,7 +11,7 @@ let reads=0, unique=false;
 const groups=Array.from({length:40},(_,i)=>({id:'g'+i}));
 const sandbox={Map,Set,Number,String,Array,Math,filters:{},_currentPanelMode:'chats',IS_OL_FRAME:false,window:{},
  normId:v=>String(v||''),_isDialogControlFolder:x=>x.type==='folder',_isDialogControlItemUnavailable:x=>!!x.unavailable,
- _getDialogRecentMeta:()=>null,_getDialogControlAssignedColor:x=>x.color||'',
+ _getDialogRecentMeta:()=>null,_getDialogNativeCounterContext:()=>null,_getDialogControlAssignedColor:x=>x.color||'',
  _getDialogControlItemLiveMeta:x=>{reads++;return x.meta;},_getDialogControlUniqueOnly:()=>unique,
  _getDialogControlViewPrefs:()=>({sortMode:'date',sortDirection:'desc',unreadOnly:false})};
 vm.createContext(sandbox);

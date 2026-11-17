@@ -1117,6 +1117,12 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 .pena-automation-panel{--pena-rules-ui:"Onest Variable",Onest,Arial,sans-serif;display:grid;grid-template-rows:48px auto minmax(0,1fr) auto;width:min(960px,100%);height:min(720px,calc(100dvh - 32px));margin:0;padding:0;overflow:hidden;border:1px solid #d6deea;border-radius:16px;background:#f7f9fc;color:#182237;box-shadow:0 24px 70px rgba(15,23,42,.28),0 3px 12px rgba(15,23,42,.12);font:500 12px/18px var(--pena-rules-ui);text-transform:none;letter-spacing:normal}
 .pena-automation-tabs{display:flex;gap:8px;padding:8px 16px;border-bottom:1px solid #e2e7ee;background:#fff}
 .pena-automation-tabs [aria-selected=true]{background:#edf3ff;border-color:#7293f3;color:#2854d7}
+.pena-automation-info{max-width:720px;margin:0 auto;line-height:1.6}
+.pena-automation-info[hidden]{display:none}
+.pena-automation-info h3{margin:0 0 20px;font-size:18px;line-height:1.4}
+.pena-automation-info section{margin:0 0 20px}
+.pena-automation-info h4{margin:0 0 4px;font-size:13px;font-weight:650}
+.pena-automation-info p{margin:0;color:#526480;overflow-wrap:anywhere}
 .pena-automation-tickets{display:grid;gap:16px}
 .pena-automation-ticket{display:grid;gap:8px;padding:16px;border:1px solid #d7dfeb;border-radius:8px;background:#fff;overflow-wrap:anywhere}
 .pena-automation-ticket-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}

@@ -54,6 +54,7 @@ function fixture() {
     _isDialogControlFolder: item => item.type === 'folder',
     _isDialogControlItemUnavailable: item => item.unavailable === true,
     _getDialogControlItemLiveMeta: item => ({ ...item }),
+    _getDialogNativeCounterContext: () => null,
     _getDialogRecentMeta: () => null,
     normId: id => String(id || '')
   };

@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '9.0.5';
+	window.__ANITREC_RUNNING__ = '9.0.6';
 
-	const VER = '9.0.5';
+	const VER = '9.0.6';
 	// Google Material Icons / Refresh (Apache-2.0).
 	const _PENA_RELOAD_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>';
 	const _PENA_NATIVE_ONLY = true;
@@ -4326,11 +4326,11 @@
 		return ['tasks', 'chats'].reduce((total, mode) => total + _hydrateDialogControlItemsFromRecent(mode, options), 0);
 	}
 
-	function _mergeDialogRecentWithDomMeta(dialogId, domMeta) {
+	function _mergeDialogRecentWithDomMeta(dialogId, domMeta, counterContext = undefined) {
 		// An index can briefly retain a DOM node after Bitrix has recycled it.
 		// Never merge the new occupant's title/counters into the previous dialog.
 		if (domMeta?.id && normId(domMeta.id) !== normId(dialogId)) domMeta = null;
-		const native = _getDialogNativeCounterMeta(dialogId);
+		const native = _getDialogNativeCounterMeta(dialogId, counterContext);
 		const stored = _getDialogRecentMeta(dialogId);
 		const recent = native ? Object.assign({}, stored || domMeta || { id: normId(dialogId) }, native) : stored;
 		if (!recent) return domMeta;
@@ -5563,7 +5563,8 @@
 	}
 
 	function _mergeDialogTaskCatalogRows(rows = [], automationEvidence = null) {
-		if (automationEvidence && automationEvidence.scope !== _getDialogTimeIdentityScopeKey()) return 0;
+		const scope = _getDialogTimeIdentityScopeKey();
+		if (automationEvidence && automationEvidence.scope !== scope) return 0;
 		let merged = 0;
 		const fetchedAt = Date.now();
 		for (const task of rows) {
@@ -5573,7 +5574,7 @@
 			const id = normId(/^chat/i.test(rawChatId) ? rawChatId : `chat${rawChatId}`);
 			if (!id) continue;
 			const previous = _getDialogRecentMeta(id) || {};
-			const taskKey = _getDialogTimeIdentityScopeKey()+':'+rawTaskId;
+			const taskKey = scope+':'+rawTaskId;
 			const changedAfterRead = automationEvidence && ((_dialogAutomationTaskRevisions.get(taskKey)||0) !== (automationEvidence.revisions.get(taskKey)||0) ||
 				(automationEvidence.readAt && (_dialogAutomationVerifiedTasks.get(taskKey)||0)>automationEvidence.readAt));
 			const displayTitle = String(changedAfterRead
@@ -5603,6 +5604,12 @@
 				availability: previous.availability === 'unavailable' ? 'unavailable' : 'available',
 				fetchedAt
 			});
+			// API freshness and user-visible changes are separate. A successful
+			// audit of unchanged facts must not rebuild both catalogs and their UI.
+			if (automationEvidence?.changedIds && Object.keys(meta).some(key =>
+				key !== 'fetchedAt' && key !== 'taskCatalogFetchedAt' && (key === 'automationFacts'
+					? window.__PENA_NATIVE_CATALOG__.automationFactsSignature(previous[key] || {}) !== window.__PENA_NATIVE_CATALOG__.automationFactsSignature(meta[key] || {})
+					: previous[key] !== meta[key]))) automationEvidence.changedIds.add(id);
 			_setDialogRecentMeta(_dialogRecentMeta, meta, [id, rawChatId]);
 			if (!changedAfterRead && automationEvidence?.readAt) _dialogAutomationVerifiedTasks.set(taskKey, automationEvidence.readAt);
 			if (explicitTimeTrackingEnabled != null) _setDialogTimeTaskEligibility(rawTaskId, explicitTimeTrackingEnabled, fetchedAt);
@@ -13338,6 +13345,7 @@ if (_presetChannel) {
 	}
 	function _applyDialogAutomation(mode, items, previewRules = null) {
 		if (!_isPenaExtensionEnabled()) return 0;
+		const scope = _getDialogTimeIdentityScopeKey();
 		const model = window.__PENA_NATIVE_CATALOG__;
 		const config = _readDialogAutomationConfig(mode);
 		const rules = previewRules || config.rules;
@@ -13379,7 +13387,7 @@ if (_presetChannel) {
 		let changed = 0;
 		for (const item of items) {
 			if (_isDialogControlFolder(item) || _isDialogControlItemUnavailable(item)) { delete reviews[item.id]; continue; }
-			if (locked.has(item.id) || _dialogAutomationDirtyTasks.has(_getDialogTimeIdentityScopeKey()+':'+item.taskId)) { if(reviews[item.id])reviews[item.id].ticket=null;continue; }
+			if (locked.has(item.id) || _dialogAutomationDirtyTasks.has(scope+':'+item.taskId)) { if(reviews[item.id])reviews[item.id].ticket=null;continue; }
 			const facts = _dialogAutomationFacts(item);
 			const decision = model.automationDecision(rules, facts, mode, folderIds);
 			if (!previewRules && enabledRules.length) {
@@ -13518,7 +13526,7 @@ if (_presetChannel) {
 			const batch=_dialogAutomationRefreshCandidates(scope).filter(({due})=>due<=Date.now()).slice(0,50);
 			if (!batch.length) { _scheduleDialogAutomationRefresh(scope);return; }
 			_dialogAutomationRefreshing=scope;
-			const evidence={scope,revisions:new Map(_dialogAutomationTaskRevisions),readAt:Date.now()};
+			const evidence={scope,revisions:new Map(_dialogAutomationTaskRevisions),readAt:Date.now(),changedIds:new Set()};
 			const requested=new Map(batch.map(entry=>[String(entry.item.taskId),entry]));
 			// Missing/inaccessible rows are not successful reads. Keep their last
 			// facts, and retry later without starving the remaining tasks.
@@ -13540,8 +13548,11 @@ if (_presetChannel) {
 					}
 				}
 				if (merged) {
-					_hydrateAllDialogControlModesFromRecent({pruneMissing:false});
-					_scheduleDialogRecentCacheWrite();_notifyDialogRecentDataChanged();
+					_scheduleDialogRecentCacheWrite();
+					if (evidence.changedIds.size) {
+						_hydrateAllDialogControlModesFromRecent({pruneMissing:false});
+						_notifyDialogRecentDataChanged();
+					}
 				}
 			} catch {
 				// Shared REST scheduling handles transport limits; avoid a new
@@ -13549,7 +13560,7 @@ if (_presetChannel) {
 				for (const {key} of ordered) _dialogAutomationRefreshAttempts.set(key,Date.now()+60000);
 			} finally {
 				_dialogAutomationRefreshing='';
-				_scheduleDialogAutomation();
+				_scheduleDialogAutomationRefresh(scope);
 			}
 		},Math.max(1000,Math.min(2147483647,ordered[0].due-Date.now())));
 	}
@@ -13720,7 +13731,19 @@ if (_presetChannel) {
 		const tabs=node('div',null,panel);tabs.className='pena-automation-tabs';tabs.setAttribute('role','tablist');
 		const editorTab=button('Правила',tabs,()=>showTab(false));editorTab.setAttribute('role','tab');
 		const reviewTab=button('Пересортировка',tabs,()=>showTab(true));reviewTab.setAttribute('role','tab');
+		const infoTab=button('Инфо',tabs,()=>showTab('info'));infoTab.setAttribute('role','tab');
 		const scroll=node('div',null,panel);scroll.className='pena-automation-scroll';
+		const info=node('section',null,scroll);info.className='pena-automation-info';info.hidden=true;info.setAttribute('aria-label','Как работает сортировка');
+		node('h3','Как работает сортировка',info);
+		for(const [title,text] of [
+			['1. Настройте правила','Выберите условия и папку назначения. Правила проверяются сверху вниз: срабатывает первое подходящее. Более точные правила ставьте выше общих. Изменения начнут работать после «Сохранить».'],
+			['2. Проверьте результат','«Проверить» показывает результат для текущих условий, но ничего не переносит. В правиле можно потребовать совпадения всех или любого из условий. Условия с отметкой «Обязательно» должны выполняться в любом случае.'],
+			['3. Новые и существующие диалоги','Новые диалоги без папки распределяются автоматически. Чтобы при сохранении охватить и прежние диалоги без папки, включите «Распределить уже существующие диалоги». Конфликт с размещением в папке появится в «Пересортировке».'],
+			['4. Если задача изменилась','Изменение исполнителя, проекта, статуса, названия или срока запускает новую проверку. Пропущенные события подхватывает фоновая сверка. Она работает при включённом расширении, открытой видимой вкладке Bitrix и наличии сети; большой список проверяется порциями, поэтому результат может появиться не сразу. Неизменившиеся данные не требуют повторного переноса.'],
+			['5. Подтвердите перенос','Если нужна другая папка, откройте «Пересортировку» и подтвердите предложение. Когда ранее подходившее правило перестало подходить, может появиться предложение убрать диалог из папки. Пока вы не подтвердили, он остаётся на месте. Автоматическое подтверждение включается отдельно для задач и чатов.'],
+			['6. Пропуск и исключения','«Пропустить» закрывает одно предложение до изменения его условий. Исключение запрещает дальнейшие автоматические переносы этого диалога. Чтобы вернуть его в сортировку, откройте «Исключения» и нажмите «Снова предлагать переносы».'],
+			['Пример: сменился исполнитель','Задача лежит в вашей папке, а исполнителем стала Яна. Если первое подходящее правило ведёт в папку Яны, появится предложение перенести задачу туда. При выключенном автоматическом подтверждении нужно принять предложение. Если данных пока не хватает, расширение сначала уточнит их.']
+		]){const section=node('section',null,info);node('h4',title,section);node('p',text,section);}
 		const priorityHint=node('p','Выше в списке — выше приоритет. При совпадении нескольких правил сработает первое. Перетащите правило за ручку, затем сохраните порядок.',scroll);priorityHint.className='pena-automation-hint pena-automation-priority';
 		const list = node('div',null,scroll); list.className='pena-automation-rules';
 		const dropMarker=node('div',null,scroll);dropMarker.className='pena-automation-drop-marker';dropMarker.hidden=true;dropMarker.setAttribute('aria-hidden','true');
@@ -13986,9 +14009,11 @@ if (_presetChannel) {
 			if(!exceptionsCount)node('p','Нет исключений',exceptionsList).className='pena-automation-hint';
 			if(restoreFocus&&!tickets.hidden)tickets.querySelector(restoreFocus)?.focus({preventScroll:true});
 		};
-		function showTab(review){
-			finishRuleDrag(false);clearLookups();priorityHint.hidden=review;list.hidden=review;bottom.hidden=review;tickets.hidden=!review;
-			editorTab.setAttribute('aria-selected',String(!review));reviewTab.setAttribute('aria-selected',String(review));
+		function showTab(tab){
+			const review=tab===true,help=tab==='info';
+			finishRuleDrag(false);clearLookups();priorityHint.hidden=review||help;list.hidden=review||help;bottom.hidden=review||help;tickets.hidden=!review;info.hidden=!help;
+			editorTab.setAttribute('aria-selected',String(!review&&!help));reviewTab.setAttribute('aria-selected',String(review));infoTab.setAttribute('aria-selected',String(help));
+			scroll.scrollTop=0;
 			if(review)drawTickets();
 		}
 		let refreshQueued=false;
@@ -21179,13 +21204,16 @@ if (_presetChannel) {
 		// Temporary projection for this render only. One dialog can belong to its
 		// own group and its folder's group in the non-exclusive view.
 		const placement = uniqueOnly ? _getDialogControlPlacementIndex(source) : null;
+		// One synchronous projection has one native store/account. Resolve it
+		// once, while still reading each dialog's current counter state.
+		const counterContext = _getDialogNativeCounterContext();
 		const folderGroups = new Map(source.filter(_isDialogControlFolder)
 			.map(folder => [String(folder.id || ''), String(folder.segmentId || '')]));
 		const groups = new Map(), folderChildren = new Map(), active = [], unfiled = [], metaCache = new Map();
 		const append = (map, id, item) => { if (!map.has(id)) map.set(id, []); map.get(id).push(item); };
 		for (const item of source) {
 			if (_isDialogControlFolder(item) || _isDialogControlItemUnavailable(item)) continue;
-			const meta = _getDialogControlItemLiveMeta(item, visibleChatIndex);
+			const meta = _getDialogControlItemLiveMeta(item, visibleChatIndex, counterContext);
 			if (!searching && !_matchesDialogControlGlobalFilters(item, visibleChatIndex, meta)) continue;
 			metaCache.set(item, meta);
 			const memberships = placement ? new Set([placement.segmentOf(item)]) : new Set([
@@ -24437,7 +24465,7 @@ if (_presetChannel) {
 				localItems.splice(0, localItems.length, ...merged);
 			}
 			const nextRaw = JSON.stringify(localItems);
-			localStorage.setItem(key, nextRaw);
+			if (nextRaw !== storedRaw) localStorage.setItem(key, nextRaw);
 			_dialogControlStorageRaw[m] = nextRaw;
 		} catch {}
 		_scheduleDialogRecentCacheWrite(120);
@@ -25191,14 +25219,14 @@ if (_presetChannel) {
 		return true;
 	}
 
-	function _getDialogControlItemLiveMeta(item, visibleChatIndex) {
+	function _getDialogControlItemLiveMeta(item, visibleChatIndex, counterContext = undefined) {
 		if (!item || _isDialogControlFolder(item)) return null;
 		const el = visibleChatIndex?.get?.(normId(item.id)) || null;
 		// Folder rows are a projection of metadata, never a fresh counter source.
 		return _getDialogControlEffectiveMeta(item, (el?.classList?.contains('pena-native-managed-row') ||
 			el?.closest?.('.bx-im-chat-search__container,.bx-im-search-item__container,.bx-im-search-item-layout__container,[data-pena-native-search-row],.bx-im-search-result-item,.bx-im-search-item') ||
 			(_dialogControlManagedRoot?.isConnected && _dialogControlManagedSource?.contains(el)))
-			? null : _getCachedDialogControlElementMeta(el));
+			? null : _getCachedDialogControlElementMeta(el), counterContext);
 	}
 
 	function _getDialogControlItemFilterMeta(item, visibleChatIndex, liveMeta = undefined) {
@@ -25251,6 +25279,7 @@ if (_presetChannel) {
 	}
 
 	function _getDialogControlItemsForView(items, visibleChatIndex = buildChatElementIndex()) {
+		const counterContext = _getDialogNativeCounterContext();
 		const source = (Array.isArray(items) ? items : []).filter(item =>
 			_isDialogControlFolder(item) || !_isDialogControlItemUnavailable(item)
 		);
@@ -25271,7 +25300,7 @@ if (_presetChannel) {
 				units.push(folderUnits.get(String(item.id || '')));
 				return;
 			}
-			const meta = _getDialogControlItemLiveMeta(item, visibleChatIndex);
+			const meta = _getDialogControlItemLiveMeta(item, visibleChatIndex, counterContext);
 			liveMeta.set(item, meta);
 			if (prefs.unreadOnly && !_isDialogControlUnreadMeta(meta)) return;
 			const parent = item.folderId ? folderUnits.get(String(item.folderId)) : null;
@@ -25397,9 +25426,9 @@ if (_presetChannel) {
 		return true;
 	}
 
-	function _getDialogControlEffectiveMeta(itemOrId, meta = null) {
+	function _getDialogControlEffectiveMeta(itemOrId, meta = null, counterContext = undefined) {
 		const id = normId(typeof itemOrId === 'object' ? itemOrId?.id : itemOrId);
-		meta = _mergeDialogRecentWithDomMeta(id, meta);
+		meta = _mergeDialogRecentWithDomMeta(id, meta, counterContext);
 		if (id && _isDialogControlOptimisticRead(id)) {
 			const unreadCount = Number(meta?.unreadCount) || 0;
 			if (!meta?.hasLater && !meta?.hasUnread && !meta?.hasMention && unreadCount <= 0) {
