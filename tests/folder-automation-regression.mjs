@@ -119,7 +119,7 @@ try {
  mkdirSync('tests/artifacts',{recursive:true});
  await page.screenshot({path:'tests/artifacts/folder-automation-desktop.png'});
  await page.setViewportSize({width:390,height:780});
- assert.equal(await page.locator('.pena-automation-panel').evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+ assert.equal(await page.locator('.pena-automation-scroll').evaluate(el=>el.scrollWidth<=el.clientWidth),true);
  await page.screenshot({path:'tests/artifacts/folder-automation-mobile.png'});
  await page.getByRole('button',{name:'Сохранить',exact:true}).click();
  await page.waitForFunction(()=>JSON.parse(localStorage.getItem('pena.dialogControl.v1.chats')||'[]').find(item=>item.id==='chat5')?.folderId==='folder:test');
@@ -232,7 +232,7 @@ try {
  await page.getByRole('button',{name:'Подтвердить перенос',exact:true}).waitFor();
  await page.screenshot({path:'tests/artifacts/folder-confirmations-desktop.png'});
  await page.setViewportSize({width:360,height:780});
- assert.equal(await page.locator('.pena-automation-panel').evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+ assert.equal(await page.locator('.pena-automation-scroll').evaluate(el=>el.scrollWidth<=el.clientWidth),true);
  await page.screenshot({path:'tests/artifacts/folder-confirmations-mobile.png'});
  await page.getByRole('button',{name:'Подтвердить перенос',exact:true}).click();
  assert.equal(await taskFolder(),'folder:other');
@@ -333,7 +333,7 @@ try {
   await page.setViewportSize({width,height:800});
   await verifyControlAlignment();
   const geometry=await page.locator('.pena-automation-panel').evaluate(panel=>({
-   overflow:panel.scrollWidth>panel.clientWidth,
+   overflow:panel.querySelector('.pena-automation-scroll').scrollWidth>panel.querySelector('.pena-automation-scroll').clientWidth,
    bad:[...panel.querySelectorAll('input,select,button')].filter(el=>el.getClientRects().length&&el.getBoundingClientRect().width<15).map(el=>el.outerHTML),
    footer:panel.querySelector('footer').getBoundingClientRect().bottom<=panel.getBoundingClientRect().bottom,
    headerHeight:panel.querySelector('header').getBoundingClientRect().height,

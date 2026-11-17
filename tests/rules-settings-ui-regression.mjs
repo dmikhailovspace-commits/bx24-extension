@@ -8,7 +8,7 @@ const source=readFileSync('extension/injected.js','utf8');
 const injected=source.replace('\tasync function boot() {',`\tasync function boot() {
  window.rulesUI={items:_getDialogControlItemsForMode,save:_saveDialogControlItemsForMode,key:_dialogAutomationKey,open:_openDialogAutomation,navigation:[]};
  _openDialogControlRemoteRow=async(item,mode)=>{rulesUI.navigation.push({id:item.id,mode});return true;};`);
-const server=await startHarnessServer(),browser=await chromium.launch({headless:true});
+const server=await startHarnessServer(),browser=await chromium.launch({headless:true,ignoreDefaultArgs:['--hide-scrollbars']});
 const errors=[],phases=[];let accordionMotion;mkdirSync('tests/artifacts',{recursive:true});
 async function sampleExceptionsMotion(page, clicks=[0]) {
  return page.evaluate(async clicks=>{
@@ -58,7 +58,23 @@ try {
  assert.equal(await panel.getByLabel('Название правила',{exact:true}).isVisible(),false);
  await page.screenshot({path:'tests/artifacts/rules-info-desktop.png'});
  await page.setViewportSize({width:390,height:740});
- assert.equal(await panel.evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+ const popupGeometry=await panel.evaluate(el=>{
+  const scroll=el.querySelector('.pena-automation-scroll'),box=el.getBoundingClientRect(),rail=scroll.getBoundingClientRect();
+  const last=el.querySelector('.pena-automation-info section:last-child');scroll.scrollTop=scroll.scrollHeight;
+  return {box:{left:box.left,right:box.right,bottom:box.bottom},rail:{right:rail.right,left:rail.right-(scroll.offsetWidth-scroll.clientWidth)},
+   overflow:scroll.scrollWidth>scroll.clientWidth,viewport:innerWidth,lastBottom:last.getBoundingClientRect().bottom,scrollBottom:rail.bottom,
+   panelOverflow:getComputedStyle(el).overflow,scrollOverflow:getComputedStyle(scroll).overflow,contain:getComputedStyle(el).contain,barDisplay:getComputedStyle(scroll,'::-webkit-scrollbar').display,hit:document.elementFromPoint(rail.right-3,rail.bottom-50)?.className,thumb:getComputedStyle(scroll,'::-webkit-scrollbar-thumb').backgroundColor,track:getComputedStyle(scroll,'::-webkit-scrollbar').width};
+ });
+ console.log('Popup geometry',JSON.stringify(popupGeometry));
+ assert.equal(popupGeometry.overflow,false,'Content has no horizontal overflow');
+ assert.ok(popupGeometry.rail.left>=popupGeometry.box.right+3,'Native scrollbar is outside the rounded window');
+ assert.ok(popupGeometry.rail.right<=popupGeometry.viewport-2,'External scrollbar fits the viewport');
+ assert.ok(popupGeometry.lastBottom<=popupGeometry.scrollBottom-12,'Last card clears the rounded bottom');
+ assert.match(popupGeometry.thumb,/0\.(45|7)/,'Scrollbar thumb is translucent');
+ const railDrag=await panel.locator('.pena-automation-scroll').evaluate(el=>{el.scrollTop=0;const r=el.getBoundingClientRect();return{x:r.right-3,top:r.top,bottom:r.bottom,thumb:el.clientHeight*el.clientHeight/el.scrollHeight};});
+ await page.mouse.move(railDrag.x,railDrag.top+railDrag.thumb/2);await page.mouse.down();
+ await page.mouse.move(railDrag.x,railDrag.bottom-4,{steps:8});await page.mouse.up();
+ assert.equal(await panel.locator('.pena-automation-scroll').evaluate(el=>el.scrollTop+el.clientHeight>=el.scrollHeight-2),true,'External native thumb can be dragged to the last card');
  await page.screenshot({path:'tests/artifacts/rules-info-mobile.png'});
  await page.setViewportSize({width:1100,height:850});
  await editor();

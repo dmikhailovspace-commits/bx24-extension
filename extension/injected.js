@@ -550,11 +550,16 @@
 
 	const normId = (raw) => {
 	if (!raw) return '';
-	const s = String(raw).toLowerCase();
-	if (/^chat\d+/.test(s)) return s;
-	if (/^user\d+/.test(s)) return s;
-	if (/^\d+$/.test(s)) return 'user' + s;
-	return s;
+	const input = String(raw), cache = normId._cache || (normId._cache = new Map());
+	const cached = cache.get(input);
+		if (cached !== undefined) return cached;
+	const s = input.toLowerCase();
+	const result = /^(?:chat|user)\d+/.test(s) ? s : /^\d+$/.test(s) ? 'user' + s : s;
+	if (input.length <= 200) {
+		if (cache.size >= 16384) cache.clear();
+		cache.set(input, result);
+	}
+	return result;
 };
 
 	function _normalizeDialogControlRestDialogId(raw) {
@@ -824,11 +829,18 @@
 	}
 
 	function _normalizeDialogControlTitle(value) {
-		return String(value || '')
-			.replace(/\s+/g, ' ')
-			.replace(/[«»"']/g, '')
-			.trim()
-			.toLowerCase();
+		const input = String(value || '');
+		const cache = _normalizeDialogControlTitle._cache || (_normalizeDialogControlTitle._cache = new Map());
+		const cached = cache.get(input);
+		if (cached !== undefined) return cached;
+		const result = input.replace(/\s+/g, ' ').replace(/[«»"']/g, '').trim().toLowerCase();
+		// Pure string memoization only; no task/DOM state. Bound retained memory,
+		// including pathological imported titles, without changing normalization.
+		if (input.length <= 1000) {
+			if (cache.size >= 8192) cache.clear();
+			cache.set(input, result);
+		}
+		return result;
 	}
 
 	function _isDialogControlFallbackTitle(value) {
@@ -13317,9 +13329,15 @@ if (_presetChannel) {
 		return [...new Set([...audit.metadata.keys(),..._getDialogRecentUniqueMeta().map(item=>item.id),
 			..._getDialogControlItemsForMode(mode).filter(item=>!_isDialogControlFolder(item)).map(item=>item.id)])];
 	}
-	function _dialogAutomationFacts(item) {
+	function _dialogAutomationFacts(item, fields = null) {
 		const meta = _getDialogRecentMeta(item.id) || {};
-		return { title:meta.displayTitle || item.title || '', kind:/^user\d+$/i.test(item.id) ? 'personal' : 'group', ...meta.automationFacts };
+		const facts={title:meta.displayTitle || item.title || '',kind:/^user\d+$/i.test(item.id)?'personal':'group'};
+		if(!fields)return {...facts,...meta.automationFacts};
+		// Rule passes need only referenced fields plus the displayed ticket title.
+		for(const field of new Set(['title',...fields,...(fields.includes('deadline')?['status']:[])])){
+			if(Object.prototype.hasOwnProperty.call(meta.automationFacts||{},field))facts[field]=meta.automationFacts[field];
+		}
+		return facts;
 	}
 	function _dialogAutomationLocks(mode) {
 		try { const ids=JSON.parse(localStorage.getItem(_dialogAutomationKey(mode)+'.locks')||'[]');return new Set(Array.isArray(ids)?ids:[]); } catch { return new Set(); }
@@ -13384,16 +13402,21 @@ if (_presetChannel) {
 		const folders = new Map(items.filter(_isDialogControlFolder).map(folder => [folder.id, folder]));
 		const folderIds = new Set(folders.keys());
 		const placements=[];
+		// Equal rule inputs share a decision only within this synchronous pass.
+		// Date conditions retain per-item evaluation at the current wall clock.
+		const decisions=fields.includes('deadline')?null:new Map();
 		let changed = 0;
 		for (const item of items) {
 			if (_isDialogControlFolder(item) || _isDialogControlItemUnavailable(item)) { delete reviews[item.id]; continue; }
 			if (locked.has(item.id) || _dialogAutomationDirtyTasks.has(scope+':'+item.taskId)) { if(reviews[item.id])reviews[item.id].ticket=null;continue; }
-			const facts = _dialogAutomationFacts(item);
-			const decision = model.automationDecision(rules, facts, mode, folderIds);
+			const facts = _dialogAutomationFacts(item,fields);
+			const relevant = Object.fromEntries(fields.map(field=>[field,facts[field]]));
+			const inputKey=decisions&&JSON.stringify(relevant),cached=decisions?.get(inputKey);
+			const factsSig = cached ? cached.factsSig : model.automationFactsSignature(relevant);
+			const decision = cached ? cached.decision : model.automationDecision(rules, facts, mode, folderIds);
+			if(decisions&&!cached)decisions.set(inputKey,{factsSig,decision});
 			if (!previewRules && enabledRules.length) {
 				const target = decision?.folderId || '', previous = reviews[item.id];
-				const relevant = Object.fromEntries(fields.map(field=>[field,facts[field]]));
-				const factsSig = canonicalFacts(JSON.stringify(relevant));
 				if (decision?.pending) { if(previous)previous.ticket=null;continue; }
 				const placement=item.folderId || '';
 				const record = previous || {factsSig,target,placement};
@@ -13458,8 +13481,18 @@ if (_presetChannel) {
 	}
 	function _dialogAutomationTickets(mode = _pMode()) {
 		try {
+			const key=_dialogAutomationKey(mode)+'.review',raw=localStorage.getItem(key)||'{}';
+			// Cache only parsing, keyed by exact durable bytes and account. Placement,
+			// availability and manual locks are checked again on every read.
+			const cache=_dialogAutomationTickets._parsed||(_dialogAutomationTickets._parsed=new Map());
+			let parsed=cache.get(mode);
+			if(!parsed||parsed.key!==key||parsed.raw!==raw){
+				parsed={key,raw,entries:Object.entries(JSON.parse(raw).records||{}).filter(([,record])=>record.ticket)};
+				cache.set(mode,parsed);
+			}
+			if(!parsed.entries.length)return [];
 			const locks=_dialogAutomationLocks(mode),items=new Map(_getDialogControlItemsForMode(mode).map(item=>[item.id,item]));
-			return Object.entries(JSON.parse(localStorage.getItem(_dialogAutomationKey(mode)+'.review') || '{}').records || {}).filter(([id,record])=>{
+			return parsed.entries.filter(([id,record])=>{
 				const ticket=record.ticket,item=items.get(id),placement=item?.folderId||'';
 				// Read-time fencing also hides obsolete proposals when quota errors
 				// prevent repairing their journal after a manual move.
@@ -13492,9 +13525,10 @@ if (_presetChannel) {
 			if(scope===_getDialogTimeIdentityScopeKey())_scheduleDialogAutomation();
 		},Math.min(2147483647,Math.max(1,next-now)));
 	}
-	function _dialogAutomationRefreshCandidates(scope) {
+	function _dialogAutomationRefreshCandidates(scope, nextDueOnly = false) {
 		const locked = _dialogAutomationLocks('tasks');
-		const candidates = new Map();
+		const candidates = nextDueOnly ? null : new Map();
+		let earliest=Infinity;const now=Date.now();
 		for (const item of _getDialogControlItemsForMode('tasks')) {
 			const taskId=String(item.taskId || '');
 			if (!/^\d+$/.test(taskId) || _isDialogControlFolder(item) || _isDialogControlItemUnavailable(item) || locked.has(item.id)) continue;
@@ -13504,9 +13538,14 @@ if (_presetChannel) {
 			// restore or native-row repaint cannot postpone reconciliation.
 			const due=Math.max((_dialogAutomationVerifiedTasks.get(key)||0)+_DIALOG_AUTOMATION_REFRESH_MS,
 				_dialogAutomationRefreshAttempts.get(key)||0);
-			candidates.set(taskId,{item,key,due});
+			if(nextDueOnly){
+				// All overdue candidates schedule the same one-second wake-up.
+				// The actual batch is still rebuilt from live state when it fires.
+				if(due<=now)return due;
+				earliest=Math.min(earliest,due);
+			}else candidates.set(taskId,{item,key,due});
 		}
-		return [...candidates.values()].sort((a,b)=>a.due-b.due);
+		return nextDueOnly ? earliest : [...candidates.values()].sort((a,b)=>a.due-b.due);
 	}
 	function _scheduleDialogAutomationRefresh(scope) {
 		const current = () => _isPenaExtensionEnabled() && scope && scope === _getDialogTimeIdentityScopeKey() &&
@@ -13516,8 +13555,8 @@ if (_presetChannel) {
 			_dialogAutomationRefreshScope=scope;
 		}
 		if (!current() || _dialogAutomationRefreshTimer || _dialogAutomationRefreshing) return;
-		const ordered=_dialogAutomationRefreshCandidates(scope);
-		if (!ordered.length) return;
+		const nextDue=_dialogAutomationRefreshCandidates(scope,true);
+		if (!Number.isFinite(nextDue)) return;
 		_dialogAutomationRefreshTimer=setTimeout(async()=>{
 			_dialogAutomationRefreshTimer=null;
 			if (!current()) return;
@@ -13557,12 +13596,12 @@ if (_presetChannel) {
 			} catch {
 				// Shared REST scheduling handles transport limits; avoid a new
 				// request per batch while the portal itself is unavailable.
-				for (const {key} of ordered) _dialogAutomationRefreshAttempts.set(key,Date.now()+60000);
+				if(scope===_getDialogTimeIdentityScopeKey())for (const {key} of _dialogAutomationRefreshCandidates(scope)) _dialogAutomationRefreshAttempts.set(key,Date.now()+60000);
 			} finally {
 				_dialogAutomationRefreshing='';
 				_scheduleDialogAutomationRefresh(scope);
 			}
-		},Math.max(1000,Math.min(2147483647,ordered[0].due-Date.now())));
+		},Math.max(1000,Math.min(2147483647,nextDue-Date.now())));
 	}
 	function _scheduleDialogAutomation() {
 		_scheduleDialogAutomationRefresh(_getDialogTimeIdentityScopeKey());
@@ -13596,8 +13635,18 @@ if (_presetChannel) {
 			const locked = _dialogAutomationLocks('tasks');
 			const items = _getDialogControlItemsForMode('tasks');
 			const folders = new Set(items.filter(_isDialogControlFolder).map(item => item.id));
-			const unresolved = rules.some(rule=>rule.enabled) ? items.filter(item => !_isDialogControlFolder(item) && !_isDialogControlItemUnavailable(item) && !locked.has(item.id) &&
-				(_dialogAutomationDirtyTasks.has(scope+':'+item.taskId) || window.__PENA_NATIVE_CATALOG__.automationDecision(rules, _dialogAutomationFacts(item), 'tasks', folders)?.pending)) : [];
+			const model=window.__PENA_NATIVE_CATALOG__;
+			const fields=[...new Set(rules.filter(rule=>rule.enabled).flatMap(rule=>rule.conditions.map(condition=>condition.field)))];
+			const decisions=fields.includes('deadline')?null:new Map();
+			const unresolved = rules.some(rule=>rule.enabled) ? items.filter(item => {
+				if(_isDialogControlFolder(item)||_isDialogControlItemUnavailable(item)||locked.has(item.id))return false;
+				if(_dialogAutomationDirtyTasks.has(scope+':'+item.taskId))return true;
+				const facts=_dialogAutomationFacts(item,fields);
+				const signature=decisions&&JSON.stringify(Object.fromEntries(fields.map(field=>[field,facts[field]])));
+				const decision=decisions?.has(signature)?decisions.get(signature):model.automationDecision(rules,facts,'tasks',folders);
+				decisions?.set(signature,decision);
+				return decision?.pending;
+			}) : [];
 			// A task_add may precede the native row and the catalog. Do not strand
 			// its dirty ID by restricting detail reads to already hydrated items.
 			if (rules.some(rule=>rule.enabled)) {
@@ -15444,13 +15493,14 @@ if (_presetChannel) {
 
 	function _getDialogControlItemIdentityKeys(item) {
 		if (!item || _isDialogControlFolder(item)) return [];
-		return Array.from(new Set([
-			item.id,
-			item.dialogId,
-			item.rawDialogId,
-			item.bitrixDialogId,
-			item.restDialogId
-		].map(value => normId(_normalizeDialogControlRestDialogId(value))).filter(Boolean)));
+		const cache = _getDialogControlItemIdentityKeys._cache || (_getDialogControlItemIdentityKeys._cache = new WeakMap());
+		const previous = cache.get(item);
+		if (previous && previous.id === item.id && previous.dialogId === item.dialogId && previous.rawDialogId === item.rawDialogId &&
+			previous.bitrixDialogId === item.bitrixDialogId && previous.restDialogId === item.restDialogId) return previous.keys;
+		const keys = Array.from(new Set([item.id,item.dialogId,item.rawDialogId,item.bitrixDialogId,item.restDialogId]
+			.filter(Boolean).map(value => normId(_normalizeDialogControlRestDialogId(value))).filter(Boolean)));
+		cache.set(item,{id:item.id,dialogId:item.dialogId,rawDialogId:item.rawDialogId,bitrixDialogId:item.bitrixDialogId,restDialogId:item.restDialogId,keys});
+		return keys;
 	}
 
 	function _getDialogControlNativeRowIdentityKeys(row) {
@@ -21207,28 +21257,40 @@ if (_presetChannel) {
 		// One synchronous projection has one native store/account. Resolve it
 		// once, while still reading each dialog's current counter state.
 		const counterContext = _getDialogNativeCounterContext();
+		const filtering = !!filters.unreadOnly || !!String(filters.query || '').trim() ||
+			['typesSelected','projectIndexes','responsibleIndexes','statusIndexes','hiddenProjectIndexes','hiddenResponsibleIndexes','selectedTags','selectedIntersectionTags']
+			.some(key=>Array.isArray(filters[key])&&filters[key].length);
 		const folderGroups = new Map(source.filter(_isDialogControlFolder)
 			.map(folder => [String(folder.id || ''), String(folder.segmentId || '')]));
 		const groups = new Map(), folderChildren = new Map(), active = [], unfiled = [], metaCache = new Map();
-		const append = (map, id, item) => { if (!map.has(id)) map.set(id, []); map.get(id).push(item); };
+		const empty=()=>({childCount:0,unreadCount:0,hasUnread:false,hasMention:false,hasLater:false});
+		const append=(map,id,meta)=>{
+			let bucket=map.get(id);if(!bucket){bucket=empty();map.set(id,bucket);}
+			bucket.childCount++;
+			if(!meta)return;
+			bucket.hasMention ||= !!meta.hasMention;
+			bucket.hasLater ||= !!meta.hasLater&&!meta.hasUnread;
+			bucket.hasUnread ||= !!meta.hasUnread;
+			bucket.unreadCount += meta.hasUnread ? Math.max(1,Number(meta.unreadCount)||0) : meta.hasMention||meta.hasLater ? 1 : 0;
+		};
 		for (const item of source) {
 			if (_isDialogControlFolder(item) || _isDialogControlItemUnavailable(item)) continue;
 			const meta = _getDialogControlItemLiveMeta(item, visibleChatIndex, counterContext);
-			if (!searching && !_matchesDialogControlGlobalFilters(item, visibleChatIndex, meta)) continue;
+			if (!searching && filtering && !_matchesDialogControlGlobalFilters(item, visibleChatIndex, meta)) continue;
 			metaCache.set(item, meta);
 			const memberships = placement ? new Set([placement.segmentOf(item)]) : new Set([
 				'', String(item.segmentId || ''), folderGroups.get(String(item.folderId || '')) || ''
 			]);
-			for (const id of memberships) append(groups, id, item);
+			for (const id of memberships) append(groups, id, meta);
 			if (!memberships.has(activeSegmentId)) continue;
 			active.push(item);
 			if (placement && !placement.folderOf(item)) unfiled.push(item);
-			append(folderChildren, String(item.folderId || ''), item);
+			append(folderChildren, String(item.folderId || ''), meta);
 		}
 		const status = items => _getDialogControlNotificationStatus(items || [], visibleChatIndex, metaCache);
 		return {
-			groupStatuses: new Map(groupTabs.map(group => [String(group.id || ''), status(groups.get(String(group.id || '')))])),
-			folderStatuses: new Map(segmentFolders.map(folder => [String(folder.id || ''), status(folderChildren.get(String(folder.id || '')))])),
+			groupStatuses: new Map(groupTabs.map(group => [String(group.id || ''), groups.get(String(group.id || ''))||empty()])),
+			folderStatuses: new Map(segmentFolders.map(folder => [String(folder.id || ''), folderChildren.get(String(folder.id || ''))||empty()])),
 			segmentStatus: status(placement ? unfiled : active)
 		};
 	}
@@ -21269,7 +21331,6 @@ if (_presetChannel) {
 			_pMode(),
 			viewPrefs.uniqueOnly ? 1 : 0,
 			activeSegmentId,
-			activeFolderId,
 			_dialogControlNativeWorkspaceTab,
 			_getDialogControlAllLabel(true,activeSegmentId),
 			_getDialogControlNativeFolderOrder(segmentFolders, activeSegmentId).join(','),
@@ -21285,6 +21346,7 @@ if (_presetChannel) {
 				_normalizeDialogControlColor(folder.color)
 			].join(':')).join('|')
 		].join('::');
+		switcher.querySelectorAll('.pena-native-folder-tab').forEach(button=>button.classList.toggle('--active',String(button.dataset.nativeFolderId||'')===activeFolderId));
 		_syncDialogControlNativePreferenceControls(switcher, viewPrefs);
 		_syncDialogControlNativeTabStatuses(switcher, groupStatuses, folderStatuses, segmentStatus);
 		_syncDialogRecentStatusControl(switcher);
@@ -21791,7 +21853,7 @@ if (_presetChannel) {
 				_setDialogControlNativeActiveFolderId('', { render: false, apply: false });
 				document.querySelectorAll('#anit-dialog-control-dock .dialog-control-folder.--native-filter-active').forEach(el => el.classList.remove('--native-filter-active'));
 				_dialogControlNativeSwitcherSig = '';
-				_renderDialogControlNativeSwitcher(container, source);
+				// applyFilters coalesces one render with the current catalog on the next frame.
 				applyFilters();
 			});
 			btn.addEventListener('contextmenu', (e) => {
@@ -21905,8 +21967,7 @@ if (_presetChannel) {
 					document.querySelectorAll('#anit-dialog-control-dock .dialog-control-folder.--native-filter-active').forEach(el => {
 					el.classList.toggle('--native-filter-active', !!id && String(el.dataset?.folderId || '') === id);
 				});
-				_dialogControlNativeSwitcherSig = '';
-				_renderDialogControlNativeSwitcher(container, source);
+				// applyFilters coalesces one render with the current catalog on the next frame.
 				applyFilters();
 			});
 			btn.addEventListener('contextmenu', (e) => {
@@ -24101,7 +24162,7 @@ if (_presetChannel) {
 		});
 		if (titlesChanged) _saveDialogControlItems();
 		_renderDialogControlNativeSwitcher(container, allItems);
-		const nativeViewSig = [
+		const nativeViewSig = options.forceShow ? '' : [
 			_pMode(),
 			String(filters.query || '').trim().toLowerCase(),
 			viewPrefs.sortMode,
@@ -25236,13 +25297,13 @@ if (_presetChannel) {
 			id: normId(item?.id || live.id),
 			title: live.title || String(item?.title || '').toLowerCase(),
 			type: live.type || item?.type || '',
-			searchText: [
+			searchText: filters.query?.trim() ? [
 				item?.title,
 				live.title,
 				live.lastText,
 				recent?.displayTitle,
 				recent?.lastText
-			].filter(Boolean).join(' ')
+			].filter(Boolean).join(' ') : ''
 		});
 	}
 
@@ -25252,7 +25313,10 @@ if (_presetChannel) {
 	}
 
 	function _getDialogControlNotificationStatus(dialogItems, visibleChatIndex, metaCache = null) {
-		const children = (Array.isArray(dialogItems) ? dialogItems : []).filter(item =>
+		// The synchronous counter projection already fenced these exact items and
+		// captured their metadata. Other callers still validate their own input.
+		const source = Array.isArray(dialogItems) ? dialogItems : [];
+		const children = metaCache ? source : source.filter(item =>
 			!_isDialogControlFolder(item) && !_isDialogControlItemUnavailable(item)
 		);
 		let unreadCount = 0;

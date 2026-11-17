@@ -95,12 +95,16 @@ try{
   assert.equal(quiet.counts._applyDialogAutomation||0,0,'Unchanged data never reruns rules');
   assert.equal(quiet.counts._renderDialogControlNativeSwitcher||0,0,'Unchanged data never redraws folders');
  }
- await page.evaluate(()=>perfApi.render());
+ await page.evaluate(()=>{perfApi.render();window.perfOriginalFolderButton=document.querySelector('[data-native-folder-id="folder:perf-a"]');});
  await phase('folder-interactions',async()=>{
   for(let i=0;i<10;i++){await page.locator('[data-native-folder-id="'+(i%2?'folder:perf-a':'folder:perf-b')+'"]').click();await page.waitForTimeout(150);}
   await page.waitForTimeout(1500);
  });
  assert.deepEqual(errors,[]);
+ if(!process.env.PENA_PERF_SOURCE){
+  assert.equal(await page.evaluate(()=>perfOriginalFolderButton===document.querySelector('[data-native-folder-id="folder:perf-a"]')),true,'Folder selection preserves the tab node and focus target');
+  assert.equal(await page.locator('[data-native-folder-id="folder:perf-a"]').evaluate(el=>el.classList.contains('--active')),true,'The existing tab reflects the current folder');
+ }
  assert.equal(await page.evaluate(()=>perfApi.items('tasks').filter(x=>/^chat990/.test(x.id)&&x.folderId==='folder:perf-a').length),Math.min(count,1000));
  assert.equal(await page.evaluate(()=>perfApi.items('tasks').filter(x=>/^chat99/.test(x.id)&&!x.title.startsWith('Performance task ')).length),0,'Detail reads preserve canonical titles');
 }finally{

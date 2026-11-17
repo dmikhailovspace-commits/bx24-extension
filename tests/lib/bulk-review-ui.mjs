@@ -55,7 +55,7 @@ export async function verifyBulkReview({browser,server,source}){
    assert.equal(motion.origin,'10px 10px');
    for(const [x,y] of motion.samples){assert.ok(Math.abs(x-motion.samples[0][0])<.5);assert.ok(Math.abs(y-motion.samples[0][1])<.5);}
    await page.setViewportSize({width:360,height:640});
-   assert.equal(await panel.evaluate(el=>el.scrollWidth<=el.clientWidth+1),true);
+   assert.equal(await panel.locator('.pena-automation-scroll').evaluate(el=>el.scrollWidth<=el.clientWidth+1),true);
    await page.screenshot({path:`tests/artifacts/bulk-review-${mode}-mobile.png`});
    await page.setViewportSize({width:1100,height:850});
    await panel.getByRole('button',{name:'Закрыть',exact:true}).click();

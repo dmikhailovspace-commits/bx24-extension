@@ -81,7 +81,7 @@ function fixture() {
   return { rows, state, sandbox, render() {
     state.calls.clear();
     const result = JSON.parse(JSON.stringify(sandbox._renderDialogControlNativeSwitcher({}, rows)));
-    assert.equal(state.calls.size, rows.filter(item => item.type !== 'folder' && !item.unavailable).length);
+    assert.equal(state.calls.size, Object.keys(sandbox.filters).length ? rows.filter(item => item.type !== 'folder' && !item.unavailable).length : 0,'Inactive filters require no metadata projection');
     assert.ok(rows.filter(item=>item.unavailable).every(item=>!state.calls.has(item)),'unavailable rows are rejected before metadata/filter work');
     assert.ok([...state.calls.values()].every(count => count === 1), `filter calls per item: ${JSON.stringify([...state.calls].map(([item, count]) => [item.id, count]))}`);
     return result;

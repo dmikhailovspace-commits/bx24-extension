@@ -1,3 +1,4 @@
+import {verifyExternalScrollRail} from './popup-scroll-geometry.mjs';
 import assert from 'node:assert/strict';
 
 export async function settleTransferMotion(panel) {
@@ -241,7 +242,8 @@ export async function checkTransferCode(page, platform) {
  for (const viewport of [{width:1100,height:800},{width:360,height:640},{width:640,height:400},{width:360,height:320}]) {
   await page.setViewportSize(viewport);
   const box=await panel.boundingBox();assert.ok(box.x>=0&&box.y>=0&&box.x+box.width<=viewport.width+1&&box.y+box.height<=viewport.height+1,`${platform} dialog stays in viewport`);
-  assert.equal(await panel.evaluate(el=>el.scrollWidth<=el.clientWidth+1),true,'No horizontal overflow');
+  assert.equal(await panel.locator('.pena-transfer-body').evaluate(el=>el.scrollWidth<=el.clientWidth+1),true,'No horizontal overflow');
+  await verifyExternalScrollRail(panel,'.pena-transfer-body');
   const body=panel.locator('.pena-transfer-body');
   assert.equal(await body.evaluate(el=>el.clientHeight>=64),true,'Expanded settings retain a usable scrolling area');
   assert.equal(await body.evaluate(el=>{const sections=[...el.querySelectorAll('.pena-transfer-section')];return sections.every((s,i)=>!i||s.getBoundingClientRect().top>=sections[i-1].getBoundingClientRect().bottom);}),true,'Expanded sections never overlap');

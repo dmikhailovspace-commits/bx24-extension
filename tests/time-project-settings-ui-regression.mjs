@@ -1,9 +1,10 @@
+import {verifyExternalScrollRail} from './lib/popup-scroll-geometry.mjs';
 import assert from 'node:assert/strict';
 import {mkdirSync,writeFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {startHarnessServer,collectPageErrors} from './lib/harness-server.mjs';
 const require=createRequire(import.meta.url),{chromium}=require('playwright');
-const server=await startHarnessServer(),browser=await chromium.launch({headless:true});
+const server=await startHarnessServer(),browser=await chromium.launch({headless:true,ignoreDefaultArgs:['--hide-scrollbars']});
 const page=await browser.newPage({viewport:{width:1280,height:900}}),errors=collectPageErrors(page),phases=[];
 await page.addInitScript(()=>{window.timeTaskGroupOverrides={'101':'1','102':'2','303':'0'};});
 const phase=async(name,run)=>{const start=Date.now();try{const detail=await run();phases.push({name,status:'PASS',ms:Date.now()-start,detail});}catch(error){phases.push({name,status:'FAIL',ms:Date.now()-start,error:String(error)});throw error;}};
@@ -165,7 +166,8 @@ try{
   for(const viewport of [{width:1280,height:900},{width:360,height:760}]){
    await page.setViewportSize(viewport);await page.waitForTimeout(180);
    const geometry=await page.locator('.pena-native-time-panel').evaluate(panel=>{const r=panel.getBoundingClientRect(),scroll=panel.querySelector('.pena-native-time-scroll');const section=scroll.querySelector('.pena-native-time-project-settings').getBoundingClientRect();return{width:r.width,height:r.height,left:r.left,right:r.right,top:r.top,bottom:r.bottom,bottomVoid:r.bottom-section.bottom,overflow:scroll.scrollWidth-scroll.clientWidth};});
-   assert.equal(geometry.width,viewport.width===360?344:960);assert.equal(geometry.height,viewport.width===360?744:720);assert(geometry.bottomVoid<=(viewport.width===360?9:17));assert.ok(geometry.overflow<=1);
+   assert.equal(geometry.width,viewport.width===360?332:960);assert.equal(geometry.height,viewport.width===360?744:720);assert(geometry.bottomVoid<=(viewport.width===360?9:17));assert.ok(geometry.overflow<=1);
+   await verifyExternalScrollRail(page.locator('.pena-native-time-panel'),'.pena-native-time-scroll');
    const settingsBox=await page.locator('.pena-native-time-panel').boundingBox();
    await page.locator('.pena-native-time-project-cancel').click();
    assert.deepEqual(await page.locator('.pena-native-time-panel').boundingBox(),settingsBox);

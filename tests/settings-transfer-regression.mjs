@@ -1,10 +1,11 @@
+import {verifyExternalScrollRail} from './lib/popup-scroll-geometry.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {startHarnessServer} from './lib/harness-server.mjs';
 import {checkTransferCode,buildAndCheckExport,openTransferSettings,settleTransferMotion} from './lib/settings-transfer-ui.mjs';
 const {chromium}=createRequire(import.meta.url)('playwright');
-const server=await startHarnessServer(),browser=await chromium.launch({headless:true});
+const server=await startHarnessServer(),browser=await chromium.launch({headless:true,ignoreDefaultArgs:['--hide-scrollbars']});
 const errors=[];mkdirSync('tests/artifacts',{recursive:true});
 const fixture=readFileSync('tests/native-cold-start-layout-harness.html','utf8').replace('* { box-sizing: border-box; }','* { box-sizing: content-box; }');
 const fixtureUrl=server.baseUrl+'/tests/native-cold-start-layout-harness.html?layoutDelay=50';
@@ -50,9 +51,10 @@ try {
  for(const size of [{width:360,height:540},{width:320,height:320}]){
   await embedded.locator('iframe').evaluate((el,size)=>Object.assign(el.style,{width:size.width+'px',height:size.height+'px'}),size);
   await embeddedPanel.getByText('Вставить код вместо файла',{exact:true}).evaluate(el=>el.parentElement.open=true);
-  const geometry=await embeddedPanel.evaluate(el=>{const r=el.getBoundingClientRect();return {left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:innerWidth,height:innerHeight,overflow:el.scrollWidth>el.clientWidth+1};});
+  const geometry=await embeddedPanel.evaluate(el=>{const r=el.getBoundingClientRect();return {left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:innerWidth,height:innerHeight,overflow:el.querySelector('.pena-transfer-body').scrollWidth>el.querySelector('.pena-transfer-body').clientWidth+1};});
   assert.ok(geometry.left>=0&&geometry.top>=0&&geometry.right<=geometry.width+1&&geometry.bottom<=geometry.height+1,`Dialog fits embedded ${size.width}x${size.height}`);
   assert.equal(geometry.overflow,false,'Embedded dialog has no horizontal overflow');
+  await verifyExternalScrollRail(embeddedPanel,'.pena-transfer-body');
   for(const name of ['Код экспорта','Код импорта','Файл настроек'])assert.equal(await embeddedPanel.getByLabel(name).evaluate(el=>{const a=el.getBoundingClientRect(),b=el.closest('.pena-transfer-body').getBoundingClientRect();return a.left>=b.left&&a.right<=b.right+1;}),true,`${name} remains within the embedded body`);
   await embeddedPanel.getByRole('button',{name:'Проверить код'}).scrollIntoViewIfNeeded();
   assert.equal(await embeddedPanel.getByRole('button',{name:'Проверить код'}).evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}),true,'Embedded last action is reachable');

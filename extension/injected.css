@@ -1117,11 +1117,11 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 .pena-automation-panel{--pena-rules-ui:"Onest Variable",Onest,Arial,sans-serif;display:grid;grid-template-rows:48px auto minmax(0,1fr) auto;width:min(960px,100%);height:min(720px,calc(100dvh - 32px));margin:0;padding:0;overflow:hidden;border:1px solid #d6deea;border-radius:16px;background:#f7f9fc;color:#182237;box-shadow:0 24px 70px rgba(15,23,42,.28),0 3px 12px rgba(15,23,42,.12);font:500 12px/18px var(--pena-rules-ui);text-transform:none;letter-spacing:normal}
 .pena-automation-tabs{display:flex;gap:8px;padding:8px 16px;border-bottom:1px solid #e2e7ee;background:#fff}
 .pena-automation-tabs [aria-selected=true]{background:#edf3ff;border-color:#7293f3;color:#2854d7}
-.pena-automation-info{max-width:720px;margin:0 auto;line-height:1.6}
+.pena-automation-info{display:grid;gap:16px;min-width:0;margin:0;line-height:1.6}
 .pena-automation-info[hidden]{display:none}
-.pena-automation-info h3{margin:0 0 20px;font-size:18px;line-height:1.4}
-.pena-automation-info section{margin:0 0 20px}
-.pena-automation-info h4{margin:0 0 4px;font-size:13px;font-weight:650}
+.pena-automation-info h3{margin:0;font-size:14px;line-height:20px}
+.pena-automation-info section{display:grid;gap:8px;min-width:0;margin:0;padding:16px;border:1px solid #d7dfeb;border-radius:8px;background:#fff}
+.pena-automation-info h4{margin:0;font-size:13px;font-weight:650}
 .pena-automation-info p{margin:0;color:#526480;overflow-wrap:anywhere}
 .pena-automation-tickets{display:grid;gap:16px}
 .pena-automation-ticket{display:grid;gap:8px;padding:16px;border:1px solid #d7dfeb;border-radius:8px;background:#fff;overflow-wrap:anywhere}
@@ -1300,3 +1300,24 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 .pena-automation-drag-ghost{position:fixed;z-index:5;pointer-events:none;width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:10px 14px;background:#fff;border:1px solid #315fe8;border-radius:8px;box-shadow:0 8px 24px #14203926;color:#142039;font:600 13px/20px var(--pena-rules-ui)}
 .pena-automation-sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 @media(max-width:680px){.pena-automation-rule-head>.pena-automation-drag-handle{grid-column:1;grid-row:1}.pena-automation-rule-head>.pena-automation-rule-toggle{grid-column:2;grid-row:1}.pena-automation-rule-head>label{grid-column:1/4}.pena-automation-rule-head>.pena-automation-icon-button{grid-column:4}}
+
+/* Keep the native scroll rail outside popup chrome. No observer or JS scrollbar. */
+.pena-automation-panel{width:min(960px,calc(100% - 12px));overflow:visible}
+.pena-automation-header{border-radius:15px 15px 0 0}
+.pena-automation-bottom{border-radius:0 0 15px 15px;scrollbar-width:thin;scrollbar-color:rgba(104,119,141,.45) transparent}
+.pena-automation-scroll,.pena-native-time-scroll,.pena-transfer-body{margin-right:-12px;padding-right:22px;overflow-x:hidden;scrollbar-width:auto;scrollbar-gutter:stable;scrollbar-color:auto;overscroll-behavior:contain}
+:is(.pena-automation-scroll,.pena-native-time-scroll,.pena-transfer-body)::-webkit-scrollbar{width:6px;height:6px}
+:is(.pena-automation-scroll,.pena-native-time-scroll,.pena-transfer-body)::-webkit-scrollbar-track{background:transparent}
+:is(.pena-automation-scroll,.pena-native-time-scroll,.pena-transfer-body)::-webkit-scrollbar-thumb{border-radius:999px;background:rgba(104,119,141,.45)}
+:is(.pena-automation-scroll,.pena-native-time-scroll,.pena-transfer-body)::-webkit-scrollbar-thumb:hover{background:rgba(104,119,141,.7)}
+.pena-native-time-panel.pena-native-command-popover{width:min(960px,calc(100vw - 44px));overflow:visible}
+.pena-native-time-panel-head{border-radius:15px 15px 0 0}
+.pena-native-time-loading-overlay{border-radius:15px}
+.pena-transfer-panel.pena-automation-panel{max-width:calc(100% - 12px)}
+.pena-transfer-body{padding-right:26px}
+@media(max-width:680px){.pena-automation-scroll{padding-right:22px}}
+@supports not selector(::-webkit-scrollbar){.pena-automation-scroll,.pena-native-time-scroll,.pena-transfer-body{scrollbar-width:thin;scrollbar-color:rgba(104,119,141,.45) transparent}}
+
+.pena-transfer-footer{border-radius:0 0 15px 15px}
+@media(max-width:680px){.pena-native-time-panel.pena-native-command-popover{width:calc(100vw - 28px)}.pena-native-time-scroll{padding-right:14px}}
+@media(max-width:560px){.pena-transfer-body{padding-right:22px}}
