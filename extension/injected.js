@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '9.0.4';
+	window.__ANITREC_RUNNING__ = '9.0.5';
 
-	const VER = '9.0.4';
+	const VER = '9.0.5';
 	// Google Material Icons / Refresh (Apache-2.0).
 	const _PENA_RELOAD_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>';
 	const _PENA_NATIVE_ONLY = true;
@@ -5574,7 +5574,8 @@
 			if (!id) continue;
 			const previous = _getDialogRecentMeta(id) || {};
 			const taskKey = _getDialogTimeIdentityScopeKey()+':'+rawTaskId;
-			const changedAfterRead = automationEvidence && (_dialogAutomationTaskRevisions.get(taskKey)||0) !== (automationEvidence.revisions.get(taskKey)||0);
+			const changedAfterRead = automationEvidence && ((_dialogAutomationTaskRevisions.get(taskKey)||0) !== (automationEvidence.revisions.get(taskKey)||0) ||
+				(automationEvidence.readAt && (_dialogAutomationVerifiedTasks.get(taskKey)||0)>automationEvidence.readAt));
 			const displayTitle = String(changedAfterRead
 				? (previous.automationFacts?.title ?? previous.displayTitle ?? '')
 				: (task?.TITLE ?? task?.title ?? previous.displayTitle ?? '')).replace(/\s+/g, ' ').trim();
@@ -5598,11 +5599,12 @@
 				lastMessageTs: Math.max(0, Number(previous.lastMessageTs) || taskActivityTs || 0),
 				lastMessageTsSource: previous.lastMessageTsSource || (taskActivityTs ? 'task-activity' : ''),
 				automationFacts: changedAfterRead ? {...previous.automationFacts} : window.__PENA_NATIVE_CATALOG__.taskAutomationFacts(task, previous.automationFacts),
-				taskCatalogFetchedAt: fetchedAt,
+				taskCatalogFetchedAt: changedAfterRead ? previous.taskCatalogFetchedAt : fetchedAt,
 				availability: previous.availability === 'unavailable' ? 'unavailable' : 'available',
 				fetchedAt
 			});
 			_setDialogRecentMeta(_dialogRecentMeta, meta, [id, rawChatId]);
+			if (!changedAfterRead && automationEvidence?.readAt) _dialogAutomationVerifiedTasks.set(taskKey, automationEvidence.readAt);
 			if (explicitTimeTrackingEnabled != null) _setDialogTimeTaskEligibility(rawTaskId, explicitTimeTrackingEnabled, fetchedAt);
 			if (displayTitle) _dialogTimeTaskTitles.set(rawTaskId, displayTitle);
 			merged += 1;
@@ -5660,7 +5662,7 @@
 		const evidence = { scope:scopeKey, revisions:new Map(_dialogTimeTaskRevisions), at:syncStartedAt };
 		// Keep the snapshot through deferred activation too: a rule save can finish
 		// after a newer Pull update even when its network request finished earlier.
-		const automationEvidence = {scope:_getDialogTimeIdentityScopeKey(),revisions:new Map(_dialogAutomationTaskRevisions)};
+		const automationEvidence = {scope:_getDialogTimeIdentityScopeKey(),revisions:new Map(_dialogAutomationTaskRevisions),readAt:Date.now()};
 		const syncPromise = (async () => {
 			const select = ['ID', 'TITLE', 'CHAT_ID', 'GROUP_ID', 'ALLOW_TIME_TRACKING', 'ACTIVITY_DATE', 'CHANGED_DATE', 'TIME_SPENT_IN_LOGS', 'RESPONSIBLE_ID', 'CREATED_BY', 'ACCOMPLICES', 'AUDITORS', 'STATUS', 'PRIORITY', 'DEADLINE'];
 			const maxPages = headOnly
@@ -12894,6 +12896,12 @@ if (_presetChannel) {
 	let _dialogAutomationTimer = null;
 	let _dialogAutomationDeadlineTimer = null;
 	let _dialogAutomationRetryTimer = null;
+	let _dialogAutomationRefreshTimer = null;
+	let _dialogAutomationRefreshScope = '';
+	let _dialogAutomationRefreshing = '';
+	const _dialogAutomationVerifiedTasks = new Map();
+	const _dialogAutomationRefreshAttempts = new Map();
+	const _DIALOG_AUTOMATION_REFRESH_MS = 120000;
 	let _dialogAutomationLoading = '';
 	const _dialogAutomationAttempts = new Map();
 	const _dialogAutomationRetryDelays = new Map();
@@ -13476,7 +13484,77 @@ if (_presetChannel) {
 			if(scope===_getDialogTimeIdentityScopeKey())_scheduleDialogAutomation();
 		},Math.min(2147483647,Math.max(1,next-now)));
 	}
+	function _dialogAutomationRefreshCandidates(scope) {
+		const locked = _dialogAutomationLocks('tasks');
+		const candidates = new Map();
+		for (const item of _getDialogControlItemsForMode('tasks')) {
+			const taskId=String(item.taskId || '');
+			if (!/^\d+$/.test(taskId) || _isDialogControlFolder(item) || _isDialogControlItemUnavailable(item) || locked.has(item.id)) continue;
+			const key=scope+':'+taskId;
+			if (_dialogAutomationDirtyTasks.has(key)) continue;
+			// Only explicit API reads in this session establish freshness. A cache
+			// restore or native-row repaint cannot postpone reconciliation.
+			const due=Math.max((_dialogAutomationVerifiedTasks.get(key)||0)+_DIALOG_AUTOMATION_REFRESH_MS,
+				_dialogAutomationRefreshAttempts.get(key)||0);
+			candidates.set(taskId,{item,key,due});
+		}
+		return [...candidates.values()].sort((a,b)=>a.due-b.due);
+	}
+	function _scheduleDialogAutomationRefresh(scope) {
+		const current = () => _isPenaExtensionEnabled() && scope && scope === _getDialogTimeIdentityScopeKey() &&
+			!document.hidden && navigator.onLine !== false && _readDialogAutomation('tasks').some(rule=>rule.enabled);
+		if (_dialogAutomationRefreshScope!==scope || !current()) {
+			clearTimeout(_dialogAutomationRefreshTimer);_dialogAutomationRefreshTimer=null;
+			_dialogAutomationRefreshScope=scope;
+		}
+		if (!current() || _dialogAutomationRefreshTimer || _dialogAutomationRefreshing) return;
+		const ordered=_dialogAutomationRefreshCandidates(scope);
+		if (!ordered.length) return;
+		_dialogAutomationRefreshTimer=setTimeout(async()=>{
+			_dialogAutomationRefreshTimer=null;
+			if (!current()) return;
+			// Detail reads have priority over the missed-event safety net.
+			if (_dialogAutomationLoading) { _scheduleDialogAutomationRefresh(scope);return; }
+			const batch=_dialogAutomationRefreshCandidates(scope).filter(({due})=>due<=Date.now()).slice(0,50);
+			if (!batch.length) { _scheduleDialogAutomationRefresh(scope);return; }
+			_dialogAutomationRefreshing=scope;
+			const evidence={scope,revisions:new Map(_dialogAutomationTaskRevisions),readAt:Date.now()};
+			const requested=new Map(batch.map(entry=>[String(entry.item.taskId),entry]));
+			// Missing/inaccessible rows are not successful reads. Keep their last
+			// facts, and retry later without starving the remaining tasks.
+			for (const {key} of batch) _dialogAutomationRefreshAttempts.set(key,Date.now()+60000);
+			try {
+				const page=await _callBxRestPageWithTimeout('tasks.task.list',{
+					filter:{ID:[...requested.keys()]},order:{ID:'asc'},start:0,
+					select:['ID','TITLE','CHAT_ID','GROUP_ID','RESPONSIBLE_ID','CREATED_BY','ACCOMPLICES','AUDITORS','STATUS','PRIORITY','DEADLINE']
+				},12000,{isCurrent:current});
+				if (!current()) return;
+				let merged=0;
+				for (const task of _extractDialogTaskCatalogRows(page?.data)) {
+					const taskId=String(task?.ID ?? task?.id ?? ''),entry=requested.get(taskId);
+					if (!entry || (_dialogAutomationTaskRevisions.get(entry.key)||0)!==(evidence.revisions.get(entry.key)||0)) continue;
+					const chatId=task.CHAT_ID ?? task.chatId ?? task.chat?.id ?? entry.item.id;
+					if (normId(/^chat/i.test(String(chatId))?String(chatId):'chat'+chatId)!==entry.item.id) continue;
+					if (_mergeDialogTaskCatalogRows([{...task,CHAT_ID:chatId}],evidence)) {
+						_dialogAutomationRefreshAttempts.delete(entry.key);merged++;
+					}
+				}
+				if (merged) {
+					_hydrateAllDialogControlModesFromRecent({pruneMissing:false});
+					_scheduleDialogRecentCacheWrite();_notifyDialogRecentDataChanged();
+				}
+			} catch {
+				// Shared REST scheduling handles transport limits; avoid a new
+				// request per batch while the portal itself is unavailable.
+				for (const {key} of ordered) _dialogAutomationRefreshAttempts.set(key,Date.now()+60000);
+			} finally {
+				_dialogAutomationRefreshing='';
+				_scheduleDialogAutomation();
+			}
+		},Math.max(1000,Math.min(2147483647,ordered[0].due-Date.now())));
+	}
 	function _scheduleDialogAutomation() {
+		_scheduleDialogAutomationRefresh(_getDialogTimeIdentityScopeKey());
 		document.dispatchEvent(new Event('pena-automation-facts-changed'));
 		clearTimeout(_dialogAutomationRetryTimer);_dialogAutomationRetryTimer=null;
 		if (!_isPenaExtensionEnabled() || !_getDialogTimeIdentityScopeKey()) {
@@ -13551,6 +13629,7 @@ if (_presetChannel) {
 						}
 						const taskKey = scope+':'+taskId;
 						const revision = _dialogAutomationTaskRevisions.get(taskKey);
+						const readAt = Date.now();
 						const data = await _callBxRestMethod('tasks.task.get', {taskId}, {timeoutMs:12000,isCurrent:current});
 						if (!current()) break;
 						if (_dialogAutomationTaskRevisions.get(taskKey) !== revision) { _dialogAutomationAttempts.delete(key); continue; }
@@ -13558,7 +13637,7 @@ if (_presetChannel) {
 						if (String(task?.id ?? task?.ID) !== taskId) continue;
 						const chatId = task.CHAT_ID ?? task.chatId ?? task.chat?.id ?? item.id;
 						if (!/^(?:chat)?[1-9]\d*$/.test(String(chatId))) continue;
-						if (!_mergeDialogTaskCatalogRows([{...task,CHAT_ID:chatId}])) continue;
+						if (!_mergeDialogTaskCatalogRows([{...task,CHAT_ID:chatId}],{scope,readAt,revisions:new Map([[taskKey,revision||0]])})) continue;
 						_dialogAutomationDirtyTasks.delete(taskKey);
 						_dialogAutomationRetryDelays.delete(key);
 						_hydrateAllDialogControlModesFromRecent({pruneMissing:false});

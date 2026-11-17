@@ -81,7 +81,9 @@ export async function verifyAutomationAudit(model,injectedSource) {
  };
  const mergeStart=source.indexOf('\tfunction _mergeDialogTaskCatalogRows('),mergeEnd=source.indexOf('\tasync function _loadDialogTaskCatalogPartitionTail(',mergeStart);
  assert.ok(mergeStart>0&&mergeEnd>mergeStart);
- runInNewContext(source.slice(mergeStart,mergeEnd)+source.slice(start,end)+'\nthis.api={apply:_applyDialogAutomation,receive:_receiveDialogAutomationTask,schedule:_scheduleDialogAutomation,tickets:_dialogAutomationTickets};',context);
+ // This deterministic fixture drives detail/deadline timers explicitly. The
+ // independent API refresh timer is exercised by the full rules-live browser suite.
+ runInNewContext(source.slice(mergeStart,mergeEnd)+source.slice(start,end)+'\n_scheduleDialogAutomationRefresh=()=>{};\nthis.api={apply:_applyDialogAutomation,receive:_receiveDialogAutomationTask,schedule:_scheduleDialogAutomation,tickets:_dialogAutomationTickets};',context);
  const {api}=context;
  const key=()=>`pena.automation.v1.${scope}.tasks`;
  const ownerRule=id=>makeRule([{field:'responsibleId',op:'eq',value:id}],'all',{id,folderId:id==='2'?'folder:a':'folder:b'});

@@ -17,9 +17,15 @@ async function scenario(name,run){
   await page.goto(server.baseUrl+'/tests/native-consistency-harness.html?mode=tasks&nativeCatalog=1&passThrough=1&lazyNative=1&skipInitialMount=1');
   await page.waitForFunction(()=>window.liveRules&&window.nativeCustomEventHandlers.get('onPullEvent-tasks')?.length);
   await page.evaluate(()=>{
-   window.liveTaskRecords={};window.liveRequests=[];window.liveHeld=[];
+   window.liveTaskRecords={};window.liveRequests=[];window.liveHeld=[];window.liveListRequests=[];
    const original=BX.rest.callMethod;
    BX.rest.callMethod=function(method,params,callback){
+    if(method==='tasks.task.list' && Array.isArray(params.filter?.ID)){
+     liveListRequests.push([...params.filter.ID]);
+     const tasks=params.filter.ID.map(id=>liveTaskRecords[id]).filter(Boolean).map(task=>structuredClone(task));
+     const deliver=()=>callback({error:()=>window.liveListError||null,data:()=>({tasks})});
+     if(window.liveListHold)liveHeld.push(deliver);else deliver();return;
+    }
     if(method==='tasks.task.get' && liveTaskRecords[String(params.taskId)]){
      const task=structuredClone(liveTaskRecords[String(params.taskId)]);liveRequests.push(String(params.taskId));
      const deliver=()=>callback({error:()=>null,data:()=>({task})});
@@ -50,6 +56,90 @@ async function scenario(name,run){
 }
 const placed=(page,id,folder)=>page.waitForFunction(({id,folder})=>liveRules.items('tasks').find(x=>x.id===id)?.folderId===folder,{id,folder},{timeout:10000});
 try{
+ await scenario('missed Pull refreshes a previously assigned task on resume',async page=>{
+  await page.evaluate(()=>{
+   liveSeed('chat99006','88006');
+   liveRules.seed({id:'chat99006',taskId:'88006',isTask:true,displayTitle:'Owner changed while closed',automationFacts:{title:'Owner changed while closed',responsibleId:'7'},taskCatalogFetchedAt:Date.now()-3600000,availability:'available'});
+   liveTaskRecords['88006']={id:'88006',chatId:'99006',title:'Owner changed while closed',responsibleId:'8'};
+   localStorage.setItem(liveRules.key('tasks'),JSON.stringify({version:1,excludedIds:[],autoAcceptTransfers:false,rules:[
+    {id:'owner-a',enabled:true,folderId:'folder:live-a',match:'all',conditions:[{field:'responsibleId',op:'eq',value:'7'}]},
+    {id:'owner-b',enabled:true,folderId:'folder:live-b',match:'all',conditions:[{field:'responsibleId',op:'eq',value:'8'}]}
+   ]}));
+   document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await page.waitForFunction(()=>liveRules.tickets('tasks').some(([id,r])=>id==='chat99006'&&r.ticket.to==='folder:live-b'));
+  assert.equal(await page.evaluate(()=>liveRules.items('tasks').find(x=>x.id==='chat99006').folderId),'folder:live-a');
+  assert.equal(await page.evaluate(()=>liveRequests.length),0);
+ });
+ await scenario('quiet portal refreshes completed facts periodically without Pull',async page=>{
+  await page.clock.install();
+  await page.evaluate(()=>{liveSeed('chat99007','88007');liveTaskRecords['88007']={id:'88007',chatId:'99007',status:'3'};liveRules.schedule();});
+  await page.waitForFunction(()=>liveListRequests.some(ids=>ids.includes('88007')));
+  await page.waitForTimeout(600);
+  await page.evaluate(()=>{
+   liveTaskRecords['88007'].status='5';
+   liveRules.seed({...liveRules.get('chat99007'),fetchedAt:Date.now(),taskCatalogFetchedAt:Date.now()});
+  });
+  await page.clock.fastForward(121000);
+  await placed(page,'chat99007','folder:live-b');
+  assert.equal(await page.evaluate(()=>liveListRequests.filter(ids=>ids.includes('88007')).length),2);
+ });
+ await scenario('background reconciliation is batched and respects exclusions',async page=>{
+  await page.evaluate(()=>{
+   liveConfigure(false);
+   for(let i=0;i<65;i++){
+    const taskId=String(88200+i),id='chat'+(99200+i);
+    liveSeed(id,taskId);liveTaskRecords[taskId]={id:taskId,chatId:id.slice(4),status:'5'};
+   }
+   localStorage.setItem(liveRules.key('tasks')+'.locks',JSON.stringify(['chat99200']));
+   liveRules.schedule();
+  });
+  await page.waitForFunction(()=>liveRules.tickets('tasks').filter(([id])=>/^chat992/.test(id)).length===64,null,{timeout:15000});
+  assert.ok(await page.evaluate(()=>liveListRequests.every(ids=>ids.length<=50&&!ids.includes('88200'))));
+  assert.equal(await page.evaluate(()=>liveRules.items('tasks').find(x=>x.id==='chat99200').folderId),'folder:live-a');
+ });
+ await scenario('failed background read preserves placement and retries with backoff',async page=>{
+  await page.clock.install();
+  await page.evaluate(()=>{liveSeed('chat99008','88008');liveTaskRecords['88008']={id:'88008',chatId:'99008',status:'5'};liveListError={error:'TEMPORARY_ERROR'};liveRules.schedule();});
+  await page.waitForFunction(()=>liveListRequests.some(ids=>ids.includes('88008')));
+  await page.waitForTimeout(600);
+  await page.clock.fastForward(30000);
+  assert.equal(await page.evaluate(()=>liveListRequests.filter(ids=>ids.includes('88008')).length),1);
+  assert.equal(await page.evaluate(()=>liveRules.items('tasks').find(x=>x.id==='chat99008').folderId),'folder:live-a');
+  await page.evaluate(()=>{liveListError=null;});
+  await page.clock.fastForward(31000);
+  await placed(page,'chat99008','folder:live-b');
+ });
+ await scenario('Pull during background audit fences the older list response',async page=>{
+  await page.evaluate(()=>{liveSeed('chat99009','88009');liveTaskRecords['88009']={id:'88009',chatId:'99009',status:'5'};liveListHold=true;liveRules.schedule();});
+  await page.waitForFunction(()=>liveHeld.length===1);
+  await page.evaluate(()=>{liveTaskRecords['88009'].status='3';liveEmit('88009');liveListHold=false;liveHeld.splice(0).forEach(fn=>fn());});
+  await page.waitForFunction(()=>liveRequests.includes('88009'));
+  await page.waitForTimeout(700);
+  assert.equal(await page.evaluate(()=>liveRules.items('tasks').find(x=>x.id==='chat99009').folderId),'folder:live-a');
+ });
+ await scenario('offline pause resumes reconciliation without changing manual preference',async page=>{
+  await page.clock.install();
+  await page.evaluate(()=>{
+   Object.defineProperty(navigator,'onLine',{configurable:true,get:()=>false});
+   liveConfigure(false);liveSeed('chat99010','88010');liveTaskRecords['88010']={id:'88010',chatId:'99010',status:'5'};liveRules.schedule();
+  });
+  await page.clock.fastForward(125000);
+  assert.equal(await page.evaluate(()=>liveListRequests.length),0);
+  await page.evaluate(()=>{Object.defineProperty(navigator,'onLine',{configurable:true,get:()=>true});window.dispatchEvent(new Event('online'));});
+  await page.waitForFunction(()=>liveRules.tickets('tasks').some(([id,r])=>id==='chat99010'&&r.ticket.to==='folder:live-b'));
+  assert.equal(await page.evaluate(()=>liveRules.items('tasks').find(x=>x.id==='chat99010').folderId),'folder:live-a');
+ });
+ await scenario('a missing task is not marked fresh and recovers on the next retry',async page=>{
+  await page.clock.install();
+  await page.evaluate(()=>{liveSeed('chat99011','88011');liveRules.schedule();});
+  await page.waitForFunction(()=>liveListRequests.some(ids=>ids.includes('88011')));
+  await page.waitForTimeout(600);
+  assert.equal(await page.evaluate(()=>liveRules.items('tasks').find(x=>x.id==='chat99011').folderId),'folder:live-a');
+  await page.evaluate(()=>{liveTaskRecords['88011']={id:'88011',chatId:'99011',status:'5'};});
+  await page.clock.fastForward(61000);
+  await placed(page,'chat99011','folder:live-b');
+ });
  await scenario('partial Pull rereads all conditions and moves an existing task',async page=>{
   await page.evaluate(()=>{liveSeed('chat99001','88001');liveTaskRecords['88001']={id:'88001',chatId:'99001',title:'Changed title',status:'5'};liveEmit('88001',{TITLE:'Changed title'});});
   await placed(page,'chat99001','folder:live-b');
