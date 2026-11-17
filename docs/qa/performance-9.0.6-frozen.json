@@ -1,0 +1,1055 @@
+{
+  "pairs": [
+    {
+      "taskRatio": 1.482586290236689,
+      "new": {
+        "label": "frozen-r2-a",
+        "count": 4000,
+        "runtimeSha256": "bf1080e833e1badca1e7ee68d0bd30f3be89fdefcc2d450c0e48ce86018152eb",
+        "node": "v24.22.1",
+        "browser": "151.0.7922.34",
+        "phases": [
+          {
+            "name": "rules-and-refresh",
+            "elapsedMs": 14008.7837,
+            "scriptMs": 87.461,
+            "taskMs": 156.031,
+            "layoutMs": 0,
+            "longTasks": 0,
+            "longTaskTotal": 0,
+            "longTaskMax": 0,
+            "lagP95": 1.4000000059604645,
+            "lagMax": 30,
+            "counts": {
+              "_getDialogTimeIdentityScopeKey": 864,
+              "_dialogAutomationRefreshCandidates": 25,
+              "_getDialogControlItemsForMode": 37,
+              "_applyDialogAutomation": 8
+            },
+            "apiCalls": 11,
+            "storageBytes": 1359948,
+            "heap": 16100000,
+            "top": [
+              [
+                "(idle)",
+                13905461
+              ],
+              [
+                "(program)",
+                64535
+              ],
+              [
+                "_applyDialogAutomation",
+                17688
+              ],
+              [
+                "http://127.0.0.1:1541/extension/injected.js:13624",
+                9059
+              ],
+              [
+                "normId",
+                6518
+              ],
+              [
+                ":3",
+                6331
+              ],
+              [
+                "http://127.0.0.1:1541/extension/injected.js:13645",
+                6300
+              ],
+              [
+                "_dialogAutomationRefreshCandidates",
+                5897
+              ],
+              [
+                "(garbage collector)",
+                4619
+              ],
+              [
+                "_getDialogRecentMeta",
+                4121
+              ],
+              [
+                "_dialogAutomationTickets",
+                3037
+              ],
+              [
+                "_isDialogRecentUnavailable",
+                2841
+              ],
+              [
+                ":-1",
+                1869
+              ],
+              [
+                "_readDialogAutomationConfig",
+                1715
+              ],
+              [
+                "http://127.0.0.1:1541/extension/injected.js:13649",
+                1629
+              ],
+              [
+                "setItem",
+                1537
+              ],
+              [
+                "automationFactsSignature",
+                1535
+              ],
+              [
+                "http://127.0.0.1:1541/extension/injected.js:13564",
+                1484
+              ]
+            ]
+          },
+          {
+            "name": "unchanged-refresh",
+            "elapsedMs": 12001.8207,
+            "scriptMs": 24.732000000000003,
+            "taskMs": 65.65199999999999,
+            "layoutMs": 0,
+            "longTasks": 0,
+            "longTaskTotal": 0,
+            "longTaskMax": 0,
+            "lagP95": 1.4000000059604645,
+            "lagMax": 1.5999999940395355,
+            "counts": {
+              "_getDialogTimeIdentityScopeKey": 744,
+              "_dialogAutomationRefreshCandidates": 24,
+              "_getDialogControlItemsForMode": 24
+            },
+            "apiCalls": 12,
+            "storageBytes": 0,
+            "heap": 16100000,
+            "top": [
+              [
+                "(idle)",
+                11970977
+              ],
+              [
+                "(program)",
+                36814
+              ],
+              [
+                ":3",
+                3204
+              ],
+              [
+                "_dialogAutomationRefreshCandidates",
+                2666
+              ],
+              [
+                "_getDialogRecentMeta",
+                1837
+              ],
+              [
+                "_readDialogAutomationConfig",
+                1638
+              ],
+              [
+                "_getDialogTimeIdentityScopeKey",
+                1535
+              ],
+              [
+                "http://127.0.0.1:1541/extension/injected.js:13569",
+                1110
+              ]
+            ]
+          },
+          {
+            "name": "folder-interactions",
+            "elapsedMs": 3449.824199999999,
+            "scriptMs": 126.34600000000002,
+            "taskMs": 266.553,
+            "layoutMs": 3.059,
+            "longTasks": 0,
+            "longTaskTotal": 0,
+            "longTaskMax": 0,
+            "lagP95": 1.9000000059604645,
+            "lagMax": 20.100000023841858,
+            "counts": {
+              "_renderDialogControlNativeSwitcher": 10,
+              "_getDialogControlItemsForMode": 35,
+              "_getDialogTimeIdentityScopeKey": 282,
+              "_dialogAutomationRefreshCandidates": 3
+            },
+            "apiCalls": 1,
+            "storageBytes": 260,
+            "heap": 16100000,
+            "top": [
+              [
+                "(idle)",
+                3232829
+              ],
+              [
+                "(program)",
+                72396
+              ],
+              [
+                "_getDialogControlCounterProjection",
+                10915
+              ],
+              [
+                "(garbage collector)",
+                9080
+              ],
+              [
+                "_normalizeDialogControlTitle",
+                8598
+              ],
+              [
+                "_getDialogRecentMeta",
+                7892
+              ],
+              [
+                "getBoundingClientRect",
+                5764
+              ],
+              [
+                "hasMentionMarker",
+                4309
+              ],
+              [
+                "_dialogAutomationRefreshCandidates",
+                4235
+              ],
+              [
+                "_getSafeTopWindow",
+                3556
+              ],
+              [
+                "removeProperty",
+                3225
+              ],
+              [
+                "evaluate",
+                3182
+              ],
+              [
+                "_setDialogRecentMeta",
+                3178
+              ],
+              [
+                "_getDialogRecentRenderSignature",
+                3144
+              ],
+              [
+                "_countDialogRecentMeta",
+                3122
+              ],
+              [
+                "http://127.0.0.1:1541/extension/injected.js:2514",
+                3111
+              ],
+              [
+                ":-1",
+                3088
+              ],
+              [
+                "_getDialogControlItemIdentityKeys",
+                3085
+              ]
+            ]
+          }
+        ],
+        "errors": []
+      },
+      "pair": "a",
+      "scriptRatio": 1.9935146873257619,
+      "old": {
+        "label": "initial-paired-a",
+        "count": 4000,
+        "runtimeSha256": "ab6f077b769355fc22da8da6cb3115e20b594a63b27d3406f21228808985318d",
+        "node": "v24.22.1",
+        "browser": "151.0.7922.34",
+        "phases": [
+          {
+            "name": "rules-and-refresh",
+            "elapsedMs": 14007.2246,
+            "scriptMs": 133.63400000000001,
+            "taskMs": 218.64000000000001,
+            "layoutMs": 0,
+            "longTasks": 0,
+            "longTaskTotal": 0,
+            "longTaskMax": 0,
+            "lagP95": 1.4000000059604645,
+            "lagMax": 31.400000005960464,
+            "counts": {
+              "_getDialogTimeIdentityScopeKey": 872,
+              "_dialogAutomationRefreshCandidates": 25,
+              "_getDialogControlItemsForMode": 45,
+              "_applyDialogAutomation": 8
+            },
+            "apiCalls": 11,
+            "storageBytes": 1359948,
+            "heap": 12700000,
+            "top": [
+              [
+                "(idle)",
+                13852114
+              ],
+              [
+                "(program)",
+                59833
+              ],
+              [
+                "_applyDialogAutomation",
+                23070
+              ],
+              [
+                "_dialogAutomationRefreshCandidates",
+                15309
+              ],
+              [
+                "normalizeAutomationId",
+                14279
+              ],
+              [
+                "_dialogAutomationFacts",
+                9748
+              ],
+              [
+                "(garbage collector)",
+                8996
+              ],
+              [
+                ":3",
+                8306
+              ],
+              [
+                "_isDialogControlItemUnavailable",
+                7258
+              ],
+              [
+                "automationDecision",
+                6800
+              ],
+              [
+                "_dialogAutomationTickets",
+                6081
+              ],
+              [
+                "automationCondition",
+                5701
+              ],
+              [
+                "_getDialogRecentMeta",
+                4728
+              ],
+              [
+                "http://127.0.0.1:12582/extension/injected.js:13603",
+                4218
+              ],
+              [
+                "canonicalFacts",
+                3024
+              ],
+              [
+                "http://127.0.0.1:12582/extension/injected.js:13585",
+                3021
+              ],
+              [
+                "http://127.0.0.1:12582/extension/injected.js:13465",
+                2064
+              ],
+              [
+                "http://127.0.0.1:12582/extension/native-catalog.js:508",
+                1949
+              ]
+            ]
+          },
+          {
+            "name": "unchanged-refresh",
+            "elapsedMs": 12005.9601,
+            "scriptMs": 31.661999999999995,
+            "taskMs": 83.44300000000001,
+            "layoutMs": 0,
+            "longTasks": 0,
+            "longTaskTotal": 0,
+            "longTaskMax": 0,
+            "lagP95": 1.399999976158142,
+            "lagMax": 2.0999999940395355,
+            "counts": {
+              "_getDialogTimeIdentityScopeKey": 744,
+              "_dialogAutomationRefreshCandidates": 24,
+              "_getDialogControlItemsForMode": 24
+            },
+            "apiCalls": 12,
+            "storageBytes": 0,
+            "heap": 12700000,
+            "top": [
+              [
+                "(idle)",
+                11933546
+              ],
+              [
+                "(program)",
+                43659
+              ],
+              [
+                "_dialogAutomationRefreshCandidates",
+                21588
+              ],
+              [
+                ":3",
+                6390
+              ],
+              [
+                "normId",
+                3238
+              ],
+              [
+                "now",
+                1633
+              ],
+              [
+                "http://127.0.0.1:12582/extension/native-catalog.js:508",
+                1568
+              ],
+              [
+                "_isDialogControlFolder",
+                1545
+              ],
+              [
+                "(garbage collector)",
+                1539
+              ],
+              [
+                "_isDialogRecentPublishable",
+                1536
+              ],
+              [
+                "_getSafeTopWindow",
+                1508
+              ],
+              [
+                "_isDialogControlItemUnavailable",
+                1314
+              ]
+            ]
+          },
+          {
+            "name": "folder-interactions",
+            "elapsedMs": 3555.0022000000026,
+            "scriptMs": 310.23499999999996,
+            "taskMs": 421.769,
+            "layoutMs": 5.792000000000001,
+            "longTasks": 0,
+            "longTaskTotal": 0,
+            "longTaskMax": 0,
+            "lagP95": 5.5999999940395355,
+            "lagMax": 46.900000005960464,
+            "counts": {
+              "_renderDialogControlNativeSwitcher": 20,
+              "_getDialogControlItemsForMode": 75,
+              "_getDialogTimeIdentityScopeKey": 582,
+              "_dialogAutomationRefreshCandidates": 3
+            },
+            "apiCalls": 1,
+            "storageBytes": 260,
+            "heap": 12700000,
+            "top": [
+              [
+                "(idle)",
+                3156756
+              ],
+              [
+                "(program)",
+                49166
+              ],
+              [
+                "normId",
+                31534
+              ],
+              [
+                "_getDialogRecentMeta",
+                15943
+              ],
+              [
+                "_dialogAutomationTickets",
+                15799
+              ],
+              [
+                "_normalizeDialogControlTitle",
+                15456
+              ],
+              [
+                "_getDialogControlItemIdentityKeys",
+                15003
+              ],
+              [
+                "_getDialogControlCounterProjection",
+                12533
+              ],
+              [
+                "(garbage collector)",
+                11479
+              ],
+              [
+                "_getDialogControlNotificationStatus",
+                9880
+              ],
+              [
+                "getBoundingClientRect",
+                9841
+              ],
+              [
+                "_normalizeDialogControlRestDialogId",
+                9538
+              ],
+              [
+                "_getDialogControlItemFilterMeta",
+                9180
+              ],
+              [
+                "http://127.0.0.1:12582/extension/injected.js:15433",
+                7900
+              ],
+              [
+                "_isDialogRecentUnavailable",
+                7648
+              ],
+              [
+                "_getDialogRecentRenderSignature",
+                7513
+              ],
+              [
+                "_setDialogRecentMeta",
+                7092
+              ],
+              [
+                "elementsFromPoint",
+                6303
+              ]
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "taskRatio": 1.6081270668403644,
+      "new": {
+        "label": "frozen-r2-b",
+        "count": 4000,
+        "runtimeSha256": "bf1080e833e1badca1e7ee68d0bd30f3be89fdefcc2d450c0e48ce86018152eb",
+        "node": "v24.22.1",
+        "browser": "151.0.7922.34",
+        "phases": [
+          {
+            "name": "rules-and-refresh",
+            "elapsedMs": 14013.482,
+            "scriptMs": 77.303,
+            "taskMs": 144.54500000000002,
+            "layoutMs": 0,
+            "longTasks": 0,
+            "longTaskTotal": 0,
+            "longTaskMax": 0,
+            "lagP95": 1.2000000178813934,
+            "lagMax": 17.80000001192093,
+            "counts": {
+              "_getDialogTimeIdentityScopeKey": 864,
+              "_dialogAutomationRefreshCandidates": 25,
+              "_getDialogControlItemsForMode": 37,
+              "_applyDialogAutomation": 8
+            },
+            "apiCalls": 11,
+            "storageBytes": 1359948,
+            "heap": 16100000,
+            "top": [
+              [
+                "(idle)",
+                13931162
+              ],
+              [
+                "(program)",
+                56662
+              ],
+              [
+                "_applyDialogAutomation",
+                22463
+              ],
+              [
+                "http://127.0.0.1:8769/extension/injected.js:13645",
+                7778
+              ],
+              [
+                "_dialogAutomationFacts",
+                4885
+              ],
+              [
+                "_dialogAutomationRefreshCandidates",
+                4580
+              ],
+              [
+                "_readDialogAutomationConfig",
+                3227
+              ],
+              [
+                "(garbage collector)",
+                2847
+              ],
+              [
+                ":3",
+                2439
+              ],
+              [
+                "http://127.0.0.1:8769/extension/injected.js:5623",
+                1993
+              ],
+              [
+                "_dialogAutomationLocks",
+                1816
+              ],
+              [
+                "http://127.0.0.1:8769/extension/injected.js:13564",
+                1778
+              ],
+              [
+                "setItem",
+                1648
+              ],
+              [
+                "_getDialogRecentCacheUserId",
+                1617
+              ],
+              [
+                "_getDialogRecentMeta",
+                1542
+              ],
+              [
+                "_isDialogControlFolder",
+                1526
+              ],
+              [
+                "http://127.0.0.1:8769/extension/injected.js:13624",
+                1513
+              ],
+              [
+                "_dialogAutomationTickets",
+                1509
+              ]
+            ]
+          },
+          {
+            "name": "unchanged-refresh",
+            "elapsedMs": 12001.0134,
+            "scriptMs": 24.994000000000003,
+            "taskMs": 61.476000000000006,
+            "layoutMs": 0,
+            "longTasks": 0,
+            "longTaskTotal": 0,
+            "longTaskMax": 0,
+            "lagP95": 1.300000011920929,
+            "lagMax": 6.200000017881393,
+            "counts": {
+              "_getDialogTimeIdentityScopeKey": 744,
+              "_dialogAutomationRefreshCandidates": 24,
+              "_getDialogControlItemsForMode": 24
+            },
+            "apiCalls": 12,
+            "storageBytes": 0,
+            "heap": 16100000,
+            "top": [
+              [
+                "(idle)",
+                11967368
+              ],
+              [
+                "(program)",
+                39327
+              ],
+              [
+                "_dialogAutomationRefreshCandidates",
+                4119
+              ],
+              [
+                "_getDialogRecentMeta",
+                1871
+              ],
+              [
+                ":3",
+                1771
+              ],
+              [
+                "current",
+                1684
+              ],
+              [
+                "data",
+                1570
+              ],
+              [
+                "_getDialogControlItemsForMode",
+                124
+              ]
+            ]
+          },
+          {
+            "name": "folder-interactions",
+            "elapsedMs": 3464.3022999999994,
+            "scriptMs": 117.06700000000002,
+            "taskMs": 253.01300000000003,
+            "layoutMs": 2.9720000000000004,
+            "longTasks": 0,
+            "longTaskTotal": 0,
+            "longTaskMax": 0,
+            "lagP95": 1.699999988079071,
+            "lagMax": 15.699999988079071,
+            "counts": {
+              "_renderDialogControlNativeSwitcher": 10,
+              "_getDialogControlItemsForMode": 35,
+              "_getDialogTimeIdentityScopeKey": 282,
+              "_dialogAutomationRefreshCandidates": 3
+            },
+            "apiCalls": 1,
+            "storageBytes": 260,
+            "heap": 16100000,
+            "top": [
+              [
+                "(idle)",
+                3280709
+              ],
+              [
+                "(program)",
+                59143
+              ],
+              [
+                "getBoundingClientRect",
+                9052
+              ],
+              [
+                "_normalizeDialogControlTitle",
+                8925
+              ],
+              [
+                "normId",
+                7304
+              ],
+              [
+                "(garbage collector)",
+                6665
+              ],
+              [
+                "_getDialogControlCounterProjection",
+                6627
+              ],
+              [
+                ":3",
+                5039
+              ],
+              [
+                "http://127.0.0.1:8769/extension/injected.js:2514",
+                4774
+              ],
+              [
+                "_getDialogRecentRenderSignature",
+                4658
+              ],
+              [
+                "_dialogAutomationRefreshCandidates",
+                4189
+              ],
+              [
+                "_isDialogControlFolder",
+                4029
+              ],
+              [
+                "_getDialogControlItemLiveMeta",
+                3105
+              ],
+              [
+                "_getDialogControlNativeFilter",
+                3104
+              ],
+              [
+                "closest",
+                3085
+              ],
+              [
+                "toggle",
+                3010
+              ],
+              [
+                "http://127.0.0.1:8769/extension/injected.js:1849",
+                2110
+              ],
+              [
+                "_syncDialogControlItemTitleFromElement",
+                2101
+              ]
+            ]
+          }
+        ],
+        "errors": []
+      },
+      "pair": "b",
+      "scriptRatio": 2.2671541365037102,
+      "old": {
+        "label": "initial-paired-b",
+        "count": 4000,
+        "runtimeSha256": "ab6f077b769355fc22da8da6cb3115e20b594a63b27d3406f21228808985318d",
+        "node": "v24.22.1",
+        "browser": "151.0.7922.34",
+        "phases": [
+          {
+            "name": "rules-and-refresh",
+            "elapsedMs": 14018.513300000002,
+            "scriptMs": 146.977,
+            "taskMs": 234.132,
+            "layoutMs": 0,
+            "longTasks": 0,
+            "longTaskTotal": 0,
+            "longTaskMax": 0,
+            "lagP95": 1.399999976158142,
+            "lagMax": 23.69999998807907,
+            "counts": {
+              "_getDialogTimeIdentityScopeKey": 872,
+              "_dialogAutomationRefreshCandidates": 25,
+              "_getDialogControlItemsForMode": 45,
+              "_applyDialogAutomation": 8
+            },
+            "apiCalls": 11,
+            "storageBytes": 1359948,
+            "heap": 12700000,
+            "top": [
+              [
+                "(idle)",
+                13846780
+              ],
+              [
+                "(program)",
+                68821
+              ],
+              [
+                "_applyDialogAutomation",
+                28423
+              ],
+              [
+                "_dialogAutomationRefreshCandidates",
+                20406
+              ],
+              [
+                "normalizeAutomationId",
+                15410
+              ],
+              [
+                "(garbage collector)",
+                11377
+              ],
+              [
+                "automationDecision",
+                11185
+              ],
+              [
+                "_dialogAutomationTickets",
+                6821
+              ],
+              [
+                ":3",
+                6577
+              ],
+              [
+                "automationCondition",
+                5675
+              ],
+              [
+                "_dialogAutomationFacts",
+                4769
+              ],
+              [
+                "http://127.0.0.1:12380/extension/injected.js:13603",
+                4554
+              ],
+              [
+                "now",
+                3482
+              ],
+              [
+                "_getDialogRecentMeta",
+                3358
+              ],
+              [
+                "automationFactsSignature",
+                3044
+              ],
+              [
+                "_scheduleDialogAutomationRefresh",
+                2654
+              ],
+              [
+                "http://127.0.0.1:12380/extension/native-catalog.js:508",
+                2009
+              ],
+              [
+                "_isDialogControlItemUnavailable",
+                1701
+              ]
+            ]
+          },
+          {
+            "name": "unchanged-refresh",
+            "elapsedMs": 12015.376400000001,
+            "scriptMs": 27.460999999999984,
+            "taskMs": 76.728,
+            "layoutMs": 0,
+            "longTasks": 0,
+            "longTaskTotal": 0,
+            "longTaskMax": 0,
+            "lagP95": 1.4000000059604645,
+            "lagMax": 2.4000000059604645,
+            "counts": {
+              "_getDialogTimeIdentityScopeKey": 744,
+              "_dialogAutomationRefreshCandidates": 24,
+              "_getDialogControlItemsForMode": 24
+            },
+            "apiCalls": 12,
+            "storageBytes": 0,
+            "heap": 12700000,
+            "top": [
+              [
+                "(idle)",
+                11973243
+              ],
+              [
+                "(program)",
+                30597
+              ],
+              [
+                "_dialogAutomationRefreshCandidates",
+                15107
+              ],
+              [
+                "_isDialogControlItemUnavailable",
+                3231
+              ],
+              [
+                ":3",
+                1683
+              ],
+              [
+                "_getDialogRecentMeta",
+                1602
+              ],
+              [
+                "automationFactsSignature",
+                1553
+              ],
+              [
+                "_readDialogAutomationConfig",
+                1511
+              ],
+              [
+                "http://127.0.0.1:12380/extension/injected.js:13530",
+                1505
+              ],
+              [
+                "http://127.0.0.1:12380/extension/injected.js:13513",
+                1335
+              ]
+            ]
+          },
+          {
+            "name": "folder-interactions",
+            "elapsedMs": 3564.5663999999997,
+            "scriptMs": 322.894,
+            "taskMs": 427.32499999999993,
+            "layoutMs": 4.813000000000001,
+            "longTasks": 0,
+            "longTaskTotal": 0,
+            "longTaskMax": 0,
+            "lagP95": 15.900000005960464,
+            "lagMax": 52.80000001192093,
+            "counts": {
+              "_renderDialogControlNativeSwitcher": 20,
+              "_getDialogControlItemsForMode": 76,
+              "_getDialogTimeIdentityScopeKey": 640,
+              "_dialogAutomationRefreshCandidates": 4
+            },
+            "apiCalls": 2,
+            "storageBytes": 260,
+            "heap": 12700000,
+            "top": [
+              [
+                "(idle)",
+                3161211
+              ],
+              [
+                "(program)",
+                55070
+              ],
+              [
+                "_normalizeDialogControlTitle",
+                25922
+              ],
+              [
+                "_getDialogControlItemFilterMeta",
+                25611
+              ],
+              [
+                "_dialogAutomationTickets",
+                19363
+              ],
+              [
+                "normId",
+                18050
+              ],
+              [
+                "(garbage collector)",
+                13763
+              ],
+              [
+                "http://127.0.0.1:12380/extension/injected.js:24140",
+                10829
+              ],
+              [
+                "_getDialogRecentMeta",
+                10327
+              ],
+              [
+                "_getDialogControlCounterProjection",
+                10088
+              ],
+              [
+                "_setDialogRecentMeta",
+                9755
+              ],
+              [
+                "_getDialogControlItemIdentityKeys",
+                8790
+              ],
+              [
+                "http://127.0.0.1:12380/extension/injected.js:25268",
+                8518
+              ],
+              [
+                "getBoundingClientRect",
+                7911
+              ],
+              [
+                "_renderDialogControlNativeSwitcher",
+                7638
+              ],
+              [
+                "_getDialogRecentRenderSignature",
+                7341
+              ],
+              [
+                "_syncDialogControlItemTitleFromElement",
+                6742
+              ],
+              [
+                "matchByFilters",
+                6163
+              ]
+            ]
+          }
+        ],
+        "errors": []
+      }
+    }
+  ],
+  "source": "e01b5808028ce3a6d789ea9ff77b19d0f5f84e3e"
+}
