@@ -25,4 +25,18 @@
 
 ## Поставка
 
-Ожидается проверка frozen commit и CI, GitHub Release, публичного main/update.json, Chrome Web Store и шести файлов в прежней общей папке Яндекс Диска. Готовый ZIP не означает публикацию в Store.
+Frozen source: `fe2af2807d0fbb509807ef4fe4282380a07863a7`, тег `v9.0.5`. CI https://github.com/dmikhailovspace-commits/bx24-extension/actions/runs/44042384416 прошёл с первой попытки: точный search-focused 16/16 за 450257 ms, все дополнительные gates, Windows EXE и macOS Universal DMG. macOS runner подтвердил hdiutil, plist, обе архитектуры, права и LF. Физический Mac не запускался.
+
+GitHub Release: https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v9.0.5. Восемь assets скачаны и сверены с CI, GitHub digest и SHA-256 sidecar; 19 публичных runtime-файлов совпали с frozen source. Chrome ZIP дополнительно побайтно совпал с zipFiles(chromeFiles()) замороженного исходника. Доказательства: tests/artifacts/release-9.0.5/verification.json, ci-final.log и chrome-early/build-manifest.json.
+
+Публичный desktop-канал повторно подтверждён штатным tools/publish-update-channel.mjs как 9.0.5. Коммит `bbfae86d2defc627bc088511574b79223128de9d` меняет только main/update.json.
+
+Chrome Store: версия черновика 9.0.5 проверена, отправка с отмеченной автопубликацией принята. Получено «Ваш продукт (расширение) отправлен на проверку», статус «Ожидает рассмотрения». Это не утверждение об уже опубликованной в Store версии. Снимок tests/artifacts/release-9.0.5/store-submitted.jpg.
+
+Диск: шесть новых файлов загружены в существующую общую папку, получено «Все файлы загружены», проверены имена/размеры и дата 17.11.2026 11:12. Затем шесть прежних файлов отправлены в восстанавливаемую корзину. Тот же объект папки переименован в v9.0.5; внутри шесть файлов, в родителе единственная версия с общим доступом. Снимок tests/artifacts/release-9.0.5/disk-files.jpg. Публикация выполнена через GitHub CLI и встроенный браузер/DOM, без native Computer Use.
+
+Контрольные суммы основных файлов:
+
+- Chrome ZIP: `4f6068a51b2591259e40e245148351a19a9ce104dbcfeee1cfe5966c9a49890a`.
+- Windows EXE: `12d0d3f8625ca0936046ffa8abba8d689aaa06305bbc6f404ba31343cf70d3e3`.
+- macOS DMG: `b791be167a4fe058e7bb45052bd44c30a263a6398224d769addbdb1d0f57d483`.
