@@ -76,6 +76,9 @@ try {
  await page.mouse.move(railDrag.x,railDrag.bottom-4,{steps:8});await page.mouse.up();
  assert.equal(await panel.locator('.pena-automation-scroll').evaluate(el=>el.scrollTop+el.clientHeight>=el.scrollHeight-2),true,'External native thumb can be dragged to the last card');
  await page.screenshot({path:'tests/artifacts/rules-info-mobile.png'});
+ await page.setViewportSize({width:320,height:640});
+ assert.equal(await panel.locator('.pena-automation-scroll').evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+ await page.screenshot({path:'tests/artifacts/rules-info-320.png'});
  await page.setViewportSize({width:1100,height:850});
  await editor();
  assert.equal(await panel.getByLabel('Название правила',{exact:true}).inputValue(),'Несохранённый черновик');

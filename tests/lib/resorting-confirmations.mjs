@@ -56,7 +56,7 @@ export async function verifyResorting(browser, server, source) {
   await page.getByLabel('Больше не предлагать переносы для этого диалога').check();
   assert.equal(await page.getByRole('button',{name:'Подтвердить перенос',exact:true}).isEnabled(),false);
   await page.setViewportSize({width:360,height:780});
-  assert.equal(await page.locator('.pena-automation-panel').evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+  assert.equal(await page.locator('.pena-automation-scroll').evaluate(el=>el.scrollWidth<=el.clientWidth),true);
   await page.screenshot({path:'tests/artifacts/resorting-confirmations-mobile.png'});
   await page.getByRole('button',{name:'Оставить и больше не предлагать',exact:true}).click();
   assert.equal(await pending(),0);assert.equal(await placement(),'folder:manual');

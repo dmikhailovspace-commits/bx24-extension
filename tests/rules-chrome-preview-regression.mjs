@@ -64,7 +64,7 @@ try {
  assert.equal(await page.locator('.pena-automation-rule-body:visible').count(),1,'Validation expands only the invalid rule');
  assert.equal(await title.getAttribute('aria-invalid'),'true');
  await page.setViewportSize({width:360,height:780});
- assert.equal(await page.locator('.pena-automation-panel').evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+ assert.equal(await page.locator('.pena-automation-scroll').evaluate(el=>el.scrollWidth<=el.clientWidth),true);
  await page.screenshot({path:'tests/artifacts/rules-preview-narrow-error.png'});
  await page.getByRole('button',{name:'Закрыть',exact:true}).click();await page.reload();
  await page.locator('.recent-host .pena-native-rules-button').waitFor();await open();

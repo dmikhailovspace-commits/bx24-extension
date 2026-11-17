@@ -129,7 +129,7 @@ try {
   await page.setViewportSize({width:360,height:800});
   const layout=await page.evaluate(()=>{
    const panel=document.querySelector('.pena-native-time-panel');const buttons=Array.from(panel.querySelectorAll('.pena-native-time-panel-head button'));const box=panel.getBoundingClientRect();
-   return{panelFits:panel.scrollWidth<=panel.clientWidth+1,buttonsFit:buttons.every(button=>{const r=button.getBoundingClientRect();return r.left>=box.left&&r.right<=box.right+1;}),headerDoesNotOverlap:panel.querySelector('.pena-native-time-scroll').getBoundingClientRect().top>=panel.querySelector('.pena-native-time-panel-head').getBoundingClientRect().bottom-1,tabs:Array.from(panel.querySelectorAll('.pena-native-time-view-tab')).map(tab=>tab.textContent)};
+   return{panelFits:panel.querySelector('.pena-native-time-scroll').scrollWidth<=panel.querySelector('.pena-native-time-scroll').clientWidth+1,buttonsFit:buttons.every(button=>{const r=button.getBoundingClientRect();return r.left>=box.left&&r.right<=box.right+1;}),headerDoesNotOverlap:panel.querySelector('.pena-native-time-scroll').getBoundingClientRect().top>=panel.querySelector('.pena-native-time-panel-head').getBoundingClientRect().bottom-1,tabs:Array.from(panel.querySelectorAll('.pena-native-time-view-tab')).map(tab=>tab.textContent)};
   });
   assert.equal(layout.panelFits,true);assert.equal(layout.buttonsFit,true);assert.equal(layout.headerDoesNotOverlap,true);assert.deepEqual(layout.tabs,['День','7 дней','30 дней']);
   await page.screenshot({path:'tests/artifacts/time-30-days-360.png'});await page.setViewportSize({width:1200,height:900});
@@ -191,7 +191,7 @@ try {
     const box=overlay.getBoundingClientRect();
     return{width:innerWidth,total:panel.querySelector('.pena-native-time-total-value').textContent,today:document.querySelector('.pena-native-time-button-label').textContent,
      overlayVisible:!overlay.hidden,cursor:getComputedStyle(overlay).cursor,headInert:panel.querySelector('.pena-native-time-panel-head').inert,scrollInert:panel.querySelector('.pena-native-time-scroll').inert,
-     filter:getComputedStyle(panel.querySelector('.pena-native-time-scroll')).filter,opacity:Number(getComputedStyle(panel.querySelector('.pena-native-time-scroll')).opacity),left:box.left,right:box.right,scrollWidth:panel.scrollWidth,clientWidth:panel.clientWidth};
+     filter:getComputedStyle(panel.querySelector('.pena-native-time-scroll')).filter,opacity:Number(getComputedStyle(panel.querySelector('.pena-native-time-scroll')).opacity),left:box.left,right:box.right,scrollWidth:panel.querySelector('.pena-native-time-scroll').scrollWidth,clientWidth:panel.querySelector('.pena-native-time-scroll').clientWidth};
    });
    assert.equal(snapshot.overlayVisible,true);assert.equal(snapshot.cursor,'default');assert.equal(snapshot.headInert,true);assert.equal(snapshot.scrollInert,true);assert.equal(snapshot.filter,'none');assert.ok(snapshot.opacity>0&&snapshot.opacity<1,'Loading content stays visibly dimmed without a blur pass');
    assert.match(snapshot.total,/^≥ /);assert.doesNotMatch(snapshot.today,/10\s*мин|10\s*м/);
@@ -326,7 +326,7 @@ try {
   assert.match(await page.locator('.pena-native-time-partial-warning').innerText(),/не разрешает читать время/);
   for(const width of [1000,360]){
    await page.setViewportSize({width,height:800});
-   assert.ok(await page.locator('.pena-native-time-panel').evaluate(panel=>panel.scrollWidth<=panel.clientWidth+1));
+   assert.ok(await page.locator('.pena-native-time-panel').evaluate(panel=>panel.querySelector('.pena-native-time-scroll').scrollWidth<=panel.querySelector('.pena-native-time-scroll').clientWidth+1));
    await page.screenshot({path:`tests/artifacts/time-failed-tasks-${width}.png`});
   }
   await page.setViewportSize({width:1000,height:800});

@@ -86,7 +86,7 @@ try {
  phases.push('Expanded state follows the rule, closing cancels draft, edge autoscroll reaches the last insertion point');
  await page.setViewportSize({width:360,height:780});await page.locator('.pena-automation-scroll').evaluate(el=>el.scrollTop=0);
  await begin(1);await moveTo(0);assert.equal(await page.locator('.pena-automation-drop-marker').isVisible(),true);await page.screenshot({path:'tests/artifacts/rules-drag-narrow.png'});await page.keyboard.press('Escape');await page.mouse.up();
- assert.equal(await page.locator('.pena-automation-panel').evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+ assert.equal(await page.locator('.pena-automation-scroll').evaluate(el=>el.scrollWidth<=el.clientWidth),true);
  phases.push('360px layout preserves drag handle and insertion indicator');assert.deepEqual(errors,[]);
 }finally{
  await context.close();if(profile.startsWith(join(tmpdir(),'bx24-rules-drag-')))rmSync(profile,{recursive:true,force:true});

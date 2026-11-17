@@ -1319,5 +1319,5 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 @supports not selector(::-webkit-scrollbar){.pena-automation-scroll,.pena-native-time-scroll,.pena-transfer-body{scrollbar-width:thin;scrollbar-color:rgba(104,119,141,.45) transparent}}
 
 .pena-transfer-footer{border-radius:0 0 15px 15px}
-@media(max-width:680px){.pena-native-time-panel.pena-native-command-popover{width:calc(100vw - 28px)}.pena-native-time-scroll{padding-right:14px}}
+@media(max-width:680px){.pena-native-time-panel.pena-native-command-popover{width:min(520px,calc(100vw - 28px))}.pena-native-time-scroll{padding-right:14px}}
 @media(max-width:560px){.pena-transfer-body{padding-right:22px}}
