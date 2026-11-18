@@ -37,7 +37,7 @@ function harness() {
  const start=source.indexOf('\tlet _dialogAutomationTimer = null;'),end=source.indexOf('\tfunction _openDialogAutomation(',start);
  const titleStart=source.indexOf('\tfunction _queueDialogTimeTaskTitle('),titleEnd=source.indexOf('\tfunction _getDialogTimeNativeTaskMutation(',titleStart);
  const catalogStart=source.indexOf('\tfunction _mergeDialogTaskCatalogRows('),catalogEnd=source.indexOf('\tasync function _runDialogRecentApiCatalogLoad(',catalogStart);
- runInNewContext(source.slice(start,end)+source.slice(titleStart,titleEnd)+source.slice(catalogStart,catalogEnd)+'\nthis.api={apply:_applyDialogAutomation,receive:_receiveDialogAutomationTask,schedule:_scheduleDialogAutomation,tickets:_dialogAutomationTickets,facts:_dialogAutomationFacts,title:_queueDialogTimeTaskTitle,syncCatalog:_syncDialogTaskCatalog,commitCatalog:_commitDialogTaskCatalogResult};',context);
+ runInNewContext(source.slice(start,end)+source.slice(titleStart,titleEnd)+source.slice(catalogStart,catalogEnd)+'\n_scheduleDialogAutomationRefresh=()=>{};\nthis.api={apply:_applyDialogAutomation,receive:_receiveDialogAutomationTask,schedule:_scheduleDialogAutomation,tickets:_dialogAutomationTickets,facts:_dialogAutomationFacts,title:_queueDialogTimeTaskTitle,syncCatalog:_syncDialogTaskCatalog,commitCatalog:_commitDialogTaskCatalogResult};',context);
  const key=()=>`pena.automation.v1.${scope}.tasks`;
  function rules(values){storage.set(key(),JSON.stringify({version:1,rules:values.map(([field,op,value,folderId='folder:a'],i)=>({id:'r'+i,enabled:true,folderId,match:'all',conditions:[{field,op,value}]})),excludedIds:[]}));}
  function task(facts={},extra={}){const item={id:'chat1',taskId:'1',title:'Original task',...extra};items.tasks.push(item);metas.set(item.id,{id:item.id,taskId:item.taskId,displayTitle:item.title,automationFacts:facts});return item;}
@@ -106,11 +106,11 @@ export async function verifyRulesRuntimePreview() {
   h.api.apply('tasks',h.items.tasks);assert.equal(h.api.tickets('tasks').length,1);
   h.api.receive('1',{});h.api.apply('tasks',h.items.tasks);assert.equal(h.api.tickets('tasks').length,0);assert.equal(item.folderId,'folder:b');
  });
- await check('A known nonmatch becoming a match requires confirmation, not an automatic move',()=>{
-  const h=harness();h.rules([['responsibleId','eq','7']]);const item=h.task({responsibleId:'8'});
+ await check('A newly matching dialog already filed elsewhere requires confirmation',()=>{
+  const h=harness();h.rules([['responsibleId','eq','7']]);const item=h.task({responsibleId:'8'},{folderId:'folder:b'});
   assert.equal(h.api.apply('tasks',h.items.tasks),0);assert.equal(h.api.tickets('tasks').length,0);
   h.api.receive('1',{RESPONSIBLE_ID:'7'});assert.equal(h.api.apply('tasks',h.items.tasks),0);
-  assert.equal(item.folderId,undefined);assert.equal(h.api.tickets('tasks')[0][1].ticket.to,'folder:a');
+  assert.equal(item.folderId,'folder:b');assert.equal(h.api.tickets('tasks')[0][1].ticket.to,'folder:a');
  });
  await check('Unknown facts resolving for a fresh arrival still allow its first automatic placement',()=>{
   const h=harness();h.rules([['responsibleId','eq','7']]);const item=h.task();

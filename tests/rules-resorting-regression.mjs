@@ -10,16 +10,16 @@ function fixture(mode='tasks'){
  const storage=new Map(),metas=new Map(),scope='resort.invalid~7',key=`pena.automation.v1.${scope}.${mode}`;
  const items=[{id:'folder:a',type:'folder',segmentId:'group:a'},{id:'folder:b',type:'folder',segmentId:'group:b'},{id:'chat1',taskId:'1',title:'Alpha',folderId:'folder:a'}];
  metas.set('chat1',{id:'chat1',taskId:'1',displayTitle:'Alpha',automationFacts:{title:'Alpha',responsibleId:'7'}});
- let enabled=true,quota=false;
+ let enabled=true,quota=false,placementSaved=true;
  const context={window:{__PENA_NATIVE_CATALOG__:model},localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>{if(quota&&k.endsWith('.review'))throw new Error('QuotaExceededError');storage.set(k,v);},removeItem:k=>storage.delete(k)},
   document:{hidden:false,dispatchEvent(){},querySelectorAll:()=>[]},navigator:{onLine:true},Event:class{},setTimeout:()=>1,clearTimeout(){},
   _getDialogTimeIdentityScopeKey:()=>scope,_pMode:()=>mode,_getDialogRecentMeta:id=>metas.get(id),_isPenaExtensionEnabled:()=>enabled,
   _getDialogRecentUniqueMeta:()=>[...metas.values()],_dialogRecentMeta:metas,_setDialogRecentMeta:(target,meta)=>target.set(meta.id,meta),_scheduleDialogRecentCacheWrite(){},
-  _isDialogControlFolder:item=>item.type==='folder',_isDialogControlItemUnavailable:item=>!!item.unavailable,_getDialogControlItemsForMode:()=>items};
+  _isDialogControlFolder:item=>item.type==='folder',_isDialogControlItemUnavailable:item=>!!item.unavailable,_getDialogControlItemsForMode:()=>items,_saveDialogControlItemsForMode:()=>placementSaved};
  const at=source.indexOf('\tlet _dialogAutomationTimer = null;'),end=source.indexOf('\tfunction _openDialogAutomation(',at);
  runInNewContext(source.slice(at,end)+'\nthis.api={apply:_applyDialogAutomation,tickets:_dialogAutomationTickets,exclude:_excludeDialogAutomationTransfers,dirty:_dialogAutomationDirtyTasks};',context);
  const config=(auto=false,rules=[titleRule])=>storage.set(key,JSON.stringify({version:1,rules,excludedIds:[],autoAcceptTransfers:auto}));config();
- return {items,item:items[2],metas,storage,key,scope,config,quota:value=>quota=value,enabled:value=>enabled=value,api:context.api,apply:()=>context.api.apply(mode,items),tickets:()=>context.api.tickets(mode)};
+ return {items,item:items[2],metas,storage,key,scope,config,quota:value=>quota=value,placementSaved:value=>placementSaved=value,enabled:value=>enabled=value,api:context.api,apply:()=>context.api.apply(mode,items),tickets:()=>context.api.tickets(mode)};
 }
 function check(name,run){try{run();results.push({name,passed:true});console.log('PASS '+name);}catch(error){results.push({name,passed:false,error:error.stack});console.error('FAIL '+name+'\n'+error.stack);}}
 check('Manual mode creates a proposal; enabling auto accepts it once and updates group',()=>{
@@ -81,6 +81,13 @@ check('Journal quota leaves placement untouched and retry applies once after sto
  const f=fixture();f.apply();const before=f.storage.get(f.key+'.review');f.config(true);f.quota(true);
  assert.equal(f.apply(),0);assert.equal(f.item.folderId,'folder:a');assert.equal(f.storage.get(f.key+'.review'),before);assert.equal(f.tickets().length,1);
  f.quota(false);assert.equal(f.apply(),1);assert.equal(f.item.folderId,'folder:b');assert.equal(f.apply(),0);
+});
+check('Automatic placement failure restores the proposal and retries the same move',()=>{
+ const f=fixture();f.apply();const before=f.storage.get(f.key+'.review');f.config(true);
+ f.placementSaved(false);assert.equal(f.api.apply('tasks',f.items,null,null,true),0);
+ assert.equal(f.item.folderId,'folder:a');assert.equal(f.storage.get(f.key+'.review'),before);
+ f.placementSaved(true);assert.equal(f.api.apply('tasks',f.items,null,null,true),1);
+ assert.equal(f.item.folderId,'folder:b');assert.equal(f.tickets().length,0);
 });
 check('Persisted exclusion hides a stale ticket even if journal quota prevents clearing it',()=>{
  const f=fixture();f.apply();f.quota(true);f.enabled(false);assert.equal(f.api.exclude('tasks',['chat1']),true);assert.equal(f.tickets().length,0);

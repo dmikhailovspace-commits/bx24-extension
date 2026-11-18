@@ -32,6 +32,12 @@ export async function verifyBulkReview({browser,server,source}){
    assert.equal(await panel.locator('.pena-automation-ticket.--selected').count(),2,'Same labels in different folder IDs are not similar');
    assert.equal(await all.evaluate(el=>el.indeterminate),true);
    await page.screenshot({path:`tests/artifacts/bulk-review-${mode}.png`});
+   const lock = cards.first().getByLabel('Больше не предлагать переносы для этого диалога');
+   await lock.check();
+   assert.equal(await panel.getByRole('button',{name:'Подтвердить выбранные',exact:true}).isDisabled(),true);
+   assert.equal(await panel.getByRole('button',{name:'Добавить в исключения',exact:true}).isEnabled(),true);
+   await lock.uncheck();
+   assert.equal(await panel.getByRole('button',{name:'Подтвердить выбранные',exact:true}).isEnabled(),true);
    // A harmless live refresh preserves the chosen proposal identities.
    await page.evaluate(()=>document.dispatchEvent(new Event('pena-automation-review-changed')));
    assert.equal(await panel.locator('.pena-automation-ticket.--selected').count(),2);

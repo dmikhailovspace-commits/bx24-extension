@@ -572,14 +572,27 @@
 		if (op === 'ends') return values.some(text => text.endsWith(expected));
 		return false;
 	}
+	function automationRuleMatch(rule, facts, mode, now) {
+		let requiredPending = false, optionalPending = false, optionalMatched = false, hasOptional = false;
+		for (const condition of rule.conditions) {
+			if (condition.required === true || rule.match !== 'any') {
+				const result = automationCondition(condition,facts,mode,now);
+				if (result === false) return false;
+				requiredPending ||= result === null;
+			} else if (!optionalMatched) {
+				hasOptional = true;
+				const result = automationCondition(condition,facts,mode,now);
+				optionalMatched = result === true;
+				optionalPending ||= result === null;
+			}
+		}
+		if (hasOptional && !optionalMatched && !optionalPending) return false;
+		return requiredPending || (hasOptional && !optionalMatched) ? null : true;
+	}
 	function automationDecision(rules, facts, mode, folderIds, now = Date.now()) {
-		const all=checks=>checks.includes(false)?false:checks.includes(null)?null:true;
-		const any=checks=>checks.includes(true)?true:checks.includes(null)?null:false;
 		for (const rule of Array.isArray(rules) ? rules : []) {
 			if (!rule.enabled || !folderIds.has(rule.folderId) || !rule.conditions?.length) continue;
-			const required=[],optional=[];
-			for(const condition of rule.conditions)(condition.required===true?required:optional).push(automationCondition(condition,facts,mode,now));
-			const match=all([all(required),optional.length?(rule.match==='any'?any(optional):all(optional)):true]);
+			const match = automationRuleMatch(rule,facts,mode,now);
 			// Preserve priority until metadata for an earlier possible rule arrives.
 			if (match === null) return { pending: true };
 			if (match) return { ruleId: rule.id, folderId: rule.folderId };

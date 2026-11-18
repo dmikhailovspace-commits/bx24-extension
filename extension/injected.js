@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '9.0.6';
+	window.__ANITREC_RUNNING__ = '9.0.7';
 
-	const VER = '9.0.6';
+	const VER = '9.0.7';
 	// Google Material Icons / Refresh (Apache-2.0).
 	const _PENA_RELOAD_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>';
 	const _PENA_NATIVE_ONLY = true;
@@ -4325,9 +4325,10 @@
 			existingById.set(id, items[items.length - 1]);
 			added += 1;
 		});
-		updated += _applyDialogAutomation(targetMode, items);
+		const placed = _applyDialogAutomation(targetMode, items, null, null, true);
+		updated += placed;
 		if (added || updated || removed) {
-			_saveDialogControlItemsForMode(targetMode, items);
+			if (!placed) _saveDialogControlItemsForMode(targetMode, items);
 			_dialogControlLastSig = '';
 			_dialogControlNativeViewSig = '';
 		}
@@ -8271,7 +8272,8 @@
 		// A nested native project owns this column while recent is an avatar rail.
 		// Pause folder pagination too, including delayed progress/retry messages.
 		if (_findNativeCompactRail(container)) return null;
-        const requested = new Set(Array.from(filter.ids || []).map(normId).filter(Boolean));
+        const requested = new Set(filter.ids);
+        if (!requested.size && (filter.folderId || filter.segmentId)) return null;
         const candidates = _getDialogControlItems().filter(item => !_isDialogControlFolder(item));
         // Unassigned reminders are in the catalog, not necessarily in saved folders.
         // Their badge count must have a matching native loading demand on reopen.
@@ -12130,7 +12132,7 @@ if (_presetChannel) {
 			if (filtersHost) _refreshDialogControlPanel(filtersHost);
 			const mode = _pMode();
 			const nativeFolderFilter = _getDialogControlNativeFilter();
-			const demandedIds = new Set(Array.from(nativeFolderFilter?.ids || []).map(normId).filter(Boolean));
+			const demandedIds = new Set(_isDialogNativeLazyMode() ? [] : nativeFolderFilter?.ids);
 			const normalizedQuery = _normalizeDialogControlTitle(filters.query || '');
 			if (normalizedQuery && !_isDialogNativeLazyMode()) {
 				_getDialogControlItemsForMode(mode).forEach(item => {
@@ -13334,7 +13336,7 @@ if (_presetChannel) {
 		const facts={title:meta.displayTitle || item.title || '',kind:/^user\d+$/i.test(item.id)?'personal':'group'};
 		if(!fields)return {...facts,...meta.automationFacts};
 		// Rule passes need only referenced fields plus the displayed ticket title.
-		for(const field of new Set(['title',...fields,...(fields.includes('deadline')?['status']:[])])){
+		for(const field of fields){
 			if(Object.prototype.hasOwnProperty.call(meta.automationFacts||{},field))facts[field]=meta.automationFacts[field];
 		}
 		return facts;
@@ -13361,27 +13363,12 @@ if (_presetChannel) {
 		document.dispatchEvent(new Event('pena-automation-review-changed'));
 		return true;
 	}
-	function _applyDialogAutomation(mode, items, previewRules = null) {
-		if (!_isPenaExtensionEnabled()) return 0;
-		const scope = _getDialogTimeIdentityScopeKey();
-		const model = window.__PENA_NATIVE_CATALOG__;
-		const config = _readDialogAutomationConfig(mode);
-		const rules = previewRules || config.rules;
-		const excluded = new Set(previewRules ? [] : config.excludedIds || []);
-		const locked = _dialogAutomationLocks(mode);
-		if (!model?.automationDecision) return 0;
-		const reviewKey = _dialogAutomationKey(mode) + '.review';
-		if (!rules.some(rule=>rule.enabled)) {
-			if (!previewRules && localStorage.getItem(reviewKey)) { localStorage.removeItem(reviewKey);_syncDialogAutomationBadge(); }
-			return 0;
-		}
-		// Display labels can be hydrated after an old import. They must never
-		// invalidate a dismissed move or make auto-accept reconsider it.
-		const semanticRules=list=>list.map(({id,enabled,folderId,match,conditions})=>({id,enabled,folderId,match,conditions:conditions.map(({field,op,value,required})=>({field,op,value:model.automationFields[field]?.[1]==='ids'?(model.normalizeAutomationId(value)||value):value,required:required===true}))}));
-		const rulesSig = JSON.stringify(semanticRules(rules));
-		const before = localStorage.getItem(reviewKey) || '';
+	function _dialogAutomationSemanticRules(list,model) {
+		return list.map(({id,enabled,folderId,match,conditions})=>({id,enabled,folderId,match,conditions:conditions.map(({field,op,value,required})=>({field,op,value:model.automationFields[field]?.[1]==='ids'?(model.normalizeAutomationId(value)||value):value,required:required===true}))}));
+	}
+	function _dialogAutomationReviewRecords(before,rulesSig,model) {
 		let reviews = {};
-		const semanticOrder=signature=>JSON.stringify(semanticRules(JSON.parse(signature)).sort((a,b)=>String(a.id).localeCompare(String(b.id))));
+		const semanticOrder=signature=>JSON.stringify(_dialogAutomationSemanticRules(JSON.parse(signature),model).sort((a,b)=>String(a.id).localeCompare(String(b.id))));
 		const canonicalFacts=signature=>model.automationFactsSignature(JSON.parse(signature));
 		try {
 			const journal=JSON.parse(before);
@@ -13397,8 +13384,53 @@ if (_presetChannel) {
 				}
 			}
 		} catch {}
+		return reviews;
+	}
+	function _dialogAutomationReview(previous,factsSig,decision,placement,title) {
+		const target = decision?.folderId || '';
+		const record = previous || {factsSig,target,placement};
+		// Existing manual placements need a proposal even on the first scan.
+		// A dismissed proposal stays closed until its actual inputs change.
+		// The journal owns rulesSig once; duplicating all rules per ticket can
+		// exhaust localStorage on portals with thousands of matching dialogs.
+		const signature = record.dismissedSig || (placement && placement !== target)
+			? JSON.stringify([factsSig,placement,target,decision?.ruleId||'']) : '';
+		// Another winning rule with the same facts/from/to is the same move.
+		if(record.dismissedSig&&record.dismissedSig!==signature)try{if(JSON.stringify(JSON.parse(record.dismissedSig).slice(0,3))===JSON.stringify([factsSig,placement,target]))record.dismissedSig=signature;}catch{}
+		if(target || record.placement!==placement)record.proposeRemoval=false;
+		else if(previous && record.target && placement)record.proposeRemoval=true;
+		if(record.dismissedSig && record.dismissedSig!==signature)delete record.dismissedSig;
+		// Resorting starts in a folder. A prior scan or automationHandled
+		// alone is not evidence of a current placement (including old journals).
+		record.reviewRequired=!!placement;
+		if(record.reviewRequired && (target || record.proposeRemoval) && target!==placement && record.dismissedSig!==signature){
+			if(record.ticket?.signature!==signature)record.ticket={from:placement,to:target,ruleId:decision?.ruleId||'',title,reason:target?'Правило предлагает другую папку':'Диалог больше не подходит под правила',signature,updatedAt:Date.now()};
+		}else record.ticket=null;
+		record.factsSig=factsSig;record.target=target;record.placement=placement;
+		if (record.ticket) record.ticket.title = title;
+		return record;
+	}
+	function _applyDialogAutomation(mode, items, previewRules = null, unresolved = null, persist = false) {
+		if (!_isPenaExtensionEnabled()) return 0;
+		const scope = _getDialogTimeIdentityScopeKey();
+		const model = window.__PENA_NATIVE_CATALOG__;
+		const config = _readDialogAutomationConfig(mode);
+		const rules = previewRules || config.rules;
+		const excluded = new Set(previewRules ? [] : config.excludedIds || []);
+		const locked = _dialogAutomationLocks(mode);
+		if (!model?.automationDecision) return 0;
+		const reviewKey = _dialogAutomationKey(mode) + '.review';
+		if (!rules.some(rule=>rule.enabled)) {
+			if (!previewRules && localStorage.getItem(reviewKey)) { localStorage.removeItem(reviewKey);_syncDialogAutomationBadge(); }
+			return 0;
+		}
+		const rulesSig = JSON.stringify(_dialogAutomationSemanticRules(rules,model));
+		const before = localStorage.getItem(reviewKey) || '';
+		const reviews = _dialogAutomationReviewRecords(before,rulesSig,model);
 		const enabledRules = rules.filter(rule=>rule.enabled);
 		const fields = [...new Set(enabledRules.flatMap(rule=>(rule.conditions||[]).map(c=>c.field)))];
+		const factFields = new Set(['title', ...fields]);
+		if (fields.includes('deadline')) factFields.add('status');
 		const folders = new Map(items.filter(_isDialogControlFolder).map(folder => [folder.id, folder]));
 		const folderIds = new Set(folders.keys());
 		const placements=[];
@@ -13408,37 +13440,28 @@ if (_presetChannel) {
 		let changed = 0;
 		for (const item of items) {
 			if (_isDialogControlFolder(item) || _isDialogControlItemUnavailable(item)) { delete reviews[item.id]; continue; }
-			if (locked.has(item.id) || _dialogAutomationDirtyTasks.has(scope+':'+item.taskId)) { if(reviews[item.id])reviews[item.id].ticket=null;continue; }
-			const facts = _dialogAutomationFacts(item,fields);
-			const relevant = Object.fromEntries(fields.map(field=>[field,facts[field]]));
+			const dirty = _dialogAutomationDirtyTasks.size && _dialogAutomationDirtyTasks.has(scope+':'+item.taskId);
+			if (locked.has(item.id) || dirty) {
+				if (dirty && !locked.has(item.id)) unresolved?.push(item);
+				if (reviews[item.id]) reviews[item.id].ticket = null;
+				continue;
+			}
+			const facts = _dialogAutomationFacts(item,factFields);
+			const relevant = {};
+			for (const field of fields) relevant[field] = facts[field];
 			const inputKey=decisions&&JSON.stringify(relevant),cached=decisions?.get(inputKey);
 			const factsSig = cached ? cached.factsSig : model.automationFactsSignature(relevant);
 			const decision = cached ? cached.decision : model.automationDecision(rules, facts, mode, folderIds);
 			if(decisions&&!cached)decisions.set(inputKey,{factsSig,decision});
-			if (!previewRules && enabledRules.length) {
+			if (!previewRules) {
 				const target = decision?.folderId || '', previous = reviews[item.id];
-				if (decision?.pending) { if(previous)previous.ticket=null;continue; }
-				const placement=item.folderId || '';
-				const record = previous || {factsSig,target,placement};
-				// Existing manual placements need a proposal even on the first scan.
-				// A dismissed proposal stays closed until its actual inputs change.
-				// The journal owns rulesSig once; duplicating all rules per ticket can
-				// exhaust localStorage on portals with thousands of matching dialogs.
-				const signature=JSON.stringify([factsSig,placement,target,decision?.ruleId||'']);
-				// Another winning rule with the same facts/from/to is the same move.
-				if(record.dismissedSig&&record.dismissedSig!==signature)try{if(JSON.stringify(JSON.parse(record.dismissedSig).slice(0,3))===JSON.stringify([factsSig,placement,target]))record.dismissedSig=signature;}catch{}
-				if(target || record.placement!==placement)record.proposeRemoval=false;
-				else if(previous && record.target && placement)record.proposeRemoval=true;
-				if(record.dismissedSig && record.dismissedSig!==signature)delete record.dismissedSig;
-				// Resorting starts in a folder. A prior scan or automationHandled
-				// alone is not evidence of a current placement (including old journals).
-				record.reviewRequired=!!placement;
-				if(record.reviewRequired && (target || record.proposeRemoval) && target!==placement && record.dismissedSig!==signature){
-					if(record.ticket?.signature!==signature)record.ticket={from:placement,to:target,ruleId:decision?.ruleId||'',title:facts.title,reason:target?'Правило предлагает другую папку':'Диалог больше не подходит под правила',signature,updatedAt:Date.now()};
-				}else record.ticket=null;
-				record.factsSig=factsSig;record.target=target;record.placement=placement;
+				if (decision?.pending) {
+					unresolved?.push(item);
+					if (previous) previous.ticket = null;
+					continue;
+				}
+				const record = _dialogAutomationReview(previous,factsSig,decision,item.folderId || '',facts.title);
 				reviews[item.id] = record;
-				if (record.ticket) record.ticket.title = facts.title;
 				if(record.ticket && config.autoAcceptTransfers === true){
 					// Only an up-to-date proposal reaches here. Unknown task facts,
 					// permanent exceptions and dismissed proposals were filtered above.
@@ -13448,7 +13471,7 @@ if (_presetChannel) {
 				}
 				// A first match may arrive after earlier scans or a REST refresh.
 				// Only a real assignment/manual action or activation snapshot blocks it.
-				if (item.folderId || item.automationHandled || excluded.has(item.id) || record.dismissedSig) continue;
+				if (record.dismissedSig) continue;
 			}
 			if (item.folderId || item.automationHandled || excluded.has(item.id)) continue;
 			if (!decision?.folderId) continue;
@@ -13458,7 +13481,6 @@ if (_presetChannel) {
 			if (reviews[item.id]) reviews[item.id].placement = decision.folderId;
 		}
 		if (!previewRules) {
-			if (!rules.some(rule=>rule.enabled)) reviews = {};
 			const itemIds = new Set(items.map(item=>item.id));
 			for (const id of Object.keys(reviews)) if (!itemIds.has(id)) delete reviews[id];
 			const after = JSON.stringify({rulesSig,factsOrderVersion:2,records:reviews});
@@ -13469,10 +13491,23 @@ if (_presetChannel) {
 			_dialogAutomationStorageErrors.delete(_dialogAutomationKey(mode));
 			// Apply only after the journal is durable. Quota errors must leave
 			// both the visible placement and the previous proposal untouched.
+			const originals = persist ? placements.map(({item}) => [item,{...item}]) : [];
 			for(const {item,target,ruleId} of placements){
 				item.folderId=target;if(target)item.segmentId=folders.get(target).segmentId||'';
 				item.automationHandled=true;item.automationRuleId=ruleId;
 				delete item.column;delete item.columnIndex;
+			}
+			if (persist && placements.length && _saveDialogControlItemsForMode(mode,items) === false) {
+				for (const [item,original] of originals) {
+					for (const key of Object.keys(item)) delete item[key];
+					Object.assign(item,original);
+				}
+				if (localStorage.getItem(reviewKey) === after) {
+					if (before) localStorage.setItem(reviewKey,before);
+					else localStorage.removeItem(reviewKey);
+				}
+				_dialogAutomationStorageErrors.set(_dialogAutomationKey(mode),'Не удалось сохранить размещение. Проверьте свободное место в хранилище браузера.');
+				return 0;
 			}
 			if(after!==before)document.dispatchEvent(new Event('pena-automation-review-changed'));
 			_syncDialogAutomationBadge();
@@ -13525,27 +13560,41 @@ if (_presetChannel) {
 			if(scope===_getDialogTimeIdentityScopeKey())_scheduleDialogAutomation();
 		},Math.min(2147483647,Math.max(1,next-now)));
 	}
-	function _dialogAutomationRefreshCandidates(scope, nextDueOnly = false) {
-		const locked = _dialogAutomationLocks('tasks');
-		const candidates = nextDueOnly ? null : new Map();
-		let earliest=Infinity;const now=Date.now();
-		for (const item of _getDialogControlItemsForMode('tasks')) {
-			const taskId=String(item.taskId || '');
-			if (!/^\d+$/.test(taskId) || _isDialogControlFolder(item) || _isDialogControlItemUnavailable(item) || locked.has(item.id)) continue;
-			const key=scope+':'+taskId;
-			if (_dialogAutomationDirtyTasks.has(key)) continue;
-			// Only explicit API reads in this session establish freshness. A cache
-			// restore or native-row repaint cannot postpone reconciliation.
-			const due=Math.max((_dialogAutomationVerifiedTasks.get(key)||0)+_DIALOG_AUTOMATION_REFRESH_MS,
-				_dialogAutomationRefreshAttempts.get(key)||0);
-			if(nextDueOnly){
-				// All overdue candidates schedule the same one-second wake-up.
-				// The actual batch is still rebuilt from live state when it fires.
-				if(due<=now)return due;
-				earliest=Math.min(earliest,due);
-			}else candidates.set(taskId,{item,key,due});
+	let _dialogAutomationRefreshCursor = {scope:'', items:null, index:0};
+	function _dialogAutomationRefreshCandidates(scope, nextDueOnly = false, batchLimit = Infinity) {
+		const items = _getDialogControlItemsForMode('tasks');
+		if (_dialogAutomationRefreshCursor.scope !== scope || _dialogAutomationRefreshCursor.items !== items) {
+			_dialogAutomationRefreshCursor = {scope, items, index:0};
 		}
-		return nextDueOnly ? earliest : [...candidates.values()].sort((a,b)=>a.due-b.due);
+		const cursor = _dialogAutomationRefreshCursor;
+		const locked = _dialogAutomationLocks('tasks');
+		const candidates = new Map();
+		const now = Date.now();
+		let earliest = Infinity;
+		for (let offset = 0; offset < items.length; offset++) {
+			const index = (cursor.index + offset) % items.length;
+			const item = items[index], taskId = String(item.taskId || '');
+			if (!/^\d+$/.test(taskId) || _isDialogControlFolder(item) || locked.has(item.id)) continue;
+			const key = scope+':'+taskId;
+			if (_dialogAutomationDirtyTasks.has(key)) continue;
+			const due = Math.max((_dialogAutomationVerifiedTasks.get(key)||0) + _DIALOG_AUTOMATION_REFRESH_MS,
+				_dialogAutomationRefreshAttempts.get(key)||0);
+			if (Number.isFinite(batchLimit) && due > now) continue;
+			if (_isDialogControlItemUnavailable(item)) continue;
+			if (nextDueOnly) {
+				if (due <= now) return due;
+				earliest = Math.min(earliest, due);
+			} else {
+				candidates.set(taskId, {item,key,due});
+				if (candidates.size === batchLimit) {
+					// Continue from the next row. Recheck availability, locks, revisions
+					// and freshness at request time, even after a catalog reorder.
+					cursor.index = (index + 1) % items.length;
+					break;
+				}
+			}
+		}
+		return nextDueOnly ? earliest : [...candidates.values()];
 	}
 	function _scheduleDialogAutomationRefresh(scope) {
 		const current = () => _isPenaExtensionEnabled() && scope && scope === _getDialogTimeIdentityScopeKey() &&
@@ -13554,7 +13603,7 @@ if (_presetChannel) {
 			clearTimeout(_dialogAutomationRefreshTimer);_dialogAutomationRefreshTimer=null;
 			_dialogAutomationRefreshScope=scope;
 		}
-		if (!current() || _dialogAutomationRefreshTimer || _dialogAutomationRefreshing) return;
+		if (_dialogAutomationRefreshTimer || _dialogAutomationRefreshing || !current()) return;
 		const nextDue=_dialogAutomationRefreshCandidates(scope,true);
 		if (!Number.isFinite(nextDue)) return;
 		_dialogAutomationRefreshTimer=setTimeout(async()=>{
@@ -13562,7 +13611,7 @@ if (_presetChannel) {
 			if (!current()) return;
 			// Detail reads have priority over the missed-event safety net.
 			if (_dialogAutomationLoading) { _scheduleDialogAutomationRefresh(scope);return; }
-			const batch=_dialogAutomationRefreshCandidates(scope).filter(({due})=>due<=Date.now()).slice(0,50);
+			const batch=_dialogAutomationRefreshCandidates(scope,false,50);
 			if (!batch.length) { _scheduleDialogAutomationRefresh(scope);return; }
 			_dialogAutomationRefreshing=scope;
 			const evidence={scope,revisions:new Map(_dialogAutomationTaskRevisions),readAt:Date.now(),changedIds:new Set()};
@@ -13576,17 +13625,16 @@ if (_presetChannel) {
 					select:['ID','TITLE','CHAT_ID','GROUP_ID','RESPONSIBLE_ID','CREATED_BY','ACCOMPLICES','AUDITORS','STATUS','PRIORITY','DEADLINE']
 				},12000,{isCurrent:current});
 				if (!current()) return;
-				let merged=0;
+				const accepted = [];
 				for (const task of _extractDialogTaskCatalogRows(page?.data)) {
 					const taskId=String(task?.ID ?? task?.id ?? ''),entry=requested.get(taskId);
 					if (!entry || (_dialogAutomationTaskRevisions.get(entry.key)||0)!==(evidence.revisions.get(entry.key)||0)) continue;
 					const chatId=task.CHAT_ID ?? task.chatId ?? task.chat?.id ?? entry.item.id;
 					if (normId(/^chat/i.test(String(chatId))?String(chatId):'chat'+chatId)!==entry.item.id) continue;
-					if (_mergeDialogTaskCatalogRows([{...task,CHAT_ID:chatId}],evidence)) {
-						_dialogAutomationRefreshAttempts.delete(entry.key);merged++;
-					}
+					accepted.push({...task,CHAT_ID:chatId});
 				}
-				if (merged) {
+				if (_mergeDialogTaskCatalogRows(accepted,evidence)) {
+					for (const task of accepted) _dialogAutomationRefreshAttempts.delete(scope+':'+String(task.ID ?? task.id));
 					_scheduleDialogRecentCacheWrite();
 					if (evidence.changedIds.size) {
 						_hydrateAllDialogControlModesFromRecent({pruneMissing:false});
@@ -13621,9 +13669,10 @@ if (_presetChannel) {
 			_dialogAutomationTimer = null;
 			if (!_isPenaExtensionEnabled() || document.hidden || navigator.onLine === false) return;
 			let changed = false;
+			const unresolved = [];
 			for (const mode of ['chats','tasks']) {
 				const items = _getDialogControlItemsForMode(mode);
-				if (_applyDialogAutomation(mode, items)) { _saveDialogControlItemsForMode(mode, items); changed = true; }
+				if (_applyDialogAutomation(mode, items, null, mode === 'tasks' ? unresolved : null, true)) changed = true;
 			}
 			if (changed) { _dialogControlNativeViewSig = ''; _notifyDialogRecentDataChanged(); }
 			_scheduleDialogAutomationDeadline(_getDialogTimeIdentityScopeKey());
@@ -13631,25 +13680,10 @@ if (_presetChannel) {
 			// queue, cap each batch, and fence responses across account switches.
 			const scope = _getDialogTimeIdentityScopeKey();
 			if (_dialogAutomationLoading === scope) return;
-			const rules = _readDialogAutomation('tasks');
-			const locked = _dialogAutomationLocks('tasks');
-			const items = _getDialogControlItemsForMode('tasks');
-			const folders = new Set(items.filter(_isDialogControlFolder).map(item => item.id));
-			const model=window.__PENA_NATIVE_CATALOG__;
-			const fields=[...new Set(rules.filter(rule=>rule.enabled).flatMap(rule=>rule.conditions.map(condition=>condition.field)))];
-			const decisions=fields.includes('deadline')?null:new Map();
-			const unresolved = rules.some(rule=>rule.enabled) ? items.filter(item => {
-				if(_isDialogControlFolder(item)||_isDialogControlItemUnavailable(item)||locked.has(item.id))return false;
-				if(_dialogAutomationDirtyTasks.has(scope+':'+item.taskId))return true;
-				const facts=_dialogAutomationFacts(item,fields);
-				const signature=decisions&&JSON.stringify(Object.fromEntries(fields.map(field=>[field,facts[field]])));
-				const decision=decisions?.has(signature)?decisions.get(signature):model.automationDecision(rules,facts,'tasks',folders);
-				decisions?.set(signature,decision);
-				return decision?.pending;
-			}) : [];
-			// A task_add may precede the native row and the catalog. Do not strand
-			// its dirty ID by restricting detail reads to already hydrated items.
-			if (rules.some(rule=>rule.enabled)) {
+			// Pending and dirty rows were collected during the same rule pass.
+			// Pull can announce a task before its dialog joins the catalog.
+			if (_dialogAutomationDirtyTasks.size && _readDialogAutomation('tasks').some(rule=>rule.enabled)) {
+				const items = _getDialogControlItemsForMode('tasks');
 				const known = new Set(items.map(item=>String(item.taskId || '')));
 				for (const key of _dialogAutomationDirtyTasks.keys()) {
 					if (!key.startsWith(scope+':')) continue;
@@ -13862,6 +13896,68 @@ if (_presetChannel) {
 		const selectedTickets=new Map();
 		let bulkBusy=false;
 		let exceptionsExpanded=false;
+		function resolveTicketBatch(ticketMode, entries, accept, forceLock = false) {
+			if (!entries.length || !_isPenaExtensionEnabled() || key !== _dialogAutomationKey(mode)) return 0;
+			const itemKey = `${_LS_DIALOG_CONTROL}.${ticketMode}`;
+			const baseRaw = _dialogControlStorageRaw[ticketMode];
+			if (baseRaw != null && (localStorage.getItem(itemKey) || '[]') !== baseRaw) {
+				throw new Error('Catalog changed in another tab');
+			}
+			const items = _getDialogControlItemsForMode(ticketMode);
+			_applyDialogAutomation(ticketMode, items, null, null, true);
+			const scope = _getDialogTimeIdentityScopeKey();
+			const modeKey = _dialogAutomationKey(ticketMode), reviewKey = modeKey+'.review';
+			const before = localStorage.getItem(reviewKey);
+			if (!before || _dialogAutomationStorageErrors.has(modeKey)) return 0;
+			const state = JSON.parse(before), locks = _dialogAutomationLocks(ticketMode);
+			const byId = new Map(items.map(item => [item.id,item]));
+			const folders = new Set(items.filter(_isDialogControlFolder).map(item => item.id));
+			const rules = _readDialogAutomation(ticketMode);
+			const updates = new Map();
+			for (const entry of entries) {
+				const {id,ticket} = entry, item = byId.get(id), record = state.records?.[id];
+				if (!item || (accept && entry.lock.checked) || locks.has(id) || _isDialogControlItemUnavailable(item) ||
+					!item.folderId || item.folderId !== ticket.from || item.folderId === ticket.to ||
+					state.rulesSig !== entry.rulesSig || JSON.stringify(record?.ticket) !== JSON.stringify(ticket)) continue;
+				if (_dialogAutomationDirtyTasks.has(scope+':'+item.taskId)) { _scheduleDialogAutomation(); continue; }
+				const decision = model.automationDecision(rules,_dialogAutomationFacts(item),ticketMode,folders);
+				if (decision?.pending || (decision?.folderId || '') !== ticket.to) { _scheduleDialogAutomation(); continue; }
+				if (accept) {
+					const moved = {...item,folderId:ticket.to,automationHandled:true,automationRuleId:ticket.ruleId};
+					if (ticket.to) moved.segmentId = byId.get(ticket.to).segmentId || '';
+					delete moved.column; delete moved.columnIndex;
+					updates.set(id,moved);
+					record.placement = ticket.to;
+				} else {
+					updates.set(id,item);
+					record.dismissedSig = ticket.signature;
+					if (forceLock || entry.lock.checked) locks.add(id);
+				}
+				record.ticket = null;
+			}
+			if (!updates.size) return 0;
+			if (localStorage.getItem(reviewKey) !== before || (localStorage.getItem(itemKey) || '[]') !== _dialogControlStorageRaw[ticketMode]) {
+				throw new Error('Transfer changed in another tab');
+			}
+			const nextReview = JSON.stringify(state);
+			if (!accept && (forceLock || entries.some(entry => entry.lock.checked))) {
+				localStorage.setItem(modeKey+'.locks',JSON.stringify([...locks]));
+			}
+			localStorage.setItem(reviewKey,nextReview);
+			if (accept) {
+				const next = items.map(item => updates.get(item.id) || item);
+				if (!_saveDialogControlItemsForMode(ticketMode,next)) {
+					_dialogControlItems[ticketMode] = items;
+					if (localStorage.getItem(reviewKey) === nextReview) localStorage.setItem(reviewKey,before);
+					throw new Error('Transfer placement was not saved');
+				}
+			}
+			for (const entry of entries) if (updates.has(entry.id)) {
+				lockDrafts.delete(entry.key);
+				selectedTickets.delete(entry.key);
+			}
+			return updates.size;
+		}
 		const drawTickets=()=>{
 			if(bulkBusy)return;
 			const focused=tickets.contains(document.activeElement)?document.activeElement:null;
@@ -13904,7 +14000,7 @@ if (_presetChannel) {
 				selectAll.checked=!!entries.length&&selected.length===entries.length;selectAll.indeterminate=!!selected.length&&!selectAll.checked;selectAll.disabled=!entries.length;
 				selectionStatus.textContent=`Выбрано: ${selected.length} из ${entries.length}`;
 				confirmSelected.querySelector('span').textContent=selectAll.checked?'Подтвердить всё':'Подтвердить выбранные';
-				confirmSelected.disabled=!selected.length;excludeSelected.disabled=!selected.length;
+				confirmSelected.disabled=!selected.length || selected.some(entry => entry.lock.checked);excludeSelected.disabled=!selected.length;
 				for(const entry of entries){entry.checkbox.checked=selectedTickets.get(entry.key)===entry.identity;entry.card.classList.toggle('--selected',entry.checkbox.checked);}
 			};
 			const resolveSelected=async accept=>{
@@ -13915,10 +14011,14 @@ if (_presetChannel) {
 				for(const control of tickets.querySelectorAll('button,input'))control.disabled=true;
 				let completed=0;
 				try{
-					for(let index=0;index<chosen.length;index++){
-						if(index%8===0){selectionStatus.textContent=`Обрабатываем: ${index} из ${chosen.length}`;await new Promise(resolve=>setTimeout(resolve,0));}
-						if(!overlay.isConnected||key!==_dialogAutomationKey(mode)||!_isPenaExtensionEnabled())break;
-						if(chosen[index].resolve(accept,true,!accept))completed++;
+					for (let index = 0; index < chosen.length; index += 8) {
+						selectionStatus.textContent = `Обрабатываем: ${index} из ${chosen.length}`;
+						await new Promise(resolve => setTimeout(resolve,0));
+						if (!overlay.isConnected || key !== _dialogAutomationKey(mode) || !_isPenaExtensionEnabled()) break;
+						const batch = chosen.slice(index,index+8);
+						for (const ticketMode of ['chats','tasks']) {
+							completed += resolveTicketBatch(ticketMode,batch.filter(entry => entry.mode === ticketMode),accept,!accept);
+						}
 					}
 				}catch{_showDialogDockToast('Не удалось сохранить все изменения. Проверьте оставшиеся предложения.','danger');}
 				finally{
@@ -13933,8 +14033,7 @@ if (_presetChannel) {
 			let ticketCount=0;
 			for(const ticketMode of ['chats','tasks']){
 				const items=_getDialogControlItemsForMode(ticketMode);
-				const changed=_applyDialogAutomation(ticketMode,items);
-				if(changed)_saveDialogControlItemsForMode(ticketMode,items);
+				_applyDialogAutomation(ticketMode,items,null,null,true);
 				if(_dialogAutomationStorageErrors.has(_dialogAutomationKey(ticketMode)))autoStatus.textContent=_dialogAutomationStorageErrors.get(_dialogAutomationKey(ticketMode));
 				const shownRulesSig=JSON.parse(localStorage.getItem(_dialogAutomationKey(ticketMode)+'.review')||'{}').rulesSig;
 				for(const [id,record] of _dialogAutomationTickets(ticketMode)){
@@ -13945,7 +14044,7 @@ if (_presetChannel) {
 					const titleLabel=node('label',null,card);titleLabel.className='pena-automation-ticket-heading';
 					const checkbox=node('input',null,titleLabel);checkbox.type='checkbox';checkbox.setAttribute('aria-label',`Выбрать диалог «${ticket.title||id}»`);
 					node('strong',ticket.title||id,titleLabel);
-					const entry={key:selectionKey,identity:proposalIdentity,mode:ticketMode,to:ticket.to,checkbox,card};entries.push(entry);
+					const entry={id,ticket,rulesSig:shownRulesSig,key:selectionKey,identity:proposalIdentity,mode:ticketMode,to:ticket.to,checkbox,card};entries.push(entry);
 					checkbox.addEventListener('change',()=>{if(checkbox.checked)selectedTickets.set(selectionKey,proposalIdentity);else selectedTickets.delete(selectionKey);updateSelection();});
 					const folderName=id=>items.find(item=>_isDialogControlFolder(item)&&item.id===id)?.title||'Без папки';
 					const sameName=folderName(ticket.from)===folderName(ticket.to);
@@ -13964,55 +14063,20 @@ if (_presetChannel) {
 					const lock=node('input',null,lockLabel);lock.type='checkbox';lock.checked=lockDrafts.get(ticketMode+':'+id)===proposalIdentity;
 					lockLabel.append(document.createTextNode('Больше не предлагать переносы для этого диалога'));
 					const actions=node('div',null,card);actions.className='pena-automation-ticket-actions';
-					const resolve=(accept,deferDraw=false,forceLock=false)=>{
-						const redraw=()=>{if(!deferDraw)drawTickets();return false;};
-						if(key!==_dialogAutomationKey(mode))return close();
-						if(!_isPenaExtensionEnabled() || (accept&&lock.checked))return;
-						const currentItems=_getDialogControlItemsForMode(ticketMode);
-						if(_applyDialogAutomation(ticketMode,currentItems))_saveDialogControlItemsForMode(ticketMode,currentItems);
-						const reviewKey=_dialogAutomationKey(ticketMode)+'.review';
-						const state=JSON.parse(localStorage.getItem(reviewKey)||'{}');
-						const item=currentItems.find(item=>item.id===id);
-						if(_dialogAutomationDirtyTasks.has(_getDialogTimeIdentityScopeKey()+':'+item?.taskId)) { _showDialogDockToast('Проверяем актуальные данные задачи. Повторите после проверки.');return; }
-						if(!item||_isDialogControlItemUnavailable(item)||_dialogAutomationLocks(ticketMode).has(id)||!item.folderId||item.folderId!==ticket.from||item.folderId===ticket.to||state.rulesSig!==shownRulesSig||JSON.stringify(state.records?.[id]?.ticket)!==JSON.stringify(ticket))return redraw();
-						const decision=window.__PENA_NATIVE_CATALOG__.automationDecision(_readDialogAutomation(ticketMode),_dialogAutomationFacts(item),ticketMode,new Set(currentItems.filter(_isDialogControlFolder).map(folder=>folder.id)));
-						if(decision?.pending || (decision?.folderId||'')!==ticket.to) { _scheduleDialogAutomation();return redraw(); }
-						try{
-						if(accept){
-							const folder=currentItems.find(item=>_isDialogControlFolder(item)&&item.id===ticket.to);
-							if(ticket.to&&!folder)return redraw();
-							const before={...item},reviewBefore=JSON.stringify(state);
-							state.records[id].ticket=null;state.records[id].placement=ticket.to;
-							// A failed journal write must not move even the first selected dialog.
-							localStorage.setItem(reviewKey,JSON.stringify(state));
-							item.folderId=ticket.to;if(folder)item.segmentId=folder.segmentId||'';
-							item.automationHandled=true;item.automationRuleId=ticket.ruleId;
-							delete item.column;delete item.columnIndex;
-							_saveDialogControlItemsForMode(ticketMode,currentItems);
-							const persisted=JSON.parse(localStorage.getItem(`${_LS_DIALOG_CONTROL}.${ticketMode}`)||'[]').find(value=>value.id===id);
-							if(persisted?.folderId!==ticket.to){
-								for(const field of Object.keys(item))delete item[field];Object.assign(item,before);
-								localStorage.setItem(reviewKey,reviewBefore);
-								throw new Error('Transfer placement was not saved');
+					const resolve=accept=>{
+						if (key !== _dialogAutomationKey(mode)) return close();
+						try {
+							if (resolveTicketBatch(ticketMode,[entry],accept)) {
+								_syncDialogAutomationBadge(); _dialogControlNativeViewSig=''; _notifyDialogRecentDataChanged();
 							}
-						}
-						if(!accept){
-							state.records[id].dismissedSig=ticket.signature;
-							if(lock.checked||forceLock){const ids=_dialogAutomationLocks(ticketMode);ids.add(id);localStorage.setItem(_dialogAutomationKey(ticketMode)+'.locks',JSON.stringify([...ids]));}
-						}
-						lockDrafts.delete(ticketMode+':'+id);
-						state.records[id].ticket=null;state.records[id].placement=item.folderId||'';
-						if(!accept)localStorage.setItem(reviewKey,JSON.stringify(state));
-						selectedTickets.delete(selectionKey);
-						if(!deferDraw){_syncDialogAutomationBadge();_dialogControlNativeViewSig='';_notifyDialogRecentDataChanged();drawTickets();}
-						return true;
-						}catch(error){if(deferDraw)throw error;_showDialogDockToast('Не удалось сохранить изменение. Повторите попытку.','danger');return redraw();}
+						} catch { _showDialogDockToast('Не удалось сохранить изменение. Повторите попытку.','danger'); }
+						drawTickets();
 					};
-					entry.resolve=resolve;
 					const acceptButton=button('Подтвердить перенос',actions,()=>resolve(true));acceptButton.disabled=lock.checked;
 					const skipButton=button(lock.checked?'Оставить и больше не предлагать':'Пропустить',actions,()=>resolve(false));
 					button('Выбрать похожие',actions,()=>{for(const candidate of entries)if(candidate.mode===ticketMode&&candidate.to===ticket.to)selectedTickets.set(candidate.key,candidate.identity);updateSelection();}).title='Выбрать переносы в ту же папку';
-					lock.addEventListener('change',()=>{lockDrafts.set(ticketMode+':'+id,lock.checked?proposalIdentity:'');acceptButton.disabled=lock.checked;skipButton.querySelector('span').textContent=lock.checked?'Оставить и больше не предлагать':'Пропустить';});
+					entry.lock=lock;
+					lock.addEventListener('change',()=>{updateSelection();lockDrafts.set(ticketMode+':'+id,lock.checked?proposalIdentity:'');acceptButton.disabled=lock.checked;skipButton.querySelector('span').textContent=lock.checked?'Оставить и больше не предлагать':'Пропустить';});
 				}
 			}
 			if(!ticketCount)node('p','Нет переносов для подтверждения',tickets);
@@ -14029,8 +14093,10 @@ if (_presetChannel) {
 			const paintExceptions=()=>{exceptions.classList.toggle('--open',exceptionsExpanded);exceptionsToggle.setAttribute('aria-expanded',String(exceptionsExpanded));exceptionsContent.inert=!exceptionsExpanded;exceptionsContent.setAttribute('aria-hidden',String(!exceptionsExpanded));};
 			paintExceptions();let exceptionsCount=0;
 			for(const lockedMode of ['chats','tasks']){
+				const locks=_dialogAutomationLocks(lockedMode);
+				if (!locks.size) continue;
 				const lockedItems=new Map(_getDialogControlItemsForMode(lockedMode).map(item=>[item.id,item]));
-				for(const id of _dialogAutomationLocks(lockedMode)){
+				for(const id of locks){
 				exceptionsCount++;
 				const item=lockedItems.get(id);
 				const card=node('article',null,exceptionsList);card.className='pena-automation-ticket pena-automation-locked';
@@ -14262,7 +14328,7 @@ if (_presetChannel) {
 			const run=++previewRun, rulesSnapshot=JSON.stringify(rules);
 			const current=()=>!saving&&overlay.isConnected&&run===previewRun&&key===_dialogAutomationKey(mode)&&mode===_pMode()&&JSON.stringify(rules)===rulesSnapshot;
 			const identity=item=>JSON.stringify([_dialogAutomationTaskRevisions.get(_getDialogTimeIdentityScopeKey()+':'+item.taskId),_dialogAutomationFacts(item)]);
-			const factsFor=item=>{const cached=previewFacts.get(item.id);return cached?.identity===identity(item)?cached.facts:_dialogAutomationFacts(item);};
+			const factsFor=item=>{const cached=previewFacts.get(item.id);return cached && cached.identity===identity(item)?cached.facts:_dialogAutomationFacts(item);};
 			const items=_getDialogControlItemsForMode(mode),folderMap=new Map(folders().map(folder=>[folder.id,folder.title])),folderIds=new Set(folderMap.keys());
 			if(mode==='tasks'){
 				const missing=items.filter(item=>!_isDialogControlFolder(item)&&!_isDialogControlItemUnavailable(item)&&/^\d+$/.test(String(item.taskId))&&
@@ -14283,25 +14349,35 @@ if (_presetChannel) {
 			if(!current())return;
 			const matches=[];let pending=0,distribute=0,confirm=0,unchanged=0,protectedCount=0,skipped=0,keptUnassigned=0;
 			const locked=_dialogAutomationLocks(mode);
-			let review={};try{review=JSON.parse(localStorage.getItem(key+'.review')||'{}');}catch{}
+			const fields = [...new Set(rules.filter(rule=>rule.enabled).flatMap(rule=>rule.conditions.map(condition=>condition.field)))];
+			const signature = JSON.stringify(_dialogAutomationSemanticRules(rules,model));
+			const records = _dialogAutomationReviewRecords(localStorage.getItem(key+'.review') || '',signature,model);
 			for(const item of items){
 				if(_isDialogControlFolder(item)||_isDialogControlItemUnavailable(item))continue;
 				if(_dialogAutomationDirtyTasks.has(_getDialogTimeIdentityScopeKey()+':'+item.taskId)&&previewFacts.get(item.id)?.identity!==identity(item)){pending++;continue;}
-				const decision=model.automationDecision(rules,factsFor(item),mode,folderIds);
+				const facts = factsFor(item);
+				const decision = model.automationDecision(rules,facts,mode,folderIds);
 				if(decision?.pending){pending++;continue;}
-				if(!decision?.folderId)continue;
-				matches.push({item,decision});
+				if (decision?.folderId) matches.push({item,decision});
+				else if (!records[item.id] || !item.folderId) continue;
+				const relevant = Object.fromEntries(fields.map(field=>[field,facts[field]]));
+				const record = _dialogAutomationReview(records[item.id],model.automationFactsSignature(relevant),decision,item.folderId || '',facts.title);
+				if (!decision?.folderId && !record.ticket && !record.dismissedSig) continue;
 				if(locked.has(item.id))protectedCount++;
-				else if(item.folderId===decision.folderId)unchanged++;
-				else if(item.folderId)confirm++;
-				else if(item.automationHandled)keptUnassigned++;
-				else if(review.records?.[item.id]?.dismissedSig)skipped++;
-				else distribute++;
+				else if(record.ticket)confirm++;
+				else if(decision?.folderId && item.folderId===decision.folderId)unchanged++;
+				else if(record.dismissedSig)skipped++;
+				else if(decision?.folderId && !item.folderId) {
+					if(item.automationHandled)keptUnassigned++;
+					else distribute++;
+				}
 			}
 			status.replaceChildren();node('strong',`Совпадений: ${matches.length}`,status);
-			node('span',includeExisting.checked?`Сейчас будут распределены: ${distribute}.`:'Существующие диалоги останутся на месте. Это проверка условий на текущем списке.',status);
+			node('span',includeExisting.checked?`Сейчас будут распределены: ${distribute}.`:'Диалоги без папки останутся на месте.',status);
 			if(unchanged)node('span',`Уже в нужной папке: ${unchanged}.`,status);
-			if(confirm)node('span',`Требуют подтверждения переноса: ${confirm}. Предложения обновятся после сохранения правил.`,status);
+			if(confirm)node('span',_readDialogAutomationConfig(mode).autoAcceptTransfers === true
+				? `Будут перенесены автоматически: ${confirm}.`
+				: `Требуют подтверждения переноса: ${confirm}. Предложения обновятся после сохранения правил.`,status);
 			if(protectedCount)node('span',`Переносы отключены для ${protectedCount} диалогов.`,status);
 			if(skipped)node('span',`Ранее пропущены: ${skipped}. Автоматический перенос не выполняется.`,status);
 			if(keptUnassigned)node('span',`Останутся без папки: ${keptUnassigned}. Ручное размещение сохранится.`,status);
@@ -14339,7 +14415,7 @@ if (_presetChannel) {
 			}catch(error){if(current())status.textContent=error.message||'Не удалось сохранить правила. Повторите попытку.';}
 			finally{saving=false;controls.forEach(el=>el.disabled=false);previewButton.disabled=false;}
 		});
-		for(const ticketMode of ['chats','tasks']){const items=_getDialogControlItemsForMode(ticketMode);if(_applyDialogAutomation(ticketMode,items))_saveDialogControlItemsForMode(ticketMode,items);}
+		for(const ticketMode of ['chats','tasks']){const items=_getDialogControlItemsForMode(ticketMode);_applyDialogAutomation(ticketMode,items,null,null,true);}
 		draw();showTab(['chats','tasks'].some(mode=>_dialogAutomationTickets(mode).length>0));document.body.append(overlay);try{overlay.showPopover?.();}catch{}header.querySelector('button').focus();
 	}
 	window.addEventListener('storage',event=>{
@@ -15458,10 +15534,8 @@ if (_presetChannel) {
 		const viewPrefs = _getDialogControlViewPrefs();
 		const items = _getDialogControlItems();
 		const segmentId = _getDialogControlActiveSegmentId();
-		const segmentDialogs = _getDialogControlNativeDialogItemsForSegment(items, segmentId);
 		let folderId = _getDialogControlNativeActiveFolderId();
-		const segmentFolders = _getDialogControlNativeFoldersForSegment(items, segmentId);
-		const folderExists = !folderId || segmentFolders.some(item => String(item.id || '') === folderId);
+		const folderExists = !folderId || _getDialogControlNativeFoldersForSegment(items, segmentId).some(item => String(item.id || '') === folderId);
 		if (!folderExists) {
 			_setDialogControlNativeActiveFolderId('', { render: false, apply: false });
 			folderId = '';
@@ -15471,19 +15545,20 @@ if (_presetChannel) {
 		const titles = new Set();
 		const excludedIds = new Set();
 		const placement = viewPrefs.uniqueOnly ? _getDialogControlPlacementIndex(items) : null;
+		const segmentDialogs = _getDialogControlNativeDialogItemsForSegment(items, segmentId);
 		const selected = new Set(segmentDialogs.filter(item => placement
 			? placement.folderOf(item) === folderId
 			: !folderId || String(item.folderId || '') === folderId));
+		if (!selected.size && !placement) return {segmentId,folderId,ids,titles,excludedIds,uniqueOnly:false,unreadOnly:!!(viewPrefs.unreadOnly || filters.unreadOnly)};
 		const titleCounts = new Map();
 		items.forEach(item => {
 			if (_isDialogControlFolder(item)) return;
 			if (placement && !selected.has(item)) _getDialogControlItemIdentityKeys(item).forEach(id => excludedIds.add(id));
 			const titleKey = _normalizeDialogControlTitle(item.title);
-			if (!titleKey || _isDialogControlFallbackTitle(titleKey)) return;
+			if (!titleKey || ['dialog','диалог','дилалог'].includes(titleKey)) return;
 			titleCounts.set(titleKey, (titleCounts.get(titleKey) || 0) + 1);
 		});
-		segmentDialogs.forEach(item => {
-			if (!selected.has(item)) return;
+		selected.forEach(item => {
 			_getDialogControlItemIdentityKeys(item).forEach(id => ids.add(id));
 			const titleKey = _normalizeDialogControlTitle(item.title);
 			if (titleKey && titleCounts.get(titleKey) === 1) titles.add(titleKey);
@@ -21346,6 +21421,8 @@ if (_presetChannel) {
 				_normalizeDialogControlColor(folder.color)
 			].join(':')).join('|')
 		].join('::');
+		Object.assign(switcher._penaNativeRenderContext, {mode:_pMode(), dataRevision:_dialogControlDataRevision,
+			recentRevision:_dialogRecentDataRevision, segmentId:activeSegmentId});
 		switcher.querySelectorAll('.pena-native-folder-tab').forEach(button=>button.classList.toggle('--active',String(button.dataset.nativeFolderId||'')===activeFolderId));
 		_syncDialogControlNativePreferenceControls(switcher, viewPrefs);
 		_syncDialogControlNativeTabStatuses(switcher, groupStatuses, folderStatuses, segmentStatus);
@@ -21967,8 +22044,25 @@ if (_presetChannel) {
 					document.querySelectorAll('#anit-dialog-control-dock .dialog-control-folder.--native-filter-active').forEach(el => {
 					el.classList.toggle('--native-filter-active', !!id && String(el.dataset?.folderId || '') === id);
 				});
-				// applyFilters coalesces one render with the current catalog on the next frame.
-				applyFilters();
+				const view = switcher._penaNativeRenderContext;
+				if (!_isDialogNativeLazyMode() || !_isDialogControlNativePassThrough() || _dialogControlManagedRoot?.isConnected ||
+					filtersHost?.isConnected || switcher !== _dialogControlNativeSwitcherNode || view?.container !== findContainer() ||
+					view.mode !== _pMode() || view.segmentId !== _getDialogControlActiveSegmentId() ||
+					view.dataRevision !== _dialogControlDataRevision || view.recentRevision !== _dialogRecentDataRevision) {
+					applyFilters();
+					return;
+				}
+				// Selecting a folder changes visibility. Catalog updates still own
+				// counters and decoration, including renders already in the queue.
+				const filter = _getDialogControlNativeFilter();
+				const selectedId = _getDialogControlNativeActiveFolderId();
+				for (const tab of switcher.querySelectorAll('.pena-native-folder-tab')) {
+					tab.classList.toggle('--active', (tab.dataset.nativeFolderId || '') === selectedId);
+				}
+				_indexDialogNativeSearchRows(container);
+				_applyDialogControlRowFilters(_getCurrentFilterRows(container), filter);
+				_syncDialogControlNativeMultiSelection(container);
+				_scheduleDialogNativeFolderWindow();
 			});
 			btn.addEventListener('contextmenu', (e) => {
 				_showDialogControlNativeFolderContextMenu(e, folder, activeSegmentId, filtersHost);
@@ -24508,6 +24602,7 @@ if (_presetChannel) {
 		const m = mode === 'tasks' ? 'tasks' : 'chats';
 		_dialogControlDataRevision += 1;
 		if (!_dialogControlItems || Array.isArray(_dialogControlItems)) _dialogControlItems = {};
+		let saved = true;
 		const localItems = Array.isArray(items) ? items : [];
 		_migrateDialogControlItemIds(localItems);
 		_dialogControlItems[m] = localItems;
@@ -24528,8 +24623,9 @@ if (_presetChannel) {
 			const nextRaw = JSON.stringify(localItems);
 			if (nextRaw !== storedRaw) localStorage.setItem(key, nextRaw);
 			_dialogControlStorageRaw[m] = nextRaw;
-		} catch {}
+		} catch { saved = false; }
 		_scheduleDialogRecentCacheWrite(120);
+		return saved;
 	}
 
 	function _armDialogControlStorageSync() {
@@ -25493,7 +25589,7 @@ if (_presetChannel) {
 	function _getDialogControlEffectiveMeta(itemOrId, meta = null, counterContext = undefined) {
 		const id = normId(typeof itemOrId === 'object' ? itemOrId?.id : itemOrId);
 		meta = _mergeDialogRecentWithDomMeta(id, meta, counterContext);
-		if (id && _isDialogControlOptimisticRead(id)) {
+		if (_dialogControlOptimisticRead.size && id && _isDialogControlOptimisticRead(id)) {
 			const unreadCount = Number(meta?.unreadCount) || 0;
 			if (!meta?.hasLater && !meta?.hasUnread && !meta?.hasMention && unreadCount <= 0) {
 				_dialogControlOptimisticRead.delete(id);
@@ -25505,7 +25601,7 @@ if (_presetChannel) {
 			_dialogControlOptimisticLater.delete(id);
 			return meta;
 		}
-		if (!id || !_isDialogControlOptimisticLater(id) || meta?.hasUnread || meta?.hasMention) return meta;
+		if (!_dialogControlOptimisticLater.size || !id || !_isDialogControlOptimisticLater(id) || meta?.hasUnread || meta?.hasMention) return meta;
 		return Object.assign({}, meta || {}, { hasUnread: false, hasLater: true, hasMention: false, unreadCount: 0 });
 	}
 

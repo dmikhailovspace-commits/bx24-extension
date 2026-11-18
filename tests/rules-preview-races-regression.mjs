@@ -160,6 +160,20 @@ try{
   await page.evaluate(()=>{const items=previewRace.items('tasks');items.find(x=>x.id===duplicateId).folderId='folder:test';previewRace.save('tasks',items);document.dispatchEvent(new Event('pena-automation-review-changed'));});
   await page.waitForFunction(()=>!document.querySelector('.pena-automation-ticket:not(.pena-automation-locked)'));
  });
+ await phase('Preview accounts for automatic confirmation when matching an already filed dialog',async page=>{
+  await page.evaluate(()=>{
+   const api=previewRace,items=api.items('tasks'),item=items.find(x=>x.taskId);
+   items.push({id:'folder:manual',type:'folder',title:'Ручная'});item.folderId='folder:manual';api.save('tasks',items);
+   localStorage.setItem(api.key('tasks'),JSON.stringify({version:1,rules:[],autoAcceptTransfers:true,excludedIds:[]}));
+   api.receive(String(item.taskId),{TITLE:'QA automatic transfer'});
+  });
+  await page.evaluate(()=>previewRace.open());
+  await page.getByRole('button',{name:'Добавить правило',exact:true}).click();
+  await page.getByLabel('Поле условия').selectOption('title');
+  await page.getByLabel('Значение условия').fill('QA automatic transfer');
+  await page.getByLabel('Папка назначения').selectOption('folder:test');
+  assert.match(await check(page),/Будут перенесены автоматически: [1-9]/);
+ });
  await phase('A manually unassigned handled dialog is neither moved nor advertised for review',async page=>{
   await page.evaluate(()=>{
    const api=previewRace,items=api.items('tasks'),item=items.find(x=>x.taskId);window.rootHandledId=item.id;

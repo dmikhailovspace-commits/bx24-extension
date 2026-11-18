@@ -1,0 +1,432 @@
+{
+  "baseline": "v9.0.6",
+  "candidate": "9.0.7",
+  "executionOrder": [
+    "frozen-after-1",
+    "frozen-before-1",
+    "frozen-before-2",
+    "frozen-after-2"
+  ],
+  "combinedRendererCpuRatios": [
+    3.2566686439131223,
+    2.835091456052704
+  ],
+  "runs": {
+    "frozen-before-1": {
+      "label": "frozen-before-1",
+      "count": 4000,
+      "runtimeSha256": "25176186c1279bb2413a9f6c1df52f10f7e4630085ec8c7153f00aa55f62d018",
+      "modelSha256": "4b7c4c1d87572a9262231df1bc69700fc57eb9087867cc3f8a94fc2d7ea8f67b",
+      "profiling": false,
+      "node": "v24.22.1",
+      "browser": "151.0.7922.34",
+      "phases": [
+        {
+          "name": "rules-and-refresh",
+          "rendererCpuMs": 176.50199999999998,
+          "elapsedMs": 14009.670299999998,
+          "scriptMs": 74.80000000000001,
+          "taskMs": 106.904,
+          "layoutMs": 0,
+          "longTasks": 0,
+          "longTaskTotal": 0,
+          "longTaskMax": 0,
+          "lagP95": 1.0999999940395355,
+          "lagMax": 1.7000000178813934,
+          "counts": {
+            "_getDialogTimeIdentityScopeKey": 864,
+            "_dialogAutomationRefreshCandidates": 25,
+            "_getDialogControlItemsForMode": 37,
+            "_applyDialogAutomation": 8
+          },
+          "apiCalls": 11,
+          "storageBytes": 1359948,
+          "heap": 16100000,
+          "top": []
+        },
+        {
+          "name": "unchanged-refresh",
+          "rendererCpuMs": 72.99900000000004,
+          "elapsedMs": 12012.406600000002,
+          "scriptMs": 24.759000000000004,
+          "taskMs": 47.927,
+          "layoutMs": 0,
+          "longTasks": 0,
+          "longTaskTotal": 0,
+          "longTaskMax": 0,
+          "lagP95": 1,
+          "lagMax": 1.800000011920929,
+          "counts": {
+            "_getDialogTimeIdentityScopeKey": 744,
+            "_dialogAutomationRefreshCandidates": 24,
+            "_getDialogControlItemsForMode": 24
+          },
+          "apiCalls": 12,
+          "storageBytes": 0,
+          "heap": 16100000,
+          "top": []
+        },
+        {
+          "name": "folder-interactions",
+          "rendererCpuMs": 437.21900000000005,
+          "elapsedMs": 3439.450099999998,
+          "scriptMs": 105.659,
+          "taskMs": 248.677,
+          "layoutMs": 1.595,
+          "longTasks": 0,
+          "longTaskTotal": 0,
+          "longTaskMax": 0,
+          "lagP95": 1.699999988079071,
+          "lagMax": 14.799999982118607,
+          "counts": {
+            "_renderDialogControlNativeSwitcher": 10,
+            "_getDialogControlItemsForMode": 16,
+            "_getDialogTimeIdentityScopeKey": 316,
+            "_dialogAutomationRefreshCandidates": 6
+          },
+          "apiCalls": 3,
+          "storageBytes": 260,
+          "heap": 16100000,
+          "top": []
+        },
+        {
+          "name": "confirm-transfers",
+          "rendererCpuMs": 2168.2059999999997,
+          "elapsedMs": 1851.2998000000007,
+          "scriptMs": 81.008,
+          "taskMs": 1752.6109999999999,
+          "layoutMs": 30.897,
+          "longTasks": 6,
+          "longTaskTotal": 1334,
+          "longTaskMax": 272,
+          "lagP95": 490.59999999403954,
+          "lagMax": 490.59999999403954,
+          "counts": {
+            "_getDialogTimeIdentityScopeKey": 971,
+            "_getDialogControlItemsForMode": 311,
+            "_applyDialogAutomation": 58,
+            "_dialogAutomationRefreshCandidates": 2,
+            "_notifyDialogRecentDataChanged": 1,
+            "_renderDialogControlNativeSwitcher": 2
+          },
+          "apiCalls": 1,
+          "storageBytes": 123378082,
+          "heap": 16100000,
+          "top": []
+        }
+      ],
+      "errors": []
+    },
+    "frozen-before-2": {
+      "label": "frozen-before-2",
+      "count": 4000,
+      "runtimeSha256": "25176186c1279bb2413a9f6c1df52f10f7e4630085ec8c7153f00aa55f62d018",
+      "modelSha256": "4b7c4c1d87572a9262231df1bc69700fc57eb9087867cc3f8a94fc2d7ea8f67b",
+      "profiling": false,
+      "node": "v24.22.1",
+      "browser": "151.0.7922.34",
+      "phases": [
+        {
+          "name": "rules-and-refresh",
+          "rendererCpuMs": 177.41099999999997,
+          "elapsedMs": 14012.999099999999,
+          "scriptMs": 72.914,
+          "taskMs": 102.67800000000001,
+          "layoutMs": 0,
+          "longTasks": 0,
+          "longTaskTotal": 0,
+          "longTaskMax": 0,
+          "lagP95": 0.9000000059604645,
+          "lagMax": 1.300000011920929,
+          "counts": {
+            "_getDialogTimeIdentityScopeKey": 864,
+            "_dialogAutomationRefreshCandidates": 25,
+            "_getDialogControlItemsForMode": 37,
+            "_applyDialogAutomation": 8
+          },
+          "apiCalls": 11,
+          "storageBytes": 1359948,
+          "heap": 16100000,
+          "top": []
+        },
+        {
+          "name": "unchanged-refresh",
+          "rendererCpuMs": 81.54700000000004,
+          "elapsedMs": 12014.747600000002,
+          "scriptMs": 28.824,
+          "taskMs": 54.66199999999999,
+          "layoutMs": 0,
+          "longTasks": 0,
+          "longTaskTotal": 0,
+          "longTaskMax": 0,
+          "lagP95": 1,
+          "lagMax": 1.9000000059604645,
+          "counts": {
+            "_getDialogTimeIdentityScopeKey": 744,
+            "_dialogAutomationRefreshCandidates": 24,
+            "_getDialogControlItemsForMode": 24
+          },
+          "apiCalls": 12,
+          "storageBytes": 0,
+          "heap": 16100000,
+          "top": []
+        },
+        {
+          "name": "folder-interactions",
+          "rendererCpuMs": 446.1379999999999,
+          "elapsedMs": 3444.5714000000007,
+          "scriptMs": 118.135,
+          "taskMs": 265.847,
+          "layoutMs": 1.663,
+          "longTasks": 0,
+          "longTaskTotal": 0,
+          "longTaskMax": 0,
+          "lagP95": 9.099999994039536,
+          "lagMax": 23.69999998807907,
+          "counts": {
+            "_renderDialogControlNativeSwitcher": 10,
+            "_getDialogControlItemsForMode": 16,
+            "_getDialogTimeIdentityScopeKey": 316,
+            "_dialogAutomationRefreshCandidates": 6
+          },
+          "apiCalls": 3,
+          "storageBytes": 260,
+          "heap": 16100000,
+          "top": []
+        },
+        {
+          "name": "confirm-transfers",
+          "rendererCpuMs": 2241.8709999999996,
+          "elapsedMs": 1820.3258999999998,
+          "scriptMs": 91.496,
+          "taskMs": 1738.405,
+          "layoutMs": 34.556,
+          "longTasks": 7,
+          "longTaskTotal": 1388,
+          "longTaskMax": 254,
+          "lagP95": 451.7000000178814,
+          "lagMax": 451.7000000178814,
+          "counts": {
+            "_getDialogTimeIdentityScopeKey": 971,
+            "_getDialogControlItemsForMode": 311,
+            "_applyDialogAutomation": 58,
+            "_dialogAutomationRefreshCandidates": 2,
+            "_notifyDialogRecentDataChanged": 1,
+            "_renderDialogControlNativeSwitcher": 2
+          },
+          "apiCalls": 1,
+          "storageBytes": 123378082,
+          "heap": 16100000,
+          "top": []
+        }
+      ],
+      "errors": []
+    },
+    "frozen-after-1": {
+      "label": "frozen-after-1",
+      "count": 4000,
+      "runtimeSha256": "ddd172a3aa538f471f921aa2ff5ce4c85ea3220dce0142ee3c89c0fca475a969",
+      "modelSha256": "39ea96b86a1b088e442afcd5f3e5139c32a3151ae4db605311c23082d8e1d425",
+      "profiling": false,
+      "node": "v24.22.1",
+      "browser": "151.0.7922.34",
+      "phases": [
+        {
+          "name": "rules-and-refresh",
+          "rendererCpuMs": 100.87499999999999,
+          "elapsedMs": 14012.4738,
+          "scriptMs": 38.976,
+          "taskMs": 66.699,
+          "layoutMs": 0,
+          "longTasks": 0,
+          "longTaskTotal": 0,
+          "longTaskMax": 0,
+          "lagP95": 0.9000000059604645,
+          "lagMax": 1.9000000059604645,
+          "counts": {
+            "_getDialogTimeIdentityScopeKey": 311,
+            "_dialogAutomationRefreshCandidates": 25,
+            "_getDialogControlItemsForMode": 33,
+            "_applyDialogAutomation": 8
+          },
+          "apiCalls": 11,
+          "storageBytes": 1359948,
+          "heap": 15200000,
+          "top": []
+        },
+        {
+          "name": "unchanged-refresh",
+          "rendererCpuMs": 51.266000000000034,
+          "elapsedMs": 12003.658199999998,
+          "scriptMs": 11.268,
+          "taskMs": 32.33,
+          "layoutMs": 0,
+          "longTasks": 0,
+          "longTaskTotal": 0,
+          "longTaskMax": 0,
+          "lagP95": 1,
+          "lagMax": 1.7999999821186066,
+          "counts": {
+            "_getDialogTimeIdentityScopeKey": 156,
+            "_dialogAutomationRefreshCandidates": 24,
+            "_getDialogControlItemsForMode": 24
+          },
+          "apiCalls": 12,
+          "storageBytes": 0,
+          "heap": 15200000,
+          "top": []
+        },
+        {
+          "name": "folder-interactions",
+          "rendererCpuMs": 270.753,
+          "elapsedMs": 3383.086199999998,
+          "scriptMs": 39.719,
+          "taskMs": 158.253,
+          "layoutMs": 0.364,
+          "longTasks": 0,
+          "longTaskTotal": 0,
+          "longTaskMax": 0,
+          "lagP95": 2.5999999940395355,
+          "lagMax": 11.699999988079071,
+          "counts": {
+            "_getDialogTimeIdentityScopeKey": 39,
+            "_dialogAutomationRefreshCandidates": 6,
+            "_getDialogControlItemsForMode": 6
+          },
+          "apiCalls": 3,
+          "storageBytes": 260,
+          "heap": 15200000,
+          "top": []
+        },
+        {
+          "name": "confirm-transfers",
+          "rendererCpuMs": 453.746,
+          "elapsedMs": 397.28670000000056,
+          "scriptMs": 63.552,
+          "taskMs": 319.44399999999996,
+          "layoutMs": 29.946,
+          "longTasks": 0,
+          "longTaskTotal": 0,
+          "longTaskMax": 0,
+          "lagP95": 68.60000002384186,
+          "lagMax": 68.60000002384186,
+          "counts": {
+            "_getDialogTimeIdentityScopeKey": 319,
+            "_getDialogControlItemsForMode": 242,
+            "_applyDialogAutomation": 16,
+            "_notifyDialogRecentDataChanged": 1,
+            "_renderDialogControlNativeSwitcher": 2
+          },
+          "apiCalls": 0,
+          "storageBytes": 16622160,
+          "heap": 15200000,
+          "top": []
+        }
+      ],
+      "errors": []
+    },
+    "frozen-after-2": {
+      "label": "frozen-after-2",
+      "count": 4000,
+      "runtimeSha256": "ddd172a3aa538f471f921aa2ff5ce4c85ea3220dce0142ee3c89c0fca475a969",
+      "modelSha256": "39ea96b86a1b088e442afcd5f3e5139c32a3151ae4db605311c23082d8e1d425",
+      "profiling": false,
+      "node": "v24.22.1",
+      "browser": "151.0.7922.34",
+      "phases": [
+        {
+          "name": "rules-and-refresh",
+          "rendererCpuMs": 102.17600000000004,
+          "elapsedMs": 14015.3357,
+          "scriptMs": 39.375,
+          "taskMs": 68.535,
+          "layoutMs": 0,
+          "longTasks": 0,
+          "longTaskTotal": 0,
+          "longTaskMax": 0,
+          "lagP95": 0.9000000059604645,
+          "lagMax": 1.699999988079071,
+          "counts": {
+            "_getDialogTimeIdentityScopeKey": 311,
+            "_dialogAutomationRefreshCandidates": 25,
+            "_getDialogControlItemsForMode": 33,
+            "_applyDialogAutomation": 8
+          },
+          "apiCalls": 11,
+          "storageBytes": 1359948,
+          "heap": 15200000,
+          "top": []
+        },
+        {
+          "name": "unchanged-refresh",
+          "rendererCpuMs": 56.72100000000002,
+          "elapsedMs": 12005.5968,
+          "scriptMs": 12.072,
+          "taskMs": 34.805,
+          "layoutMs": 0,
+          "longTasks": 0,
+          "longTaskTotal": 0,
+          "longTaskMax": 0,
+          "lagP95": 0.9000000059604645,
+          "lagMax": 2.600000023841858,
+          "counts": {
+            "_getDialogTimeIdentityScopeKey": 156,
+            "_dialogAutomationRefreshCandidates": 24,
+            "_getDialogControlItemsForMode": 24
+          },
+          "apiCalls": 12,
+          "storageBytes": 0,
+          "heap": 15200000,
+          "top": []
+        },
+        {
+          "name": "folder-interactions",
+          "rendererCpuMs": 316.763,
+          "elapsedMs": 3436.4036000000015,
+          "scriptMs": 42.449000000000005,
+          "taskMs": 176.22,
+          "layoutMs": 0.36,
+          "longTasks": 0,
+          "longTaskTotal": 0,
+          "longTaskMax": 0,
+          "lagP95": 4.299999982118607,
+          "lagMax": 12.899999976158142,
+          "counts": {
+            "_getDialogTimeIdentityScopeKey": 39,
+            "_dialogAutomationRefreshCandidates": 6,
+            "_getDialogControlItemsForMode": 6
+          },
+          "apiCalls": 3,
+          "storageBytes": 260,
+          "heap": 15200000,
+          "top": []
+        },
+        {
+          "name": "confirm-transfers",
+          "rendererCpuMs": 563.801,
+          "elapsedMs": 481.3098000000027,
+          "scriptMs": 84.27699999999999,
+          "taskMs": 386.50699999999995,
+          "layoutMs": 37.416,
+          "longTasks": 1,
+          "longTaskTotal": 62,
+          "longTaskMax": 62,
+          "lagP95": 53,
+          "lagMax": 53,
+          "counts": {
+            "_getDialogTimeIdentityScopeKey": 319,
+            "_getDialogControlItemsForMode": 226,
+            "_applyDialogAutomation": 16,
+            "_notifyDialogRecentDataChanged": 1,
+            "_renderDialogControlNativeSwitcher": 2
+          },
+          "apiCalls": 0,
+          "storageBytes": 16622160,
+          "heap": 15200000,
+          "top": []
+        }
+      ],
+      "errors": []
+    }
+  }
+}
