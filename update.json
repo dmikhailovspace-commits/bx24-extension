@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "9.0.6",
-  "release_date": "2026-11-17",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v9.0.6",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.6",
+  "version": "9.0.8",
+  "release_date": "2026-11-18",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v9.0.8",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.8",
   "extension_files": [
-    "worker-v9_0_6.js",
+    "worker-v9_0_8.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,13 +33,12 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.6/extension/injected.js",
-  "changelog": "Снижена нагрузка фоновой сверки и переключения папок. Справка «Инфо» и общая вёрстка окон с внешними полосами прокрутки.",
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.8/extension/injected.js",
+  "changelog": "Ускорены проверка правил и переключение папок. Массовое подтверждение учитывает исключения, предпросмотр показывает автоматические переносы.",
   "release_notes": [
-    "Фоновая сверка неизменившихся задач больше не запускает полный пересчёт правил и перерисовку папок.",
-    "Ускорены переключение папок, счётчики и повторная проверка одинаковых условий; живая пересортировка, подтверждение и исключения сохранены.",
-    "В панели правил появилась кнопка «Инфо» с объяснением сортировки и примерами.",
-    "«Инфо» оформлена как остальные разделы; полупрозрачные полосы прокрутки вынесены за скруглённую рамку окон."
+    "Проверка задач формирует очередь уточнений за один проход. Фоновая сверка обходит задачи по кругу и сохраняет прежний интервал и размер пакета.",
+    "При выборе папки в нативном списке обновляются видимость строк и выбранная вкладка.",
+    "При массовом подтверждении учитывается галочка «Больше не предлагать». Предпросмотр различает ручное и автоматическое подтверждение."
   ],
   "verification_profile": "search-focused",
   "distribution": "github",
