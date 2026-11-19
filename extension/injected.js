@@ -33557,20 +33557,25 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 			'data-id', 'data-dialog-id', 'data-dialog-id-value', 'data-dialogid',
 			'data-chat-id', 'data-user-id', 'data-entity-id', 'href'
 		]);
+		let ownerByElement;
 		const getMutationOwnerRow = mutation => {
 			const mutationElement = mutation.target?.nodeType === 1 ? mutation.target : mutation.target?.parentElement || null;
-			return mutationElement?.matches?.(controlRowSel) ? mutationElement : mutationElement?.closest?.(controlRowSel) || null;
+			if (!mutationElement) return null;
+			if (ownerByElement.has(mutationElement)) return ownerByElement.get(mutationElement);
+			const owner = mutationElement.closest?.(controlRowSel) || null;
+			ownerByElement.set(mutationElement, owner);
+			return owner;
 		};
 		const mutationTouchesBitrixCounterState = mutation => {
 			const mutationElement = mutation.target?.nodeType === 1 ? mutation.target : mutation.target?.parentElement || null;
 			const ownerRow = getMutationOwnerRow(mutation);
 			if (!ownerRow) return false;
 			if (mutation.type === 'attributes') {
-				return !!(mutationElement?.matches?.(controlStatusSel) || mutationElement?.closest?.(controlStatusSel));
+				return !!mutationElement?.closest?.(controlStatusSel);
 			}
 			if (mutation.type === 'characterData') return !!mutationElement?.closest?.(controlStatusSel);
 			if (mutation.type !== 'childList') return false;
-			if (mutationElement?.matches?.(controlStatusSel) || mutationElement?.closest?.(controlStatusSel)) return true;
+			if (mutationElement?.closest?.(controlStatusSel)) return true;
 			return [...mutation.addedNodes, ...mutation.removedNodes].some(node =>
 				node.nodeType === 1 && (node.matches?.(controlStatusSel) || node.querySelector?.(controlStatusSel))
 			);
@@ -33626,6 +33631,9 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 		};
 
 		obs = new MutationObserver((mutations) => {
+		// Hundreds of childList records can share one parent after a page append.
+		// Vue may reparent the same element before the next delivery.
+		ownerByElement = new WeakMap();
 		if (!IS_OL_FRAME && _isDialogControlNativeMode() && _dialogControlMultiSelected.size) {
 			const recycled = new Set(mutations.filter(mutation => mutation.type === 'attributes' &&
 				rowIdentityAttributes.has(mutation.attributeName)).map(getMutationOwnerRow).filter(Boolean));
@@ -33658,7 +33666,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 					for (const node of mutation.addedNodes) {
 						if (node.nodeType !== 1) continue;
 						if (node.matches(itemSel)) changedRows.add(node);
-						node.querySelectorAll(itemSel).forEach(row => changedRows.add(row));
+						else node.querySelectorAll(itemSel).forEach(row => changedRows.add(row));
 					}
 				}
 			}
