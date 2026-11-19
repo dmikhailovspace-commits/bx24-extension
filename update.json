@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "9.0.12",
+  "version": "9.0.13",
   "release_date": "2026-11-19",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v9.0.12",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.12",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v9.0.13",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.13",
   "extension_files": [
-    "worker-v9_0_12.js",
+    "worker-v9_0_13.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,11 +33,11 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.12/extension/injected.js",
-  "changelog": "Сокращены повторные проверки папки и ленты во время подгрузки диалогов.",
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.13/extension/injected.js",
+  "changelog": "Снижена нагрузка на интерфейс во время прокрутки и подгрузки диалогов.",
   "release_notes": [
-    "При подгрузке папки сортировщик проверяет её состав перед запросом следующей страницы и перед показом результата.",
-    "Пока Bitrix загружает диалоги, список строк повторно проверяется после изменений в самой ленте."
+    "При прокрутке ленты или переписки фоновая подгрузка папки ждёт короткой паузы перед следующей страницей.",
+    "При массовой подгрузке сортировщик обрабатывает данные новых диалогов небольшими порциями."
   ],
   "verification_profile": "search-focused",
   "distribution": "github",
