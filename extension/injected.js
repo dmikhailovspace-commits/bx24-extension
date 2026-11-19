@@ -8596,7 +8596,7 @@
 		// Counter, title and preview changes on known rows have their own
 		// observers. A page extending the catalog only needs the new entries.
 		const captured = _captureDialogNativeWindow(container, target, state, 0,
-			_isDialogNativeLazyMode() ? missingRows : visibleRows);
+			background && _isDialogNativeLazyMode() ? missingRows : visibleRows);
 		const afterSignature = _getDialogRecentRenderSignature(target);
 		if (!captured.added || (!captured.nativeAdded && beforeSignature === afterSignature)) {
 			return { count: _countDialogRecentMeta(), skipped: true };
@@ -8677,7 +8677,7 @@
 				return;
 			}
 			if (options.full || options.force || options.reason) _refreshDialogRecentCatalog(options).catch(() => {});
-			else _refreshDialogNativeVisibleWindow();
+			else _refreshDialogNativeVisibleWindow(true);
 		}, Math.max(0, Number(options.delay) || 0));
 	}
 
@@ -9269,7 +9269,7 @@
 	async function _runDialogWakeReconcile(reason = 'wake', options = {}) {
 		if (_isDialogNativeLazyMode()) {
 			if (document.hidden || !isInternalChatsDOM()) return { skipped: true };
-			const result = _refreshDialogNativeVisibleWindow();
+			const result = _refreshDialogNativeVisibleWindow(true);
 			_scheduleDialogCounterReconcile();
 			// Today's task totals have their own scope and deduplicated bootstrap;
 			// returning to Messenger must keep it alive without walking chat history.
@@ -10201,7 +10201,7 @@
 			if (window.__PENA_FORCE_REST_CATALOG__ === true) {
 				_scheduleDialogRecentSync({ delay: _dialogRecentCacheLoaded ? 100 : 0, full: !_dialogRecentCacheLoaded });
 			} else if (_isDialogControlNativePassThrough()) {
-				_refreshDialogNativeVisibleWindow();
+				_refreshDialogNativeVisibleWindow(true);
 			}
 			_scheduleDialogCounterReconcile();
 			// Repository metadata does not prove that the current Bitrix viewport is
@@ -10212,7 +10212,7 @@
 			clearTimeout(repositoryGrace);
 			_dialogRecentRuntimeStarting = false;
 			_armDialogRecentSync();
-			if (_isDialogControlNativePassThrough()) _refreshDialogNativeVisibleWindow();
+			if (_isDialogControlNativePassThrough()) _refreshDialogNativeVisibleWindow(true);
 			_scheduleDialogNativeModeLoad('runtime-recovery', 0);
 		});
 		return true;
