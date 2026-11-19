@@ -1237,7 +1237,7 @@
 	  const node = document.querySelector(selector);
 	  return node ? getComputedStyle(node).cursor : null;
 	};
-    setInterval(() => {
+    if (!new URLSearchParams(location.search).has('skipTestOutput')) setInterval(() => {
 	  const activeHost = document.querySelector('.test-host:not([hidden])');
 	  const allSwitchers = Array.from(document.querySelectorAll('.pena-native-folder-switcher'));
 	  const switcher = allSwitchers.find(panel => activeHost?.contains(panel)) || allSwitchers.find(panel => getComputedStyle(panel).display !== 'none') || allSwitchers[0] || null;

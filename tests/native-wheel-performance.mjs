@@ -40,7 +40,8 @@ try {
       stop() { const out = phase; phase = null; return out; }
     };
   });
-  await page.goto(server.baseUrl + '/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&lazyNative=1&nativeFirst=1&passThrough=1&many=1&catalogRows=350');
+  const rows = Number(process.env.PENA_WHEEL_ROWS || 350);
+  await page.goto(server.baseUrl + '/tests/native-consistency-harness.html?mode=chats&nativeCatalog=1&lazyNative=1&nativeFirst=1&passThrough=1&many=1&skipTestOutput&catalogRows=' + rows);
   await page.locator('.recent-host .pena-native-rules-button').waitFor();
   await page.evaluate(() => {
     const pane = document.createElement('div');

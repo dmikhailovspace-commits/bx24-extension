@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '9.0.9';
+	window.__ANITREC_RUNNING__ = '9.0.10';
 
-	const VER = '9.0.9';
+	const VER = '9.0.10';
 	// Google Material Icons / Refresh (Apache-2.0).
 	const _PENA_RELOAD_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>';
 	const _PENA_NATIVE_ONLY = true;
@@ -12097,7 +12097,7 @@ if (_presetChannel) {
 				!filters.selectedTags?.length && !filters.selectedIntersectionTags?.length &&
 				(_currentPanelMode !== 'tasks' || (!filters.projectIndexes?.length && !filters.responsibleIndexes?.length &&
 					!filters.statusIndexes?.length && !filters.hiddenProjectIndexes?.length && !filters.hiddenResponsibleIndexes?.length))) {
-				if (el.classList.contains('pena-native-filter-hidden')) el.classList.remove('pena-native-filter-hidden');
+				el.classList.toggle('pena-native-filter-hidden', false);
 				return true;
 			}
 			const meta = _getDialogRowFilterMeta(el);
