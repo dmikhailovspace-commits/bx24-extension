@@ -585,8 +585,8 @@
 		if (/^\d+$/.test(userId)) return `user${userId}`;
 		if (/^user\d+$/i.test(userId)) return userId;
 		const entityId = String(el.getAttribute?.('data-entity-id') || el.dataset?.entityId || '').trim();
-		const entityType = String(el.getAttribute?.('data-entity-type') || el.dataset?.entityType || '').trim();
 		if (/^\d+$/.test(entityId)) {
+			const entityType = String(el.getAttribute?.('data-entity-type') || el.dataset?.entityType || '').trim();
 			if (/^(?:chat|dialog|group)$/i.test(entityType)) return `chat${entityId}`;
 			if (/user|private/i.test(entityType)) return `user${entityId}`;
 		}
@@ -601,7 +601,7 @@
 
 	function _getRawDialogControlIdFromElement(el) {
 		if (!el) return '';
-		const values = [
+		const own = [
 			_getTypedDialogDataId(el),
 			el.getAttribute?.('data-dialog-id'),
 			el.getAttribute?.('data-dialog-id-value'),
@@ -609,17 +609,17 @@
 			el.getAttribute?.('data-id'),
 			el.dataset?.dialogId,
 			el.dataset?.dialogid,
-			el.dataset?.id,
-			el.querySelector?.('[data-dialog-id]')?.getAttribute?.('data-dialog-id'),
-			el.querySelector?.('[data-dialog-id-value]')?.getAttribute?.('data-dialog-id-value'),
-			el.querySelector?.('[data-dialogid]')?.getAttribute?.('data-dialogid'),
-			_getSafeNestedDialogDataId(el),
-			el.getAttribute?.('data-userid'),
-			el.dataset?.userid,
-			el.querySelector?.('[data-userid]')?.getAttribute?.('data-userid'),
-			(el.matches?.('.bx-im-search-item__container,.bx-im-search-item-layout__container,[data-pena-native-search-row]') ? _getDialogNativeSearchRowId(el) : '')
-		];
-		return _normalizeDialogControlRestDialogId(values.find(value => String(value || '').trim()));
+			el.dataset?.id
+		].find(value => String(value || '').trim());
+		if (own) return _normalizeDialogControlRestDialogId(own);
+		for (const attribute of ['data-dialog-id', 'data-dialog-id-value', 'data-dialogid']) {
+			const nested = el.querySelector?.('[' + attribute + ']')?.getAttribute?.(attribute)?.trim();
+			if (nested) return _normalizeDialogControlRestDialogId(nested);
+		}
+		return _normalizeDialogControlRestDialogId(_getSafeNestedDialogDataId(el) ||
+			String(el.getAttribute?.('data-userid') || '').trim() || String(el.dataset?.userid || '').trim() ||
+			String(el.querySelector?.('[data-userid]')?.getAttribute?.('data-userid') || '').trim() ||
+			(el.matches?.('.bx-im-search-item__container,.bx-im-search-item-layout__container,[data-pena-native-search-row]') ? _getDialogNativeSearchRowId(el) : ''));
 	}
 
 	function _getDialogControlRestDialogId(dialogId, el = null, item = null) {
