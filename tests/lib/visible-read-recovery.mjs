@@ -102,6 +102,21 @@ export async function checkVisibleReadRecovery(source) {
     f.messages.get(10).unread = false; f.anchors.splice(0, 1); await f.tick();
     assert.equal(f.calls[0].type, 'im.dialog.read'); f.recovery.dispose();
   });
+  await phase('Scrolling a settled read dialog skips layout until a new anchor arrives', async () => {
+    const f = fixture();
+    await f.tick();
+    f.state.counter = 0;
+    f.anchors.length = 0;
+    let layoutReads = 0;
+    f.sandbox.isVisibleElement = () => { layoutReads++; return true; };
+    f.recovery.schedule(); await f.tick();
+    assert.equal(layoutReads, 0);
+    f.anchors.push({ chatId: 1, messageId: 10, type: 'mention' });
+    f.recovery.schedule(); await f.tick();
+    assert.ok(layoutReads > 0);
+    assert.equal(f.anchors.length, 0);
+    f.recovery.dispose();
+  });
   await phase('Failed anchor acknowledgements preserve the local anchors', async () => {
     const f = fixture(); f.state.counter = 0;
     f.context.BXNS.Messenger.v2.Lib.runAction = async () => { throw Error('offline'); };

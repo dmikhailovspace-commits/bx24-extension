@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '9.0.10';
+	window.__ANITREC_RUNNING__ = '9.0.11';
 
-	const VER = '9.0.10';
+	const VER = '9.0.11';
 	// Google Material Icons / Refresh (Apache-2.0).
 	const _PENA_RELOAD_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>';
 	const _PENA_NATIVE_ONLY = true;
@@ -3347,7 +3347,17 @@
 		};
 		const run = async () => {
 			timer = null;
-			if (flight || !current()) return;
+			if (flight || disposed) return;
+			// A scroll in an already-read conversation does not require layout
+			// or Vue component discovery. Counter and anchor mutations reschedule us.
+			const bound = instance?.proxy;
+			if (bound && !instance.isUnmounted && bound.$el?.isConnected &&
+				bound.dialogId === context.store.getters['application/getLayout']?.entityId) {
+				const chatId = Number(bound.dialog?.chatId);
+				if (chatId > 0 && context.store.getters['counters/getCounterByChatId']?.(chatId) === 0 &&
+					!context.store.state.messages?.anchors?.anchors?.some(anchor => Number(anchor.chatId) === chatId && Number(anchor.messageId) > 0)) return;
+			}
+			if (!current()) return;
 			const proxy = resolve();
 			if (!proxy || !proxy.messagesCanBeRead() || !isVisibleElement(proxy.$el)) return;
 			const chatId = Number(proxy.dialog?.chatId), dialogId = proxy.dialogId;
@@ -12091,14 +12101,15 @@ if (_presetChannel) {
 		if (_isDialogNativeLazyMode()) {
 			const searching = !!String(filters.query || '').trim();
 			const unread = (viewPrefs || _getDialogControlViewPrefs()).unreadOnly || filters.unreadOnly;
-			// Recycled rows still need to shed an old folder's hidden class.
-			// The unfiltered inbox does not need to read their messages or avatars.
-			if (!nativeFolderFilter && !unread && !searching && !filters.typesSelected?.length &&
+			// Folder membership usually follows the row ID. Read message details
+			// only for content filters or the canonical title fallback.
+			if (!nativeFolderFilter?.unreadOnly && !unread && !searching && !filters.typesSelected?.length &&
 				!filters.selectedTags?.length && !filters.selectedIntersectionTags?.length &&
 				(_currentPanelMode !== 'tasks' || (!filters.projectIndexes?.length && !filters.responsibleIndexes?.length &&
 					!filters.statusIndexes?.length && !filters.hiddenProjectIndexes?.length && !filters.hiddenResponsibleIndexes?.length))) {
-				el.classList.toggle('pena-native-filter-hidden', false);
-				return true;
+				const visible = !nativeFolderFilter || _matchesDialogControlNativeFilter(el, null, nativeFolderFilter);
+				el.classList.toggle('pena-native-filter-hidden', !visible);
+				return visible;
 			}
 			const meta = _getDialogRowFilterMeta(el);
 			let visible = searching ? (!unread || _isDialogControlUnreadMeta(meta)) : matchByFilters(meta);
@@ -15505,12 +15516,12 @@ if (_presetChannel) {
 		return id;
 	}
 
-	function _getDialogControlNativeDialogItemsForSegment(items, segmentId = '') {
+	function _getDialogControlNativeDialogItemsForSegment(items, segmentId = '', placement) {
 		const source = Array.isArray(items) ? items : [];
 		const id = String(segmentId || '');
 		const dialogs = source.filter(item => !_isDialogControlFolder(item));
-		if (_getDialogControlUniqueOnly()) {
-			const placement = _getDialogControlPlacementIndex(source);
+		if (placement === undefined && _getDialogControlUniqueOnly()) placement = _getDialogControlPlacementIndex(source);
+		if (placement) {
 			return dialogs.filter(item => placement.segmentOf(item) === id);
 		}
 		if (!id) return dialogs;
@@ -15524,12 +15535,12 @@ if (_presetChannel) {
 		);
 	}
 
-	function _getDialogControlNativeFoldersForSegment(items, segmentId = '') {
+	function _getDialogControlNativeFoldersForSegment(items, segmentId = '', placement) {
 		const source = Array.isArray(items) ? items : [];
 		const id = String(segmentId || '');
 		const folders = source.filter(_isDialogControlFolder);
-		if (_getDialogControlUniqueOnly()) {
-			const placement = _getDialogControlPlacementIndex(source);
+		if (placement === undefined && _getDialogControlUniqueOnly()) placement = _getDialogControlPlacementIndex(source);
+		if (placement) {
 			return folders.filter(folder => placement.segmentOf(folder) === id);
 		}
 		if (!id) return folders;
@@ -15549,7 +15560,8 @@ if (_presetChannel) {
 		let folderId = _getDialogControlNativeActiveFolderId();
 		if (!segmentId && !folderId && !viewPrefs.unreadOnly && !filters.unreadOnly && !viewPrefs.uniqueOnly) return null;
 		const items = _getDialogControlItems();
-		const folderExists = !folderId || _getDialogControlNativeFoldersForSegment(items, segmentId).some(item => String(item.id || '') === folderId);
+		const placement = viewPrefs.uniqueOnly ? _getDialogControlPlacementIndex(items) : null;
+		const folderExists = !folderId || _getDialogControlNativeFoldersForSegment(items, segmentId, placement).some(item => String(item.id || '') === folderId);
 		if (!folderExists) {
 			_setDialogControlNativeActiveFolderId('', { render: false, apply: false });
 			folderId = '';
@@ -15558,8 +15570,7 @@ if (_presetChannel) {
 		const ids = new Set();
 		const titles = new Set();
 		const excludedIds = new Set();
-		const placement = viewPrefs.uniqueOnly ? _getDialogControlPlacementIndex(items) : null;
-		const segmentDialogs = _getDialogControlNativeDialogItemsForSegment(items, segmentId);
+		const segmentDialogs = _getDialogControlNativeDialogItemsForSegment(items, segmentId, placement);
 		const selected = new Set(segmentDialogs.filter(item => placement
 			? placement.folderOf(item) === folderId
 			: !folderId || String(item.folderId || '') === folderId));
@@ -15610,18 +15621,19 @@ if (_presetChannel) {
 		if (filter.unreadOnly && !_isDialogControlUnreadMeta(meta)) return false;
 		if (!filter.segmentId && !filter.folderId && !filter.uniqueOnly) return true;
 		const identityKeys = Array.from(new Set([
-			normId(meta?.id),
+			normId(meta ? meta.id : getChatIdFromElement(row)),
 			..._getDialogControlNativeRowIdentityKeys(row)
 		].filter(Boolean)));
 		if (filter.uniqueOnly && identityKeys.some(id => filter.excludedIds?.has(id))) return false;
 		// New native rows have no saved assignment and belong in the root inbox.
 		if (filter.uniqueOnly && !filter.segmentId && !filter.folderId) return true;
 		if (identityKeys.some(id => filter.ids?.has?.(id))) return true;
-		const titleKeys = [
-			_normalizeDialogControlTitle(meta?.title),
-			_normalizeDialogControlTitle(getChatTitleFromElement(row))
-		].filter(Boolean);
-		return titleKeys.some(key => filter.titles?.has?.(key));
+		if (!filter.titles?.size) return false;
+		const rowTitle = _normalizeDialogControlTitle(getChatTitleFromElement(row));
+		if (rowTitle && filter.titles.has(rowTitle)) return true;
+		// Keep the canonical task-title fallback for renamed and recycled rows.
+		const title = _normalizeDialogControlTitle((meta || _getDialogRowFilterMeta(row))?.title);
+		return !!title && filter.titles.has(title);
 	}
 
 	function _getDialogControlNativeSeedColor(seed, isAll = false) {
@@ -15819,6 +15831,7 @@ if (_presetChannel) {
 	// Bitrix, using the owner that received the gesture; never search the page.
 	const _pendingListWheels = new WeakMap();
 	function _watchDialogListWheel(event) {
+		if (!event.cancelable) return;
 		const viewport = event.currentTarget;
 		if (event.ctrlKey || _dialogControlActive || filters.query?.trim() ||
 			!document.documentElement.classList.contains('pena-dialog-native-mode') ||

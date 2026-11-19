@@ -68,6 +68,25 @@ for(unique of [false,true,false]){
  assert.deepEqual(rows.map(x=>x.hidden),expected);assert.equal(preferenceReads,1);assert.equal(beforeReads,rows.length);
  report.cases.push({operation:'row-filter-preferences',size:rows.length,unreadOnly:unique,beforeMs,afterMs,beforeReads,afterReads:preferenceReads});
 }
+// A folder match by ID or an exclusion needs no message, counter or avatar data.
+Object.assign(sandbox, {
+ getChatIdFromElement: row => row.id,
+ _getDialogControlNativeRowIdentityKeys: row => [row.id],
+ getChatTitleFromElement: row => row.title,
+ _normalizeDialogControlTitle: title => String(title || '').toLowerCase()
+});
+vm.runInContext(extract('_matchesDialogControlNativeFilter'), sandbox);
+const folder = { folderId:'f', ids:new Set(['one']), titles:new Set(['alias']), uniqueOnly:true, excludedIds:new Set(['two']) };
+let metadataReads = 0;
+sandbox._getDialogRowFilterMeta = row => { metadataReads++; return row.meta; };
+for (const [id, title, storedTitle, visible] of [
+ ['one','renamed','unknown',true], ['two','alias','alias',false],
+ ['three','alias','unknown',true], ['four','old','alias',true], ['five','other','other',false]
+]) {
+ const row = { id, title, meta:{id,title:storedTitle}, classList:{toggle(_name,hidden){ assert.equal(!hidden,visible); }} };
+ assert.equal(sandbox._applyDialogControlRowFilter(row,folder,{unreadOnly:false}), visible);
+}
+assert.equal(metadataReads, 2);
 mkdirSync('tests/artifacts',{recursive:true});writeFileSync('tests/artifacts/render-performance.json',JSON.stringify(report,null,2)+'\n');
 console.log('PASS measured render projections: identical counters/order/visibility, fresh next batch, bounded metadata and preference reads');
 console.log(JSON.stringify(report.cases.filter(x=>x.size===10000&&((x.operation==='counters'&&!x.unique&&x.active===''&&!x.searching)||x.operation==='date-sort'||x.operation==='row-filter-preferences')),null,2));
