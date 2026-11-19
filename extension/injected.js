@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '9.0.11';
+	window.__ANITREC_RUNNING__ = '9.0.12';
 
-	const VER = '9.0.11';
+	const VER = '9.0.12';
 	// Google Material Icons / Refresh (Apache-2.0).
 	const _PENA_RELOAD_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>';
 	const _PENA_NATIVE_ONLY = true;
@@ -8275,6 +8275,7 @@
 	const _dialogNativePageRequests = new WeakMap();
 	let _dialogNativeFolderTimer = null;
 	let _dialogNativeFolderRun = null;
+	let _dialogNativeFolderDemandKey = '';
 	function _getDialogNativeFolderDemand() {
 		if (!_isDialogNativeLazyMode() || document.hidden || String(filters.query || '').trim()) return null;
 		const container = findContainer();
@@ -8376,20 +8377,30 @@
 	}
 	async function _loadDialogNativeFolderWindow(force = false) {
 		const demand = _getDialogNativeFolderDemand();
+		_dialogNativeFolderDemandKey = demand?.key || '';
 		document.querySelectorAll('.pena-native-folder-status').forEach(node => {
 			if (!demand || node.dataset.demandKey !== demand.key) node.remove();
 		});
 		if (!demand) return { skipped: true };
 		if (_dialogNativeFolderRun) return _dialogNativeFolderRun;
-		const { container, viewport, mode, generation, scope, ids, groups, key } = demand;
+		const { container, viewport, mode, generation, scope, groups, key } = demand;
 		let state = _dialogNativeFolderWindows.get(container);
 		if (!state || state.key !== key) {
 			state = { key, stopped: false };
 			_dialogNativeFolderWindows.set(container, state);
 		}
-		const current = () => scope === _getDialogNativeExpectedAuditScopeKey(mode) &&
-			_isDialogNativeSourceGenerationCurrent(mode, container, viewport, generation) && _getDialogNativeFolderDemand()?.key === key;
-		const nativeIds = () => new Set(_getDialogNativeSourceRows(container).flatMap(_getDialogControlNativeRowIdentityKeys));
+		// During a pending response we only need cancellation. Revalidate the full
+		// selection before requesting another page or touching the current view.
+		const canWait = () => _dialogNativeFolderDemandKey === key && !document.hidden && !String(filters.query || '').trim() &&
+			scope === _getDialogNativeExpectedAuditScopeKey(mode) && _isDialogNativeSourceGenerationCurrent(mode, container, viewport, generation);
+		const current = () => canWait() && _getDialogNativeFolderDemand()?.key === key;
+		let observer, presentIds;
+		const nativeIds = () => {
+			if (!observer || !presentIds || observer.takeRecords().length) {
+				presentIds = new Set(_getDialogNativeSourceRows(container).flatMap(_getDialogControlNativeRowIdentityKeys));
+			}
+			return presentIds;
+		};
 		const missing = () => { const present = nativeIds(); return groups.some(group => !group.some(id => present.has(id))); };
 		const status = (message, retry = false) => {
 			document.querySelectorAll('.pena-native-folder-status').forEach(node => node.remove());
@@ -8424,11 +8435,16 @@
 			let bridge;
 			const statusTimer = setTimeout(() => { if (current() && missing()) status('Загрузка диалогов…'); },180);
 			try {
+				// A recycled row can change its identity without changing nodes. Cache
+				// only inside this run, watching the native list including descendants.
+				observer = new MutationObserver(() => { presentIds = null; });
+				observer.observe(container, { childList: true, subtree: true, attributes: true, characterData: true });
+				presentIds = null;
 				// On first mount the native list may precede its Vue service. One
 				// coalesced, cancellable wait avoids a false error and a second loader.
 				bridge = _findDialogNativePageService(demand);
 				const deadline = Date.now()+3000;
-				while (!bridge && current() && missing() && Date.now()<deadline) {
+				while (!bridge && canWait() && missing() && Date.now()<deadline) {
 					await pause(100); bridge = _findDialogNativePageService(demand);
 				}
 				if (!current()) return {cancelled:true,pages};
@@ -8439,13 +8455,17 @@
 					if (!pending && bridge.busy()) {
 						busySince ||= Date.now();
 						if (Date.now() - busySince > 15000) throw new Error('Native pagination remains busy');
-						await pause(150); continue;
+						do {
+							await pause(150);
+						} while (canWait() && missing() && bridge.busy() && bridge.instance.proxy.getRecentService() === bridge.service &&
+							!_dialogNativePageRequests.has(bridge.service) && Date.now() - busySince <= 15000);
+						continue;
 					}
 					busySince = 0;
 					if (!bridge.hasMore()) {
 						// A cursor reaches the tail before Vue paints the final response.
 						const renderDeadline = Date.now() + 1500;
-						while (current() && missing() && Date.now() < renderDeadline) await pause(100);
+						while (canWait() && Date.now() < renderDeadline && missing()) await pause(100);
 						if (!current()) return { cancelled: true, pages };
 						_refreshDialogNativeVisibleWindow(); applyFilters();
 						if (!missing()) break;
@@ -8453,7 +8473,12 @@
 						stop(bridge); status('');
 						return { exhausted: true, pages };
 					}
-					const before = [...nativeIds()].join(',');
+					const beforeIds = nativeIds();
+					const before = [...beforeIds].join(',');
+					const rowsChanged = () => {
+						const after = nativeIds();
+						return beforeIds !== after && before !== [...after].join(',');
+					};
 					const cursor = bridge.cursor();
 					let request = pending;
 					if (!request) {
@@ -8464,7 +8489,7 @@
 					}
 					let settled = false, failure;
 					request.then(() => { settled = true; }, error => { failure = error; settled = true; });
-					while (!settled && current()) await pause(50);
+					while (!settled && canWait()) await pause(50);
 					if (!current()) return { cancelled: true, pages };
 					if (failure) throw failure;
 					await pause(40);
@@ -8472,10 +8497,10 @@
 					// resolved promise when another caller is loading. Allow that caller
 					// and Vue to finish before treating a no-op as a broken cursor.
 					const progressDeadline = Date.now() + 1500;
-					while (current() && before === [...nativeIds()].join(',') && cursor === bridge.cursor() && Date.now() < progressDeadline) await pause(100);
+					while (canWait() && Date.now() < progressDeadline && cursor === bridge.cursor() && !rowsChanged()) await pause(100);
 					if (!current()) return { cancelled: true, pages };
 					_refreshDialogNativeVisibleWindow(); applyFilters(); pages += 1;
-					const progressed = before !== [...nativeIds()].join(',') || cursor !== bridge.cursor();
+					const progressed = cursor !== bridge.cursor() || rowsChanged();
 					unchanged = progressed ? 0 : unchanged + 1;
 					if (unchanged >= 3 && bridge.hasMore() && missing()) throw new Error('Native pagination made no progress');
 				}
@@ -8486,6 +8511,7 @@
 				if (current()) { stop(bridge); status('Не удалось загрузить диалоги', true); }
 				return { error: String(error?.message || error), pages };
 			} finally {
+				observer?.disconnect();
 				clearTimeout(statusTimer);
 				_dialogNativeFolderRun = null;
 				if (!current()) _scheduleDialogNativeFolderWindow();

@@ -5,6 +5,12 @@ import { startHarnessServer, collectPageErrors } from './lib/harness-server.mjs'
 
 const raw = readFileSync(new URL('../extension/injected.js', import.meta.url), 'utf8');
 const source = raw.replace('\tasync function boot() {', `\tasync function boot() {
+  const originalDemand = _getDialogNativeFolderDemand;
+  window.pendingDemandReads = 0;
+  _getDialogNativeFolderDemand = (...args) => {
+    if (window.nativeServices?.[_pMode()]?.isLoading) window.pendingDemandReads++;
+    return originalDemand(...args);
+  };
   window.lazyAudit = {
     lazy: _isDialogNativeLazyMode, prefs: _getDialogControlViewPrefs,
     unread: () => { _setDialogControlViewPrefs({unreadOnly:true}); applyFilters(); },
@@ -107,14 +113,18 @@ try {
         lazyAudit.addFolder('folder:other');
         lazyAudit.assign('chat1007', 'folder:other');
         lazyAudit.assign('chat1100');
-        window.nativeServiceDelay = 250;
+        window.nativeServiceDelay = 1000;
+        window.pendingDemandReads = 0;
         window.callsBeforeSwitch = nativeServiceCalls.length;
         lazyAudit.apply();
       });
       await page.waitForFunction(() => nativeServiceCalls.length > callsBeforeSwitch);
+      await page.waitForTimeout(450);
+      assert(await page.evaluate(() => pendingDemandReads <= 4), 'A pending native request must not rebuild the folder on every timer tick');
       await page.locator('.pena-native-folder-tab[data-native-folder-id="folder:other"]').click();
       await page.waitForFunction(() => !lazyAudit.active());
-      await page.waitForTimeout(350); // The previous folder's in-flight page has arrived.
+      await page.waitForFunction(mode => !nativeServices[mode].isLoading, mode);
+      await page.evaluate(() => { window.nativeServiceDelay = 250; });
       await host.locator('[data-id="chat1007"]').waitFor({state:'visible'});
       const switchedAudit = await page.evaluate(() => {
         folderPaintAudit.running = false;
