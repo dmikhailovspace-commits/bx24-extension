@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "9.0.10",
+  "version": "9.0.11",
   "release_date": "2026-11-19",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v9.0.10",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.10",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v9.0.11",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.11",
   "extension_files": [
-    "worker-v9_0_10.js",
+    "worker-v9_0_11.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,12 +33,12 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.10/extension/injected.js",
-  "changelog": "Ускорена прокрутка списка диалогов и открытой переписки.",
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.11/extension/injected.js",
+  "changelog": "Сокращена работа сортировщика при прокрутке папок и прочитанной переписки.",
   "release_notes": [
-    "При прокрутке переписки сортировщик больше не ищет список диалогов на странице.",
-    "Лента обрабатывает колесо в своей области. Обычная прокрутка выполняется браузером, в том числе при подгрузке строк.",
-    "В диалоге без непрочитанных сообщений и отметок расширение пропускает дополнительный обход видимых сообщений."
+    "При прокрутке папки сортировщик определяет видимость известных диалогов по их идентификаторам.",
+    "В режиме «Без повторов» размещение в папках рассчитывается один раз за проход фильтра.",
+    "При прокрутке прочитанной переписки повторная сверка пропускает измерение окна, пока не появятся непрочитанные сообщения или отметки."
   ],
   "verification_profile": "search-focused",
   "distribution": "github",
