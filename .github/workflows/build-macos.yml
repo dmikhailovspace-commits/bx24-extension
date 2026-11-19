@@ -98,6 +98,8 @@ jobs:
           exit $LASTEXITCODE
 
       - name: Verify native list and message scrolling
+        env:
+          PENA_WHEEL_REPORT: native-wheel-performance
         run: node tests/native-wheel-performance.mjs
 
       - name: Verify quiet automation performance contract

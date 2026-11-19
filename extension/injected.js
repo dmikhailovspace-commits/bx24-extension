@@ -11619,7 +11619,7 @@ if (_presetChannel) {
 				const opened = await _openDialogControlViaBitrixApi({ id: `user${user.id}`, dialogId: user.id }, { allowUnobserved: true });
 				if (!_isPenaEmployeeSearchCurrent(state)) return;
 				button.disabled = false;
-				if (!opened) { state.openError = 'Не удалось открыть чат. Попробуйте ещё раз'; _renderPenaEmployeeSearch(state); }
+				if (opened === false) { state.openError = 'Не удалось открыть чат. Попробуйте ещё раз'; _renderPenaEmployeeSearch(state); }
 			});
 			content.append(button);
 		}
@@ -22333,7 +22333,7 @@ if (_presetChannel) {
 		const topWin = _getSafeTopWindow();
 		const roots = Array.from(new Set([window, topWin].filter(Boolean)));
 		for (const root of roots) {
-			if (!isCurrent()) return false;
+			if (!isCurrent()) return null;
 			const api = root.BX?.Messenger?.Public;
 			if (typeof api?.openChat !== 'function') continue;
 			try {
@@ -22341,21 +22341,23 @@ if (_presetChannel) {
 				const resolved = result && typeof result.then === 'function' ? await result : result;
 				if (resolved !== false) {
 					const verified = await _verifyDialogControlOpened(dialogId, roots, isCurrent);
+					if (!isCurrent()) return null;
 					if (verified === true || (verified === null && options.allowUnobserved === true)) return true;
 				}
 			} catch {}
 		}
 		for (const root of roots) {
-			if (!isCurrent()) return false;
+			if (!isCurrent()) return null;
 			const openMessenger = root.BX24?.im?.openMessenger;
 			if (typeof openMessenger !== 'function') continue;
 			try {
 				const result = openMessenger.call(root.BX24.im, dialogId);
 				const resolved = result && typeof result.then === 'function' ? await result : result;
+				if (!isCurrent()) return null;
 				if (resolved !== false) return true;
 			} catch {}
 		}
-		return false;
+		return isCurrent() ? false : null;
 	}
 
 	async function _openDialogControlRemoteRow(item, mode = _pMode()) {
@@ -23760,6 +23762,8 @@ if (_presetChannel) {
 				_scheduleDialogControlPanelRender(filtersHost, 0);
 				return;
 			}
+			// A native row can take over while a managed open is still awaiting Bitrix.
+			if (row && e.isTrusted && !e.altKey && e.button === 0) ++_dialogOpenRevision;
 			// An ordinary click leaves multi-select and still reaches Bitrix.
 			// Context-menu/palette actions above retain the group they act on.
 			if (_clearDialogControlMultiSelection()) {
