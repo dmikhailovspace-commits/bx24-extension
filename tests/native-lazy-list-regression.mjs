@@ -7,6 +7,19 @@ const raw = readFileSync(new URL('../extension/injected.js', import.meta.url), '
 const source = raw.replace('\tasync function boot() {', `\tasync function boot() {
   const originalDemand = _getDialogNativeFolderDemand;
   window.pendingDemandReads = 0;
+  const originalCapture = _captureDialogNativeWindow;
+  _captureDialogNativeWindow = (...args) => {
+    const result = originalCapture(...args);
+    if (window.injectReadReceipt && args[4]?.length && _dialogNativeWindowCaptures.has(args[0])) {
+      window.injectReadReceipt = false;
+      const id = normId(getChatIdFromElement(args[4][0]));
+      const record = args[1].get(id);
+      _setDialogRecentMeta(_dialogRecentMeta, {...record, unreadCount: 0, hasUnread: false,
+        counterFetchedAt: Date.now() + 1000, lastReadMessageId: 992233});
+      window.injectedReceiptId = id;
+    }
+    return result;
+  };
   _getDialogNativeFolderDemand = (...args) => {
     if (window.nativeServices?.[_pMode()]?.isLoading) window.pendingDemandReads++;
     return originalDemand(...args);
@@ -308,6 +321,20 @@ try {
       assert.deepEqual(errors,[]);report.phases.push({mode,status:'PASS',privateBusy:true,delayedFinalPaint:true,renamedService:true,serviceReplacement:true});
     } finally {await page.close();}
   }
+  const largePage = await browser.newPage();
+  try {
+    await largePage.route('**/extension/injected.js', route => route.fulfill({contentType:'application/javascript',body:source}));
+    await largePage.goto(server.baseUrl + '/tests/native-consistency-harness.html?mode=tasks&lazyNative=1&nativeCatalog=1&nativeFirst=1&passThrough=1&eager=0&lazy=1&lazyChunk=150&catalogRows=240&nativeService=1');
+    await largePage.locator('.task-host .pena-native-folder-switcher').waitFor();
+    await largePage.waitForFunction(() => window.__PENA_RECENT_SYNC__?.gateReady);
+    await largePage.evaluate(() => { window.injectReadReceipt=true; lazyAudit.assign('chat1239'); lazyAudit.folder('folder:test'); });
+    await largePage.locator('.task-host [data-id="chat1239"]').waitFor({state:'visible'});
+    await largePage.waitForFunction(() => window.injectedReceiptId && lazyAudit.meta('chat1239')?.recentListFetchedAt && !lazyAudit.active());
+    const receipt = await largePage.evaluate(() => lazyAudit.meta(window.injectedReceiptId));
+    assert.equal(receipt.unreadCount, 0);
+    assert.equal(receipt.lastReadMessageId, 992233, 'A read receipt arriving between capture slices must survive the commit');
+    report.phases.push({mode:'tasks',status:'PASS',largePage:true,concurrentReadReceipt:true});
+  } finally { await largePage.close(); }
   console.log('PASS native lazy list: chats/tasks, native rows, native service pagination without scroll or blocking, remote search, counters, multi-select and unique view');
 } finally {
   await browser.close(); await server.close();
