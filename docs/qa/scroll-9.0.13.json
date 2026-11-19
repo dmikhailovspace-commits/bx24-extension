@@ -1,0 +1,567 @@
+{
+  "runner": "GitHub-hosted Windows 2025 / Chromium",
+  "actions": "https://github.com/dmikhailovspace-commits/bx24-extension/actions/runs/44507057180",
+  "releaseWorkflow": "https://github.com/dmikhailovspace-commits/bx24-extension/actions/runs/44506900657",
+  "method": "144 wheel inputs per run, 1200 synthetic dialogs, modules from immutable tags v9.0.10 and v9.0.13, two repeats per tag in alternating order. Timed request and render delays. Renderer TaskDuration includes post-wheel processing and a settling period. Frame intervals are requestAnimationFrame intervals. over50 means >50.5 ms.",
+  "runs": [
+    {
+      "ref": "v9.0.10",
+      "area": "conversation",
+      "chunk": 50,
+      "pass": "1",
+      "requests": 3,
+      "overlapping": 16,
+      "travel": {
+        "list": 0,
+        "conversation": 9216
+      },
+      "gesture": {
+        "count": 151,
+        "p95": 16.799999999999727,
+        "max": 50,
+        "over50": 0
+      },
+      "frames": {
+        "count": 263,
+        "p95": 16.799999999999727,
+        "max": 66.70000000000073,
+        "over50": 1
+      },
+      "longTasks": [
+        51
+      ],
+      "rendererMs": {
+        "TaskDuration": 515,
+        "ScriptDuration": 277,
+        "LayoutDuration": 5,
+        "RecalcStyleDuration": 5
+      }
+    },
+    {
+      "ref": "v9.0.10",
+      "area": "conversation",
+      "chunk": 50,
+      "pass": "4",
+      "requests": 3,
+      "overlapping": 16,
+      "travel": {
+        "list": 0,
+        "conversation": 9216
+      },
+      "gesture": {
+        "count": 151,
+        "p95": 16.799999999999955,
+        "max": 50.09999999999991,
+        "over50": 0
+      },
+      "frames": {
+        "count": 263,
+        "p95": 16.799999999999955,
+        "max": 66.69999999999982,
+        "over50": 1
+      },
+      "longTasks": [
+        51
+      ],
+      "rendererMs": {
+        "TaskDuration": 510,
+        "ScriptDuration": 273,
+        "LayoutDuration": 4,
+        "RecalcStyleDuration": 4
+      }
+    },
+    {
+      "ref": "v9.0.13",
+      "area": "conversation",
+      "chunk": 50,
+      "pass": "2",
+      "requests": 3,
+      "overlapping": 7,
+      "travel": {
+        "list": 0,
+        "conversation": 9216
+      },
+      "gesture": {
+        "count": 146,
+        "p95": 16.700000000000273,
+        "max": 16.800000000000182,
+        "over50": 0
+      },
+      "frames": {
+        "count": 351,
+        "p95": 16.700000000000728,
+        "max": 49.899999999999636,
+        "over50": 0
+      },
+      "longTasks": [],
+      "rendererMs": {
+        "TaskDuration": 345,
+        "ScriptDuration": 209,
+        "LayoutDuration": 4,
+        "RecalcStyleDuration": 4
+      }
+    },
+    {
+      "ref": "v9.0.13",
+      "area": "conversation",
+      "chunk": 50,
+      "pass": "3",
+      "requests": 3,
+      "overlapping": 7,
+      "travel": {
+        "list": 0,
+        "conversation": 9216
+      },
+      "gesture": {
+        "count": 146,
+        "p95": 16.799999999999727,
+        "max": 16.800000000000182,
+        "over50": 0
+      },
+      "frames": {
+        "count": 351,
+        "p95": 16.799999999999955,
+        "max": 33.400000000000546,
+        "over50": 0
+      },
+      "longTasks": [],
+      "rendererMs": {
+        "TaskDuration": 417,
+        "ScriptDuration": 254,
+        "LayoutDuration": 5,
+        "RecalcStyleDuration": 5
+      }
+    },
+    {
+      "ref": "v9.0.10",
+      "area": "conversation",
+      "chunk": 600,
+      "pass": "1",
+      "requests": 2,
+      "overlapping": 11,
+      "travel": {
+        "list": 0,
+        "conversation": 9216
+      },
+      "gesture": {
+        "count": 151,
+        "p95": 16.800000000000182,
+        "max": 749.8999999999996,
+        "over50": 5
+      },
+      "frames": {
+        "count": 225,
+        "p95": 16.800000000000182,
+        "max": 749.8999999999996,
+        "over50": 5
+      },
+      "longTasks": [
+        84,
+        147,
+        146,
+        123,
+        58,
+        88,
+        459,
+        184,
+        131
+      ],
+      "rendererMs": {
+        "TaskDuration": 1741,
+        "ScriptDuration": 927,
+        "LayoutDuration": 12,
+        "RecalcStyleDuration": 19
+      }
+    },
+    {
+      "ref": "v9.0.10",
+      "area": "conversation",
+      "chunk": 600,
+      "pass": "4",
+      "requests": 2,
+      "overlapping": 11,
+      "travel": {
+        "list": 0,
+        "conversation": 9216
+      },
+      "gesture": {
+        "count": 150,
+        "p95": 16.800000000000182,
+        "max": 733.1999999999998,
+        "over50": 5
+      },
+      "frames": {
+        "count": 223,
+        "p95": 16.800000000000182,
+        "max": 733.1999999999998,
+        "over50": 5
+      },
+      "longTasks": [
+        77,
+        146,
+        143,
+        121,
+        55,
+        87,
+        453,
+        182,
+        129
+      ],
+      "rendererMs": {
+        "TaskDuration": 1706,
+        "ScriptDuration": 906,
+        "LayoutDuration": 12,
+        "RecalcStyleDuration": 17
+      }
+    },
+    {
+      "ref": "v9.0.13",
+      "area": "conversation",
+      "chunk": 600,
+      "pass": "2",
+      "requests": 2,
+      "overlapping": 7,
+      "travel": {
+        "list": 0,
+        "conversation": 9216
+      },
+      "gesture": {
+        "count": 147,
+        "p95": 16.700000000000273,
+        "max": 16.800000000000182,
+        "over50": 0
+      },
+      "frames": {
+        "count": 301,
+        "p95": 16.799999999999272,
+        "max": 183.30000000000018,
+        "over50": 4
+      },
+      "longTasks": [
+        122,
+        59,
+        157,
+        117,
+        69
+      ],
+      "rendererMs": {
+        "TaskDuration": 1159,
+        "ScriptDuration": 864,
+        "LayoutDuration": 13,
+        "RecalcStyleDuration": 17
+      }
+    },
+    {
+      "ref": "v9.0.13",
+      "area": "conversation",
+      "chunk": 600,
+      "pass": "3",
+      "requests": 2,
+      "overlapping": 7,
+      "travel": {
+        "list": 0,
+        "conversation": 9216
+      },
+      "gesture": {
+        "count": 146,
+        "p95": 16.799999999999727,
+        "max": 33.30000000000018,
+        "over50": 0
+      },
+      "frames": {
+        "count": 302,
+        "p95": 16.800000000000182,
+        "max": 166.70000000000073,
+        "over50": 4
+      },
+      "longTasks": [
+        120,
+        58,
+        140,
+        95,
+        74
+      ],
+      "rendererMs": {
+        "TaskDuration": 1081,
+        "ScriptDuration": 805,
+        "LayoutDuration": 12,
+        "RecalcStyleDuration": 17
+      }
+    },
+    {
+      "ref": "v9.0.10",
+      "area": "list",
+      "chunk": 50,
+      "pass": "1",
+      "requests": 3,
+      "overlapping": 16,
+      "travel": {
+        "list": 5856,
+        "conversation": 0
+      },
+      "gesture": {
+        "count": 149,
+        "p95": 16.700000000000273,
+        "max": 33.40000000000009,
+        "over50": 0
+      },
+      "frames": {
+        "count": 258,
+        "p95": 16.799999999999727,
+        "max": 33.400000000000546,
+        "over50": 0
+      },
+      "longTasks": [],
+      "rendererMs": {
+        "TaskDuration": 435,
+        "ScriptDuration": 191,
+        "LayoutDuration": 5,
+        "RecalcStyleDuration": 4
+      }
+    },
+    {
+      "ref": "v9.0.10",
+      "area": "list",
+      "chunk": 50,
+      "pass": "4",
+      "requests": 3,
+      "overlapping": 16,
+      "travel": {
+        "list": 5856,
+        "conversation": 0
+      },
+      "gesture": {
+        "count": 148,
+        "p95": 16.700000000000273,
+        "max": 33.309999999999945,
+        "over50": 0
+      },
+      "frames": {
+        "count": 260,
+        "p95": 16.799999999999727,
+        "max": 50,
+        "over50": 0
+      },
+      "longTasks": [],
+      "rendererMs": {
+        "TaskDuration": 434,
+        "ScriptDuration": 196,
+        "LayoutDuration": 5,
+        "RecalcStyleDuration": 3
+      }
+    },
+    {
+      "ref": "v9.0.13",
+      "area": "list",
+      "chunk": 50,
+      "pass": "2",
+      "requests": 2,
+      "overlapping": 14,
+      "travel": {
+        "list": 5856,
+        "conversation": 0
+      },
+      "gesture": {
+        "count": 145,
+        "p95": 16.700000000000273,
+        "max": 16.799999999999955,
+        "over50": 0
+      },
+      "frames": {
+        "count": 232,
+        "p95": 16.700000000000273,
+        "max": 16.800000000000182,
+        "over50": 0
+      },
+      "longTasks": [],
+      "rendererMs": {
+        "TaskDuration": 222,
+        "ScriptDuration": 80,
+        "LayoutDuration": 3,
+        "RecalcStyleDuration": 2
+      }
+    },
+    {
+      "ref": "v9.0.13",
+      "area": "list",
+      "chunk": 50,
+      "pass": "3",
+      "requests": 2,
+      "overlapping": 14,
+      "travel": {
+        "list": 5856,
+        "conversation": 0
+      },
+      "gesture": {
+        "count": 145,
+        "p95": 16.700000000000273,
+        "max": 16.800000000000182,
+        "over50": 0
+      },
+      "frames": {
+        "count": 232,
+        "p95": 16.700000000000728,
+        "max": 16.800000000000182,
+        "over50": 0
+      },
+      "longTasks": [],
+      "rendererMs": {
+        "TaskDuration": 206,
+        "ScriptDuration": 78,
+        "LayoutDuration": 3,
+        "RecalcStyleDuration": 2
+      }
+    },
+    {
+      "ref": "v9.0.10",
+      "area": "list",
+      "chunk": 600,
+      "pass": "1",
+      "requests": 2,
+      "overlapping": 12,
+      "travel": {
+        "list": 5856,
+        "conversation": 0
+      },
+      "gesture": {
+        "count": 150,
+        "p95": 50.09999999999991,
+        "max": 366.5,
+        "over50": 6
+      },
+      "frames": {
+        "count": 223,
+        "p95": 16.800000000000182,
+        "max": 366.5,
+        "over50": 6
+      },
+      "longTasks": [
+        64,
+        121,
+        120,
+        97,
+        62,
+        152,
+        368,
+        82,
+        88
+      ],
+      "rendererMs": {
+        "TaskDuration": 1398,
+        "ScriptDuration": 774,
+        "LayoutDuration": 9,
+        "RecalcStyleDuration": 14
+      }
+    },
+    {
+      "ref": "v9.0.10",
+      "area": "list",
+      "chunk": 600,
+      "pass": "4",
+      "requests": 2,
+      "overlapping": 12,
+      "travel": {
+        "list": 5856,
+        "conversation": 0
+      },
+      "gesture": {
+        "count": 150,
+        "p95": 16.800000000000182,
+        "max": 483.3000000000002,
+        "over50": 5
+      },
+      "frames": {
+        "count": 223,
+        "p95": 16.800000000000182,
+        "max": 483.3000000000002,
+        "over50": 5
+      },
+      "longTasks": [
+        67,
+        117,
+        119,
+        98,
+        66,
+        355,
+        139,
+        109
+      ],
+      "rendererMs": {
+        "TaskDuration": 1349,
+        "ScriptDuration": 733,
+        "LayoutDuration": 9,
+        "RecalcStyleDuration": 16
+      }
+    },
+    {
+      "ref": "v9.0.13",
+      "area": "list",
+      "chunk": 600,
+      "pass": "2",
+      "requests": 2,
+      "overlapping": 14,
+      "travel": {
+        "list": 5856,
+        "conversation": 0
+      },
+      "gesture": {
+        "count": 147,
+        "p95": 16.700000000000273,
+        "max": 16.800000000000182,
+        "over50": 0
+      },
+      "frames": {
+        "count": 242,
+        "p95": 16.799999999999727,
+        "max": 216.69999999999982,
+        "over50": 2
+      },
+      "longTasks": [
+        165,
+        79,
+        55
+      ],
+      "rendererMs": {
+        "TaskDuration": 696,
+        "ScriptDuration": 513,
+        "LayoutDuration": 8,
+        "RecalcStyleDuration": 13
+      }
+    },
+    {
+      "ref": "v9.0.13",
+      "area": "list",
+      "chunk": 600,
+      "pass": "3",
+      "requests": 2,
+      "overlapping": 14,
+      "travel": {
+        "list": 5856,
+        "conversation": 0
+      },
+      "gesture": {
+        "count": 147,
+        "p95": 16.700000000000273,
+        "max": 16.800000000000182,
+        "over50": 0
+      },
+      "frames": {
+        "count": 241,
+        "p95": 16.799999999999272,
+        "max": 233.29999999999973,
+        "over50": 2
+      },
+      "longTasks": [
+        169,
+        90,
+        60
+      ],
+      "rendererMs": {
+        "TaskDuration": 737,
+        "ScriptDuration": 540,
+        "LayoutDuration": 8,
+        "RecalcStyleDuration": 13
+      }
+    }
+  ]
+}
