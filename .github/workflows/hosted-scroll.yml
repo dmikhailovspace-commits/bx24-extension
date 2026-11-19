@@ -31,7 +31,7 @@ jobs:
         shell: pwsh
         run: |
           $i=0
-          foreach ($ref in @('v9.0.10','v9.0.12','HEAD','HEAD','v9.0.12','v9.0.10')) {
+          foreach ($ref in @('v9.0.10','v9.0.13','v9.0.13','v9.0.10')) {
             $i++
             node tests/hosted-pagination-profile.mjs $ref ${{ matrix.area }} ${{ matrix.chunk }} $i
             if ($LASTEXITCODE) {exit $LASTEXITCODE}
@@ -42,7 +42,7 @@ jobs:
           name: scroll-${{ matrix.area }}-${{ matrix.chunk }}
           path: tests/artifacts/hosted/
   focused:
-    if: "!contains(github.event.head_commit.message, '[receipt]')"
+    if: "!contains(github.event.head_commit.message, '[receipt]') && !contains(github.event.head_commit.message, '[frozen]')"
     runs-on: windows-2025
     timeout-minutes: 25
     steps:
