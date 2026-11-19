@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "version": "9.0.8",
-  "release_date": "2026-11-18",
-  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v9.0.8",
-  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.8",
+  "version": "9.0.10",
+  "release_date": "2026-11-19",
+  "release_url": "https://github.com/dmikhailovspace-commits/bx24-extension/releases/tag/v9.0.10",
+  "raw_base_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.10",
   "extension_files": [
-    "worker-v9_0_8.js",
+    "worker-v9_0_10.js",
     "background.js",
     "content.js",
     "native-catalog.js",
@@ -33,12 +33,12 @@
   "macos_files": [
     "installers/macos/updater.sh"
   ],
-  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.8/extension/injected.js",
-  "changelog": "Ускорены проверка правил и переключение папок. Массовое подтверждение учитывает исключения, предпросмотр показывает автоматические переносы.",
+  "injected_js_url": "https://raw.githubusercontent.com/dmikhailovspace-commits/bx24-extension/v9.0.10/extension/injected.js",
+  "changelog": "Ускорена прокрутка списка диалогов и открытой переписки.",
   "release_notes": [
-    "Проверка задач формирует очередь уточнений за один проход. Фоновая сверка обходит задачи по кругу и сохраняет прежний интервал и размер пакета.",
-    "При выборе папки в нативном списке обновляются видимость строк и выбранная вкладка.",
-    "При массовом подтверждении учитывается галочка «Больше не предлагать». Предпросмотр различает ручное и автоматическое подтверждение."
+    "При прокрутке переписки сортировщик больше не ищет список диалогов на странице.",
+    "Лента обрабатывает колесо в своей области. Обычная прокрутка выполняется браузером, в том числе при подгрузке строк.",
+    "В диалоге без непрочитанных сообщений и отметок расширение пропускает дополнительный обход видимых сообщений."
   ],
   "verification_profile": "search-focused",
   "distribution": "github",
