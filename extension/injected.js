@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '9.0.13';
+	window.__ANITREC_RUNNING__ = '9.0.14';
 
-	const VER = '9.0.13';
+	const VER = '9.0.14';
 	// Google Material Icons / Refresh (Apache-2.0).
 	const _PENA_RELOAD_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>';
 	const _PENA_NATIVE_ONLY = true;
@@ -217,6 +217,13 @@
 		}
 
 
+	// While Bitrix remounts the list, the nearest overflowing ancestor may
+	// contain both columns. Moving it also moves the composer and messages.
+	function _sharesDialogMessagePane(owner, list) {
+		return owner !== list && owner.contains(list) &&
+			!!owner.querySelector('.bx-im-dialog-chat__scroll-container,.bx-im-dialog-chat__container,.bx-im-content-chat__container');
+	}
+
 		function findInternalScrollContainer(activeList = null) {
 			const list = activeList?.matches?.('.bx-im-list-container-task__elements,.bx-im-list-container-recent__elements')
 				? activeList
@@ -274,8 +281,11 @@
 			// actual dialog rows toward this list and accept only their scroll owner.
 			// The search scroller and the open conversation have no such row ancestry.
 			const rowAncestors = new Set();
-			const semanticRows = Array.from(list.querySelectorAll(nativeRowSelector))
-				.filter(row => _isUsableDialogCandidate(row, { allowNestedId: true })).slice(0, 4);
+			const semanticRows = [];
+			for (const row of list.querySelectorAll(nativeRowSelector)) {
+				if (_isUsableDialogCandidate(row, { allowNestedId: true })) semanticRows.push(row);
+				if (semanticRows.length === 4) break;
+			}
 			for (const row of semanticRows) {
 				for (let owner = row.parentElement, depth = 0; owner && owner !== list && depth < 10;
 					owner = owner.parentElement, depth += 1) {
@@ -303,13 +313,14 @@
 					n.classList.contains('bx-im-list-task__scroll-container') ||
 					n.classList.contains('bx-im-list-container-recent__scroll-container') ||
 					n.classList.contains('bx-im-list-container-task__scroll-container')
-				)) return n;
+				)) return _sharesDialogMessagePane(n, list) ? measuredFallback : n;
 				if (n !== list) {
 					const className = String(n.className || '');
 					const style = getComputedStyle(n);
 					const isElementsContainer = /(?:^|\s)bx-im-list-container-(?:recent|task)__elements_container(?:\s|$)/.test(className);
 					const canActuallyScroll = Number(n.scrollHeight) > Number(n.clientHeight) + 1 &&
 						/(?:auto|scroll|overlay)/i.test(String(style.overflowY || ''));
+					if (canActuallyScroll && _sharesDialogMessagePane(n, list)) break;
 					if (!measuredFallback && canActuallyScroll) measuredFallback = n;
 					if (!elementsFallback && isElementsContainer && canActuallyScroll) elementsFallback = n;
 				}
@@ -14244,7 +14255,7 @@ if (_presetChannel) {
 					if(key!==_dialogAutomationKey(mode))return close();
 					const current=_getDialogControlItemsForMode(lockedMode).find(item=>item.id===id);if(!current)return;
 					close();
-					try {if(!await _openDialogControlRemoteRow(current,lockedMode))_showDialogDockToast('Не удалось открыть диалог. Найдите его в списке Bitrix24.','danger');}
+					try {if(await _openDialogControlRemoteRow(current,lockedMode)===false)_showDialogDockToast('Не удалось открыть диалог. Найдите его в списке Bitrix24.','danger');}
 					catch{_showDialogDockToast('Не удалось открыть диалог. Повторите попытку.','danger');}
 				});navigate.disabled=!item;
 				button('Снова предлагать переносы',lockedActions,()=>{
@@ -15783,7 +15794,7 @@ if (_presetChannel) {
 		add(findVisibleInternalContainer('.bx-im-list-container-recent__container'));
 		add(findVisibleInternalContainer('.bx-im-list-container-task__elements')?.parentElement);
 		add(findVisibleInternalContainer('.bx-im-list-container-recent__elements')?.parentElement);
-		document.querySelectorAll([
+		container?.querySelectorAll([
 			'.bx-im-scrollbar__container',
 			'.bx-im-scrollbar__content',
 			'.bx-im-scrollbar-container',
@@ -15803,8 +15814,7 @@ if (_presetChannel) {
 		}
 		add(document.scrollingElement);
 		return candidates.filter(el => {
-			if (!el || (el !== document.scrollingElement && !isVisibleElement(el))) return false;
-			if (!_isDialogControlNativeScrollCandidateAllowed(el, container)) return false;
+			if (!_isDialogControlNativeScrollCandidateAllowed(el, container) || !isVisibleElement(el)) return false;
 			return el.scrollHeight > el.clientHeight + 1;
 		});
 	}
@@ -15851,7 +15861,7 @@ if (_presetChannel) {
 		if (!el) return false;
 		if (el === document.scrollingElement) return false;
 		if (el.closest?.('#anit-filters,#anit-dialog-control-dock,.dialog-control-palette,[data-dialog-control-context-menu="1"]')) return false;
-		if (el.querySelector?.('.pena-native-folder-switcher')) return false;
+		if (!container || _sharesDialogMessagePane(el, container) || el.querySelector?.('.pena-native-folder-switcher')) return false;
 		if (el === _dialogControlManagedViewport && _dialogControlManagedSource === container) return true;
 		// Keep the fallback inside the chat-list branch. Bitrix uses similar scrollbar
 		// class names for the open conversation, so a global candidate can scroll it.
@@ -22231,6 +22241,10 @@ if (_presetChannel) {
 
 	function _readDialogControlOpenedId(root = window, allowInteractionGrace = true, source = null) {
 		const values = [];
+		try {
+			const layout = root.BX?.Messenger?.v2?.Application?.Core?.getStore?.()?.getters?.['application/getLayout'];
+			if (layout?.name === 'chat' && isDialogControlId(normId(layout.entityId))) values.push(layout.entityId);
+		} catch {}
 		try { values.push(root.BX?.Messenger?.Application?.getCurrentDialogId?.()); } catch {}
 		try { values.push(root.BX?.Messenger?.Application?.getCurrentDialog?.()?.dialogId); } catch {}
 		try { values.push(root.BX?.Messenger?.Application?.getCurrentDialog?.()?.id); } catch {}
@@ -22287,11 +22301,12 @@ if (_presetChannel) {
 		return '';
 	}
 
-	async function _verifyDialogControlOpened(dialogId, roots, timeout = 900) {
+	async function _verifyDialogControlOpened(dialogId, roots, isCurrent, timeout = 900) {
 		const expected = normId(dialogId);
 		const started = Date.now();
 		let observedAny = false;
 		do {
+			if (!isCurrent()) return false;
 			for (const root of roots) {
 				const current = _readDialogControlOpenedId(root, false);
 				if (!current) continue;
@@ -22303,24 +22318,30 @@ if (_presetChannel) {
 		return observedAny ? false : null;
 	}
 
+	let _dialogOpenRevision = 0;
+
 	async function _openDialogControlViaBitrixApi(item, options = {}) {
+		const revision = options.revision ?? ++_dialogOpenRevision;
+		const isCurrent = () => revision === _dialogOpenRevision;
 		const dialogId = _normalizeDialogControlRestDialogId(_getDialogControlRestDialogId(item?.id, null, item));
 		if (!dialogId) return false;
 		const topWin = _getSafeTopWindow();
 		const roots = Array.from(new Set([window, topWin].filter(Boolean)));
 		for (const root of roots) {
+			if (!isCurrent()) return false;
 			const api = root.BX?.Messenger?.Public;
 			if (typeof api?.openChat !== 'function') continue;
 			try {
 				const result = api.openChat(dialogId);
 				const resolved = result && typeof result.then === 'function' ? await result : result;
 				if (resolved !== false) {
-					const verified = await _verifyDialogControlOpened(dialogId, roots);
+					const verified = await _verifyDialogControlOpened(dialogId, roots, isCurrent);
 					if (verified === true || (verified === null && options.allowUnobserved === true)) return true;
 				}
 			} catch {}
 		}
 		for (const root of roots) {
+			if (!isCurrent()) return false;
 			const openMessenger = root.BX24?.im?.openMessenger;
 			if (typeof openMessenger !== 'function') continue;
 			try {
@@ -22336,13 +22357,16 @@ if (_presetChannel) {
 		if (!item || _isDialogRecentInteractionBlocked()) return false;
 		const meta = _getDialogRecentMeta(item.id);
 		if (meta && !_isDialogRecentPublishable(meta)) return false;
+		const revision = ++_dialogOpenRevision;
 		// Let Bitrix choose its task route when the exact native row exists.
 		// Public.openChat is not a substitute for every task-list click handler.
 		if (mode === 'tasks') {
 			const nativeRow = _findFreshBitrixChatElementById(item.id);
 			if (nativeRow && openChatElement(nativeRow, item.id)) return true;
 		}
-		if (await _openDialogControlViaBitrixApi(item)) {
+		const openedByApi = await _openDialogControlViaBitrixApi(item, { revision });
+		if (revision !== _dialogOpenRevision) return null;
+		if (openedByApi) {
 			if (mode === 'tasks') _rememberTaskChatDialogVisit(item.id || '', item.title || '', item.taskId || '', { takeover: true });
 			return true;
 		}
@@ -22491,6 +22515,7 @@ if (_presetChannel) {
 			const currentItem = row._penaManagedItem || item;
 			if (_isDialogRecentPending(_getDialogRecentMeta(currentItem.id))) return;
 			const opened = await _openDialogControlRemoteRow(currentItem);
+			if (opened === null || !row.isConnected || normId(row.dataset.id) !== normId(currentItem.id)) return;
 			if (!opened) {
 				_showDialogDockToast('Не удалось открыть диалог', 'danger');
 				return;
@@ -22500,9 +22525,7 @@ if (_presetChannel) {
 		row.addEventListener('keydown', async event => {
 			if (event.key !== 'Enter' && event.key !== ' ') return;
 			event.preventDefault();
-			if (_isDialogRecentInteractionBlocked()) return;
-			const currentItem = row._penaManagedItem || item;
-			if (await _openDialogControlRemoteRow(currentItem)) _markDialogControlManagedRowActive(row, currentItem);
+			if (!event.repeat) row.click();
 		});
 		_updateDialogControlNativeRemoteRow(row, item, meta, nativeRow);
 		return row;

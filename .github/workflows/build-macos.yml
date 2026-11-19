@@ -32,6 +32,14 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm exec playwright install chromium
 
+      - name: Verify dialog position during navigation and native list replacement
+        shell: pwsh
+        run: |
+          git fetch --no-tags --depth=1 origin refs/tags/v9.0.13:refs/tags/v9.0.13
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tests/dialog-opening-position.mjs v9.0.13
+          exit $LASTEXITCODE
+
       - name: Run release regression checks
         shell: pwsh
         env:
