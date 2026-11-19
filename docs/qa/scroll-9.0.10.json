@@ -1,0 +1,204 @@
+{
+  "release": "9.0.10",
+  "source": "7810a0930bf29ee0caaca9dd0ddac45565eb8a80",
+  "baseline": "7006b6ef59a93bbf52b2df67feb4e780563b51c2",
+  "environment": "Playwright Chromium, headless, 4x CDP CPU throttling, Bitrix fixture, native sidebar, 48 trusted wheel inputs x 40 px in each area, 800 message elements. Expensive 5ms fixture-only diagnostic timer disabled for both builds.",
+  "runs": {
+    "350": {
+      "before-a": {
+        "list": {
+          "distance": 1920,
+          "handlers": 48,
+          "pageScans": 528,
+          "handlerMs": 485,
+          "frameP95Ms": 16.7,
+          "framesOver50Ms": 0
+        },
+        "conversation": {
+          "distance": 1920,
+          "handlers": 48,
+          "pageScans": 0,
+          "handlerMs": 140,
+          "frameP95Ms": 16.7,
+          "framesOver50Ms": 0
+        }
+      },
+      "after-a": {
+        "list": {
+          "distance": 1920,
+          "handlers": 48,
+          "pageScans": 0,
+          "handlerMs": 7,
+          "frameP95Ms": 16.7,
+          "framesOver50Ms": 0
+        },
+        "conversation": {
+          "distance": 1920,
+          "handlers": 0,
+          "pageScans": 0,
+          "handlerMs": 0,
+          "frameP95Ms": 16.7,
+          "framesOver50Ms": 0
+        }
+      },
+      "after-b": {
+        "list": {
+          "distance": 1920,
+          "handlers": 48,
+          "pageScans": 0,
+          "handlerMs": 9,
+          "frameP95Ms": 16.8,
+          "framesOver50Ms": 0
+        },
+        "conversation": {
+          "distance": 1920,
+          "handlers": 0,
+          "pageScans": 0,
+          "handlerMs": 0,
+          "frameP95Ms": 16.8,
+          "framesOver50Ms": 1
+        }
+      },
+      "before-b": {
+        "list": {
+          "distance": 1920,
+          "handlers": 48,
+          "pageScans": 528,
+          "handlerMs": 501,
+          "frameP95Ms": 16.7,
+          "framesOver50Ms": 0
+        },
+        "conversation": {
+          "distance": 1920,
+          "handlers": 48,
+          "pageScans": 0,
+          "handlerMs": 141,
+          "frameP95Ms": 16.7,
+          "framesOver50Ms": 0
+        }
+      }
+    },
+    "1600": {
+      "before-a": {
+        "list": {
+          "distance": 1920,
+          "handlers": 48,
+          "pageScans": 528,
+          "handlerMs": 1867,
+          "frameP95Ms": 66.7,
+          "framesOver50Ms": 9
+        },
+        "conversation": {
+          "distance": 1920,
+          "handlers": 48,
+          "pageScans": 0,
+          "handlerMs": 581,
+          "frameP95Ms": 16.7,
+          "framesOver50Ms": 0
+        }
+      },
+      "after-a": {
+        "list": {
+          "distance": 1920,
+          "handlers": 48,
+          "pageScans": 0,
+          "handlerMs": 8,
+          "frameP95Ms": 16.8,
+          "framesOver50Ms": 0
+        },
+        "conversation": {
+          "distance": 1920,
+          "handlers": 0,
+          "pageScans": 0,
+          "handlerMs": 0,
+          "frameP95Ms": 16.8,
+          "framesOver50Ms": 0
+        }
+      },
+      "after-b": {
+        "list": {
+          "distance": 1920,
+          "handlers": 48,
+          "pageScans": 0,
+          "handlerMs": 9,
+          "frameP95Ms": 16.8,
+          "framesOver50Ms": 0
+        },
+        "conversation": {
+          "distance": 1920,
+          "handlers": 0,
+          "pageScans": 0,
+          "handlerMs": 0,
+          "frameP95Ms": 16.7,
+          "framesOver50Ms": 0
+        }
+      },
+      "before-b": {
+        "list": {
+          "distance": 1920,
+          "handlers": 48,
+          "pageScans": 528,
+          "handlerMs": 2121,
+          "frameP95Ms": 66.7,
+          "framesOver50Ms": 19
+        },
+        "conversation": {
+          "distance": 1920,
+          "handlers": 48,
+          "pageScans": 0,
+          "handlerMs": 618,
+          "frameP95Ms": 16.7,
+          "framesOver50Ms": 0
+        }
+      }
+    }
+  },
+  "mv3": {
+    "version": "9.0.10",
+    "zipSha256": "2fba78573802456302dbbcb88047cba5f695758d8a4684b759b0691be62dfa8b",
+    "testPermission": "https://wheel.chrome.test/*",
+    "rows": 1600,
+    "metrics": {
+      "list": {
+        "distance": 1920,
+        "handlers": 48,
+        "pageScans": 0,
+        "handlerMs": 7,
+        "frameP95Ms": 5.7,
+        "framesOver50Ms": 0
+      },
+      "conversation": {
+        "distance": 1920,
+        "handlers": 0,
+        "pageScans": 0,
+        "handlerMs": 0,
+        "frameP95Ms": 5.7,
+        "framesOver50Ms": 2
+      }
+    }
+  },
+  "publicReleaseMv3": {
+    "version": "9.0.10",
+    "zipSha256": "d9a08f816f63e744b17a267887fcc958dba89985f241fd9dea46b40508065b99",
+    "testPermission": "https://wheel.chrome.test/*",
+    "rows": 1600,
+    "metrics": {
+      "list": {
+        "distance": 1920,
+        "handlers": 48,
+        "pageScans": 0,
+        "handlerMs": 12,
+        "frameP95Ms": 11.2,
+        "framesOver50Ms": 0
+      },
+      "conversation": {
+        "distance": 1920,
+        "handlers": 0,
+        "pageScans": 0,
+        "handlerMs": 0,
+        "frameP95Ms": 11.1,
+        "framesOver50Ms": 1
+      }
+    }
+  }
+}
