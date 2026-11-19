@@ -89,6 +89,9 @@ jobs:
           node tests/time-project-settings-ui-regression.mjs
           exit $LASTEXITCODE
 
+      - name: Verify native list and message scrolling
+        run: node tests/native-wheel-performance.mjs
+
       - name: Verify quiet automation performance contract
         shell: pwsh
         run: node tests/automation-performance-regression.mjs

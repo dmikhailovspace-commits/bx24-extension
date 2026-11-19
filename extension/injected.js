@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '9.0.8';
+	window.__ANITREC_RUNNING__ = '9.0.9';
 
-	const VER = '9.0.8';
+	const VER = '9.0.9';
 	// Google Material Icons / Refresh (Apache-2.0).
 	const _PENA_RELOAD_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>';
 	const _PENA_NATIVE_ONLY = true;
@@ -3352,15 +3352,16 @@
 			if (!proxy || !proxy.messagesCanBeRead() || !isVisibleElement(proxy.$el)) return;
 			const chatId = Number(proxy.dialog?.chatId), dialogId = proxy.dialogId;
 			if (!(chatId > 0)) return;
+			const counter = context.store.getters['counters/getCounterByChatId']?.(chatId);
+			const chatAnchors = (context.store.state.messages?.anchors?.anchors || []).filter(anchor => Number(anchor.chatId) === chatId && Number(anchor.messageId) > 0);
+			if (!(counter > 0) && !chatAnchors.length) return;
 			const visible = proxy.getVisibleMessagesManager().getVisibleMessages();
 			const boundary = visible.reduce((max, id) => {
 				const message = context.store.getters['messages/getById']?.(id);
 				return Number.isSafeInteger(id) && id > 0 && Number(message?.chatId) === chatId ? Math.max(max, id) : max;
 			}, 0);
 			if (!boundary) return;
-			const anchors = (context.store.state.messages?.anchors?.anchors || [])
-				.filter(anchor => Number(anchor.chatId) === chatId && Number(anchor.messageId) > 0 && Number(anchor.messageId) <= boundary);
-			const counter = context.store.getters['counters/getCounterByChatId']?.(chatId);
+			const anchors = chatAnchors.filter(anchor => Number(anchor.messageId) <= boundary);
 			const unreadBefore = context.store.getters['messages/getChatUnreadMessages']?.(chatId)
 				?.some(message => Number(message.id) > 0 && Number(message.id) <= boundary);
 			const readNeeded = counter > 0 && (boundary > Number(proxy.dialog.lastReadId || 0) || unreadBefore ||
@@ -12088,9 +12089,18 @@ if (_presetChannel) {
 	function _applyDialogControlRowFilter(el, nativeFolderFilter = null, viewPrefs = null) {
 		if (!el) return false;
 		if (_isDialogNativeLazyMode()) {
-			const meta = _getDialogRowFilterMeta(el);
 			const searching = !!String(filters.query || '').trim();
 			const unread = (viewPrefs || _getDialogControlViewPrefs()).unreadOnly || filters.unreadOnly;
+			// Recycled rows still need to shed an old folder's hidden class.
+			// The unfiltered inbox does not need to read their messages or avatars.
+			if (!nativeFolderFilter && !unread && !searching && !filters.typesSelected?.length &&
+				!filters.selectedTags?.length && !filters.selectedIntersectionTags?.length &&
+				(_currentPanelMode !== 'tasks' || (!filters.projectIndexes?.length && !filters.responsibleIndexes?.length &&
+					!filters.statusIndexes?.length && !filters.hiddenProjectIndexes?.length && !filters.hiddenResponsibleIndexes?.length))) {
+				if (el.classList.contains('pena-native-filter-hidden')) el.classList.remove('pena-native-filter-hidden');
+				return true;
+			}
+			const meta = _getDialogRowFilterMeta(el);
 			let visible = searching ? (!unread || _isDialogControlUnreadMeta(meta)) : matchByFilters(meta);
 			if (visible && nativeFolderFilter) visible = _matchesDialogControlNativeFilter(el, meta, nativeFolderFilter);
 			el.classList.toggle('pena-native-filter-hidden', !visible);
@@ -15535,15 +15545,16 @@ if (_presetChannel) {
 		if (_isDialogNativeLazyMode() && String(filters.query || '').trim()) return { segmentId:'', folderId:'', ids:new Set(), titles:new Set(), unreadOnly:!!(_getDialogControlViewPrefs().unreadOnly || filters.unreadOnly) };
 		if (IS_OL_FRAME || !_isDialogControlNativeMode()) return null;
 		const viewPrefs = _getDialogControlViewPrefs();
-		const items = _getDialogControlItems();
 		const segmentId = _getDialogControlActiveSegmentId();
 		let folderId = _getDialogControlNativeActiveFolderId();
+		if (!segmentId && !folderId && !viewPrefs.unreadOnly && !filters.unreadOnly && !viewPrefs.uniqueOnly) return null;
+		const items = _getDialogControlItems();
 		const folderExists = !folderId || _getDialogControlNativeFoldersForSegment(items, segmentId).some(item => String(item.id || '') === folderId);
 		if (!folderExists) {
 			_setDialogControlNativeActiveFolderId('', { render: false, apply: false });
 			folderId = '';
 		}
-		if (!segmentId && !folderId && !viewPrefs.unreadOnly && !filters.unreadOnly && !viewPrefs.uniqueOnly) return null;
+		if (!folderExists && !segmentId && !viewPrefs.unreadOnly && !filters.unreadOnly && !viewPrefs.uniqueOnly) return null;
 		const ids = new Set();
 		const titles = new Set();
 		const excludedIds = new Set();
@@ -15804,51 +15815,37 @@ if (_presetChannel) {
 		return moved;
 	}
 
-	function _captureDialogControlNativeScrollPositions(target = null) {
-		const container = findContainer();
-		return _getDialogControlNativeScrollCandidates(target, container).map(el => ({
-			el,
-			top: Number(el.scrollTop) || 0,
-			left: Number(el.scrollLeft) || 0
-		}));
-	}
-
-	function _didDialogControlNativeScrollMove(snapshot) {
-		return (Array.isArray(snapshot) ? snapshot : []).some(item => {
-			const el = item?.el;
-			if (!el || !el.isConnected) return false;
-			return Math.abs((Number(el.scrollTop) || 0) - (Number(item.top) || 0)) > .5 ||
-				Math.abs((Number(el.scrollLeft) || 0) - (Number(item.left) || 0)) > .5;
+	// CSS contains the native list at its edge. Only repair gestures cancelled by
+	// Bitrix, using the owner that received the gesture; never search the page.
+	const _pendingListWheels = new WeakMap();
+	function _watchDialogListWheel(event) {
+		const viewport = event.currentTarget;
+		if (event.ctrlKey || _dialogControlActive || filters.query?.trim() ||
+			!document.documentElement.classList.contains('pena-dialog-native-mode') ||
+			event.target?.closest?.('.bx-im-chat-search__container,.bx-im-search-item__container,.bx-im-search-item-layout__container,[data-pena-native-search-row],.pena-native-command-popover,[data-dialog-control-context-menu]')) return;
+		const dy = _getDialogControlNativeWheelDelta(event);
+		if (!dy || Math.abs(dy) <= Math.abs(event.deltaX)) return;
+		const before = viewport.scrollTop;
+		let pending = _pendingListWheels.get(viewport);
+		if (pending) {
+			pending.push({event, before, dy});
+			return;
+		}
+		pending = [{event, before, dy}];
+		_pendingListWheels.set(viewport, pending);
+		// Other handlers, including document bubble listeners, may cancel it later.
+		requestAnimationFrame(() => {
+			_pendingListWheels.delete(viewport);
+			if (!pending.some(entry => entry.event.defaultPrevented) || !viewport.isConnected ||
+				(viewport !== _dialogNativePassThroughCaptureViewport && viewport !== _dialogControlManagedViewport) ||
+				filters.query?.trim() || _dialogControlActive || !_isDialogControlNativeMode()) return;
+			const top = viewport.scrollTop;
+			let delta = 0;
+			for (const entry of pending) {
+				if (entry.event.defaultPrevented && entry.before === top && viewport.contains(entry.event.target)) delta += entry.dy;
+			}
+			if (delta) viewport.scrollTop = top + delta;
 		});
-	}
-
-	function _scheduleDialogControlNativeWheelFallback(deltaY, target = null, event = null) {
-		const dy = Number(deltaY) || 0;
-		if (!dy || IS_OL_FRAME) return;
-		const snapshot = _captureDialogControlNativeScrollPositions(target);
-		setTimeout(() => {
-			if (!_isDialogControlNativeMode() || _dialogControlActive) return;
-			if (_didDialogControlNativeScrollMove(snapshot)) return;
-			// Chromium may commit a trusted wheel after the current task. Only repair a
-			// gesture that another Bitrix handler actually cancelled; otherwise the
-			// delayed native scroll and this fallback would apply the delta twice.
-			if (event && !event.defaultPrevented) return;
-			_scrollDialogControlNativeBy(dy, target);
-		}, 48);
-	}
-
-	function _isDialogControlNativeListWheelTarget(target) {
-		const el = target?.nodeType === 1 ? target : target?.parentElement || null;
-		if (!el || el.closest?.('.pena-native-command-popover,.dialog-control-palette,[data-dialog-control-context-menu="1"]')) return false;
-		// Search results have their own Bitrix scroll owner inside the same list
-		// branch. The ordinary task list may be short while the results are long.
-		if (el.closest?.('.bx-im-chat-search__container,.bx-im-search-item__container,.bx-im-search-item-layout__container,[data-pena-native-search-row],.bx-im-search-result-item,.bx-im-search-item,.bx-im-dialog-search-result-item,.bx-im-list-search-item')) return false;
-		if (_dialogControlManagedViewport?.isConnected && _dialogControlManagedViewport.contains(el)) return true;
-		const container = findContainer();
-		if (!container) return false;
-		if (container === el || container.contains?.(el)) return true;
-		const scrollHost = findInternalScrollContainer(container);
-		return !!(scrollHost && (scrollHost === el || scrollHost.contains?.(el)));
 	}
 
 	function _getDialogControlNativeWheelDelta(event) {
@@ -22985,6 +22982,7 @@ if (_presetChannel) {
 			root._penaManagedState = { view: [], rows: new Map(), rowCache: new Map(), signature: '', renderSignature: '', pendingScrollTop: null, pendingFallbackTop: null, selectedId: '', sourceAnchor };
 			root._penaManagedScrollHandler = _scheduleDialogControlManagedVirtualRender;
 			viewport.addEventListener('scroll', root._penaManagedScrollHandler, { passive: true });
+			viewport.addEventListener('wheel', _watchDialogListWheel, { passive: true, capture: true });
 			viewport.addEventListener('wheel', event => {
 				const dy = _getDialogControlNativeWheelDelta(event);
 				if (!dy || Math.abs(dy) <= Math.abs(Number(event.deltaX) || 0)) return;
@@ -23097,11 +23095,12 @@ if (_presetChannel) {
 		});
 		_dialogControlColorSortStates.delete(container);
 	}
-	function _applyDialogControlColorSort(container, rows = null, items = _getDialogControlItems()) {
+	function _applyDialogControlColorSort(container, rows = null, items = null) {
 		if (!container) return;
 		if (_getDialogControlViewPrefs().sortMode !== 'color' || String(filters.query || '').trim() || !_isDialogControlNativeMode()) {
 			_clearDialogControlColorSort(container); return;
 		}
+		items ??= _getDialogControlItems();
 		rows = (rows || _getDialogControlNativeRows(container)).filter(row => !row.matches('.bx-im-search-item__container,.bx-im-search-item-layout__container,[data-pena-native-search-row]'));
 		const itemIndex = _buildDialogControlNativeItemIndex(items), groups = new Map();
 		for (const row of rows) {
@@ -23493,22 +23492,6 @@ if (_presetChannel) {
 	function _armDialogControlNativeInteractions() {
 		if (document._penaDialogControlNativeInteractionsAttached) return;
 		document._penaDialogControlNativeInteractionsAttached = true;
-		document.addEventListener('wheel', (e) => {
-			// Bitrix owns wheel scrolling while a search query is active. Its results
-			// can be wrapped by an unnamed scroll owner inside the ordinary list.
-			if (!_isDialogControlNativeMode() || _dialogControlActive || String(filters.query || '').trim() ||
-				!_isDialogControlNativeListWheelTarget(e.target)) return;
-			const dy = _getDialogControlNativeWheelDelta(e);
-			if (!dy || Math.abs(dy) <= Math.abs(Number(e.deltaX) || 0)) return;
-			const scrollEl = _getDialogControlNativeListScrollHost(findContainer(), e.target);
-			if (scrollEl && _canDialogControlNativeScrollElement(scrollEl, dy)) {
-				_scheduleDialogControlNativeWheelFallback(dy, e.target, e);
-				return;
-			}
-			// Contain wheel at a short list or its boundary so the Bitrix workspace
-			// cannot move the fixed controls out of view.
-			e.preventDefault();
-		}, { capture: true, passive: false });
 		let multiSelectGesture = null;
 		const consumeMultiSelectGesture = (e) => {
 			const gesture = multiSelectGesture;
@@ -30976,6 +30959,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-native-btn{margin-left:auto;order:50}
 #anit-dialog-control-dock .dialog-control-native-btn svg{width:16px;height:16px;stroke-width:1.9}
 #anit-dialog-control-dock .dialog-control-native-btn.--active{border-color:rgba(93,200,126,.58);background:rgba(93,200,126,.14);color:#d9ffe4}
+.pena-dialog-native-mode .pena-native-wheel-owner{overscroll-behavior-y:contain}
 .pena-dialog-native-mode .pena-native-folder-switcher-host{display:flex!important;flex-direction:column!important;min-height:0!important;background:#fff!important;overscroll-behavior:contain}
 .pena-dialog-native-mode .pena-native-list-scroll-viewport{position:relative!important;top:auto!important;right:auto!important;bottom:auto!important;left:auto!important;display:block!important;flex:1 1 0!important;min-height:0!important;height:auto!important;max-height:none!important;overscroll-behavior:contain}
 .pena-dialog-native-mode .bx-im-list-container-task__elements,.pena-dialog-native-mode .bx-im-list-container-recent__elements{position:relative;min-height:100%;overflow:visible!important}
@@ -33402,6 +33386,8 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 		if (_dialogNativePassThroughCaptureViewport !== passThroughViewport) {
 			if (_dialogNativePassThroughCaptureViewport && _dialogNativePassThroughCaptureHandler) {
 				_dialogNativePassThroughCaptureViewport.removeEventListener('scroll', _dialogNativePassThroughCaptureHandler);
+				_dialogNativePassThroughCaptureViewport.removeEventListener('wheel', _watchDialogListWheel, true);
+				_dialogNativePassThroughCaptureViewport.classList.remove('pena-native-wheel-owner');
 			}
 			if (_dialogNativePassThroughCaptureRaf) {
 				cancelAnimationFrame(_dialogNativePassThroughCaptureRaf);
@@ -33426,6 +33412,8 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 				: null;
 			if (passThroughViewport && _dialogNativePassThroughCaptureHandler) {
 				passThroughViewport.addEventListener('scroll', _dialogNativePassThroughCaptureHandler, { passive: true });
+				passThroughViewport.classList.add('pena-native-wheel-owner');
+				passThroughViewport.addEventListener('wheel', _watchDialogListWheel, { passive: true, capture: true });
 			}
 		}
 		if (obs) obs.disconnect();
@@ -34084,6 +34072,10 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 					const addedByTarget = new Map();
 					let relevant = false;
 					for (const record of records) {
+						// The conversation's history virtualizes messages independently
+						// of the sidebar. Mount/removal of the pane itself is still seen
+						// on its parent, as are list and route-shell replacements.
+						if (record.target?.closest?.('.bx-im-dialog-chat__scroll-container')) continue;
 						if (record?.type !== 'childList') {
 							if (this.isRelevantMutation(record)) relevant = true;
 							continue;

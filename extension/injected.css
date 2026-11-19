@@ -275,6 +275,7 @@ html.anit-panel-mode-switching #anit-dialog-control-dock .dialog-control-actions
 #anit-dialog-control-dock .dialog-control-native-btn{margin-left:auto;order:50}
 #anit-dialog-control-dock .dialog-control-native-btn svg{width:16px;height:16px;stroke-width:1.9}
 #anit-dialog-control-dock .dialog-control-native-btn.--active{border-color:rgba(93,200,126,.58);background:rgba(93,200,126,.14);color:#d9ffe4}
+.pena-dialog-native-mode .pena-native-wheel-owner{overscroll-behavior-y:contain}
 .pena-dialog-native-mode .pena-native-folder-switcher-host{display:flex!important;flex-direction:column!important;min-height:0!important;background:#fff!important;overscroll-behavior:contain}
 .pena-dialog-native-mode .pena-native-list-scroll-viewport{position:relative!important;top:auto!important;right:auto!important;bottom:auto!important;left:auto!important;display:block!important;flex:1 1 0!important;min-height:0!important;height:auto!important;max-height:none!important;overscroll-behavior:contain}
 .pena-dialog-native-mode .bx-im-list-container-task__elements,.pena-dialog-native-mode .bx-im-list-container-recent__elements{position:relative;min-height:100%;overflow:visible!important}
