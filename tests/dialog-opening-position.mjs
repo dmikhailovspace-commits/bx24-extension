@@ -17,10 +17,14 @@ async function measure(source, version) {
   assert.ok(source.includes(marker));
   await page.route('**/extension/injected.js*', route => route.fulfill({
     contentType: 'application/javascript',
-    body: source.replace(marker, marker + '\nwindow.positionProbe = { owner: findInternalScrollContainer, move: _scrollDialogControlNativeListBy };')
+    body: source.replace(marker, marker + '\nwindow.positionProbe = { mount: _resolveDialogControlNativeMount, owner: findInternalScrollContainer, move: _scrollDialogControlNativeListBy };')
   }));
   try {
     await page.goto(server.baseUrl + '/tests/recent-sync-harness.html?leadershipcase=1&apicase=1');
+    await page.waitForFunction(() => {
+      const sync = window.__PENA_RECENT_SYNC__;
+      return sync && !sync.inFlight && sync.windowCount === 401 && sync.lastFullAt > 0;
+    });
     const folder = page.locator('.pena-native-folder-tab[title="Руководители"]');
     await folder.click();
     const first = page.locator('.pena-native-remote-row[data-id="user42"]');
@@ -108,7 +112,10 @@ async function measure(source, version) {
         list.replaceWith(viewport);
         viewport.append(list);
         positionProbe.move(64);
-        return { choseShell: owner === shell, before, afterDown, afterUp, restoredListTop: viewport.scrollTop, visitedRows, resolveMs };
+        const restoredListTop = viewport.scrollTop;
+        shell.className = 'bx-im-list-container-recent__container';
+        const sharedMount = positionProbe.mount(list, { requireStable: false });
+        return { choseShell: owner === shell, before, afterDown, afterUp, restoredListTop, sharedMount: sharedMount.reason, visitedRows, resolveMs };
       } finally {
         Element.prototype.matches = originalMatches;
         window.__PENA_ACTIVE_LIST_CONTEXT__ = prev;
@@ -135,6 +142,7 @@ try {
   assert.deepEqual(geometry.afterDown, geometry.before);
   assert.deepEqual(geometry.afterUp, geometry.before);
   assert.equal(geometry.restoredListTop, 64);
+  assert.equal(geometry.sharedMount, 'shared-conversation-host');
   assert.equal(geometry.visitedRows, 4);
   if (results.length === 2) {
     const baseline = results[0];

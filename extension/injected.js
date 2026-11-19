@@ -16122,6 +16122,11 @@ if (_presetChannel) {
 		if (!sourceRegion?.isConnected || !host?.isConnected || host === document.body || host === document.documentElement) {
 			return fail('invalid-host', { sourceViewport, sourceRegion, host });
 		}
+		// Mounting the toolbar changes its host to a flex column. Never apply
+		// that layout to a shared shell, even when its width matches the list.
+		if (_sharesDialogMessagePane(host, container)) {
+			return fail('shared-conversation-host', { sourceViewport, host });
+		}
 		const listMode = container.matches('.bx-im-list-container-task__elements') ? 'task' : 'recent';
 		const expectedViewportSelector = listMode === 'task'
 			? '.bx-im-list-base__scroll-container,.bx-im-list-container-task__scroll-container,.bx-im-list-task__scroll-container,.bx-im-list-container-task__elements_container'
