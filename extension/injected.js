@@ -8,9 +8,9 @@
 	(function () {
 
 	if (window.__ANITREC_RUNNING__) { return; }
-	window.__ANITREC_RUNNING__ = '9.0.12';
+	window.__ANITREC_RUNNING__ = '9.0.13';
 
-	const VER = '9.0.12';
+	const VER = '9.0.13';
 	// Google Material Icons / Refresh (Apache-2.0).
 	const _PENA_RELOAD_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>';
 	const _PENA_NATIVE_ONLY = true;
@@ -585,8 +585,8 @@
 		if (/^\d+$/.test(userId)) return `user${userId}`;
 		if (/^user\d+$/i.test(userId)) return userId;
 		const entityId = String(el.getAttribute?.('data-entity-id') || el.dataset?.entityId || '').trim();
-		const entityType = String(el.getAttribute?.('data-entity-type') || el.dataset?.entityType || '').trim();
 		if (/^\d+$/.test(entityId)) {
+			const entityType = String(el.getAttribute?.('data-entity-type') || el.dataset?.entityType || '').trim();
 			if (/^(?:chat|dialog|group)$/i.test(entityType)) return `chat${entityId}`;
 			if (/user|private/i.test(entityType)) return `user${entityId}`;
 		}
@@ -601,7 +601,7 @@
 
 	function _getRawDialogControlIdFromElement(el) {
 		if (!el) return '';
-		const values = [
+		const own = [
 			_getTypedDialogDataId(el),
 			el.getAttribute?.('data-dialog-id'),
 			el.getAttribute?.('data-dialog-id-value'),
@@ -609,17 +609,17 @@
 			el.getAttribute?.('data-id'),
 			el.dataset?.dialogId,
 			el.dataset?.dialogid,
-			el.dataset?.id,
-			el.querySelector?.('[data-dialog-id]')?.getAttribute?.('data-dialog-id'),
-			el.querySelector?.('[data-dialog-id-value]')?.getAttribute?.('data-dialog-id-value'),
-			el.querySelector?.('[data-dialogid]')?.getAttribute?.('data-dialogid'),
-			_getSafeNestedDialogDataId(el),
-			el.getAttribute?.('data-userid'),
-			el.dataset?.userid,
-			el.querySelector?.('[data-userid]')?.getAttribute?.('data-userid'),
-			(el.matches?.('.bx-im-search-item__container,.bx-im-search-item-layout__container,[data-pena-native-search-row]') ? _getDialogNativeSearchRowId(el) : '')
-		];
-		return _normalizeDialogControlRestDialogId(values.find(value => String(value || '').trim()));
+			el.dataset?.id
+		].find(value => String(value || '').trim());
+		if (own) return _normalizeDialogControlRestDialogId(own);
+		for (const attribute of ['data-dialog-id', 'data-dialog-id-value', 'data-dialogid']) {
+			const nested = el.querySelector?.('[' + attribute + ']')?.getAttribute?.(attribute)?.trim();
+			if (nested) return _normalizeDialogControlRestDialogId(nested);
+		}
+		return _normalizeDialogControlRestDialogId(_getSafeNestedDialogDataId(el) ||
+			String(el.getAttribute?.('data-userid') || '').trim() || String(el.dataset?.userid || '').trim() ||
+			String(el.querySelector?.('[data-userid]')?.getAttribute?.('data-userid') || '').trim() ||
+			(el.matches?.('.bx-im-search-item__container,.bx-im-search-item-layout__container,[data-pena-native-search-row]') ? _getDialogNativeSearchRowId(el) : ''));
 	}
 
 	function _getDialogControlRestDialogId(dialogId, el = null, item = null) {
@@ -6559,8 +6559,7 @@
 		});
 	}
 
-	function _captureDialogNativeWindow(container, target, state, maxCount = 0) {
-		const rows = _getDialogNativeSourceRows(container);
+	function _captureDialogNativeWindow(container, target, state, maxCount = 0, rows = _getDialogNativeSourceRows(container)) {
 		const fetchedAt = Date.now();
 		const isTaskMode = state?.mode === 'tasks' || container?.matches?.('.bx-im-list-container-task__elements') === true;
 		let added = 0;
@@ -8271,6 +8270,7 @@
 	// Folder pages are loaded by the mounted Bitrix component's own service.
 	// Bitrix owns cursors, model updates, native rendering and request deduplication.
 	const _dialogNativeFolderWindows = new WeakMap();
+	const _dialogNativePageFilterPending = new WeakSet();
 	const _dialogNativePageServices = new WeakMap();
 	const _dialogNativePageRequests = new WeakMap();
 	let _dialogNativeFolderTimer = null;
@@ -8424,6 +8424,10 @@
 		}
 		state.stopped = false;
 		const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+		const waitForScrollEnd = async () => {
+			let remaining;
+			while (canWait() && (remaining = _dialogNativeScrollQuietDelay()) > 0) await pause(remaining);
+		};
 		_dialogNativeFolderRun = (async () => {
 			// Defer once so the run is installed before any synchronous early return.
 			await pause(0);
@@ -8450,6 +8454,13 @@
 				if (!current()) return {cancelled:true,pages};
 				if (missing() && !bridge) { clearTimeout(statusTimer); stop(bridge); status('Не удалось подключить загрузку Bitrix',true); return {unavailable:true}; }
 				while (current() && missing()) {
+					// Bitrix can still load at the bottom itself. Do not initiate the
+					// next background page while the user is reading or moving the list.
+					if (pages && _dialogNativeScrollQuietDelay()) {
+						await waitForScrollEnd();
+						if (!current()) return { cancelled: true, pages };
+						if (!missing()) break;
+					}
 					bridge = _findDialogNativePageService(demand) || bridge;
 					const pending = _dialogNativePageRequests.get(bridge.service);
 					if (!pending && bridge.busy()) {
@@ -8467,7 +8478,8 @@
 						const renderDeadline = Date.now() + 1500;
 						while (canWait() && Date.now() < renderDeadline && missing()) await pause(100);
 						if (!current()) return { cancelled: true, pages };
-						_refreshDialogNativeVisibleWindow(); applyFilters();
+						_dialogNativePageFilterPending.add(container);
+						_scheduleDialogNativePassThroughRefresh(0);
 						if (!missing()) break;
 						clearTimeout(statusTimer);
 						stop(bridge); status('');
@@ -8499,7 +8511,10 @@
 					const progressDeadline = Date.now() + 1500;
 					while (canWait() && Date.now() < progressDeadline && cursor === bridge.cursor() && !rowsChanged()) await pause(100);
 					if (!current()) return { cancelled: true, pages };
-					_refreshDialogNativeVisibleWindow(); applyFilters(); pages += 1;
+					// The list observer already masks inserted and recycled rows before
+					// paint. Its deferred refresh also handles cursor-before-render.
+					_dialogNativePageFilterPending.add(container);
+					_scheduleDialogNativePassThroughRefresh(0); pages += 1;
 					const progressed = cursor !== bridge.cursor() || rowsChanged();
 					unchanged = progressed ? 0 : unchanged + 1;
 					if (unchanged >= 3 && bridge.hasMore() && missing()) throw new Error('Native pagination made no progress');
@@ -8520,7 +8535,8 @@
 		return _dialogNativeFolderRun;
 	}
 
-	function _refreshDialogNativeVisibleWindow() {
+	const _dialogNativeWindowCaptures = new WeakMap();
+	function _refreshDialogNativeVisibleWindow(background = false) {
 		if (_isDialogNativeLazyMode() && String(filters.query || '').trim()) {
 			return { count: _countDialogRecentMeta(), skipped: true, search: true };
 		}
@@ -8534,19 +8550,24 @@
 		const container = findContainer();
 		if (!container || IS_OL_FRAME) return { count: _countDialogRecentMeta(), skipped: true };
 		const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
-		const visibleIds = _getDialogNativeSourceRows(container)
-			.map(row => normId(getChatIdFromElement(row)))
-			.filter(Boolean);
+		const running = _dialogNativeWindowCaptures.get(container);
+		if (background && running) {
+			running.checkAgain = true;
+			return { count: _countDialogRecentMeta(), pending: true };
+		}
+		const visibleRows = _getDialogNativeSourceRows(container);
 		// Recycled Bitrix rows are already represented in the complete catalog. Their
 		// identity change only requires repainting that physical row; cloning, sorting
 		// and serialising the whole catalog here used to block message rendering and
 		// scrolling for no useful work.
-		const hasUnknownVisibleDialog = visibleIds.some(id => {
+		const missingRows = visibleRows.filter(row => {
+			const id = normId(getChatIdFromElement(row));
+			if (!id) return false;
 			const meta = _getDialogRecentMeta(id);
 			const nativeRank = Number(meta?.nativeRecentRank);
 			return !meta || !(Number(meta.recentListFetchedAt) > 0) || !Number.isFinite(nativeRank) || nativeRank < 0;
 		});
-		if (!hasUnknownVisibleDialog) {
+		if (!missingRows.length) {
 			return { count: _countDialogRecentMeta(), skipped: true, knownWindow: true };
 		}
 		const rankedMeta = _getDialogRecentUniqueMeta().filter(meta => {
@@ -8566,17 +8587,29 @@
 		// This is deliberately patch-only. A viewport-sized sample is useful metadata,
 		// but it is not proof that Bitrix has materialized the whole virtual list.
 		const state = { mode, seen: new Set(), orderById, nextNativeRank, startedAt: Date.now() };
+		if (background && _isDialogNativeLazyMode() && missingRows.length > 40) {
+			_captureDialogNativePageInSlices(container, missingRows, state);
+			return { count: _countDialogRecentMeta(), pending: true };
+		}
 		const target = new Map(_dialogRecentMeta);
 		const beforeSignature = _getDialogRecentRenderSignature(target);
-		const captured = _captureDialogNativeWindow(container, target, state);
+		// Counter, title and preview changes on known rows have their own
+		// observers. A page extending the catalog only needs the new entries.
+		const captured = _captureDialogNativeWindow(container, target, state, 0,
+			background && _isDialogNativeLazyMode() ? missingRows : visibleRows);
 		const afterSignature = _getDialogRecentRenderSignature(target);
 		if (!captured.added || (!captured.nativeAdded && beforeSignature === afterSignature)) {
 			return { count: _countDialogRecentMeta(), skipped: true };
 		}
 		_dialogRecentMeta = target;
+		_publishDialogNativeWindowPatch(state, beforeSignature !== afterSignature);
+		return { count: _countDialogRecentMeta(), received: captured.added, native: true };
+	}
+
+	function _publishDialogNativeWindowPatch(state, changed) {
 		state.seen.forEach(_markDialogRecentRepositoryDirty);
 		_hydrateAllDialogControlModesFromRecent({ pruneMissing: false });
-		if (beforeSignature !== afterSignature) {
+		if (changed) {
 			_dialogRecentDataRevision += 1;
 			_notifyDialogRecentDataChanged();
 		}
@@ -8587,7 +8620,52 @@
 		// seemingly complete catalog.
 		_scheduleDialogRecentCacheWrite(80);
 		_publishDialogRecentSyncState();
-		return { count: _countDialogRecentMeta(), received: captured.added, native: true };
+	}
+
+	function _captureDialogNativePageInSlices(container, rows, state) {
+		const scope = _getDialogNativeExpectedAuditScopeKey(state.mode);
+		const baseline = new Map(_dialogRecentMeta);
+		const patch = new Map();
+		const run = { checkAgain: false };
+		let offset = 0;
+		_dialogNativeWindowCaptures.set(container, run);
+		const step = () => {
+			let nextDelay = null;
+			try {
+				if (!container.isConnected || document.hidden || scope !== _getDialogNativeExpectedAuditScopeKey(state.mode) ||
+					container !== findContainer() || _pMode() !== state.mode || String(filters.query || '').trim()) return;
+				const remaining = _dialogNativeScrollQuietDelay();
+				if (remaining) { nextDelay = remaining; return; }
+				const deadline = performance.now() + 5;
+				do {
+					const batch = rows.slice(offset, offset + 8).filter(row => container.contains(row));
+					offset += 8;
+					_captureDialogNativeWindow(container, patch, state, 0, batch);
+				} while (offset < rows.length && performance.now() < deadline);
+				if (offset < rows.length) { nextDelay = 0; return; }
+				// Keep changes that arrived from counters, read receipts or an audit
+				// during the yield. Only publish records whose original is still current.
+				const accepted = new Map();
+				for (const [key, meta] of patch) {
+					if (_dialogRecentMeta.get(meta.id) === baseline.get(meta.id) &&
+						_dialogRecentMeta.get(key) === baseline.get(key)) accepted.set(key, meta);
+					else run.checkAgain = true;
+				}
+				if (accepted.size) {
+					for (const [key, meta] of accepted) _dialogRecentMeta.set(key, meta);
+					state.seen = new Set(Array.from(accepted.values(), meta => meta.id));
+					_publishDialogNativeWindowPatch(state, true);
+				}
+			} catch (error) {
+				warn('Native page capture failed', error?.message || error);
+			} finally {
+				if (nextDelay === null) {
+					_dialogNativeWindowCaptures.delete(container);
+					if (run.checkAgain && container.isConnected) _scheduleDialogNativePassThroughRefresh(0);
+				} else setTimeout(step, nextDelay);
+			}
+		};
+		setTimeout(step, 0);
 	}
 
 	function _scheduleDialogRecentSync(options = {}) {
@@ -8599,7 +8677,7 @@
 				return;
 			}
 			if (options.full || options.force || options.reason) _refreshDialogRecentCatalog(options).catch(() => {});
-			else _refreshDialogNativeVisibleWindow();
+			else _refreshDialogNativeVisibleWindow(true);
 		}, Math.max(0, Number(options.delay) || 0));
 	}
 
@@ -9191,7 +9269,7 @@
 	async function _runDialogWakeReconcile(reason = 'wake', options = {}) {
 		if (_isDialogNativeLazyMode()) {
 			if (document.hidden || !isInternalChatsDOM()) return { skipped: true };
-			const result = _refreshDialogNativeVisibleWindow();
+			const result = _refreshDialogNativeVisibleWindow(true);
 			_scheduleDialogCounterReconcile();
 			// Today's task totals have their own scope and deduplicated bootstrap;
 			// returning to Messenger must keep it alive without walking chat history.
@@ -9519,8 +9597,13 @@
 		}, Math.max(0, Number(delay) || 0));
 	}
 
-	function _noteDialogCatalogUserActivity() {
+	let _dialogNativeLastScrollAt = 0;
+	function _dialogNativeScrollQuietDelay() {
+		return Math.max(0, 180 - (Date.now() - _dialogNativeLastScrollAt));
+	}
+	function _noteDialogCatalogUserActivity(event) {
 		_dialogNativeLastUserActivityAt = Date.now();
+		if (event?.type === 'wheel' || event?.type === 'touchmove') _dialogNativeLastScrollAt = _dialogNativeLastUserActivityAt;
 		if (_dialogNativeOriginalScrollActive) {
 			_dialogNativeOriginalScrollCancel?.('user-interaction');
 		}
@@ -9950,6 +10033,11 @@
 				return;
 			}
 			if (_dialogNativeOriginalScrollActive) return;
+			const remaining = _isDialogNativeLazyMode() && _dialogNativeScrollQuietDelay();
+			if (remaining) {
+				_scheduleDialogNativePassThroughRefresh(remaining);
+				return;
+			}
 			_dialogNativePassThroughRefreshPending = false;
 			if (window.__PENA_TEST_PERF_METRICS__) {
 				window.__PENA_TEST_PERF_METRICS__.passThroughRefreshes =
@@ -9962,11 +10050,13 @@
 			// Visible rows may enrich a catalog only after the current document has
 			// completed its atomic traversal. Otherwise a post-timeout DOM mutation
 			// republishes the partial window that the traversal deliberately rejected.
-			if (!apiLoadPromise) _refreshDialogNativeVisibleWindow();
+			if (!apiLoadPromise) _refreshDialogNativeVisibleWindow(true);
 			// Presentation is independent from the metadata audit. Apply the current
 			// folder/search/sort immediately instead of leaving recycled Bitrix rows raw
 			// for the whole duration of a long REST pagination pass.
-			_scheduleDialogControlNativeView(findContainer(), { restoreDisplay: false });
+			const container = findContainer();
+			if (_dialogNativePageFilterPending.delete(container)) applyFilters();
+			else _scheduleDialogControlNativeView(container, { restoreDisplay: false });
 			if (apiLoadPromise && _dialogNativePassThroughApiResumePromise !== apiLoadPromise) {
 				_dialogNativePassThroughApiResumePromise = apiLoadPromise;
 				Promise.resolve(apiLoadPromise).finally(() => {
@@ -9994,7 +10084,7 @@
 				if (!document.hidden) _scheduleDialogRecentSync({ delay: 150 });
 			});
 		} else {
-			['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(type => {
+			['pointerdown', 'keydown', 'wheel', 'touchstart', 'touchmove'].forEach(type => {
 				document.addEventListener(type, _noteDialogCatalogUserActivity, { capture: true, passive: true });
 			});
 			_dialogLifecycleLastHeartbeatAt = Date.now();
@@ -10111,7 +10201,7 @@
 			if (window.__PENA_FORCE_REST_CATALOG__ === true) {
 				_scheduleDialogRecentSync({ delay: _dialogRecentCacheLoaded ? 100 : 0, full: !_dialogRecentCacheLoaded });
 			} else if (_isDialogControlNativePassThrough()) {
-				_refreshDialogNativeVisibleWindow();
+				_refreshDialogNativeVisibleWindow(true);
 			}
 			_scheduleDialogCounterReconcile();
 			// Repository metadata does not prove that the current Bitrix viewport is
@@ -10122,7 +10212,7 @@
 			clearTimeout(repositoryGrace);
 			_dialogRecentRuntimeStarting = false;
 			_armDialogRecentSync();
-			if (_isDialogControlNativePassThrough()) _refreshDialogNativeVisibleWindow();
+			if (_isDialogControlNativePassThrough()) _refreshDialogNativeVisibleWindow(true);
 			_scheduleDialogNativeModeLoad('runtime-recovery', 0);
 		});
 		return true;
@@ -33467,20 +33557,25 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 			'data-id', 'data-dialog-id', 'data-dialog-id-value', 'data-dialogid',
 			'data-chat-id', 'data-user-id', 'data-entity-id', 'href'
 		]);
+		let ownerByElement;
 		const getMutationOwnerRow = mutation => {
 			const mutationElement = mutation.target?.nodeType === 1 ? mutation.target : mutation.target?.parentElement || null;
-			return mutationElement?.matches?.(controlRowSel) ? mutationElement : mutationElement?.closest?.(controlRowSel) || null;
+			if (!mutationElement) return null;
+			if (ownerByElement.has(mutationElement)) return ownerByElement.get(mutationElement);
+			const owner = mutationElement.closest?.(controlRowSel) || null;
+			ownerByElement.set(mutationElement, owner);
+			return owner;
 		};
 		const mutationTouchesBitrixCounterState = mutation => {
 			const mutationElement = mutation.target?.nodeType === 1 ? mutation.target : mutation.target?.parentElement || null;
 			const ownerRow = getMutationOwnerRow(mutation);
 			if (!ownerRow) return false;
 			if (mutation.type === 'attributes') {
-				return !!(mutationElement?.matches?.(controlStatusSel) || mutationElement?.closest?.(controlStatusSel));
+				return !!mutationElement?.closest?.(controlStatusSel);
 			}
 			if (mutation.type === 'characterData') return !!mutationElement?.closest?.(controlStatusSel);
 			if (mutation.type !== 'childList') return false;
-			if (mutationElement?.matches?.(controlStatusSel) || mutationElement?.closest?.(controlStatusSel)) return true;
+			if (mutationElement?.closest?.(controlStatusSel)) return true;
 			return [...mutation.addedNodes, ...mutation.removedNodes].some(node =>
 				node.nodeType === 1 && (node.matches?.(controlStatusSel) || node.querySelector?.(controlStatusSel))
 			);
@@ -33536,6 +33631,9 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 		};
 
 		obs = new MutationObserver((mutations) => {
+		// Hundreds of childList records can share one parent after a page append.
+		// Vue may reparent the same element before the next delivery.
+		ownerByElement = new WeakMap();
 		if (!IS_OL_FRAME && _isDialogControlNativeMode() && _dialogControlMultiSelected.size) {
 			const recycled = new Set(mutations.filter(mutation => mutation.type === 'attributes' &&
 				rowIdentityAttributes.has(mutation.attributeName)).map(getMutationOwnerRow).filter(Boolean));
@@ -33568,7 +33666,7 @@ html.anit-dialog-control-cursor .bx-im-list-recent-item__wrap:hover,html.anit-di
 					for (const node of mutation.addedNodes) {
 						if (node.nodeType !== 1) continue;
 						if (node.matches(itemSel)) changedRows.add(node);
-						node.querySelectorAll(itemSel).forEach(row => changedRows.add(row));
+						else node.querySelectorAll(itemSel).forEach(row => changedRows.add(row));
 					}
 				}
 			}
