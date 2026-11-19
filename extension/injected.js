@@ -8535,7 +8535,8 @@
 		return _dialogNativeFolderRun;
 	}
 
-	function _refreshDialogNativeVisibleWindow() {
+	const _dialogNativeWindowCaptures = new WeakMap();
+	function _refreshDialogNativeVisibleWindow(background = false) {
 		if (_isDialogNativeLazyMode() && String(filters.query || '').trim()) {
 			return { count: _countDialogRecentMeta(), skipped: true, search: true };
 		}
@@ -8549,6 +8550,11 @@
 		const container = findContainer();
 		if (!container || IS_OL_FRAME) return { count: _countDialogRecentMeta(), skipped: true };
 		const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
+		const running = _dialogNativeWindowCaptures.get(container);
+		if (background && running) {
+			running.checkAgain = true;
+			return { count: _countDialogRecentMeta(), pending: true };
+		}
 		const visibleRows = _getDialogNativeSourceRows(container);
 		// Recycled Bitrix rows are already represented in the complete catalog. Their
 		// identity change only requires repainting that physical row; cloning, sorting
@@ -8581,6 +8587,10 @@
 		// This is deliberately patch-only. A viewport-sized sample is useful metadata,
 		// but it is not proof that Bitrix has materialized the whole virtual list.
 		const state = { mode, seen: new Set(), orderById, nextNativeRank, startedAt: Date.now() };
+		if (background && _isDialogNativeLazyMode() && missingRows.length > 40) {
+			_captureDialogNativePageInSlices(container, missingRows, state);
+			return { count: _countDialogRecentMeta(), pending: true };
+		}
 		const target = new Map(_dialogRecentMeta);
 		const beforeSignature = _getDialogRecentRenderSignature(target);
 		// Counter, title and preview changes on known rows have their own
@@ -8592,9 +8602,14 @@
 			return { count: _countDialogRecentMeta(), skipped: true };
 		}
 		_dialogRecentMeta = target;
+		_publishDialogNativeWindowPatch(state, beforeSignature !== afterSignature);
+		return { count: _countDialogRecentMeta(), received: captured.added, native: true };
+	}
+
+	function _publishDialogNativeWindowPatch(state, changed) {
 		state.seen.forEach(_markDialogRecentRepositoryDirty);
 		_hydrateAllDialogControlModesFromRecent({ pruneMissing: false });
-		if (beforeSignature !== afterSignature) {
+		if (changed) {
 			_dialogRecentDataRevision += 1;
 			_notifyDialogRecentDataChanged();
 		}
@@ -8605,7 +8620,52 @@
 		// seemingly complete catalog.
 		_scheduleDialogRecentCacheWrite(80);
 		_publishDialogRecentSyncState();
-		return { count: _countDialogRecentMeta(), received: captured.added, native: true };
+	}
+
+	function _captureDialogNativePageInSlices(container, rows, state) {
+		const scope = _getDialogNativeExpectedAuditScopeKey(state.mode);
+		const baseline = new Map(_dialogRecentMeta);
+		const patch = new Map();
+		const run = { checkAgain: false };
+		let offset = 0;
+		_dialogNativeWindowCaptures.set(container, run);
+		const step = () => {
+			let nextDelay = null;
+			try {
+				if (!container.isConnected || document.hidden || scope !== _getDialogNativeExpectedAuditScopeKey(state.mode) ||
+					container !== findContainer() || _pMode() !== state.mode || String(filters.query || '').trim()) return;
+				const remaining = _dialogNativeScrollQuietDelay();
+				if (remaining) { nextDelay = remaining; return; }
+				const deadline = performance.now() + 5;
+				do {
+					const batch = rows.slice(offset, offset + 8).filter(row => container.contains(row));
+					offset += 8;
+					_captureDialogNativeWindow(container, patch, state, 0, batch);
+				} while (offset < rows.length && performance.now() < deadline);
+				if (offset < rows.length) { nextDelay = 0; return; }
+				// Keep changes that arrived from counters, read receipts or an audit
+				// during the yield. Only publish records whose original is still current.
+				const accepted = new Map();
+				for (const [key, meta] of patch) {
+					if (_dialogRecentMeta.get(meta.id) === baseline.get(meta.id) &&
+						_dialogRecentMeta.get(key) === baseline.get(key)) accepted.set(key, meta);
+					else run.checkAgain = true;
+				}
+				if (accepted.size) {
+					for (const [key, meta] of accepted) _dialogRecentMeta.set(key, meta);
+					state.seen = new Set(Array.from(accepted.values(), meta => meta.id));
+					_publishDialogNativeWindowPatch(state, true);
+				}
+			} catch (error) {
+				warn('Native page capture failed', error?.message || error);
+			} finally {
+				if (nextDelay === null) {
+					_dialogNativeWindowCaptures.delete(container);
+					if (run.checkAgain && container.isConnected) _scheduleDialogNativePassThroughRefresh(0);
+				} else setTimeout(step, nextDelay);
+			}
+		};
+		setTimeout(step, 0);
 	}
 
 	function _scheduleDialogRecentSync(options = {}) {
@@ -9990,7 +10050,7 @@
 			// Visible rows may enrich a catalog only after the current document has
 			// completed its atomic traversal. Otherwise a post-timeout DOM mutation
 			// republishes the partial window that the traversal deliberately rejected.
-			if (!apiLoadPromise) _refreshDialogNativeVisibleWindow();
+			if (!apiLoadPromise) _refreshDialogNativeVisibleWindow(true);
 			// Presentation is independent from the metadata audit. Apply the current
 			// folder/search/sort immediately instead of leaving recycled Bitrix rows raw
 			// for the whole duration of a long REST pagination pass.

@@ -34,6 +34,7 @@ const injection = hook + `
   _setDialogControlNativeActiveFolderId('folder:test');
  };
  window.finishedRun=()=>!_dialogNativeFolderRun;
+ window.capturedTarget=id=>Number(_getDialogRecentMeta(id)?.recentListFetchedAt)>0;
 `;
 try {
  const page=await browser.newPage({viewport:{width:1400,height:850}});
@@ -71,6 +72,7 @@ try {
  await page.evaluate(()=>{audit.wheelEnd=performance.now();});
  await page.locator('.task-host [data-id="'+target+'"]').waitFor({state:'visible',timeout:20000});
  await page.waitForFunction(()=>finishedRun());
+ await page.waitForFunction(target=>capturedTarget(target), target, {timeout: 25000});
  await page.waitForTimeout(1200);
  const after=await metrics();
  const {profile}=await session.send('Profiler.stop');
