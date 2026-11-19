@@ -6559,8 +6559,7 @@
 		});
 	}
 
-	function _captureDialogNativeWindow(container, target, state, maxCount = 0) {
-		const rows = _getDialogNativeSourceRows(container);
+	function _captureDialogNativeWindow(container, target, state, maxCount = 0, rows = _getDialogNativeSourceRows(container)) {
 		const fetchedAt = Date.now();
 		const isTaskMode = state?.mode === 'tasks' || container?.matches?.('.bx-im-list-container-task__elements') === true;
 		let added = 0;
@@ -8271,6 +8270,7 @@
 	// Folder pages are loaded by the mounted Bitrix component's own service.
 	// Bitrix owns cursors, model updates, native rendering and request deduplication.
 	const _dialogNativeFolderWindows = new WeakMap();
+	const _dialogNativePageFilterPending = new WeakSet();
 	const _dialogNativePageServices = new WeakMap();
 	const _dialogNativePageRequests = new WeakMap();
 	let _dialogNativeFolderTimer = null;
@@ -8424,6 +8424,10 @@
 		}
 		state.stopped = false;
 		const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+		const waitForScrollEnd = async () => {
+			let remaining;
+			while (canWait() && (remaining = _dialogNativeScrollQuietDelay()) > 0) await pause(remaining);
+		};
 		_dialogNativeFolderRun = (async () => {
 			// Defer once so the run is installed before any synchronous early return.
 			await pause(0);
@@ -8450,6 +8454,13 @@
 				if (!current()) return {cancelled:true,pages};
 				if (missing() && !bridge) { clearTimeout(statusTimer); stop(bridge); status('Не удалось подключить загрузку Bitrix',true); return {unavailable:true}; }
 				while (current() && missing()) {
+					// Bitrix can still load at the bottom itself. Do not initiate the
+					// next background page while the user is reading or moving the list.
+					if (pages && _dialogNativeScrollQuietDelay()) {
+						await waitForScrollEnd();
+						if (!current()) return { cancelled: true, pages };
+						if (!missing()) break;
+					}
 					bridge = _findDialogNativePageService(demand) || bridge;
 					const pending = _dialogNativePageRequests.get(bridge.service);
 					if (!pending && bridge.busy()) {
@@ -8467,7 +8478,8 @@
 						const renderDeadline = Date.now() + 1500;
 						while (canWait() && Date.now() < renderDeadline && missing()) await pause(100);
 						if (!current()) return { cancelled: true, pages };
-						_refreshDialogNativeVisibleWindow(); applyFilters();
+						_dialogNativePageFilterPending.add(container);
+						_scheduleDialogNativePassThroughRefresh(0);
 						if (!missing()) break;
 						clearTimeout(statusTimer);
 						stop(bridge); status('');
@@ -8499,7 +8511,10 @@
 					const progressDeadline = Date.now() + 1500;
 					while (canWait() && Date.now() < progressDeadline && cursor === bridge.cursor() && !rowsChanged()) await pause(100);
 					if (!current()) return { cancelled: true, pages };
-					_refreshDialogNativeVisibleWindow(); applyFilters(); pages += 1;
+					// The list observer already masks inserted and recycled rows before
+					// paint. Its deferred refresh also handles cursor-before-render.
+					_dialogNativePageFilterPending.add(container);
+					_scheduleDialogNativePassThroughRefresh(0); pages += 1;
 					const progressed = cursor !== bridge.cursor() || rowsChanged();
 					unchanged = progressed ? 0 : unchanged + 1;
 					if (unchanged >= 3 && bridge.hasMore() && missing()) throw new Error('Native pagination made no progress');
@@ -8534,19 +8549,19 @@
 		const container = findContainer();
 		if (!container || IS_OL_FRAME) return { count: _countDialogRecentMeta(), skipped: true };
 		const mode = container.matches?.('.bx-im-list-container-task__elements') ? 'tasks' : 'chats';
-		const visibleIds = _getDialogNativeSourceRows(container)
-			.map(row => normId(getChatIdFromElement(row)))
-			.filter(Boolean);
+		const visibleRows = _getDialogNativeSourceRows(container);
 		// Recycled Bitrix rows are already represented in the complete catalog. Their
 		// identity change only requires repainting that physical row; cloning, sorting
 		// and serialising the whole catalog here used to block message rendering and
 		// scrolling for no useful work.
-		const hasUnknownVisibleDialog = visibleIds.some(id => {
+		const missingRows = visibleRows.filter(row => {
+			const id = normId(getChatIdFromElement(row));
+			if (!id) return false;
 			const meta = _getDialogRecentMeta(id);
 			const nativeRank = Number(meta?.nativeRecentRank);
 			return !meta || !(Number(meta.recentListFetchedAt) > 0) || !Number.isFinite(nativeRank) || nativeRank < 0;
 		});
-		if (!hasUnknownVisibleDialog) {
+		if (!missingRows.length) {
 			return { count: _countDialogRecentMeta(), skipped: true, knownWindow: true };
 		}
 		const rankedMeta = _getDialogRecentUniqueMeta().filter(meta => {
@@ -8568,7 +8583,10 @@
 		const state = { mode, seen: new Set(), orderById, nextNativeRank, startedAt: Date.now() };
 		const target = new Map(_dialogRecentMeta);
 		const beforeSignature = _getDialogRecentRenderSignature(target);
-		const captured = _captureDialogNativeWindow(container, target, state);
+		// Counter, title and preview changes on known rows have their own
+		// observers. A page extending the catalog only needs the new entries.
+		const captured = _captureDialogNativeWindow(container, target, state, 0,
+			_isDialogNativeLazyMode() ? missingRows : visibleRows);
 		const afterSignature = _getDialogRecentRenderSignature(target);
 		if (!captured.added || (!captured.nativeAdded && beforeSignature === afterSignature)) {
 			return { count: _countDialogRecentMeta(), skipped: true };
@@ -9519,8 +9537,13 @@
 		}, Math.max(0, Number(delay) || 0));
 	}
 
-	function _noteDialogCatalogUserActivity() {
+	let _dialogNativeLastScrollAt = 0;
+	function _dialogNativeScrollQuietDelay() {
+		return Math.max(0, 180 - (Date.now() - _dialogNativeLastScrollAt));
+	}
+	function _noteDialogCatalogUserActivity(event) {
 		_dialogNativeLastUserActivityAt = Date.now();
+		if (event?.type === 'wheel' || event?.type === 'touchmove') _dialogNativeLastScrollAt = _dialogNativeLastUserActivityAt;
 		if (_dialogNativeOriginalScrollActive) {
 			_dialogNativeOriginalScrollCancel?.('user-interaction');
 		}
@@ -9950,6 +9973,11 @@
 				return;
 			}
 			if (_dialogNativeOriginalScrollActive) return;
+			const remaining = _isDialogNativeLazyMode() && _dialogNativeScrollQuietDelay();
+			if (remaining) {
+				_scheduleDialogNativePassThroughRefresh(remaining);
+				return;
+			}
 			_dialogNativePassThroughRefreshPending = false;
 			if (window.__PENA_TEST_PERF_METRICS__) {
 				window.__PENA_TEST_PERF_METRICS__.passThroughRefreshes =
@@ -9966,7 +9994,9 @@
 			// Presentation is independent from the metadata audit. Apply the current
 			// folder/search/sort immediately instead of leaving recycled Bitrix rows raw
 			// for the whole duration of a long REST pagination pass.
-			_scheduleDialogControlNativeView(findContainer(), { restoreDisplay: false });
+			const container = findContainer();
+			if (_dialogNativePageFilterPending.delete(container)) applyFilters();
+			else _scheduleDialogControlNativeView(container, { restoreDisplay: false });
 			if (apiLoadPromise && _dialogNativePassThroughApiResumePromise !== apiLoadPromise) {
 				_dialogNativePassThroughApiResumePromise = apiLoadPromise;
 				Promise.resolve(apiLoadPromise).finally(() => {
@@ -9994,7 +10024,7 @@
 				if (!document.hidden) _scheduleDialogRecentSync({ delay: 150 });
 			});
 		} else {
-			['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(type => {
+			['pointerdown', 'keydown', 'wheel', 'touchstart', 'touchmove'].forEach(type => {
 				document.addEventListener(type, _noteDialogCatalogUserActivity, { capture: true, passive: true });
 			});
 			_dialogLifecycleLastHeartbeatAt = Date.now();

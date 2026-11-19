@@ -19,7 +19,7 @@ const instrumented = tracked.map(name => `const saved${name}=${name};
  const pending=!!window.nativeServices?.tasks?.isLoading;
  try{return saved${name}(...args);}finally{a.calls.push({fn:'${name}',pending,ms:performance.now()-t});}};`).join('\n');
 const injection = hook + `
- const a=window.audit={calls:[],frames:[],long:[],started:false,done:false};
+ const a=window.audit={calls:[],frames:[],gestureFrames:[],long:[],started:false,done:false};
  ${instrumented}
  window.prepareRun=target=>{
   const items=_getDialogControlItems();const member=items.find(i=>i.id===target);if(!member)throw Error('Unknown folder member');
@@ -30,7 +30,7 @@ const injection = hook + `
  window.startRun=()=>{
   a.started=true;a.t=performance.now();let last=a.t;
   new PerformanceObserver(list=>{for(const e of list.getEntries())if(!a.done)a.long.push(Math.round(e.duration));}).observe({entryTypes:['longtask']});
-  const frame=t=>{if(a.done)return;if(t>last)a.frames.push(t-last);last=t;requestAnimationFrame(frame);};requestAnimationFrame(frame);
+  const frame=t=>{if(a.done)return;if(t>last){a.frames.push(t-last);if(!a.wheelEnd||t<=a.wheelEnd)a.gestureFrames.push(t-last);}last=t;requestAnimationFrame(frame);};requestAnimationFrame(frame);
   _setDialogControlNativeActiveFolderId('folder:test');
  };
  window.finishedRun=()=>!_dialogNativeFolderRun;
@@ -68,8 +68,10 @@ try {
   await page.mouse.wheel(0,Math.floor(i/8)%2===0?64:-64);
   if(i%8===0&&await page.evaluate(()=>nativeServices.tasks.isLoading))overlapping++;
  }
+ await page.evaluate(()=>{audit.wheelEnd=performance.now();});
  await page.locator('.task-host [data-id="'+target+'"]').waitFor({state:'visible',timeout:20000});
  await page.waitForFunction(()=>finishedRun());
+ await page.waitForTimeout(1200);
  const after=await metrics();
  const {profile}=await session.send('Profiler.stop');
  const byId=new Map(profile.nodes.map(n=>[n.id,n]));
@@ -78,7 +80,8 @@ try {
  const result=await page.evaluate(()=>{
   const a=audit;a.done=true;const f=a.frames.sort((a,b)=>a-b);
   const summary={};for(const e of a.calls){const key=e.fn+(e.pending?' pending':' ready');const s=summary[key]||={count:0,total:0,max:0};s.count++;s.total+=e.ms;s.max=Math.max(s.max,e.ms);}
-  return {requests:nativeServiceCalls.length,travel,frames:{count:f.length,p95:f[Math.ceil(f.length*.95)-1],max:f.at(-1),over50:f.filter(x=>x>50.5).length},longTasks:a.long,summary};
+  const g=a.gestureFrames.sort((a,b)=>a-b);
+  return {requests:nativeServiceCalls.length,travel,gesture:{count:g.length,p95:g[Math.ceil(g.length*.95)-1],max:g.at(-1),over50:g.filter(x=>x>50.5).length},frames:{count:f.length,p95:f[Math.ceil(f.length*.95)-1],max:f.at(-1),over50:f.filter(x=>x>50.5).length},longTasks:a.long,summary};
  });
  const data={ref,area,chunk,pass,overlapping,...result,rendererMs:Object.fromEntries(['TaskDuration','ScriptDuration','LayoutDuration','RecalcStyleDuration'].map(k=>[k,Math.round((after[k]-before[k])*1000)])),top:Object.entries(samples).filter(([key])=>!key.startsWith('(idle)')).sort((a,b)=>b[1]-a[1]).slice(0,35)};
  mkdirSync('tests/artifacts/hosted',{recursive:true});

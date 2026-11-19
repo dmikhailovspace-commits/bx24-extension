@@ -30,7 +30,7 @@ jobs:
         shell: pwsh
         run: |
           $i=0
-          foreach ($ref in @('v9.0.10','v9.0.12','v9.0.12','v9.0.10')) {
+          foreach ($ref in @('v9.0.10','v9.0.12','HEAD','HEAD','v9.0.12','v9.0.10')) {
             $i++
             node tests/hosted-pagination-profile.mjs $ref ${{ matrix.area }} ${{ matrix.chunk }} $i
             if ($LASTEXITCODE) {exit $LASTEXITCODE}
@@ -40,3 +40,22 @@ jobs:
         with:
           name: scroll-${{ matrix.area }}-${{ matrix.chunk }}
           path: tests/artifacts/hosted/
+  focused:
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.19.0
+      - name: Check release profile including late page delivery and folder switches
+        shell: pwsh
+        run: |
+          npm install --global pnpm@10.17.0
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install chromium
+          $env:PENA_TEST_PROFILE='search-focused'
+          $env:PENA_TEST_SUITES=(Get-Content tests/search-focused-suites.json -Raw | ConvertFrom-Json) -join ','
+          $env:PENA_TEST_FAIL_FAST='1'
+          pnpm test
+          exit $LASTEXITCODE
